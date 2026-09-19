@@ -30,6 +30,8 @@ public final class HostConnection: Identifiable {
     private var reconnectAttempt = 0
     private var wantsConnection = false
     private var subscribed = Set<String>()
+    /// Threads a view has asked to open, whether or not we were connected at the time.
+    private var openRequested = Set<String>()
 
     public init(host: HostConfig) {
         self.host = host
@@ -73,6 +75,7 @@ public final class HostConnection: Identifiable {
             state = .connected
             reconnectAttempt = 0
             await resubscribeAll()
+            await openRequestedThreads()
             await refreshCatalog()
         } catch {
             appendLog("Connection failed: \(error.localizedDescription)")
@@ -158,6 +161,15 @@ public final class HostConnection: Identifiable {
         }
     }
 
+    /// Load any thread that was requested via `open(_:)` while we weren't connected yet
+    /// (selected on launch before `connect()` finished, or during a reconnect).
+    private func openRequestedThreads() async {
+        for id in openRequested {
+            guard let model = threads[id], !model.historyLoaded else { continue }
+            await loadRequestedThread(model)
+        }
+    }
+
     // MARK: server requests
 
     private func handleServerRequest(_ req: ServerRequest) async -> JSONValue? {
@@ -222,8 +234,22 @@ public final class HostConnection: Identifiable {
     }
 
     /// Open a thread: loads history and, if it is live in the daemon, subscribes to it.
+    /// If we're not connected yet (e.g. the thread was selected on launch, before `connect()`
+    /// finished, or while reconnecting), defer instead of failing: `connect()` will load it via
+    /// `openRequestedThreads()` once it succeeds.
     public func open(_ model: ThreadModel) async {
-        do { try await loadHistory(model, force: false) } catch { model.setError(error.localizedDescription) }
+        openRequested.insert(model.id)
+        guard case .connected = state else { return }
+        await loadRequestedThread(model)
+    }
+
+    private func loadRequestedThread(_ model: ThreadModel) async {
+        do {
+            try await loadHistory(model, force: false)
+            model.setError(nil) // clear a stale "Not connected" from an earlier attempt
+        } catch {
+            model.setError(error.localizedDescription)
+        }
     }
 
     private func loadHistory(_ model: ThreadModel, force: Bool) async throws {
@@ -311,6 +337,7 @@ public final class HostConnection: Identifiable {
         await perform(model) { try await $0.call(Methods.ThreadDelete.self, .init(threadId: model.id)) }
         chats.removeAll { $0 === model }
         threads.removeValue(forKey: model.id)
+        openRequested.remove(model.id)
     }
 
     public func contextUsage(_ model: ThreadModel) async -> JSONValue? {
