@@ -1,20 +1,23 @@
 import SwiftUI
+import TetherKit
 import TetherUI
 
-/// Development runner (`swift run TetherDevApp`). The shipping app is the Xcode target.
 @main
-struct TetherDevApp: App {
+struct TetherApp: App {
     @State private var app = AppModel()
-
-    init() {
-        NSApplication.shared.setActivationPolicy(.regular)
-    }
 
     var body: some Scene {
         WindowGroup("Tether") {
             RootView(app: app)
                 .frame(minWidth: 900, minHeight: 600)
-                .onAppear { NSApplication.shared.activate() }
+                .onAppear {
+                    #if DEBUG
+                    // Debug: launch with TETHER_OPEN_THREAD=<id> to open a chat directly.
+                    if let id = ProcessInfo.processInfo.environment["TETHER_OPEN_THREAD"] {
+                        app.selection = .thread(host: HostConfig.local.id, id: id)
+                    }
+                    #endif
+                }
         }
         .commands {
             CommandGroup(replacing: .newItem) {

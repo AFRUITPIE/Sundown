@@ -5,11 +5,14 @@ import UniformTypeIdentifiers
 
 /// Prompt field: native multi-line TextField (Return sends, ⌥Return adds a line) with native
 /// input suggestions for `/` commands and `@` file mentions, image attachments, and send-while-running.
-struct Composer: View {
+struct Composer<Controls: View>: View {
     let connection: HostConnection
     let cwd: String?
     var thread: ThreadModel?
     var placeholder = "Ask Claude…"
+    /// Session controls (model, effort, permissions) shown under the text, left of Send.
+    @ViewBuilder var controls: Controls
+    var onStop: (() -> Void)?
     let submit: ([UserInput]) async -> Void
 
     @State private var text = ""
@@ -54,6 +57,9 @@ struct Composer: View {
         return String(last.dropFirst())
     }
 
+    /// While Claude works, an empty field offers Stop; typing turns it back into Send (adds to the turn).
+    private var showStop: Bool { thread?.isRunning == true && onStop != nil && !canSend }
+
     private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty }
 
     var body: some View {
@@ -65,36 +71,54 @@ struct Composer: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            HStack(alignment: .bottom, spacing: 8) {
-                TextField(thread?.isRunning == true ? "Send a message while Claude works…" : placeholder, text: $text, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...12)
-                    .focused($focused)
-                    .onSubmit(send)
-                    .textInputSuggestions(suggestions) { s in
-                        Label {
-                            Text(s.title)
-                            if let d = s.detail { Text(d) }
-                        } icon: {
-                            Image(systemName: s.symbol)
-                        }
-                        .textInputCompletion(s.completion)
+            TextField(thread?.isRunning == true ? "Send a message while Claude works…" : placeholder, text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(1...12)
+                .focused($focused)
+                .onSubmit(send)
+                .textInputSuggestions(suggestions) { s in
+                    Label {
+                        Text(s.title)
+                        if let d = s.detail { Text(d) }
+                    } icon: {
+                        Image(systemName: s.symbol)
                     }
-                    .padding(.vertical, 6)
-                Button(action: send) {
-                    Image(systemName: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up")
-                        .fontWeight(.semibold)
-                        .frame(width: 20, height: 20)
+                    .textInputCompletion(s.completion)
                 }
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.circle)
-                .disabled(!canSend)
-                .help(thread?.isRunning == true ? "Add to the running turn" : "Send")
+                .padding(.top, 4)
+            HStack(spacing: 4) {
+                // Full labels when there is room, icons only when narrow.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 4) { controls }
+                    HStack(spacing: 4) { controls }.labelStyle(.iconOnly)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .lineLimit(1)
+                Spacer(minLength: 0)
+                if showStop {
+                    Button("Stop", systemImage: "stop.fill") { onStop?() }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.glassProminent)
+                        .buttonBorderShape(.circle)
+                        .tint(.red)
+                        .keyboardShortcut(".", modifiers: .command)
+                        .help("Stop (⌘.)")
+                } else {
+                    Button("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up", action: send)
+                        .labelStyle(.iconOnly)
+                        .fontWeight(.semibold)
+                        .buttonStyle(.glassProminent)
+                        .buttonBorderShape(.circle)
+                        .disabled(!canSend)
+                        .help(thread?.isRunning == true ? "Add to the running turn" : "Send")
+                }
             }
         }
         .padding(.leading, 16)
-        .padding(.trailing, 8)
-        .padding(.vertical, 8)
+        .padding(.trailing, 10)
+        .padding(.vertical, 10)
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 24))
         .onDrop(of: [.image, .fileURL], isTargeted: nil, perform: drop)
         .onPasteCommand(of: [.png, .tiff, .jpeg], perform: { _ = drop($0) })

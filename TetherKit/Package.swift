@@ -7,7 +7,6 @@ let package = Package(
     products: [
         .library(name: "TetherKit", targets: ["TetherKit"]),
         .library(name: "TetherUI", targets: ["TetherUI"]),
-        .executable(name: "TetherDevApp", targets: ["TetherDevApp"]),
     ],
     dependencies: [
         // Generated protocol types live with the server; local path during development.
@@ -16,7 +15,6 @@ let package = Package(
     targets: [
         .target(name: "TetherKit", dependencies: [.product(name: "TetherProtocol", package: "TetherProtocol")]),
         .target(name: "TetherUI", dependencies: ["TetherKit"]),
-        .executableTarget(name: "TetherDevApp", dependencies: ["TetherUI"]),
         .testTarget(name: "TetherKitTests", dependencies: ["TetherKit"]),
     ]
 )

@@ -206,16 +206,12 @@ struct NewChatView: View {
         .safeAreaBar(edge: .bottom) {
             if let connection {
                 GlassEffectContainer(spacing: 10) {
-                    VStack(spacing: 10) {
-                        HStack {
-                            ModelPicker(selection: $model, models: connection.models)
-                            EffortPicker(selection: $effort, levels: connection.models.first { $0.value == model }?.supportedEffortLevels ?? EffortLevel.allCases)
-                            PermissionModePicker(selection: $mode)
-                        }
-                        .fixedSize()
-                        Composer(connection: connection, cwd: directory, placeholder: directory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…") { input in
-                            await start(connection, input)
-                        }
+                    Composer(connection: connection, cwd: directory, placeholder: directory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…") {
+                        ModelPicker(selection: $model, models: connection.models)
+                        EffortPicker(selection: $effort, levels: connection.models.first { $0.value == model }?.supportedEffortLevels ?? EffortLevel.allCases)
+                        PermissionModePicker(selection: $mode)
+                    } submit: { input in
+                        await start(connection, input)
                     }
                 }
                 .padding(.horizontal, 20)

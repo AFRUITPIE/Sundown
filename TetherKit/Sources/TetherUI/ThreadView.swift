@@ -39,7 +39,11 @@ struct BottomBar: View {
                         .id(p.id)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else {
-                    Composer(connection: connection, cwd: thread.cwd, thread: thread) { input in
+                    Composer(connection: connection, cwd: thread.cwd, thread: thread) {
+                        ThreadControls(thread: thread, connection: connection)
+                    } onStop: {
+                        Task { await connection.interrupt(thread) }
+                    } submit: { input in
                         await connection.send(thread, input: input)
                     }
                 }
@@ -55,6 +59,19 @@ struct BottomBar: View {
 
 struct TranscriptView: View {
     let thread: ThreadModel
+    @State private var position = ScrollPosition(edge: .bottom)
+    @State private var atBottom = true
+
+    /// Changes whenever streamed content grows.
+    private var contentVersion: Int {
+        thread.items.count &+ (thread.items.last.map { item -> Int in
+            switch item {
+            case .agentMessage(let m): return m.text.count
+            case .reasoning(let r): return r.text.count
+            default: return 0
+            }
+        } ?? 0)
+    }
 
     var body: some View {
         ScrollView {
@@ -76,7 +93,6 @@ struct TranscriptView: View {
         }
         // Start at the bottom and stay pinned there as streamed content grows.
         .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .defaultScrollAnchor(.bottom, for: .sizeChanges)
     }
 }
 
@@ -152,45 +168,40 @@ struct ThreadToolbar: ToolbarContent {
     @Binding var showInspector: Bool
 
     var body: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            ModelPicker(selection: Binding(get: { thread.info?.model }, set: { m in Task { await connection.setModel(thread, m) } }),
-                        models: connection.models)
-            EffortPicker(selection: Binding(get: { thread.info?.effort ?? nil }, set: { e in Task { await connection.setEffort(thread, e) } }),
-                         levels: currentModelInfo?.supportedEffortLevels ?? EffortLevel.allCases)
-            if currentModelInfo?.supportsFastMode == true {
-                Toggle("Fast mode", systemImage: "hare", isOn: Binding(
-                    get: { thread.info?.fastModeState == "on" },
-                    set: { on in Task { await connection.setFastMode(thread, on) } }))
-                    .disabled(thread.info?.fastModeDisabledReason != nil)
-                    .help(thread.info?.fastModeDisabledReason.map { "Fast mode unavailable: \($0)" } ?? "Fast mode")
-            }
-        }
-        ToolbarSpacer(.fixed, placement: .primaryAction)
-        ToolbarItem(placement: .primaryAction) {
-            PermissionModePicker(selection: Binding(
-                get: { thread.info?.permissionMode ?? .default },
-                set: { m in Task { await connection.setPermissionMode(thread, m) } }))
-        }
-        if thread.isRunning {
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-            ToolbarItem(placement: .primaryAction) {
-                Button("Stop", systemImage: "stop.fill") { Task { await connection.interrupt(thread) } }
-                    .buttonStyle(.glassProminent)
-                    .tint(.red)
-                    .keyboardShortcut(".", modifiers: .command)
-                    .help("Stop (⌘.)")
-            }
-        }
-        ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(placement: .primaryAction) {
             Toggle("Inspector", systemImage: "sidebar.trailing", isOn: $showInspector)
                 .keyboardShortcut("i", modifiers: [.command, .option])
         }
     }
 
+}
+
+/// Model, effort, fast mode and permission menus for a live chat (lives in the composer).
+struct ThreadControls: View {
+    let thread: ThreadModel
+    let connection: HostConnection
+
     private var currentModelInfo: ModelInfo? {
         let m = thread.info?.model
         return connection.models.first { $0.value == m || $0.resolvedModel == m } ?? connection.models.first
+    }
+
+    var body: some View {
+        ModelPicker(selection: Binding(get: { thread.info?.model }, set: { m in Task { await connection.setModel(thread, m) } }),
+                    models: connection.models)
+        EffortPicker(selection: Binding(get: { thread.info?.effort ?? nil }, set: { e in Task { await connection.setEffort(thread, e) } }),
+                     levels: currentModelInfo?.supportedEffortLevels ?? EffortLevel.allCases)
+        PermissionModePicker(selection: Binding(
+            get: { thread.info?.permissionMode ?? .default },
+            set: { m in Task { await connection.setPermissionMode(thread, m) } }))
+        if currentModelInfo?.supportsFastMode == true {
+            Toggle("Fast", systemImage: "hare", isOn: Binding(
+                get: { thread.info?.fastModeState == "on" },
+                set: { on in Task { await connection.setFastMode(thread, on) } }))
+                .toggleStyle(.button)
+                .disabled(thread.info?.fastModeDisabledReason != nil)
+                .help(thread.info?.fastModeDisabledReason.map { "Fast mode unavailable: \($0)" } ?? "Fast mode")
+        }
     }
 }
 
@@ -218,7 +229,7 @@ struct ModelPicker: View {
             }
             .pickerStyle(.inline)
         } label: {
-            Label(title, systemImage: "cpu").labelStyle(.titleAndIcon)
+            Label(title, systemImage: "cpu")
         }
         .help("Model")
     }
@@ -236,7 +247,7 @@ struct EffortPicker: View {
             }
             .pickerStyle(.inline)
         } label: {
-            Label(selection?.rawValue.capitalized ?? "Effort", systemImage: "gauge.with.dots.needle.50percent").labelStyle(.titleAndIcon)
+            Label(selection?.rawValue.capitalized ?? "Effort", systemImage: "gauge.with.dots.needle.50percent")
         }
         .help("Reasoning effort")
     }
@@ -296,7 +307,7 @@ struct ThreadInspector: View {
                 }
             }
             Section("Model") {
-                LabeledContent("Current", value: thread.info?.model ?? "Default")
+                LabeledContent("Current") { Text(thread.info?.model ?? "Default").truncationMode(.middle) }
                 TextField("Custom model ID", text: $customModel, prompt: Text("us.anthropic.claude-…"))
                     .onSubmit {
                         guard !customModel.isEmpty else { return }
@@ -306,10 +317,10 @@ struct ThreadInspector: View {
             if let info = thread.info {
                 Section("Session") {
                     LabeledContent("Status", value: info.status.rawValue)
-                    LabeledContent("Directory", value: info.cwd.abbreviatingHome)
+                    LabeledContent("Directory") { Text(info.cwd.abbreviatingHome).truncationMode(.middle) }
                     if let v = info.claudeCodeVersion { LabeledContent("Claude Code", value: v) }
                     if let o = info.outputStyle { LabeledContent("Output style", value: o) }
-                    LabeledContent("Thread ID") { Text(info.threadId).textSelection(.enabled).font(.caption.monospaced()) }
+                    LabeledContent("Thread ID") { Text(info.threadId).textSelection(.enabled).font(.caption.monospaced()).truncationMode(.middle) }
                 }
                 if let servers = info.mcpServers, !servers.isEmpty {
                     Section("MCP servers") {
@@ -328,6 +339,8 @@ struct ThreadInspector: View {
             }
         }
         .formStyle(.grouped)
+        // Values truncate instead of widening the column (a min width > max width loops the split view).
+        .lineLimit(1)
         .task(id: thread.turns.count) { await refresh() }
     }
 

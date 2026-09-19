@@ -33,11 +33,11 @@ struct MarkdownView: View {
             inline(text).font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline)
                 .padding(.top, 4)
         case .paragraph(let text):
-            inline(text).fixedSize(horizontal: false, vertical: true)
+            inline(text)
         case .bullet(let indent, let marker, let text):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(marker).foregroundStyle(.secondary).monospacedDigit()
-                inline(text).fixedSize(horizontal: false, vertical: true)
+                inline(text)
             }
             .padding(.leading, CGFloat(indent) * 14)
         case .quote(let text):
