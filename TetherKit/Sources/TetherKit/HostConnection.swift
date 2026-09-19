@@ -20,7 +20,8 @@ public final class HostConnection: Identifiable {
     public private(set) var account: AccountInfo?
     public private(set) var models: [ModelInfo] = []
     public private(set) var projects: [ProjectListResult.Project] = []
-    public private(set) var threadsByProject: [String: [ThreadModel]] = [:]
+    /// All chats on this host, most recent first (across every directory).
+    public private(set) var chats: [ThreadModel] = []
     public private(set) var log: [String] = []
 
     private var threads: [String: ThreadModel] = [:]
@@ -181,23 +182,24 @@ public final class HostConnection: Identifiable {
         async let modelsR = client.call(Methods.ModelList.self, .init())
         async let accountR = client.call(Methods.AccountRead.self, .init())
         if let p = try? await projectsR { projects = p.projects }
+        await loadChats()
         if let m = try? await modelsR { models = m.models }
         if let a = try? await accountR { account = a.account }
     }
 
-    public func loadThreads(project cwd: String) async {
+    public func loadChats(limit: Int = 200) async {
         guard let client else { return }
         do {
-            let r = try await client.call(Methods.ThreadList.self, .init(cwd: cwd, limit: 100))
+            let r = try await client.call(Methods.ThreadList.self, .init(limit: limit))
             var list: [ThreadModel] = []
             for s in r.threads {
                 let m = thread(s.threadId)
                 m.setSummary(s)
                 list.append(m)
             }
-            // Keep live threads that are not persisted yet (no first message).
-            for m in threadsByProject[cwd] ?? [] where !list.contains(where: { $0 === m }) { list.insert(m, at: 0) }
-            threadsByProject[cwd] = list
+            // Keep live chats that are not persisted yet (no first message on disk).
+            for m in chats where !list.contains(where: { $0 === m }) { list.insert(m, at: 0) }
+            chats = list
         } catch {
             appendLog("thread/list failed: \(error.localizedDescription)")
         }
@@ -213,11 +215,7 @@ public final class HostConnection: Identifiable {
     }
 
     private func attach(_ model: ThreadModel, toProject cwd: String) {
-        var list = threadsByProject[cwd] ?? []
-        if !list.contains(where: { $0 === model }) {
-            list.insert(model, at: 0)
-            threadsByProject[cwd] = list
-        }
+        if !chats.contains(where: { $0 === model }) { chats.insert(model, at: 0) }
         if !projects.contains(where: { $0.cwd == cwd }) {
             projects.insert(.init(cwd: cwd, lastActivity: Date().timeIntervalSince1970 * 1000, threadCount: 1), at: 0)
         }
@@ -299,19 +297,19 @@ public final class HostConnection: Identifiable {
 
     public func rename(_ model: ThreadModel, _ title: String) async {
         await perform(model) { try await $0.call(Methods.ThreadRename.self, .init(threadId: model.id, title: title)) }
-        if let cwd = model.cwd { await loadThreads(project: cwd) }
+        await loadChats()
     }
 
     public func fork(_ model: ThreadModel, at messageId: String? = nil) async -> ThreadModel? {
         guard let client else { return nil }
         guard let r = try? await client.call(Methods.ThreadFork.self, .init(threadId: model.id, atMessageId: messageId)) else { return nil }
-        if let cwd = model.cwd { await loadThreads(project: cwd) }
+        await loadChats()
         return thread(r.threadId)
     }
 
     public func delete(_ model: ThreadModel) async {
         await perform(model) { try await $0.call(Methods.ThreadDelete.self, .init(threadId: model.id)) }
-        if let cwd = model.cwd { threadsByProject[cwd]?.removeAll { $0 === model } }
+        chats.removeAll { $0 === model }
         threads.removeValue(forKey: model.id)
     }
 

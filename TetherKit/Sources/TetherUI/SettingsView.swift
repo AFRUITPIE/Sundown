@@ -1,0 +1,193 @@
+import SwiftUI
+import TetherKit
+import TetherProtocol
+
+public struct SettingsView: View {
+    @Bindable var app: AppModel
+
+    public init(app: AppModel) {
+        self.app = app
+    }
+
+    public var body: some View {
+        TabView {
+            HostsSettings(app: app).tabItem { Label("Hosts", systemImage: "server.rack") }
+            DefaultsSettings(app: app).tabItem { Label("Defaults", systemImage: "slider.horizontal.3") }
+        }
+        .frame(width: 640, height: 460)
+    }
+}
+
+struct DefaultsSettings: View {
+    @Bindable var app: AppModel
+
+    var body: some View {
+        Form {
+            TextField("Default model (blank = Claude Code default)", text: Binding(get: { app.defaultModel ?? "" }, set: { app.defaultModel = $0.isEmpty ? nil : $0 }))
+            Picker("Default effort", selection: Binding(get: { app.defaultEffort ?? "" }, set: { app.defaultEffort = $0.isEmpty ? nil : $0 })) {
+                Text("Model default").tag("")
+                ForEach(EffortLevel.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0.rawValue) }
+            }
+            Picker("Default permission mode", selection: $app.defaultPermissionMode) {
+                ForEach([PermissionMode.default, .acceptEdits, .plan, .auto, .dontAsk], id: \.self) { Text($0.label).tag($0.rawValue) }
+            }
+        }
+        .padding()
+    }
+}
+
+struct HostsSettings: View {
+    @Bindable var app: AppModel
+    @State private var selected: UUID? = HostConfig.local.id
+    @State private var addingSSH = false
+
+    var body: some View {
+        HSplitView {
+            VStack(spacing: 0) {
+                List(app.hosts, selection: $selected) { h in
+                    Label(h.name, systemImage: h.isLocal ? "laptopcomputer" : "network").tag(h.id)
+                }
+                HStack {
+                    Button { addingSSH = true } label: { Image(systemName: "plus") }
+                    Button {
+                        if let s = selected { app.removeHost(s); selected = HostConfig.local.id }
+                    } label: { Image(systemName: "minus") }
+                        .disabled(selected == HostConfig.local.id)
+                    Spacer()
+                }
+                .buttonStyle(.borderless)
+                .padding(6)
+            }
+            .frame(minWidth: 180, maxWidth: 220)
+            if let s = selected, let h = app.hosts.first(where: { $0.id == s }) {
+                HostEditor(host: h, connection: app.connection(h.id)) { app.updateHost($0) }.id(h.id)
+            } else {
+                Text("Select a host").frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .sheet(isPresented: $addingSSH) {
+            AddSSHHostSheet { h in
+                app.addHost(h)
+                selected = h.id
+            }
+        }
+    }
+}
+
+struct HostEditor: View {
+    @State var host: HostConfig
+    let connection: HostConnection?
+    let save: (HostConfig) -> Void
+    @State private var envRows: [EnvRow] = []
+
+    struct EnvRow: Identifiable, Hashable {
+        let id = UUID()
+        var key: String
+        var value: String
+    }
+
+    var body: some View {
+        Form {
+            TextField("Name", text: $host.name)
+            if let d = host.sshDestination {
+                LabeledContent("SSH destination", value: d)
+            } else {
+                LabeledContent("Kind", value: "This Mac")
+            }
+            Section("Environment for Claude on this host") {
+                Text("Set AWS_PROFILE, AWS_REGION and CLAUDE_CODE_USE_BEDROCK=1 for Bedrock, or any other variable Claude Code reads. These override the host's login-shell environment.")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach($envRows) { $row in
+                    HStack {
+                        TextField("NAME", text: $row.key).font(.body.monospaced())
+                        TextField("value", text: $row.value).font(.body.monospaced())
+                        Button { envRows.removeAll { $0.id == row.id } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+                    }
+                }
+                Button("Add variable") { envRows.append(.init(key: "", value: "")) }
+            }
+            Section("Advanced") {
+                TextField("Server command override", text: Binding(get: { host.serverCommand ?? "" }, set: { host.serverCommand = $0.isEmpty ? nil : $0 }), prompt: Text("e.g. bun run ~/Code/tether-server/src/cli.ts connect"))
+                    .font(.body.monospaced())
+            }
+            if let c = connection {
+                Section("Connection") {
+                    LabeledContent("Status", value: statusText(c.state))
+                    if let s = c.serverInfo {
+                        LabeledContent("Host", value: "\(s.host.hostname) (\(s.host.platform)/\(s.host.arch))")
+                        LabeledContent("Claude", value: "\(s.claude.version) — \(s.claude.path)")
+                    }
+                    if let a = c.account {
+                        LabeledContent("Provider", value: a.apiProvider ?? "?")
+                        if let e = a.email { LabeledContent("Account", value: e) }
+                    }
+                    DisclosureGroup("Log") {
+                        ScrollView {
+                            Text(c.log.suffix(100).joined(separator: "\n")).font(.caption.monospaced()).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: 120)
+                    }
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Save & Reconnect") {
+                    host.env = Dictionary(envRows.filter { !$0.key.isEmpty }.map { ($0.key, $0.value) }, uniquingKeysWith: { $1 })
+                    save(host)
+                    if let c = connection { Task { await c.reconnect() } }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { envRows = host.env.sorted { $0.key < $1.key }.map { EnvRow(key: $0.key, value: $0.value) } }
+    }
+
+    private func statusText(_ s: HostConnection.State) -> String {
+        switch s {
+        case .connected: return "Connected"
+        case .connecting(let m): return m
+        case .failed(let m): return "Failed: \(m)"
+        case .disconnected: return "Disconnected"
+        }
+    }
+}
+
+struct AddSSHHostSheet: View {
+    let add: (HostConfig) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var destination = ""
+    @State private var name = ""
+    private let aliases = SSHConfig.hostAliases()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add SSH host").font(.headline)
+            Text("Tether uses your ssh config, keys and agent (non-interactive). The first `claude` on the remote PATH is used; the server installs itself in ~/.tether.")
+                .font(.caption).foregroundStyle(.secondary)
+            if !aliases.isEmpty {
+                Picker("From ~/.ssh/config", selection: $destination) {
+                    Text("Choose…").tag("")
+                    ForEach(aliases, id: \.self) { Text($0).tag($0) }
+                }
+            }
+            TextField("Destination (alias or user@host)", text: $destination)
+            TextField("Display name", text: $name, prompt: Text(destination.isEmpty ? "Name" : destination))
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Add") {
+                    add(HostConfig(name: name.isEmpty ? destination : name, kind: .ssh(destination: destination)))
+                    dismiss()
+                }
+                .disabled(destination.isEmpty)
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+        .padding()
+        .frame(width: 440)
+    }
+}
