@@ -66,6 +66,7 @@ struct TranscriptView: View {
                     case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread).id(row.id)
                     }
                 }
+                if thread.isThinking { ThinkingLine() }
                 if let turn = thread.turns.last, turn.status != .inProgress, let r = turn.result {
                     TurnFooter(result: r, status: turn.status)
                 }
@@ -114,6 +115,19 @@ struct TranscriptView: View {
             }
         }
         .animation(.snappy, value: atBottom)
+    }
+}
+
+/// Marks the wait before a turn has anything to show. Reasoning itself isn't rendered, so this
+/// is all there is between sending and the first words of the reply — it comes from the thread's
+/// status rather than reasoning items, so it works with thinking off or redacted too.
+struct ThinkingLine: View {
+    var body: some View {
+        Label("Thinking…", systemImage: "ellipsis")
+            .symbolEffect(.variableColor.iterative, options: .repeating)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .transition(.opacity)
     }
 }
 
@@ -374,6 +388,16 @@ struct ThreadInspector: View {
         ThreadView(thread: .sampleRunningTurn(), connection: connection)
     }
     .frame(width: 900, height: 700)
+}
+
+#Preview("Thinking (nothing to show yet)") {
+    let connection = HostConnection.sample()
+    NavigationStack {
+        ThreadView(thread: .sample(status: .running, items: [
+            .sampleUserMessage("Why does opening a chat with the inspector open throw a constraints exception?", secondsAgo: 3),
+        ]), connection: connection)
+    }
+    .frame(width: 900, height: 400)
 }
 
 #Preview("Pending permission") {

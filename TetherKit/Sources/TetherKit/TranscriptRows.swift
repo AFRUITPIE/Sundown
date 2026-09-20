@@ -23,6 +23,10 @@ public enum TranscriptRow: Sendable {
 ///   - `.todoWrite`, whose checklist is always shown inline and shouldn't be folded away
 ///   - `.subagent`, whose nested transcript is a heavier construct than a plain tool line
 /// A single ungroupable-adjacent completed call is left as a plain `.item`, not a one-call group.
+///
+/// Reasoning items are dropped here rather than rendered: the model's internal monologue competes
+/// with its actual answer. `ThreadModel` still keeps them, and `ThreadModel.isThinking` drives the
+/// one line that marks the wait before a reply starts.
 public func foldTranscriptRows(_ items: [Item]) -> [TranscriptRow] {
     var rows: [TranscriptRow] = []
     var run: [Item.ToolCall] = []
@@ -37,7 +41,9 @@ public func foldTranscriptRows(_ items: [Item]) -> [TranscriptRow] {
     }
 
     for item in items {
-        if case .toolCall(let call) = item, isGroupable(call) {
+        if case .reasoning = item {
+            continue
+        } else if case .toolCall(let call) = item, isGroupable(call) {
             run.append(call)
         } else {
             flushRun()

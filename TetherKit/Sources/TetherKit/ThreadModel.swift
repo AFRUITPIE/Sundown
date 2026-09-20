@@ -57,6 +57,20 @@ public final class ThreadModel: Identifiable {
     public var isRunning: Bool { status == .running || status == .requiresAction }
     public var currentTurn: Turn? { turns.last.flatMap { $0.status == .inProgress ? $0 : nil } }
 
+    /// True while the model is working with nothing on screen to show for it. Reasoning items
+    /// aren't rendered, so without this the transcript sits empty through the thinking phase.
+    /// Keyed on the last item rather than the turn: items don't always carry a `turnId`, and what
+    /// matters is whether the newest thing in the transcript is already showing progress — a tool
+    /// call that is running has its own spinner, and a reply that has started speaks for itself.
+    public var isThinking: Bool {
+        guard status == .running else { return false }
+        switch items.last {
+        case .agentMessage(let m): return m.text.isEmpty
+        case .toolCall(let t): return t.status != .running && t.status != .pending
+        default: return true
+        }
+    }
+
     // MARK: loading
 
     func setInfo(_ i: ThreadInfo) {

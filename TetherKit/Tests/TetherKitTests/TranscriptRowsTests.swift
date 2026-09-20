@@ -69,4 +69,19 @@ struct TranscriptRowsTests {
     @Test func emptyInputProducesNoRows() {
         #expect(foldTranscriptRows([]).isEmpty)
     }
+
+    @Test func reasoningNeverReachesTheTranscript() {
+        let reasoning = Item.reasoning(.init(id: "r1", createdAt: 0, text: "thinking out loud"))
+        let rows = foldTranscriptRows([message("m1"), reasoning, message("m2")])
+        #expect(rows.map(\.id) == ["m1", "m2"])
+    }
+
+    /// Reasoning between two tool calls mustn't split the run it sits in, now that it isn't drawn.
+    @Test func reasoningDoesNotBreakAToolGroup() {
+        let reasoning = Item.reasoning(.init(id: "r1", createdAt: 0, text: "picking the next step"))
+        let rows = foldTranscriptRows([call("t1"), reasoning, call("t2")])
+        #expect(rows.count == 1)
+        guard case .toolGroup(let calls) = rows[0] else { Issue.record("expected a group"); return }
+        #expect(calls.map(\.id) == ["t1", "t2"])
+    }
 }
