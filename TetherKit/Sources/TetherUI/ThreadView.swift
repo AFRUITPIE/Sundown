@@ -265,7 +265,10 @@ struct ThreadControls: View {
     }
 
     var body: some View {
-        ModelPicker(selection: Binding(get: { thread.info?.model }, set: { m in Task { await connection.setModel(thread, m) } }),
+        // Falls back to the catalog's first entry only until the server reports the thread's real
+        // model — with no Default row, an unmatched selection would draw as a blank button.
+        ModelPicker(selection: Binding(get: { thread.info?.model ?? connection.models.first?.value },
+                                       set: { m in Task { await connection.setModel(thread, m) } }),
                     models: connection.models)
         EffortPicker(selection: Binding(get: { thread.info?.effort ?? nil }, set: { e in Task { await connection.setEffort(thread, e) } }),
                      levels: currentModelInfo?.supportedEffortLevels ?? EffortLevel.allCases)
@@ -297,10 +300,12 @@ struct ModelPicker: View {
     let models: [ModelInfo]
 
     var body: some View {
+        // No "Default" row: nothing in the protocol says which model the CLI would pick on its
+        // own, so a row named Default could only stand for an unknown. The default is a real
+        // model chosen in Settings, and it shows up here already selected, like any other.
         Picker("Model", selection: $selection) {
-            Text("Default").tag(String?.none)
             ForEach(models, id: \.value) { m in
-                Text(m.displayName).tag(Optional(m.value))
+                Text(m.shortName).tag(Optional(m.value))
             }
             // Keep a custom or Bedrock model ID selectable even if the CLI does not list it.
             if let s = selection, !models.contains(where: { $0.value == s || $0.resolvedModel == s }) {
@@ -319,7 +324,9 @@ struct EffortPicker: View {
 
     var body: some View {
         Picker("Effort", selection: $selection) {
-            Text("Default effort").tag(EffortLevel?.none)
+            // Unlike the model, this one is a real choice and not a stand-in for an unknown:
+            // sending no effort is what lets a model that supports it decide per turn.
+            Text("Automatic").tag(EffortLevel?.none)
             ForEach(levels, id: \.self) { Text($0.rawValue.capitalized).tag(Optional($0)) }
         }
         .pickerStyle(.menu)
@@ -399,6 +406,12 @@ struct ThreadInspector: View {
 
     private struct Key: Equatable { let threadId: String; let turns: Int }
 
+    /// The catalog's name for the thread's model, or the raw ID for one the CLI doesn't list.
+    private var currentModelName: String {
+        guard let id = thread.info?.model else { return "—" }
+        return connection.models.first { $0.value == id || $0.resolvedModel == id }?.shortName ?? id
+    }
+
     // MARK: panes
 
     private var tasks: [TaskEventNotification] { thread.tasks.values.sorted { $0.seq < $1.seq } }
@@ -444,7 +457,9 @@ struct ThreadInspector: View {
                 }
             }
             Section {
-                LabeledContent("Current") { Text(thread.info?.model ?? "Default").truncationMode(.middle) }
+                LabeledContent("Current") {
+                    Text(currentModelName).truncationMode(.middle)
+                }
                 // A bordered field, not a bare one: inside a grouped Form an unbordered TextField
                 // showing only its prompt is indistinguishable from a LabeledContent value, so an
                 // empty field read as though a custom model were already set.

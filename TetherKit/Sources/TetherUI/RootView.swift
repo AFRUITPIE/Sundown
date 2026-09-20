@@ -371,7 +371,11 @@ struct NewChatControls: View {
     }
 
     var body: some View {
-        ModelPicker(selection: $app.draftModel, models: connection.models)
+        // Resolved here as well as in `newChat()`: the host is usually still connecting when the
+        // screen appears, so the catalog lands after the draft was seeded.
+        ModelPicker(selection: Binding(get: { app.draftModel ?? app.defaultModel ?? connection.models.first?.value },
+                                       set: { app.draftModel = $0 }),
+                    models: connection.models)
         EffortPicker(selection: $app.draftEffort, levels: currentModelInfo?.supportedEffortLevels ?? EffortLevel.allCases)
         PermissionModePicker(selection: $app.draftPermissionMode)
     }

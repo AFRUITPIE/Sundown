@@ -48,16 +48,49 @@ struct DefaultsSettings: View {
                 Text("How wide messages are allowed to get. Narrow keeps lines short enough to read comfortably; the wider settings wrap code and diffs less.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            TextField("Default model (blank = Claude Code default)", text: Binding(get: { app.defaultModel ?? "" }, set: { app.defaultModel = $0.isEmpty ? nil : $0 }))
-            Picker("Default effort", selection: Binding(get: { app.defaultEffort ?? "" }, set: { app.defaultEffort = $0.isEmpty ? nil : $0 })) {
-                Text("Model default").tag("")
-                ForEach(EffortLevel.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0.rawValue) }
-            }
-            Picker("Default permission mode", selection: $app.defaultPermissionMode) {
-                ForEach([PermissionMode.default, .acceptEdits, .plan, .auto, .dontAsk], id: \.self) { Text($0.label).tag($0.rawValue) }
+            Section {
+                defaultModelPicker
+                Picker("Effort", selection: Binding(get: { app.defaultEffort ?? "" }, set: { app.defaultEffort = $0.isEmpty ? nil : $0 })) {
+                    Text("Automatic").tag("")
+                    ForEach(EffortLevel.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0.rawValue) }
+                }
+                Picker("Permissions", selection: $app.defaultPermissionMode) {
+                    ForEach([PermissionMode.default, .acceptEdits, .plan, .auto, .dontAsk], id: \.self) { Text($0.label).tag($0.rawValue) }
+                }
+            } header: {
+                Text("New chats start with")
+            } footer: {
+                Text("Models come from Claude Code on this Mac. A chat can still be switched to anything else from the toolbar.")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(nil)
             }
         }
-        .padding()
+        // Grouped so the section headers and footers render as such instead of as loose body
+        // text between the rows.
+        .formStyle(.grouped)
+    }
+
+    /// The models Claude Code on this Mac reports. The default is one of them by name — the app
+    /// can't ask the CLI which model it would otherwise choose, so "whatever it picks" isn't an
+    /// answer it could show.
+    private var models: [ModelInfo] { app.connection(HostConfig.local.id)?.models ?? [] }
+
+    @ViewBuilder private var defaultModelPicker: some View {
+        if models.isEmpty {
+            LabeledContent("Model") {
+                Text(app.defaultModel ?? "Not connected")
+                    .foregroundStyle(.secondary)
+                    .truncationMode(.middle)
+            }
+        } else {
+            Picker("Model", selection: Binding(get: { app.defaultModel ?? models.first?.value },
+                                                set: { app.defaultModel = $0 })) {
+                ForEach(models, id: \.value) { Text($0.shortName).tag(Optional($0.value)) }
+                // A Bedrock or otherwise unlisted ID set earlier stays selectable.
+                if let m = app.defaultModel, !models.contains(where: { $0.value == m || $0.resolvedModel == m }) {
+                    Text(m).tag(Optional(m))
+                }
+            }
+        }
     }
 }
 

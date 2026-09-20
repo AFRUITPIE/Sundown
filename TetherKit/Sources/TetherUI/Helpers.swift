@@ -84,6 +84,14 @@ enum Format {
     }
 }
 
+extension ModelInfo {
+    /// "Claude Opus 4.5" → "Opus 4.5". Every model carries the same brand, so it's the family and
+    /// version that tell them apart — the prefix only eats width in a pop-up button.
+    var shortName: String {
+        displayName.hasPrefix("Claude ") ? String(displayName.dropFirst(7)) : displayName
+    }
+}
+
 extension PermissionMode {
     var label: String {
         switch self {

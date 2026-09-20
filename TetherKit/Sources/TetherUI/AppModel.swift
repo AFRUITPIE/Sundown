@@ -96,8 +96,12 @@ public final class AppModel {
 
     /// Start composing a new chat on the currently selected host (or this Mac).
     public func newChat() {
-        selection = .newChat(host: selection?.hostId ?? HostConfig.local.id)
-        draftModel = defaultModel
+        let host = selection?.hostId ?? HostConfig.local.id
+        selection = .newChat(host: host)
+        // A concrete model, not "whatever the CLI decides": nothing in the protocol reports the
+        // CLI's own default, so the app's default is the one set in Settings, falling back to the
+        // top of that host's catalog until one is chosen.
+        draftModel = defaultModel ?? connections[host]?.models.first?.value
         draftEffort = defaultEffort.map(EffortLevel.init(rawValue:))
         draftPermissionMode = PermissionMode(rawValue: defaultPermissionMode)
     }
