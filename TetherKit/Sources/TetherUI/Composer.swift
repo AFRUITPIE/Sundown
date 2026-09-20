@@ -112,9 +112,7 @@ struct Composer: View {
         .onDrop(of: [.image, .fileURL], isTargeted: nil, perform: drop)
         .onPasteCommand(of: [.png, .tiff, .jpeg], perform: { _ = drop($0) })
         .onAppear { focused = true }
-        .task(id: cwd) {
-            if let thread { commands = await connection.commands(for: thread) }
-        }
+        .task(id: cwd) { commands = await connection.commands(cwd: cwd, thread: thread) }
         // Keyed on the query so each keystroke cancels the last search instead of racing it —
         // otherwise a slow reply can land after a newer one and rewrite the list.
         .task(id: mentionQuery) {

@@ -378,12 +378,24 @@ public final class HostConnection: Identifiable {
         openRequested.remove(model.id)
     }
 
-    public func contextUsage(_ model: ThreadModel) async -> JSONValue? {
-        try? await client?.call(Methods.ThreadContextUsage.self, .init(threadId: model.id, detail: .summary)).usage
+    /// Throws rather than returning nil on failure: the daemon only answers this for a thread it
+    /// currently has loaded, so an archived chat fails with `threadNotLoaded` every time. Swallowing
+    /// that left the inspector spinning forever with nothing to explain it.
+    public func contextUsage(_ model: ThreadModel) async throws -> JSONValue? {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        return try await client.call(Methods.ThreadContextUsage.self, .init(threadId: model.id, detail: .summary)).usage
     }
 
-    public func commands(for model: ThreadModel) async -> [SlashCommand] {
-        (try? await client?.call(Methods.CommandList.self, .init(cwd: model.cwd, threadId: subscribed.contains(model.id) ? model.id : nil)).commands) ?? []
+    /// Whether the daemon has this thread live, and so can answer questions about it (context
+    /// usage, MCP status). A thread read from disk isn't loaded until something resumes it.
+    public func isLoaded(_ model: ThreadModel) -> Bool { subscribed.contains(model.id) }
+
+    /// Slash commands for a directory, narrowed to a thread's own set when the daemon has it
+    /// loaded. Takes the cwd directly so the New Chat composer — which has no thread yet — still
+    /// gets the project's commands instead of an empty list.
+    public func commands(cwd: String?, thread: ThreadModel? = nil) async -> [SlashCommand] {
+        let threadId = thread.flatMap { subscribed.contains($0.id) ? $0.id : nil }
+        return (try? await client?.call(Methods.CommandList.self, .init(cwd: cwd ?? thread?.cwd, threadId: threadId)).commands) ?? []
     }
 
     public func searchFiles(cwd: String, query: String) async -> [String] {

@@ -254,10 +254,13 @@ struct DiffView: View {
     let new: String
     var lineLimit = 24
     @State private var expanded = false
+    // A diff is O(old x new) and nothing about it changes between redraws, but the transcript is
+    // re-evaluated on every streamed delta — so an expanded edit would recompute it each frame.
+    @State private var cache = DiffCache()
 
-    private struct Line: Hashable { let sign: Character; let text: String }
+    struct Line: Hashable { let sign: Character; let text: String }
 
-    private var lines: [Line] {
+    static func diff(old: String, new: String) -> [Line] {
         let a = old.components(separatedBy: "\n"), b = new.components(separatedBy: "\n")
         let diff = b.difference(from: a)
         var removed = Set<Int>(), inserted = Set<Int>()
@@ -281,7 +284,7 @@ struct DiffView: View {
     }
 
     var body: some View {
-        let all = lines
+        let all = cache.lines(old: old, new: new)
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array((expanded ? all : Array(all.prefix(lineLimit))).enumerated()), id: \.offset) { _, l in
                 Text(verbatim: "\(l.sign) \(l.text)")
@@ -300,6 +303,20 @@ struct DiffView: View {
         .textSelection(.enabled)
         .padding(.vertical, 6)
         .background(.fill.quinary, in: .rect(cornerRadius: 8))
+    }
+}
+
+/// Memoizes one diff. Held in `@State` so it lives as long as the view it belongs to, the same
+/// way `MarkdownCache` does for parsed markdown.
+final class DiffCache {
+    private var key: (old: String, new: String)?
+    private var cached: [DiffView.Line] = []
+
+    func lines(old: String, new: String) -> [DiffView.Line] {
+        if let key, key.old == old, key.new == new { return cached }
+        cached = DiffView.diff(old: old, new: new)
+        key = (old, new)
+        return cached
     }
 }
 

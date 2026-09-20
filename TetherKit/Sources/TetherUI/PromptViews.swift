@@ -70,10 +70,13 @@ struct PermissionPrompt: View {
                     .onSubmit(deny)
             }
             HStack {
+                // Exactly one default button, always. `defaultToNo` used to clear Allow's default
+                // without giving it to anything else, which left Return doing nothing at all.
                 if !showingDeny {
                     Button("Deny…") { showingDeny = true }
+                        .keyboardShortcut(denyIsDefault ? .defaultAction : nil)
                 } else {
-                    Button("Deny", role: .destructive, action: deny).keyboardShortcut(.return, modifiers: [.command, .shift])
+                    Button("Deny", action: deny).keyboardShortcut(.defaultAction)
                 }
                 Spacer()
                 if params.suppressAlwaysAllowRule != true {
@@ -85,12 +88,24 @@ struct PermissionPrompt: View {
                     }
                     .fixedSize()
                 }
-                Button("Allow") { respond(["decision": "allow", "scope": "once"]) }
-                    .keyboardShortcut(params.defaultToNo == true ? nil : .defaultAction)
-                    .buttonStyle(.borderedProminent)
+                // Prominence follows the default key, so the button Return presses is the one
+                // that looks pressable (two branches because the styles are different types).
+                if allowIsDefault {
+                    Button("Allow") { respond(["decision": "allow", "scope": "once"]) }
+                        .keyboardShortcut(.defaultAction)
+                        .buttonStyle(.borderedProminent)
+                } else {
+                    Button("Allow") { respond(["decision": "allow", "scope": "once"]) }
+                        .buttonStyle(.bordered)
+                }
             }
         }
     }
+
+    /// The server can ask for the safe answer to be the default; once the deny field is open,
+    /// committing that message is what Return should do.
+    private var denyIsDefault: Bool { params.defaultToNo == true || showingDeny }
+    private var allowIsDefault: Bool { !denyIsDefault }
 
     @ViewBuilder private var detail: some View {
         let input = params.input
@@ -138,19 +153,29 @@ struct QuestionPrompt: View {
                             .toggleStyle(.checkbox)
                         }
                     } else {
+                        // Picking an option clears a typed answer: for a single-choice question
+                        // they're alternatives, and submitting used to quietly send both.
                         Picker(q.header, selection: Binding(
                             get: { selections[q.question, default: []].first ?? "" },
-                            set: { selections[q.question] = [$0] })) {
+                            set: {
+                                selections[q.question] = [$0]
+                                other[q.question] = ""
+                            })) {
                             ForEach(q.options, id: \.label) { o in
                                 Text(o.label).tag(o.label)
-                                    .help(o.description)
                             }
                         }
                         .pickerStyle(.radioGroup)
+                        .labelsHidden() // the question is already the heading above
                         let chosen = q.options.first { selections[q.question, default: []].contains($0.label) }
                         if let chosen { Text(chosen.description).font(.caption).foregroundStyle(.secondary) }
                     }
-                    TextField("Other", text: Binding(get: { other[q.question, default: ""] }, set: { other[q.question] = $0 }))
+                    TextField(q.multiSelect ? "Something else (adds to the choices above)" : "Something else",
+                              text: Binding(get: { other[q.question, default: ""] },
+                                            set: { text in
+                                                other[q.question] = text
+                                                if !q.multiSelect, !text.isEmpty { selections[q.question] = [] }
+                                            }))
                         .textFieldStyle(.roundedBorder)
                 }
                 .padding(.bottom, 4)
@@ -164,15 +189,21 @@ struct QuestionPrompt: View {
     }
 
     private var complete: Bool {
-        params.questions.allSatisfy { !selections[$0.question, default: []].isEmpty || !other[$0.question, default: ""].isEmpty }
+        params.questions.allSatisfy {
+            !selections[$0.question, default: []].isEmpty
+                || !other[$0.question, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     private func submit() {
         var answers: [String: JSONValue] = [:]
         for q in params.questions {
-            let custom = other[q.question, default: ""]
+            let custom = other[q.question, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
             let chosen = q.options.map(\.label).filter { selections[q.question, default: []].contains($0) }
-            answers[q.question] = .string(custom.isEmpty ? chosen.joined(separator: ", ") : (chosen + [custom]).joined(separator: ", "))
+            // A typed answer replaces the choice for a single-choice question and joins it for a
+            // multi-select — the UI above enforces the same rule, so the two can't disagree.
+            let parts = custom.isEmpty ? chosen : (q.multiSelect ? chosen + [custom] : [custom])
+            answers[q.question] = .string(parts.joined(separator: ", "))
         }
         respond(["decision": "answer", "answers": .object(answers)])
     }
@@ -219,8 +250,10 @@ struct ElicitationPrompt: View {
                 Link(urlString, destination: url).font(.callout)
             }
             ForEach(fields, id: \.key) { f in
-                TextField(f.schema.string("title") ?? f.key, text: Binding(get: { values[f.key, default: ""] }, set: { values[f.key] = $0 }))
-                    .textFieldStyle(.roundedBorder)
+                field(f)
+                if let d = f.schema.string("description") {
+                    Text(d).font(.caption).foregroundStyle(.secondary)
+                }
             }
             HStack {
                 Button("Decline") { respond(["action": "decline"]) }
@@ -238,6 +271,48 @@ struct ElicitationPrompt: View {
                     respond(["action": "accept", "content": .object(content)])
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!complete)
+            }
+        }
+        // Seeds every field so a toggle starts at a real value and `complete` can tell an
+        // untouched required field from one deliberately left off.
+        .onAppear {
+            for f in fields where values[f.key] == nil {
+                values[f.key] = f.schema.string("type") == "boolean" ? "false" : (f.schema["default"]?.stringValue ?? "")
+            }
+        }
+    }
+
+    /// Fields the schema marks required — Continue used to submit empty strings for them.
+    private var required: Set<String> {
+        Set((params.requestedSchema?["required"]?.arrayValue ?? []).compactMap(\.stringValue))
+    }
+
+    private var complete: Bool {
+        required.allSatisfy { !values[$0, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// The control that matches the declared type, rather than a text field for everything —
+    /// a checkbox is not something you should have to spell "true" into.
+    @ViewBuilder private func field(_ f: (key: String, schema: JSONValue)) -> some View {
+        let title = f.schema.string("title") ?? f.key
+        let text = Binding(get: { values[f.key, default: ""] }, set: { values[f.key] = $0 })
+        switch f.schema.string("type") {
+        case "boolean":
+            Toggle(title, isOn: Binding(get: { values[f.key] == "true" },
+                                        set: { values[f.key] = $0 ? "true" : "false" }))
+        case "number", "integer":
+            TextField(title, text: text, prompt: Text("Number"))
+                .textFieldStyle(.roundedBorder)
+                .monospacedDigit()
+        default:
+            if let options = f.schema["enum"]?.arrayValue, !options.isEmpty {
+                Picker(title, selection: text) {
+                    ForEach(options.compactMap(\.stringValue), id: \.self) { Text($0).tag($0) }
+                }
+            } else {
+                TextField(title, text: text).textFieldStyle(.roundedBorder)
             }
         }
     }

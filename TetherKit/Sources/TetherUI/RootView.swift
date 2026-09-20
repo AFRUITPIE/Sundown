@@ -34,9 +34,20 @@ public struct RootView: View {
 
     @ViewBuilder private var detail: some View {
         switch app.selection {
-        case .thread(_, let id):
+        case .thread(let host, let id):
             if let thread = app.selectedThread, let c = app.selectedConnection {
                 ThreadView(thread: thread, connection: c).id(id)
+            } else {
+                // The host this chat belongs to is gone (removed in Settings while it was
+                // selected); an empty detail column would just look broken.
+                ContentUnavailableView {
+                    Label("Host Unavailable", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text("The host for this chat is no longer configured.")
+                } actions: {
+                    Button("New Chat") { app.newChat() }
+                }
+                .id(host)
             }
         case .newChat(let h):
             NewChatView(app: app, hostId: h).id(h)
@@ -136,6 +147,13 @@ struct HostSection: View {
         Section {
             switch connection.state {
             case .connected:
+                // A connected host with nothing to list used to render as a bare header with a
+                // blank space under it, which reads as still loading.
+                if filtered.isEmpty {
+                    Label(search.isEmpty ? "No chats yet" : "No matches",
+                          systemImage: search.isEmpty ? "bubble.left" : "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                }
                 ForEach(filtered) { t in
                     ChatRow(thread: t)
                         .badge(t.pending.count)
@@ -280,10 +298,19 @@ struct NewChatView: View {
         .sheet(isPresented: $choosingRemoteFolder) {
             if let connection { RemoteFolderPicker(connection: connection) { directory = $0 } }
         }
-        .onAppear {
-            directory = directory ?? connection?.projects.first?.cwd
+        // The host is usually still connecting when this appears, so the project list arrives
+        // after the fact — without the second hook the folder picker stays empty for good.
+        .onAppear { useFirstProjectIfUnset() }
+        .onChange(of: connection?.projects.first?.cwd) { useFirstProjectIfUnset() }
+        .onChange(of: hostId) {
+            directory = nil
+            useFirstProjectIfUnset()
         }
-        .onChange(of: hostId) { directory = connection?.projects.first?.cwd }
+    }
+
+    private func useFirstProjectIfUnset() {
+        guard directory == nil else { return }
+        directory = connection?.projects.first?.cwd
     }
 
     private func chooseFolder() {

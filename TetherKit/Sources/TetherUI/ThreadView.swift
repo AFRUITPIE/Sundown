@@ -7,7 +7,7 @@ struct ThreadView: View {
     let connection: HostConnection
 
     var body: some View {
-        TranscriptView(thread: thread)
+        TranscriptView(thread: thread, connection: connection)
             // Controls float over the transcript on glass; content scrolls underneath with a soft edge.
             .safeAreaBar(edge: .bottom) {
                 BottomBar(thread: thread, connection: connection)
@@ -51,15 +51,14 @@ struct BottomBar: View {
 
 struct TranscriptView: View {
     let thread: ThreadModel
+    var connection: HostConnection?
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
-                if !thread.historyLoaded {
-                    ProgressView().frame(maxWidth: .infinity).padding(40)
-                }
+                if !thread.historyLoaded { unloadedState }
                 ForEach(thread.rows, id: \.id) { row in
                     switch row {
                     case .item(let item): ItemView(item: item, thread: thread).id(item.id)
@@ -115,6 +114,62 @@ struct TranscriptView: View {
             }
         }
         .animation(.snappy, value: atBottom)
+    }
+
+    /// What stands in for the transcript before it arrives. A bare spinner is only right while
+    /// something is actually in flight — if the load failed, or the host isn't reachable, that
+    /// says so and offers the way out, rather than turning forever.
+    @ViewBuilder private var unloadedState: some View {
+        Group {
+            if let error = thread.lastError {
+                TranscriptPlaceholder("Couldn\u{2019}t Open This Chat", symbol: "exclamationmark.triangle", detail: error) {
+                    if let connection { Button("Try Again") { Task { await connection.open(thread) } } }
+                }
+            } else if case .failed(let message) = connection?.state {
+                TranscriptPlaceholder("Not Connected", symbol: "bolt.horizontal.circle", detail: message) {
+                    if let connection { Button("Reconnect") { Task { await connection.reconnect() } } }
+                }
+            } else if case .disconnected = connection?.state {
+                TranscriptPlaceholder("Not Connected", symbol: "bolt.horizontal.circle", detail: nil) {
+                    if let connection { Button("Connect") { Task { await connection.connect() } } }
+                }
+            } else {
+                VStack(spacing: 8) {
+                    ProgressView()
+                    if case .connecting(let message) = connection?.state {
+                        Text(message).font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(40)
+            }
+        }
+    }
+}
+
+/// The transcript's stand-in when there is nothing to show: a reason and a way forward.
+struct TranscriptPlaceholder<Actions: View>: View {
+    let title: String
+    let symbol: String
+    let detail: String?
+    @ViewBuilder var actions: Actions
+
+    init(_ title: String, symbol: String, detail: String?, @ViewBuilder actions: () -> Actions) {
+        self.title = title
+        self.symbol = symbol
+        self.detail = detail
+        self.actions = actions()
+    }
+
+    var body: some View {
+        ContentUnavailableView {
+            Label(title, systemImage: symbol)
+        } description: {
+            if let detail { Text(detail) }
+        } actions: {
+            actions
+        }
+        .padding(.vertical, 40)
     }
 }
 
@@ -296,29 +351,26 @@ struct PermissionModePicker: View {
 struct ThreadInspector: View {
     let thread: ThreadModel
     let connection: HostConnection
-    @State private var usage: JSONValue?
+    @State private var usage: Loaded<JSONValue?> = .loading
     @State private var customModel = ""
 
     var body: some View {
         Form {
             Section("Context") {
-                if let u = usage {
-                    let total = u["totalTokens"]?.doubleValue ?? 0
-                    let max = u["maxTokens"]?.doubleValue ?? u["rawMaxTokens"]?.doubleValue ?? 0
-                    if max > 0 {
-                        Gauge(value: min(total / max, 1)) {
-                            Text("Context window")
-                        } currentValueLabel: {
-                            Text("\(Format.tokens(total)) of \(Format.tokens(max))")
-                        }
-                    }
-                    ForEach(u["categories"]?.arrayValue ?? [], id: \.self) { c in
-                        LabeledContent(c.string("name") ?? "", value: Format.tokens(c["tokens"]?.doubleValue ?? 0))
-                    }
-                } else {
+                switch usage {
+                case .loading:
+                    // Transient by contract: every other branch below replaces it with something
+                    // readable, so this can't be left spinning at a dead end.
                     ProgressView().frame(maxWidth: .infinity)
+                case .failed(let message):
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.secondary)
+                        .lineLimit(nil)
+                case .ready(let u):
+                    contextBody(u)
                 }
                 Button("Refresh") { Task { await refresh() } }
+                    .disabled(usage.isLoading)
             }
             Section("Cost") {
                 LabeledContent("This thread", value: Format.cost(thread.totalCostUsd))
@@ -365,12 +417,58 @@ struct ThreadInspector: View {
         .scrollContentBackground(.hidden)
         // Values truncate instead of widening the column (a min width > max width loops the split view).
         .lineLimit(1)
-        .task(id: thread.turns.count) { await refresh() }
+        // Keyed on the thread too: two chats with the same turn count would otherwise leave the
+        // task un-rerun, and the inspector would keep showing the previous chat's context.
+        .task(id: Key(threadId: thread.id, turns: thread.turns.count)) { await refresh() }
+    }
+
+    private struct Key: Equatable { let threadId: String; let turns: Int }
+
+    @ViewBuilder private func contextBody(_ u: JSONValue?) -> some View {
+        if let u {
+            let total = u["totalTokens"]?.doubleValue ?? 0
+            let limit = u["maxTokens"]?.doubleValue ?? u["rawMaxTokens"]?.doubleValue ?? 0
+            if limit > 0 {
+                Gauge(value: min(total / limit, 1)) {
+                    Text("Context window")
+                } currentValueLabel: {
+                    Text("\(Format.tokens(total)) of \(Format.tokens(limit))")
+                }
+            }
+            ForEach(u["categories"]?.arrayValue ?? [], id: \.self) { c in
+                LabeledContent(c.string("name") ?? "", value: Format.tokens(c["tokens"]?.doubleValue ?? 0))
+            }
+        } else {
+            Text("No context reported yet.").foregroundStyle(.secondary)
+        }
     }
 
     private func refresh() async {
-        usage = await connection.contextUsage(thread)
+        // The daemon only answers for a thread it has loaded, so say so rather than spinning:
+        // sending a message resumes the thread and the next refresh succeeds.
+        guard connection.isLoaded(thread) else {
+            usage = .failed("Available once this chat is running — send a message to resume it.")
+            return
+        }
+        usage = .loading
+        do {
+            usage = .ready(try await connection.contextUsage(thread))
+        } catch is CancellationError {
+            // Superseded by a newer refresh; that one owns the state from here.
+        } catch {
+            usage = .failed(error.localizedDescription)
+        }
     }
+}
+
+/// A value that has to be fetched: every case renders as something, so a view can never be left
+/// showing a spinner that has nothing behind it.
+enum Loaded<Value> {
+    case loading
+    case ready(Value)
+    case failed(String)
+
+    var isLoading: Bool { if case .loading = self { return true }; return false }
 }
 
 #if DEBUG
