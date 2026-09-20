@@ -208,4 +208,18 @@ extension Item {
         case .unknown(let v): return v["turnId"]?.stringValue
         }
     }
+
+    /// ms since epoch.
+    public var createdAt: Double {
+        switch self {
+        case .userMessage(let v): return v.createdAt
+        case .agentMessage(let v): return v.createdAt
+        case .reasoning(let v): return v.createdAt
+        case .toolCall(let v): return v.createdAt
+        case .compaction(let v): return v.createdAt
+        case .error(let v): return v.createdAt
+        case .notice(let v): return v.createdAt
+        case .unknown(let v): return v["createdAt"]?.doubleValue ?? 0
+        }
+    }
 }
