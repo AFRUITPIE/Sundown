@@ -18,11 +18,36 @@ public struct SettingsView: View {
     }
 }
 
+/// The transcript-width choice as a View menu item. A submenu of mutually exclusive options is
+/// what a menu-bar picker renders as, so the current width carries a checkmark.
+public struct TranscriptWidthCommands: View {
+    @Bindable var app: AppModel
+
+    public init(app: AppModel) {
+        self.app = app
+    }
+
+    public var body: some View {
+        Picker("Transcript Width", selection: $app.transcriptWidth) {
+            ForEach(TranscriptWidth.allCases) { Text($0.label).tag($0) }
+        }
+    }
+}
+
 struct DefaultsSettings: View {
     @Bindable var app: AppModel
 
     var body: some View {
         Form {
+            Section {
+                Picker("Transcript width", selection: $app.transcriptWidth) {
+                    ForEach(TranscriptWidth.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+            } footer: {
+                Text("How wide messages are allowed to get. Narrow keeps lines short enough to read comfortably; the wider settings wrap code and diffs less.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             TextField("Default model (blank = Claude Code default)", text: Binding(get: { app.defaultModel ?? "" }, set: { app.defaultModel = $0.isEmpty ? nil : $0 }))
             Picker("Default effort", selection: Binding(get: { app.defaultEffort ?? "" }, set: { app.defaultEffort = $0.isEmpty ? nil : $0 })) {
                 Text("Model default").tag("")

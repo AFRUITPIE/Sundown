@@ -28,10 +28,32 @@ extension String {
     }
 }
 
-/// One reading column, shared by the transcript and the bar beneath it so the composer lines up
-/// with the text above it instead of sitting a few points wider on each side.
+/// How wide the transcript is allowed to get. Long lines are hard to track back to the start of
+/// the next one, so the text is capped rather than filling the window — Narrow keeps it near the
+/// 45–75 characters that read comfortably, and the wider settings trade that for fewer wraps in
+/// code blocks and diffs.
+public enum TranscriptWidth: String, CaseIterable, Identifiable, Sendable {
+    case narrow, medium, wide
+
+    public var id: Self { self }
+    public var label: String { rawValue.capitalized }
+
+    var points: CGFloat {
+        switch self {
+        case .narrow: return 700
+        case .medium: return 900
+        case .wide: return 1180
+        }
+    }
+}
+
+extension EnvironmentValues {
+    /// The transcript's maximum width, so the composer and any bar beneath it line up with the
+    /// text above instead of sitting a few points wider on each side.
+    @Entry var readingWidth: CGFloat = TranscriptWidth.narrow.points
+}
+
 enum Layout {
-    static let readingWidth: CGFloat = 920
     static let gutter: CGFloat = 28
 }
 

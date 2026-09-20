@@ -33,6 +33,7 @@ public struct RootView: View {
         // so the inspector looks like it starts below a header strip instead of running the
         // full height of the window the way the sidebar does.
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .environment(\.readingWidth, app.transcriptWidth.points)
         .task { app.connectAll() }
     }
 
@@ -86,6 +87,14 @@ struct AppToolbar: ToolbarContent {
     @Bindable var app: AppModel
 
     var body: some ToolbarContent {
+        ToolbarItem {
+            // The chat's settings, in the toolbar the way SF Symbols puts its family and weight
+            // pop-ups there: text and a chevron, no icon, showing the current value.
+            // Each sizes to its own content: left to stretch, the last one absorbs the slack and
+            // truncates its label away to nothing.
+            HStack(spacing: 8) { sessionControls }
+                .fixedSize()
+        }
         ToolbarItem(placement: .primaryAction) {
             // A plain Button (not a Toggle) so the icon never lights up while open — Xcode's own
             // right-sidebar button behaves the same way.
@@ -95,6 +104,25 @@ struct AppToolbar: ToolbarContent {
         }
     }
 
+}
+
+extension AppToolbar {
+    /// Model, effort and permissions for whatever is selected: a live chat's own state, or the
+    /// New Chat screen's draft.
+    @ViewBuilder var sessionControls: some View {
+        switch app.selection {
+        case .thread:
+            if let thread = app.selectedThread, let c = app.selectedConnection {
+                ThreadControls(thread: thread, connection: c)
+            }
+        case .newChat(let h):
+            if let c = app.connection(h) {
+                NewChatControls(app: app, connection: c)
+            }
+        case nil:
+            EmptyView()
+        }
+    }
 }
 
 /// Chats per host, most recent first. Two levels only: host section → chat.
@@ -247,6 +275,7 @@ struct ChatRow: View {
 /// Compose a new chat: choose the host and working directory, then send the first message.
 struct NewChatView: View {
     @Bindable var app: AppModel
+    @Environment(\.readingWidth) private var readingWidth
     @State var hostId: UUID
     @State private var directory: String?
     @State private var error: String?
@@ -285,20 +314,13 @@ struct NewChatView: View {
         .safeAreaBar(edge: .bottom) {
             if let connection {
                 GlassEffectContainer(spacing: 10) {
-                    VStack(spacing: 10) {
-                        HStack(spacing: 6) {
-                            NewChatControls(app: app, connection: connection)
-                            Spacer(minLength: 0)
-                        }
-                        .controlSize(.small)
-                        Composer(connection: connection, cwd: directory, placeholder: directory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…", submit: { input in
-                            await start(connection, input)
-                        })
-                    }
+                    Composer(connection: connection, cwd: directory, placeholder: directory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…", submit: { input in
+                        await start(connection, input)
+                    })
                 }
                 .padding(.horizontal, Layout.gutter)
                 .padding(.bottom, 14)
-                .frame(maxWidth: Layout.readingWidth)
+                .frame(maxWidth: readingWidth)
             }
         }
         .fileImporter(isPresented: $choosingLocalFolder, allowedContentTypes: [.folder]) { result in
@@ -435,6 +457,13 @@ private func rootPreviewApp() -> AppModel {
     app.newChat()
     return RootView(app: app)
         .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (wide transcript)") {
+    let app = rootPreviewApp()
+    app.transcriptWidth = .wide
+    return RootView(app: app)
+        .frame(width: 1400, height: 760)
 }
 
 #Preview("RootView (sidebar collapsed)") {

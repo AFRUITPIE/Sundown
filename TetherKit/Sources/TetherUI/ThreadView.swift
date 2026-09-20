@@ -23,20 +23,12 @@ struct ThreadView: View {
 struct BottomBar: View {
     let thread: ThreadModel
     let connection: HostConnection
+    @Environment(\.readingWidth) private var readingWidth
 
     var body: some View {
         GlassEffectContainer(spacing: 10) {
             VStack(spacing: 10) {
                 StatusStrip(thread: thread)
-                // The chat's own settings, in the chat rather than the window toolbar: they act on
-                // this conversation, and on what the composer beneath them is about to send.
-                if thread.pending.isEmpty {
-                    HStack(spacing: 6) {
-                        ThreadControls(thread: thread, connection: connection)
-                        Spacer(minLength: 0)
-                    }
-                    .controlSize(.small)
-                }
                 if let p = thread.pending.first {
                     PendingRequestView(pending: p, thread: thread)
                         .id(p.id)
@@ -53,7 +45,7 @@ struct BottomBar: View {
         }
         .padding(.horizontal, Layout.gutter)
         .padding(.bottom, 14)
-        .frame(maxWidth: Layout.readingWidth)
+        .frame(maxWidth: readingWidth)
         .frame(maxWidth: .infinity)
     }
 }
@@ -61,6 +53,7 @@ struct BottomBar: View {
 struct TranscriptView: View {
     let thread: ThreadModel
     var connection: HostConnection?
+    @Environment(\.readingWidth) private var readingWidth
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
 
@@ -81,7 +74,7 @@ struct TranscriptView: View {
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 16)
-            .frame(maxWidth: Layout.readingWidth)
+            .frame(maxWidth: readingWidth)
             .frame(maxWidth: .infinity)
         }
         // Start at the bottom, and follow new output only while the reader is already there —
@@ -296,6 +289,9 @@ struct ThreadControls: View {
 // or states"; use a pull-down button instead to "offer a list of actions".) `.menu` is the picker
 // style that renders as one. The help text is the introductory label HIG asks for, so the options
 // are predictable without opening the menu.
+//
+// All three are text-only, matching the family and weight pop-ups in the SF Symbols app — which
+// stay text-only even for weight, an ordinal value a gauge could have described.
 struct ModelPicker: View {
     @Binding var selection: String?
     let models: [ModelInfo]
@@ -338,7 +334,7 @@ struct PermissionModePicker: View {
     var body: some View {
         Picker("Permissions", selection: $selection) {
             ForEach([PermissionMode.default, .acceptEdits, .plan, .auto, .dontAsk, .bypassPermissions], id: \.self) { m in
-                Label(m.label, systemImage: m.symbol).tag(m)
+                Text(m.label).tag(m)
             }
         }
         .pickerStyle(.menu)

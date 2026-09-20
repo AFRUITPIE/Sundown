@@ -42,6 +42,10 @@ public final class AppModel {
     public var draftEffort: EffortLevel?
     public var draftPermissionMode: PermissionMode = .default
 
+    /// How wide the transcript may get (persisted). Narrow by default: capped line length is
+    /// easier to read than text that fills a wide window.
+    public var transcriptWidth: TranscriptWidth = .narrow { didSet { save() } }
+
     /// Defaults for new threads, per app (persisted).
     public var defaultModel: String? { didSet { save() } }
     public var defaultEffort: String? { didSet { save() } }
@@ -117,6 +121,7 @@ public final class AppModel {
         var defaultModel: String?
         var defaultEffort: String?
         var defaultPermissionMode: String?
+        var transcriptWidth: String?
     }
 
     private func load() {
@@ -125,12 +130,14 @@ public final class AppModel {
             defaultModel = s.defaultModel
             defaultEffort = s.defaultEffort
             defaultPermissionMode = s.defaultPermissionMode ?? "default"
+            transcriptWidth = s.transcriptWidth.flatMap(TranscriptWidth.init(rawValue:)) ?? .narrow
         }
         if !hosts.contains(where: { $0.id == HostConfig.local.id }) { hosts.insert(.local, at: 0) }
     }
 
     private func save() {
-        let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort, defaultPermissionMode: defaultPermissionMode)
+        let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
+                       defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue)
         if let data = try? JSONEncoder().encode(s) { defaults.set(data, forKey: Self.hostsKey) }
     }
 }
