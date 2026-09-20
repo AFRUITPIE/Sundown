@@ -24,15 +24,15 @@ public struct RootView: View {
         // full window height and slides in under a toolbar that never moves, like Xcode's right
         // sidebar — and one stable toolbar here means New Chat/Inspector never disappear when
         // switching between the sidebar, a chat and the New Chat screen.
-        .inspector(isPresented: $app.showInspector) {
+        // Only a chat has anything to inspect, so on the New Chat screen the inspector closes and
+        // its button goes away rather than offering an empty column. The preference is untouched,
+        // so it comes back as it was on the next chat.
+        .inspector(isPresented: Binding(get: { app.showInspector && app.isThreadSelected },
+                                        set: { app.showInspector = $0 })) {
             inspector
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
         }
         .toolbar { AppToolbar(app: app) }
-        // Without this the titlebar paints its own background across the top of every column,
-        // so the inspector looks like it starts below a header strip instead of running the
-        // full height of the window the way the sidebar does.
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .environment(\.readingWidth, app.transcriptWidth.points)
         .task { app.connectAll() }
     }
@@ -57,13 +57,9 @@ public struct RootView: View {
         case .newChat(let h):
             NewChatView(app: app, hostId: h).id(h)
         case nil:
-            ContentUnavailableView {
-                Label("No Chat Selected", systemImage: "bubble.left.and.text.bubble.right")
-            } description: {
-                Text("Claude Code on this Mac or any host you can reach over SSH.")
-            } actions: {
-                Button("New Chat") { app.newChat() }
-            }
+            // Selection is initialized to New Chat. Keep the same useful screen as a defensive
+            // fallback if a List transiently clears its optional selection.
+            NewChatView(app: app, hostId: HostConfig.local.id)
         }
     }
 
@@ -79,50 +75,28 @@ public struct RootView: View {
     }
 }
 
-/// What is left in the window toolbar once each control sits with the thing it acts on: the
-/// inspector toggle, beside the system's own sidebar toggle and the window title. New Chat moved
-/// into the sidebar it creates rows in, and the session controls into the chat they configure.
+/// Window actions stay in one stable toolbar. New Chat sits beside the system sidebar toggle and
+/// follows that column's visibility; the inspector toggle anchors the opposite edge.
 /// (HIG, Toolbars: "Choose items deliberately to avoid overcrowding.")
 struct AppToolbar: ToolbarContent {
     @Bindable var app: AppModel
 
     var body: some ToolbarContent {
-        ToolbarItem {
-            // The chat's settings, in the toolbar the way SF Symbols puts its family and weight
-            // pop-ups there: text and a chevron, no icon, showing the current value.
-            // Each sizes to its own content: left to stretch, the last one absorbs the slack and
-            // truncates its label away to nothing.
-            HStack(spacing: 8) { sessionControls }
-                .fixedSize()
-        }
         ToolbarItem(placement: .primaryAction) {
-            // A plain Button (not a Toggle) so the icon never lights up while open — Xcode's own
-            // right-sidebar button behaves the same way.
-            Button("Inspector", systemImage: "sidebar.trailing") { app.showInspector.toggle() }
+            if app.isThreadSelected {
+                Button {
+                    app.showInspector.toggle()
+                } label: {
+                    Image(systemName: "sidebar.trailing")
+                }
+                .buttonBorderShape(.circle)
+                .accessibilityLabel("Inspector")
                 .keyboardShortcut("i", modifiers: [.command, .option])
                 .help(app.showInspector ? "Hide Inspector" : "Show Inspector")
+            }
         }
     }
 
-}
-
-extension AppToolbar {
-    /// Model, effort and permissions for whatever is selected: a live chat's own state, or the
-    /// New Chat screen's draft.
-    @ViewBuilder var sessionControls: some View {
-        switch app.selection {
-        case .thread:
-            if let thread = app.selectedThread, let c = app.selectedConnection {
-                ThreadControls(thread: thread, connection: c)
-            }
-        case .newChat(let h):
-            if let c = app.connection(h) {
-                NewChatControls(app: app, connection: c)
-            }
-        case nil:
-            EmptyView()
-        }
-    }
 }
 
 /// Chats per host, most recent first. Two levels only: host section → chat.
@@ -139,29 +113,21 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .searchable(text: $search, placement: .sidebar, prompt: "Search")
-        // Attached to the sidebar's own content, so it belongs to that column and goes away with
-        // it when the sidebar collapses, instead of floating in the window-wide toolbar.
-        // In the sidebar's own content, not its toolbar: a `.toolbar` declared on a column is
-        // still hoisted into the window-wide titlebar, so it stayed put when the sidebar
-        // collapsed. A bottom bar belongs to the column and goes away with it — the same place
-        // Reminders puts New List.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                Divider()
+        .searchable(text: $search, placement: .sidebar, prompt: "Search Chats")
+        // Unconditional: making this item's existence depend on the sidebar meant NSToolbar
+        // inserting and removing it outright, which is instantaneous and lands at the start of
+        // the column animation — the pop. An item that is always there can't pop.
+        .toolbar {
+            ToolbarItem {
                 Button {
                     app.newChat()
                 } label: {
-                    Label("New Chat", systemImage: "square.and.pencil")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(.rect)
+                    Image(systemName: "square.and.pencil")
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel("New Chat")
                 .help("New Chat (⌘N)")
             }
-            .background(.bar)
         }
     }
 }
@@ -311,6 +277,17 @@ struct NewChatView: View {
         .frame(maxWidth: 560)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("New Chat")
+        .safeAreaBar(edge: .top) {
+            if let connection {
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    NewChatControls(app: app, connection: connection)
+                }
+                .controlSize(.small)
+                .padding(.horizontal, Layout.gutter)
+                .padding(.vertical, 6)
+            }
+        }
         .safeAreaBar(edge: .bottom) {
             if let connection {
                 GlassEffectContainer(spacing: 10) {
@@ -367,13 +344,14 @@ struct NewChatControls: View {
     let connection: HostConnection
 
     private var currentModelInfo: ModelInfo? {
-        connection.models.first { $0.value == app.draftModel || $0.resolvedModel == app.draftModel } ?? connection.models.first
+        let value = connection.models.concreteValue(for: app.draftModel ?? app.defaultModel)
+        return connection.models.concrete.first { $0.value == value } ?? connection.models.concrete.first
     }
 
     var body: some View {
         // Resolved here as well as in `newChat()`: the host is usually still connecting when the
         // screen appears, so the catalog lands after the draft was seeded.
-        ModelPicker(selection: Binding(get: { app.draftModel ?? app.defaultModel ?? connection.models.first?.value },
+        ModelPicker(selection: Binding(get: { connection.models.concreteValue(for: app.draftModel ?? app.defaultModel) },
                                        set: { app.draftModel = $0 }),
                     models: connection.models)
         EffortPicker(selection: $app.draftEffort, levels: currentModelInfo?.supportedEffortLevels ?? EffortLevel.allCases)
@@ -444,7 +422,7 @@ private func rootPreviewApp() -> AppModel {
         .frame(width: 1100, height: 760)
 }
 
-#Preview("RootView (no selection)") {
+#Preview("RootView (default new chat)") {
     RootView(app: .sample())
         .frame(width: 1100, height: 760)
 }
@@ -452,13 +430,6 @@ private func rootPreviewApp() -> AppModel {
 #Preview("RootView (inspector open)") {
     let app = rootPreviewApp()
     app.showInspector = true
-    return RootView(app: app)
-        .frame(width: 1100, height: 760)
-}
-
-#Preview("RootView (new chat)") {
-    let app = AppModel.sample()
-    app.newChat()
     return RootView(app: app)
         .frame(width: 1100, height: 760)
 }

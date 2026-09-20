@@ -115,7 +115,7 @@ extension TurnResult {
         totalCostUsd: Double = 0.18,
         inputTokens: Double = 14_200,
         outputTokens: Double = 680,
-        model: String = "claude-opus-4-5-20251101"
+        model: String = "opus"
     ) -> TurnResult {
         let usage = Usage(inputTokens: inputTokens, outputTokens: outputTokens, cacheReadInputTokens: 9_800, cacheCreationInputTokens: 320)
         let modelUsage = ModelUsage(inputTokens: inputTokens, outputTokens: outputTokens, cacheReadInputTokens: 9_800,
@@ -197,14 +197,22 @@ extension PendingRequest {
 
 extension ModelInfo {
     /// A small, realistic model list — enough to exercise ModelPicker/EffortPicker.
+    /// Shaped like what `model/list` actually returns: short family display names, the version
+    /// only in `resolvedModel`, and a leading "default" alias that resolves to one of the others.
     public static let sampleCatalog: [ModelInfo] = [
-        .init(value: "claude-opus-4-5-20251101", resolvedModel: "claude-opus-4-5-20251101", displayName: "Claude Opus 4.5",
-              description: "Most capable model, for complex tasks", supportsEffort: true,
-              supportedEffortLevels: [.low, .medium, .high, .max], supportsAdaptiveThinking: true, supportsFastMode: false, supportsAutoMode: true),
-        .init(value: "claude-sonnet-5-20250929", resolvedModel: "claude-sonnet-5-20250929", displayName: "Claude Sonnet 5",
+        .init(value: "default", resolvedModel: "claude-sonnet-5", displayName: "Default (recommended)",
+              description: "Whatever Claude Code would choose", supportsEffort: true,
+              supportedEffortLevels: [.low, .medium, .high], supportsAdaptiveThinking: true, supportsFastMode: true, supportsAutoMode: true),
+        .init(value: "sonnet", resolvedModel: "claude-sonnet-5", displayName: "Sonnet",
               description: "Balanced for everyday coding", supportsEffort: true,
               supportedEffortLevels: [.low, .medium, .high], supportsAdaptiveThinking: true, supportsFastMode: true, supportsAutoMode: true),
-        .init(value: "claude-haiku-4-5-20251001", resolvedModel: "claude-haiku-4-5-20251001", displayName: "Claude Haiku 4.5",
+        .init(value: "claude-fable-5-1[1m]", resolvedModel: "claude-fable-5-1", displayName: "Fable",
+              description: "Long context", supportsEffort: true,
+              supportedEffortLevels: [.low, .medium, .high, .max], supportsAdaptiveThinking: true, supportsFastMode: false, supportsAutoMode: true),
+        .init(value: "opus", resolvedModel: "claude-opus-5", displayName: "Opus",
+              description: "Most capable model, for complex tasks", supportsEffort: true,
+              supportedEffortLevels: [.low, .medium, .high, .max], supportsAdaptiveThinking: true, supportsFastMode: false, supportsAutoMode: true),
+        .init(value: "haiku", resolvedModel: "claude-haiku-4-5-20251001", displayName: "Haiku",
               description: "Fastest, for lightweight tasks", supportsEffort: false, supportsAdaptiveThinking: false,
               supportsFastMode: true, supportsAutoMode: false),
     ]
@@ -219,7 +227,7 @@ extension ThreadModel {
         cwd: String = "/Users/hayden/Code/tether-app",
         title: String? = nil,
         status: ThreadStatus = .idle,
-        model: String? = "claude-opus-4-5-20251101",
+        model: String? = "opus",
         effort: EffortLevel? = .high,
         permissionMode: PermissionMode = .default,
         items: [Item] = [],

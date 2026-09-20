@@ -61,6 +61,7 @@ public final class AppModel {
         _inspectorStorage = AppStorage(wrappedValue: false, "tether.inspector", store: defaults)
         load()
         for h in hosts { connections[h.id] = HostConnection(host: h) }
+        newChat()
     }
 
     public func connection(_ id: UUID) -> HostConnection? { connections[id] }
@@ -88,7 +89,10 @@ public final class AppModel {
         guard id != HostConfig.local.id else { return }
         hosts.removeAll { $0.id == id }
         if let c = connections.removeValue(forKey: id) { Task { await c.disconnect() } }
-        if selection?.hostId == id { selection = nil }
+        if selection?.hostId == id {
+            selection = nil
+            newChat()
+        }
         save()
     }
 
@@ -101,9 +105,16 @@ public final class AppModel {
         // A concrete model, not "whatever the CLI decides": nothing in the protocol reports the
         // CLI's own default, so the app's default is the one set in Settings, falling back to the
         // top of that host's catalog until one is chosen.
-        draftModel = defaultModel ?? connections[host]?.models.first?.value
+        draftModel = defaultModel ?? connections[host]?.models.defaultValue
         draftEffort = defaultEffort.map(EffortLevel.init(rawValue:))
         draftPermissionMode = PermissionMode(rawValue: defaultPermissionMode)
+    }
+
+    /// Whether a chat is on screen, as opposed to the New Chat screen — the inspector has
+    /// nothing to show without one.
+    public var isThreadSelected: Bool {
+        if case .thread = selection { return true }
+        return false
     }
 
     public var selectedConnection: HostConnection? {
@@ -156,6 +167,7 @@ extension AppModel {
         let app = AppModel(defaults: UserDefaults(suiteName: "tether.preview.\(UUID().uuidString)") ?? .standard)
         app.hosts = connections.map(\.host)
         app.connections = Dictionary(uniqueKeysWithValues: connections.map { ($0.id, $0) })
+        app.newChat()
         return app
     }
 }

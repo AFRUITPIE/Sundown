@@ -85,15 +85,72 @@ enum Format {
 }
 
 extension ModelInfo {
-    /// "Claude Opus 4.5" → "Opus 4.5". Every model carries the same brand, so it's the family and
-    /// version that tell them apart — the prefix only eats width in a pop-up button.
+    /// The catalog's own `displayName` is the bare family — "Opus", "Sonnet", "Fable" — but the
+    /// version is what separates one generation from the next, and it only appears in
+    /// `resolvedModel`. So the name is built from there: claude-opus-5 → "Opus 5",
+    /// claude-fable-5-1 → "Fable 5.1", claude-haiku-4-5-20251001 → "Haiku 4.5" (a trailing
+    /// build date is not a version anyone says out loud).
     var shortName: String {
-        displayName.hasPrefix("Claude ") ? String(displayName.dropFirst(7)) : displayName
+        guard let resolved = resolvedModel else { return displayName }
+        var parts = resolved.split(separator: "-").map(String.init)
+        if parts.first == "claude" { parts.removeFirst() }
+        if let last = parts.last, last.count == 8, last.allSatisfy(\.isNumber) { parts.removeLast() }
+        guard let family = parts.first, !family.isEmpty else { return displayName }
+        let version = parts.dropFirst().joined(separator: ".")
+        return version.isEmpty ? family.capitalized : "\(family.capitalized) \(version)"
+    }
+
+    /// The CLI lists a pseudo-model for "whatever I would pick". It isn't a model, but its
+    /// `resolvedModel` names the one it stands for — which is what lets the app show that model
+    /// by name instead of the word Default.
+    var isDefaultAlias: Bool { value == "default" }
+}
+
+extension Array where Element == ModelInfo {
+    /// The real models, without the CLI's "default" alias.
+    var concrete: [ModelInfo] { filter { !$0.isDefaultAlias } }
+
+    /// The model the CLI would choose on its own, named concretely.
+    var defaultValue: String? {
+        if let resolved = first(where: { $0.isDefaultAlias })?.resolvedModel,
+           let match = concrete.first(where: { $0.resolvedModel == resolved }) {
+            return match.value
+        }
+        return concrete.first?.value
+    }
+
+    /// Maps whatever the server reports for a thread onto a row that exists in the picker,
+    /// following the "default" alias through to the model it resolves to. An ID the CLI doesn't
+    /// list — a Bedrock one, say — is returned unchanged so it stays selectable.
+    func concreteValue(for id: String?) -> String? {
+        guard let id else { return defaultValue }
+        if let exact = concrete.first(where: { $0.value == id || $0.resolvedModel == id }) { return exact.value }
+        if let alias = first(where: { $0.value == id }), let resolved = alias.resolvedModel,
+           let match = concrete.first(where: { $0.resolvedModel == resolved }) {
+            return match.value
+        }
+        return id
     }
 }
 
 extension PermissionMode {
+    /// Short enough for a pop-up button: NSPopUpButton is as wide as its widest menu item, so
+    /// "Bypass permissions" set the width of the control even while "Ask" was selected. The menu
+    /// shows all six together, which is the context that makes one word each readable.
     var label: String {
+        switch self {
+        case .default: return "Ask"
+        case .acceptEdits: return "Accept Edits"
+        case .plan: return "Plan"
+        case .auto: return "Auto"
+        case .dontAsk: return "Deny"
+        case .bypassPermissions: return "Bypass"
+        default: return rawValue
+        }
+    }
+
+    /// The same modes spelled out, for Settings and anywhere else with room for a sentence.
+    var longLabel: String {
         switch self {
         case .default: return "Ask before edits"
         case .acceptEdits: return "Accept edits"

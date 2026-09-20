@@ -15,6 +15,19 @@ struct ThreadView: View {
             .scrollEdgeEffectStyle(.soft, for: .bottom)
             .navigationTitle(thread.title)
             .navigationSubtitle(thread.cwd?.abbreviatingHome ?? "")
+            // In the chat's own content, right-aligned, rather than the window toolbar: the
+            // toolbar is one bar across the whole window, so its trailing edge is the window's,
+            // and these controls ended up sitting over the inspector. A bar at the top of this
+            // column ends where the column does — the same scoping as Xcode's editor bar.
+            .safeAreaBar(edge: .top) {
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    ThreadControls(thread: thread, connection: connection)
+                }
+                .controlSize(.small)
+                .padding(.horizontal, Layout.gutter)
+                .padding(.vertical, 6)
+            }
             .task(id: thread.id) { await connection.open(thread) }
     }
 }
@@ -260,14 +273,14 @@ struct ThreadControls: View {
     let connection: HostConnection
 
     private var currentModelInfo: ModelInfo? {
-        let m = thread.info?.model
-        return connection.models.first { $0.value == m || $0.resolvedModel == m } ?? connection.models.first
+        let m = connection.models.concreteValue(for: thread.info?.model)
+        return connection.models.concrete.first { $0.value == m } ?? connection.models.concrete.first
     }
 
     var body: some View {
         // Falls back to the catalog's first entry only until the server reports the thread's real
         // model — with no Default row, an unmatched selection would draw as a blank button.
-        ModelPicker(selection: Binding(get: { thread.info?.model ?? connection.models.first?.value },
+        ModelPicker(selection: Binding(get: { connection.models.concreteValue(for: thread.info?.model) },
                                        set: { m in Task { await connection.setModel(thread, m) } }),
                     models: connection.models)
         EffortPicker(selection: Binding(get: { thread.info?.effort ?? nil }, set: { e in Task { await connection.setEffort(thread, e) } }),
@@ -300,11 +313,11 @@ struct ModelPicker: View {
     let models: [ModelInfo]
 
     var body: some View {
-        // No "Default" row: nothing in the protocol says which model the CLI would pick on its
-        // own, so a row named Default could only stand for an unknown. The default is a real
-        // model chosen in Settings, and it shows up here already selected, like any other.
+        // No "Default (recommended)" row: the CLI lists it as a pseudo-model, but its
+        // `resolvedModel` says which real model it stands for, so the picker shows that one
+        // selected instead of a word that names nothing.
         Picker("Model", selection: $selection) {
-            ForEach(models, id: \.value) { m in
+            ForEach(models.concrete, id: \.value) { m in
                 Text(m.shortName).tag(Optional(m.value))
             }
             // Keep a custom or Bedrock model ID selectable even if the CLI does not list it.
@@ -409,7 +422,8 @@ struct ThreadInspector: View {
     /// The catalog's name for the thread's model, or the raw ID for one the CLI doesn't list.
     private var currentModelName: String {
         guard let id = thread.info?.model else { return "—" }
-        return connection.models.first { $0.value == id || $0.resolvedModel == id }?.shortName ?? id
+        let value = connection.models.concreteValue(for: id)
+        return connection.models.concrete.first { $0.value == value }?.shortName ?? id
     }
 
     // MARK: panes
@@ -739,7 +753,7 @@ enum Loaded<Value> {
 }
 
 #Preview("ModelPicker") {
-    ModelPicker(selection: .constant("claude-sonnet-5-20250929"), models: ModelInfo.sampleCatalog)
+    ModelPicker(selection: .constant("sonnet"), models: ModelInfo.sampleCatalog)
         .padding(20)
         .frame(width: 260)
 }
