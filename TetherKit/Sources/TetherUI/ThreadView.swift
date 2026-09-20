@@ -371,7 +371,6 @@ struct ThreadInspector: View {
     let connection: HostConnection
     @State private var pane: Pane
     @State private var usage: Loaded<JSONValue?> = .loading
-    @State private var customModel = ""
 
     init(thread: ThreadModel, connection: HostConnection, pane: Pane = .tasks) {
         self.thread = thread
@@ -418,13 +417,6 @@ struct ThreadInspector: View {
 
     private struct Key: Equatable { let threadId: String; let turns: Int }
 
-    /// The catalog's name for the thread's model, or the raw ID for one the CLI doesn't list.
-    private var currentModelName: String {
-        guard let id = thread.info?.model else { return "—" }
-        let value = connection.models.concreteValue(for: id)
-        return connection.models.concrete.first { $0.value == value }?.shortName ?? id
-    }
-
     // MARK: panes
 
     private var tasks: [TaskEventNotification] { thread.tasks.values.sorted { $0.seq < $1.seq } }
@@ -468,25 +460,6 @@ struct ThreadInspector: View {
                     LabeledContent("Last turn", value: Format.cost(last.totalCostUsd))
                     LabeledContent("Duration", value: Format.duration(last.durationMs / 1000))
                 }
-            }
-            Section {
-                LabeledContent("Current") {
-                    Text(currentModelName).truncationMode(.middle)
-                }
-                // A bordered field, not a bare one: inside a grouped Form an unbordered TextField
-                // showing only its prompt is indistinguishable from a LabeledContent value, so an
-                // empty field read as though a custom model were already set.
-                TextField("Custom ID", text: $customModel, prompt: Text("us.anthropic.claude-…"))
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit {
-                        guard !customModel.isEmpty else { return }
-                        Task { await connection.setModel(thread, customModel) }
-                    }
-            } header: {
-                Text("Model")
-            } footer: {
-                Text("Set a model the CLI doesn't list, such as a Bedrock ID.")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(nil)
             }
             if let info = thread.info {
                 Section("Session") {
