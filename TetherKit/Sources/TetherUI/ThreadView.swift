@@ -18,9 +18,6 @@ struct ThreadView: View {
             .scrollEdgeEffectStyle(.soft, for: .top)
             .navigationTitle(thread.title)
             .navigationSubtitle(thread.cwd?.abbreviatingHome ?? "")
-            .safeAreaBar(edge: .top) {
-                SessionControlBar { ThreadControls(thread: thread, connection: connection) }
-            }
             .task(id: thread.id) { await connection.open(thread) }
     }
 }
@@ -56,33 +53,6 @@ struct BottomBar: View {
     }
 }
 
-/// The chat's own controls, at the trailing edge of the chat's own column.
-///
-/// Not in the window toolbar: that is one bar across the whole window, so its trailing edge is the
-/// window's and these ran over the inspector. Declaring them from inside the column does not help
-/// — a unified toolbar orders by hierarchy depth, not by column, so the inner items went furthest
-/// trailing and pushed the inspector's own button inward.
-///
-/// Glass here is explicit for the same reason: outside a toolbar the system does not supply it.
-/// One capsule holds the group rather than each control, so nothing stacks glass on glass.
-struct SessionControlBar<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        GlassEffectContainer(spacing: 8) {
-            HStack(spacing: 8) {
-                Spacer(minLength: 0)
-                HStack(spacing: 8) { content }
-                    .controlSize(.small)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .glassEffect(.regular.interactive(), in: .capsule)
-            }
-        }
-        .padding(.horizontal, Layout.gutter)
-        .padding(.vertical, 6)
-    }
-}
 
 struct TranscriptView: View {
     let thread: ThreadModel
@@ -105,6 +75,21 @@ struct TranscriptView: View {
                 if let turn = thread.turns.last, turn.status != .inProgress, let r = turn.result {
                     TurnFooter(result: r, status: turn.status)
                 }
+                // Whether the end of the transcript is on screen, asked rather than calculated.
+                // The arithmetic this replaces added the top inset to the maximum offset,
+                // inflating it by about the height of the toolbar, so with a 40pt tolerance the
+                // test could never come true and the button never went away.
+                //
+                // The last child rather than an overlay on the stack: an overlay has to be sized
+                // against the stack, which asks a LazyVStack for a height it can only give by
+                // measuring every row — and re-measuring all of them on each frame of a column
+                // resize is the one thing worth avoiding here.
+                Color.clear
+                    .frame(height: 1)
+                    .allowsHitTesting(false)
+                    .onScrollVisibilityChange(threshold: 0.01) { visible in
+                        atBottom = visible
+                    }
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 16)
@@ -115,16 +100,6 @@ struct TranscriptView: View {
         // scrolling up to read something stays put, with a way back to the live end.
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .scrollPosition($position)
-        .onScrollGeometryChange(for: Bool.self) { geometry in
-            // The composer sits in the bottom safe area, so the furthest the content can scroll
-            // includes the insets — comparing against contentSize alone reads as "not at the
-            // bottom" while sitting right at it.
-            let maxOffset = geometry.contentSize.height + geometry.contentInsets.top
-                + geometry.contentInsets.bottom - geometry.containerSize.height
-            return geometry.contentOffset.y >= maxOffset - 40
-        } action: { _, isAtBottom in
-            atBottom = isAtBottom
-        }
         // Rows in a LazyVStack are measured as they come into range, so the content keeps growing
         // for a while after history arrives — following the content size covers both that and
         // streamed output, where watching the items alone would stop short of the end.
@@ -143,8 +118,11 @@ struct TranscriptView: View {
                 Button("Jump to Latest", systemImage: "arrow.down") {
                     withAnimation { position.scrollTo(edge: .bottom) }
                 }
+                .labelStyle(.iconOnly)
                 .buttonStyle(.glass)
-                .controlSize(.small)
+                .buttonBorderShape(.circle)
+                .controlSize(.large)
+                .help("Jump to Latest")
                 .padding(.bottom, 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }

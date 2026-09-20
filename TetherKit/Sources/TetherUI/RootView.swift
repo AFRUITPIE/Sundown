@@ -84,7 +84,8 @@ struct AppToolbar: ToolbarContent {
     @Bindable var app: AppModel
 
     var body: some ToolbarContent {
-        ToolbarItem(placement: .primaryAction) {
+        ToolbarItemGroup(placement: .primaryAction) {
+            sessionControls
             if app.isThreadSelected {
                 Button {
                     app.showInspector.toggle()
@@ -98,7 +99,6 @@ struct AppToolbar: ToolbarContent {
             }
         }
     }
-
 }
 
 extension AppToolbar {
@@ -298,11 +298,6 @@ struct NewChatView: View {
         .frame(maxWidth: 560)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("New Chat")
-        .safeAreaBar(edge: .top) {
-            if let connection {
-                SessionControlBar { NewChatControls(app: app, connection: connection) }
-            }
-        }
         .safeAreaBar(edge: .bottom) {
             if let connection {
                 GlassEffectContainer(spacing: 10) {
