@@ -11,6 +11,10 @@ DEST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/servers"
 CACHE="${DERIVED_FILE_DIR:-$SRCROOT/.build}/tether-server/$VERSION"
 LOCAL="$SRCROOT/../tether-server/dist"
 
+# Cleared first. Copying into a directory that already holds another version left several in the
+# bundle, and the app then had to guess which to run — it picked the first the filesystem listed,
+# which was the oldest, so a new app quietly ran an old server.
+rm -rf "$DEST"
 mkdir -p "$DEST"
 
 if ls "$LOCAL"/tether-"$VERSION"-* >/dev/null 2>&1; then

@@ -36,6 +36,11 @@ public final class HostConnection: Identifiable {
     private var deltaFlushTask: Task<Void, Never>?
     private var chatsRefreshTask: Task<Void, Never>?
 
+    /// Reported to the daemon on connect, and written to its log. It was hardcoded to "0.1.0",
+    /// which made the log say the wrong thing about which client was attached.
+    static let appVersion: String =
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+
     public init(host: HostConfig) {
         self.host = host
         self.id = host.id
@@ -69,7 +74,7 @@ public final class HostConnection: Identifiable {
             await client.start()
             state = .connecting("Handshaking…")
             let initResult = try await client.call(Methods.Initialize.self, .init(
-                clientInfo: .init(name: "tether-app", title: "Tether", version: "0.1.0"),
+                clientInfo: .init(name: "tether-app", title: "Tether", version: Self.appVersion),
                 capabilities: .init(experimentalApi: true),
                 env: host.env.isEmpty ? nil : host.env))
             try await client.notify("initialized")

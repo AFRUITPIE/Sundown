@@ -7,6 +7,13 @@ public struct HostBootstrapper: Sendable {
         public let url: URL
         public let version: String
         public let platform: String // e.g. darwin-arm64, linux-x64
+
+        /// Numeric per component, so "0.10.0" orders above "0.9.0" where a string compare would
+        /// not. A pre-release suffix is ignored for ordering; we never ship two at one version.
+        var versionOrder: [Int] {
+            version.split(separator: "-")[0].split(separator: ".").map { Int($0) ?? 0 }
+        }
+
     }
 
     public enum BootstrapError: LocalizedError {
@@ -24,6 +31,7 @@ public struct HostBootstrapper: Sendable {
     }
 
     /// Directories searched for `tether-<version>-<platform>` binaries.
+    /// Version compared numerically per component, so 0.10.0 sorts above 0.9.0.
     public var searchDirectories: [URL]
     public var log: @Sendable (String) -> Void
 
@@ -48,7 +56,12 @@ public struct HostBootstrapper: Sendable {
             }
             if !out.isEmpty { break }
         }
-        return out
+        // Newest first. A bundle can hold more than one version — an incremental build leaves the
+        // previous one behind — and taking whatever the directory happened to list first meant
+        // running an old server against a new app. Worse, it was self-concealing: the old binary
+        // reports the old version, matches the running daemon's, and so never triggers the
+        // upgrade that would have replaced it.
+        return out.sorted { $1.versionOrder.lexicographicallyPrecedes($0.versionOrder) }
     }
 
     /// Returns the argv to launch for this host, installing the server first if needed.
