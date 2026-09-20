@@ -29,17 +29,7 @@ public struct RootView: View {
         switch app.selection {
         case .thread(let host, _):
             if let thread = app.selectedThread, let c = app.selectedConnection {
-                // Attached here, not to the split view, and bound straight to the stored
-                // preference. The framework restores and writes back this presentation itself —
-                // dragging the divider closed, the Inspector menu command — so a binding whose
-                // getter could disagree with the value it writes ended up persisting the
-                // framework's `false` over the user's preference. Only a chat has anything to
-                // inspect, so hanging it here is what keeps it off the New Chat screen.
-                ThreadView(thread: thread, connection: c)
-                    .inspector(isPresented: $app.showInspector) {
-                        ThreadInspector(thread: thread, connection: c)
-                            .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
-                    }
+                ChatDetail(app: app, thread: thread, connection: c)
             } else {
                 // The host this chat belongs to is gone (removed in Settings while it was
                 // selected); an empty detail column would just look broken.
@@ -70,6 +60,19 @@ struct AppToolbar: ToolbarContent {
     @Bindable var app: AppModel
 
     var body: some ToolbarContent {
+        // Declared by the window, not by the sidebar column. A toolbar item declared on a column
+        // is removed from the toolbar when that column collapses, and removing one item relayouts
+        // every other one — which is why collapsing the sidebar made the whole toolbar jump.
+        ToolbarItem(placement: .navigation) {
+            Button {
+                app.newChat()
+            } label: {
+                Image(systemName: "square.and.pencil")
+            }
+            .buttonBorderShape(.circle)
+            .accessibilityLabel("New Chat")
+            .help("New Chat (⌘N)")
+        }
         ToolbarItemGroup(placement: .primaryAction) {
             sessionControls
             InspectorToggle(app: app)
@@ -93,6 +96,32 @@ extension AppToolbar {
         case nil:
             EmptyView()
         }
+    }
+}
+
+/// A chat and its inspector.
+///
+/// Its own view so that reading `showInspector` — which `.inspector(isPresented:)` does — happens
+/// here rather than in `RootView.body`. Built there, every inspector toggle re-ran the root body,
+/// which re-emits the window's `.toolbar`, so NSToolbar rebuilt its items on the frame the column
+/// began animating: the buttons visibly popping out and back.
+///
+/// The binding is the stored preference directly. The framework restores and writes back this
+/// presentation itself — dragging the divider closed, the Inspector menu command — so a binding
+/// whose getter could disagree with what its setter writes ended up persisting the framework's
+/// `false` over the preference. Only a chat has anything to inspect, so hanging the inspector
+/// here is also what keeps it off the New Chat screen.
+struct ChatDetail: View {
+    @Bindable var app: AppModel
+    let thread: ThreadModel
+    let connection: HostConnection
+
+    var body: some View {
+        ThreadView(thread: thread, connection: connection)
+            .inspector(isPresented: $app.showInspector) {
+                ThreadInspector(thread: thread, connection: connection)
+                    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+            }
     }
 }
 
@@ -132,21 +161,7 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .searchable(text: $search, placement: .sidebar, prompt: "Search Chats")
-        // Unconditional: making this item's existence depend on the sidebar meant NSToolbar
-        // inserting and removing it outright, which is instantaneous and lands at the start of
-        // the column animation — the pop. An item that is always there can't pop.
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    app.newChat()
-                } label: {
-                    Image(systemName: "square.and.pencil")
-                }
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("New Chat")
-                .help("New Chat (⌘N)")
-            }
-        }
+
     }
 }
 
