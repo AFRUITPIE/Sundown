@@ -4,35 +4,21 @@ import TetherProtocol
 
 public struct RootView: View {
     @Bindable var app: AppModel
-    /// Seeded rather than fixed so a preview can render the window with the sidebar collapsed —
-    /// which is the only way to see that New Chat goes away with it.
-    @State private var columns: NavigationSplitViewVisibility
 
-    public init(app: AppModel, columnVisibility: NavigationSplitViewVisibility = .automatic) {
+    public init(app: AppModel) {
         self.app = app
-        self._columns = State(initialValue: columnVisibility)
     }
 
+    // No columnVisibility binding. Nothing here ever wrote it — it existed so a preview could show
+    // the sidebar collapsed — and holding it meant every sidebar toggle wrote this view's state,
+    // re-running this body and rebuilding the toolbar on the frame the column started animating.
+    // NavigationSplitView manages and restores that visibility itself.
     public var body: some View {
-        NavigationSplitView(columnVisibility: $columns) {
+        NavigationSplitView {
             SidebarView(app: app)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
-            // The inspector is attached here rather than to the split view so the window toolbar
-            // splits at the column boundary: items the detail declares end where the detail ends
-            // instead of running on over the inspector. It was on the split view to keep the
-            // inspector full height under a toolbar with no background of its own, which the
-            // system now handles — the toolbar takes up glass when content scrolls under it.
-            //
-            // Only a chat has anything to inspect, so on the New Chat screen the inspector closes
-            // and its button goes away rather than offering an empty column. The preference is
-            // untouched, so it comes back as it was on the next chat.
             detail
-                .inspector(isPresented: Binding(get: { app.showInspector && app.isThreadSelected },
-                                                set: { app.showInspector = $0 })) {
-                    inspector
-                        .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
-                }
         }
         .toolbar { AppToolbar(app: app) }
         .environment(\.readingWidth, app.transcriptWidth.points)
@@ -41,9 +27,19 @@ public struct RootView: View {
 
     @ViewBuilder private var detail: some View {
         switch app.selection {
-        case .thread(let host, let id):
+        case .thread(let host, _):
             if let thread = app.selectedThread, let c = app.selectedConnection {
-                ThreadView(thread: thread, connection: c).id(id)
+                // Attached here, not to the split view, and bound straight to the stored
+                // preference. The framework restores and writes back this presentation itself —
+                // dragging the divider closed, the Inspector menu command — so a binding whose
+                // getter could disagree with the value it writes ended up persisting the
+                // framework's `false` over the user's preference. Only a chat has anything to
+                // inspect, so hanging it here is what keeps it off the New Chat screen.
+                ThreadView(thread: thread, connection: c)
+                    .inspector(isPresented: $app.showInspector) {
+                        ThreadInspector(thread: thread, connection: c)
+                            .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+                    }
             } else {
                 // The host this chat belongs to is gone (removed in Settings while it was
                 // selected); an empty detail column would just look broken.
@@ -65,16 +61,6 @@ public struct RootView: View {
         }
     }
 
-    /// The inspector needs a selected thread + its connection; otherwise there's nothing to show.
-    @ViewBuilder private var inspector: some View {
-        if let thread = app.selectedThread, let connection = app.selectedConnection {
-            ThreadInspector(thread: thread, connection: connection)
-        } else {
-            ContentUnavailableView {
-                Label("No Thread Selected", systemImage: "sidebar.trailing")
-            }
-        }
-    }
 }
 
 /// Window actions stay in one stable toolbar. New Chat sits beside the system sidebar toggle and
@@ -86,17 +72,7 @@ struct AppToolbar: ToolbarContent {
     var body: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             sessionControls
-            if app.isThreadSelected {
-                Button {
-                    app.showInspector.toggle()
-                } label: {
-                    Image(systemName: "sidebar.trailing")
-                }
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("Inspector")
-                .keyboardShortcut("i", modifiers: [.command, .option])
-                .help(app.showInspector ? "Hide Inspector" : "Show Inspector")
-            }
+            InspectorToggle(app: app)
         }
     }
 }
@@ -116,6 +92,27 @@ extension AppToolbar {
             }
         case nil:
             EmptyView()
+        }
+    }
+}
+
+/// The inspector's toolbar button, as its own view so reading `showInspector` for the tooltip
+/// invalidates only this button. Read from `AppToolbar.body` it rebuilt the whole toolbar — four
+/// pickers and a toggle — on the frame the inspector column began animating.
+struct InspectorToggle: View {
+    @Bindable var app: AppModel
+
+    var body: some View {
+        if app.isThreadSelected {
+            Button {
+                app.showInspector.toggle()
+            } label: {
+                Image(systemName: "sidebar.trailing")
+            }
+            .buttonBorderShape(.circle)
+            .accessibilityLabel("Inspector")
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            .help(app.showInspector ? "Hide Inspector" : "Show Inspector")
         }
     }
 }
@@ -263,7 +260,10 @@ struct ChatRow: View {
 struct NewChatView: View {
     @Bindable var app: AppModel
     @Environment(\.readingWidth) private var readingWidth
-    @State var hostId: UUID
+    /// Read from the selection rather than held locally: the toolbar's session controls resolve
+    /// their host from the selection too, so a privately-held copy meant picking a different host
+    /// here left the Model picker listing the previous host's catalog.
+    let hostId: UUID
     @State private var directory: String?
     @State private var error: String?
     @State private var choosingLocalFolder = false
@@ -274,7 +274,8 @@ struct NewChatView: View {
     var body: some View {
         Form {
             Section {
-                Picker("Host", selection: $hostId) {
+                Picker("Host", selection: Binding(get: { hostId },
+                                                   set: { app.selection = .newChat(host: $0) })) {
                     ForEach(app.hosts) { Text($0.name).tag($0.id) }
                 }
                 Picker("Folder", selection: Binding(get: { directory }, set: { new in
@@ -449,11 +450,6 @@ private func rootPreviewApp() -> AppModel {
     app.transcriptWidth = .wide
     return RootView(app: app)
         .frame(width: 1400, height: 760)
-}
-
-#Preview("RootView (sidebar collapsed)") {
-    RootView(app: rootPreviewApp(), columnVisibility: .detailOnly)
-        .frame(width: 1100, height: 760)
 }
 
 #Preview("SidebarView") {

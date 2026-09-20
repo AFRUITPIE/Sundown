@@ -32,7 +32,13 @@ public final class AppModel {
     /// right sidebar, instead of just the detail column.
     public var showInspector: Bool {
         get { access(keyPath: \.showInspector); return inspectorStorage }
-        set { withMutation(keyPath: \.showInspector) { inspectorStorage = newValue } }
+        // Guarded the way the @Observable macro guards its own setters: without it, writing the
+        // value it already has still notifies every observer. The framework writes this one
+        // whenever it restores or collapses the inspector, so the redundant writes are frequent.
+        set {
+            guard newValue != inspectorStorage else { return }
+            withMutation(keyPath: \.showInspector) { inspectorStorage = newValue }
+        }
     }
     @ObservationIgnored @AppStorage("tether.inspector") private var inspectorStorage = false
 

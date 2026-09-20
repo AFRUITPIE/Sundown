@@ -60,10 +60,6 @@ struct TranscriptView: View {
     @Environment(\.readingWidth) private var readingWidth
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
-    /// Paging older history only starts once the transcript has settled at its end. Before that
-    /// the top of a short page is on screen, and asking for older items there would walk the
-    /// whole session backwards without anyone having scrolled.
-    @State private var readyForPaging = false
 
     var body: some View {
         ScrollView {
@@ -78,7 +74,7 @@ struct TranscriptView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                         .onScrollVisibilityChange(threshold: 0.01) { visible in
-                            guard visible, readyForPaging else { return }
+                            guard visible else { return }
                             Task { await connection?.loadOlderHistory(thread) }
                         }
                 }
@@ -113,28 +109,18 @@ struct TranscriptView: View {
             .frame(maxWidth: readingWidth)
             .frame(maxWidth: .infinity)
         }
-        // Start at the bottom, and follow new output only while the reader is already there —
-        // scrolling up to read something stays put, with a way back to the live end.
-        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        // Every role, not just `.initialOffset`. The anchor also governs how the scroll view
+        // handles content- and container-size changes, and narrowing it to the initial offset
+        // meant reimplementing that by hand — a scrollTo on every contentSize change, which fires
+        // on every frame of a column resize as the text rewraps, writing state and fighting the
+        // scroll view's own adjustment. The framework does this in its layout pass for free.
+        .defaultScrollAnchor(.bottom)
         .scrollPosition($position)
-        // Rows in a LazyVStack are measured as they come into range, so the content keeps growing
-        // for a while after history arrives — following the content size covers both that and
-        // streamed output, where watching the items alone would stop short of the end.
-        .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, _ in
-            guard atBottom else { return }
-            position.scrollTo(edge: .bottom)
-        }
         // A newly opened chat starts at its latest message, wherever the reader left the last one.
         .onChange(of: thread.historyLoaded) {
             guard thread.historyLoaded else { return }
             atBottom = true
-            readyForPaging = false
             position.scrollTo(edge: .bottom)
-        }
-        // The first content-size change after loading is the transcript settling at its end;
-        // paging older history is only sensible after that.
-        .onScrollGeometryChange(for: Bool.self) { $0.contentSize.height > 0 } action: { _, hasContent in
-            if hasContent, thread.historyLoaded { readyForPaging = true }
         }
         .overlay(alignment: .bottom) {
             if !atBottom {
@@ -148,9 +134,11 @@ struct TranscriptView: View {
                 .help("Jump to Latest")
                 .padding(.bottom, 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
+                // Scoped to the button. Applied to the ScrollView it animated every layout change
+                // in the transcript whenever this flipped, which a column resize does repeatedly.
+                .animation(.snappy, value: atBottom)
             }
         }
-        .animation(.snappy, value: atBottom)
     }
 
     /// What stands in for the transcript before it arrives. A bare spinner is only right while
