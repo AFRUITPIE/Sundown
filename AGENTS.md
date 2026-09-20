@@ -4,14 +4,21 @@
 
 Tether is a native macOS SwiftUI client for Claude Code. It is intentionally a thin client: it presents hosts, sessions, streamed transcript items, prompts, and settings while `../tether-server` owns Claude Agent SDK queries and long-lived session state.
 
-The two repositories must remain siblings:
+This repository builds on its own. Clone it, open `Tether.xcodeproj`, and build:
 
-```text
-~/Code/tether-app
-~/Code/tether-server
+- `TetherKit/Package.swift` depends on the `TetherProtocol` package published by `AFRUITPIE/tether-server`, pinned by version. The generated sources are committed there, so nothing has to be generated to consume them.
+- The app target's build phase (`Scripts/fetch-server-binaries.sh`) puts the standalone server binaries in the bundle. It prefers a sibling `../tether-server/dist` when that has binaries for the pinned version, and otherwise downloads that version's GitHub release once and caches it under `DERIVED_FILE_DIR`.
+- `.tether-server-version` is the pin. Bump it when the app needs a newer server, after that version has been released.
+
+Both repositories are private, so the download needs the GitHub CLI authenticated (`gh auth status`), and SwiftPM needs git credentials for the same account.
+
+Working on the protocol or the server at the same time still wants both checkouts side by side. Override the package with the local copy rather than editing the manifest:
+
+```sh
+swift package edit TetherProtocol --path ../../tether-server   # undo with: swift package unedit TetherProtocol
 ```
 
-`TetherKit/Package.swift` imports the generated `TetherProtocol` Swift package from `../../tether-server`. The Xcode app target also copies compiled server binaries from `../tether-server/dist` into the app bundle.
+or add `../tether-server` to the Xcode workspace, which takes precedence over the remote. Run `mise run compile` there and the build phase picks the binaries up from `dist/` automatically.
 
 ## Repository map
 
@@ -130,8 +137,11 @@ Prepare the bundled server artifacts when server code or packaging changes:
 
 ```sh
 cd ../tether-server
-mise run compile
+mise run compile          # into dist/, picked up by the app's build phase
+mise run release          # tag, publish the binaries, and record the Agent SDK version
 ```
+
+`TETHER_VERSION` comes from `package.json`, and the daemon replaces a running one only when that string differs. It is deliberately not the Agent SDK version: a server fix has to be able to ship without waiting for an SDK release. `AGENT_SDK_VERSION` is exported and reported separately.
 
 Use Xcode 27 MCP as the primary app workflow. Open `Tether.xcodeproj`, then use the Xcode tools rather than raw `xcodebuild` or a separately launched LLDB session:
 
