@@ -4,6 +4,10 @@ import SwiftUI
 /// (inline syntax via AttributedString). Good enough for Claude's output without a dependency.
 struct MarkdownView: View {
     let text: String
+    /// Parsing is pure but not cheap (a regex pass per line), and the same text is rendered again
+    /// on every layout — dragging the sidebar open re-parses every visible message per frame. The
+    /// cache is @State, so it lives as long as the row does and survives those re-renders.
+    @State private var cache = MarkdownCache()
 
     enum Block: Hashable {
         case code(lang: String, body: String)
@@ -17,7 +21,7 @@ struct MarkdownView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(Self.parse(text).enumerated()), id: \.offset) { _, block in
+            ForEach(Array(cache.blocks(for: text).enumerated()), id: \.offset) { _, block in
                 view(for: block)
             }
         }
@@ -126,6 +130,52 @@ struct MarkdownView: View {
         row.split(separator: "|", omittingEmptySubsequences: false)
             .dropFirst().dropLast()
             .map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+}
+
+/// Remembers the last parse for one message, and reuses the finished blocks of a message that is
+/// still streaming: new text only ever arrives at the end, so everything before the last blank
+/// line outside a code fence is already settled and doesn't need parsing again.
+@MainActor
+final class MarkdownCache {
+    private var text = ""
+    private var blocks: [MarkdownView.Block] = []
+    private var settledText = ""
+    private var settledBlocks: [MarkdownView.Block] = []
+
+    func blocks(for newText: String) -> [MarkdownView.Block] {
+        if newText == text { return blocks }
+        if !settledText.isEmpty, newText.hasPrefix(settledText) {
+            blocks = settledBlocks + MarkdownView.parse(String(newText.dropFirst(settledText.count)))
+        } else {
+            blocks = MarkdownView.parse(newText)
+            settledText = ""
+            settledBlocks = []
+        }
+        text = newText
+        updateSettledPrefix()
+        return blocks
+    }
+
+    /// The prefix up to the last blank line that isn't inside an open code fence.
+    private func updateSettledPrefix() {
+        guard text.count > 2048 else { return } // not worth tracking for short messages
+        var fenceCount = 0
+        var lastBoundary: String.Index?
+        var previousWasBlank = false
+        var lineStart = text.startIndex
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("```") { fenceCount += 1 }
+            let isBlank = line.allSatisfy(\.isWhitespace)
+            if isBlank, !previousWasBlank, fenceCount.isMultiple(of: 2) { lastBoundary = lineStart }
+            previousWasBlank = isBlank
+            lineStart = text.index(lineStart, offsetBy: line.count + 1, limitedBy: text.endIndex) ?? text.endIndex
+        }
+        guard let boundary = lastBoundary, boundary > text.startIndex else { return }
+        let prefix = String(text[text.startIndex..<boundary])
+        guard prefix != settledText else { return }
+        settledText = prefix
+        settledBlocks = MarkdownView.parse(prefix)
     }
 }
 

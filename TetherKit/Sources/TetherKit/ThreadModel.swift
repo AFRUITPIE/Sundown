@@ -30,6 +30,13 @@ public final class ThreadModel: Identifiable {
     public private(set) var lastError: String?
     public var totalCostUsd: Double { turns.compactMap { $0.result?.totalCostUsd }.reduce(0, +) }
     private var index: [String: Int] = [:]
+    /// Bumped by every change to `items`. Derived collections below key their caches off it, so
+    /// they cost one pass per change instead of one per SwiftUI body evaluation — during
+    /// streaming the transcript is rendered far more often than it is mutated.
+    public private(set) var itemsVersion = 0
+    @ObservationIgnored private var cachedTopLevel: (version: Int, items: [Item])?
+    @ObservationIgnored private var cachedRows: (version: Int, rows: [TranscriptRow])?
+    @ObservationIgnored private var cachedChildren: (version: Int, byParent: [String: [Item]])?
 
     public init(id: String, summary: ThreadSummary? = nil) {
         self.id = id
@@ -68,6 +75,7 @@ public final class ThreadModel: Identifiable {
         items = newItems
         turns = newTurns
         index = Dictionary(uniqueKeysWithValues: items.enumerated().map { ($1.id, $0) })
+        itemsVersion &+= 1
         historyLoaded = true
     }
 
@@ -152,21 +160,45 @@ public final class ThreadModel: Identifiable {
             index[id] = items.count
             items.append(item)
         }
+        itemsVersion &+= 1
     }
 
     private func mutate(_ id: String, _ f: (inout Item) -> Void) {
         guard let i = index[id] else { return }
         f(&items[i])
+        itemsVersion &+= 1
     }
 
     /// Items belonging to a subagent (Task/Agent tool) — rendered nested in its card.
     public func children(of toolUseId: String) -> [Item] {
-        items.filter { $0.parentToolUseId == toolUseId }
+        if let c = cachedChildren, c.version == itemsVersion { return c.byParent[toolUseId] ?? [] }
+        var byParent: [String: [Item]] = [:]
+        for item in items {
+            guard let parent = item.parentToolUseId else { continue }
+            byParent[parent, default: []].append(item)
+        }
+        cachedChildren = (itemsVersion, byParent)
+        return byParent[toolUseId] ?? []
     }
 
     public var topLevelItems: [Item] {
-        items.filter { $0.parentToolUseId == nil }
+        if let c = cachedTopLevel, c.version == itemsVersion { return c.items }
+        let top = items.filter { $0.parentToolUseId == nil }
+        cachedTopLevel = (itemsVersion, top)
+        return top
     }
+
+    /// The transcript as it is rendered: top-level items with consecutive finished tool calls
+    /// folded into one row.
+    public var rows: [TranscriptRow] {
+        if let c = cachedRows, c.version == itemsVersion { return c.rows }
+        let rows = foldTranscriptRows(topLevelItems)
+        cachedRows = (itemsVersion, rows)
+        return rows
+    }
+
+    /// Position of an item in the transcript, for views that need to know what came after it.
+    public func itemIndex(of id: String) -> Int? { index[id] }
 }
 
 extension Item {

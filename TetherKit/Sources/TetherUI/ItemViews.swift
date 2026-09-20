@@ -97,7 +97,7 @@ struct ReasoningView: View {
     }
 
     private var isStreaming: Bool {
-        thread.isRunning && thread.items.last?.id == reasoning.id
+        thread.isRunning && thread.itemIndex(of: reasoning.id) == thread.items.count - 1
     }
 
     private var isExpanded: Bool { userExpanded ?? isStreaming }
@@ -106,7 +106,7 @@ struct ReasoningView: View {
     /// it think": the gap between this item starting and whatever came right after it (the next
     /// item, or the turn finishing if this was the turn's last item).
     private var elapsedSeconds: Double? {
-        guard !isStreaming, let index = thread.items.firstIndex(where: { $0.id == reasoning.id }) else { return nil }
+        guard !isStreaming, let index = thread.itemIndex(of: reasoning.id) else { return nil }
         let stopMs = index + 1 < thread.items.count
             ? thread.items[index + 1].createdAt
             : thread.turns.first { $0.id == reasoning.turnId }?.completedAt

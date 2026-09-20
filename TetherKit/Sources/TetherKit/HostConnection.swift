@@ -32,6 +32,8 @@ public final class HostConnection: Identifiable {
     private var subscribed = Set<String>()
     /// Threads a view has asked to open, whether or not we were connected at the time.
     private var openRequested = Set<String>()
+    private var bufferedDeltas: [ServerNotification] = []
+    private var deltaFlushTask: Task<Void, Never>?
 
     public init(host: HostConfig) {
         self.host = host
@@ -103,6 +105,9 @@ public final class HostConnection: Identifiable {
         guard client != nil else { return }
         client = nil
         subscribed.removeAll()
+        deltaFlushTask?.cancel()
+        deltaFlushTask = nil
+        bufferedDeltas.removeAll()
         notificationTask?.cancel()
         for t in threads.values { t.clearPending() }
         appendLog("Disconnected: \(error.localizedDescription)")
@@ -133,10 +138,43 @@ public final class HostConnection: Identifiable {
     }
 
     private func route(_ n: ServerNotification) {
+        guard n.threadId != nil else { return }
+        switch n {
+        case .itemAgentMessageDelta, .itemReasoningDelta, .itemToolCallProgress:
+            // Partial messages arrive per token. Applying each one separately redraws the
+            // transcript at the model's typing speed, so they're batched into a frame.
+            bufferedDeltas.append(n)
+            scheduleDeltaFlush()
+        default:
+            flushDeltas() // anything else has to see the deltas that came before it
+            apply(n)
+        }
+    }
+
+    private func apply(_ n: ServerNotification) {
         guard let tid = n.threadId else { return }
         let model = thread(tid)
         model.apply(n)
         if case .threadStarted(let e) = n, let cwd = Optional(e.thread.cwd) { attach(model, toProject: cwd) }
+    }
+
+    private func scheduleDeltaFlush() {
+        guard deltaFlushTask == nil else { return }
+        deltaFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(16))
+            guard let self, !Task.isCancelled else { return }
+            self.deltaFlushTask = nil
+            self.flushDeltas()
+        }
+    }
+
+    private func flushDeltas() {
+        deltaFlushTask?.cancel()
+        deltaFlushTask = nil
+        guard !bufferedDeltas.isEmpty else { return }
+        let deltas = bufferedDeltas
+        bufferedDeltas.removeAll(keepingCapacity: true)
+        for delta in deltas { apply(delta) }
     }
 
     /// After reconnecting, catch every loaded thread up from its last seen seq (the daemon kept running).

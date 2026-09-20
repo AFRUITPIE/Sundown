@@ -115,9 +115,13 @@ struct Composer: View {
         .task(id: cwd) {
             if let thread { commands = await connection.commands(for: thread) }
         }
-        .onChange(of: mentionQuery) { _, q in
-            guard let q, let cwd else { fileMatches = []; return }
-            Task { fileMatches = await connection.searchFiles(cwd: cwd, query: q) }
+        // Keyed on the query so each keystroke cancels the last search instead of racing it —
+        // otherwise a slow reply can land after a newer one and rewrite the list.
+        .task(id: mentionQuery) {
+            guard let q = mentionQuery, let cwd else { fileMatches = []; return }
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            fileMatches = await connection.searchFiles(cwd: cwd, query: q)
         }
     }
 

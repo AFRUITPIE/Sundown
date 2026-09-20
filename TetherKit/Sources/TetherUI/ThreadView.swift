@@ -60,7 +60,7 @@ struct TranscriptView: View {
                 if !thread.historyLoaded {
                     ProgressView().frame(maxWidth: .infinity).padding(40)
                 }
-                ForEach(foldTranscriptRows(thread.topLevelItems), id: \.id) { row in
+                ForEach(thread.rows, id: \.id) { row in
                     switch row {
                     case .item(let item): ItemView(item: item, thread: thread).id(item.id)
                     case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread).id(row.id)

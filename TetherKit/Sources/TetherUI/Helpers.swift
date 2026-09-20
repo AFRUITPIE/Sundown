@@ -3,11 +3,15 @@ import SwiftUI
 import TetherProtocol
 
 extension JSONValue {
-    /// Pretty-printed JSON for display.
-    var pretty: String {
+    private static let prettyEncoder: JSONEncoder = {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        return (try? String(decoding: enc.encode(self), as: UTF8.self)) ?? ""
+        return enc
+    }()
+
+    /// Pretty-printed JSON for display.
+    var pretty: String {
+        (try? String(decoding: Self.prettyEncoder.encode(self), as: UTF8.self)) ?? ""
     }
 
     func string(_ key: String) -> String? { self[key]?.stringValue }
@@ -44,10 +48,17 @@ enum Format {
         n >= 1_000_000 ? String(format: "%.1fM", n / 1_000_000) : n >= 1000 ? String(format: "%.1fk", n / 1000) : String(Int(n))
     }
 
-    static func relative(msSinceEpoch: Double) -> String {
+    /// Shared: building a formatter costs more than the formatting, and the sidebar formats one
+    /// per row on every pass.
+    @MainActor private static let relativeFormatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .abbreviated
-        return f.localizedString(for: Date(timeIntervalSince1970: msSinceEpoch / 1000), relativeTo: .now)
+        return f
+    }()
+
+    @MainActor
+    static func relative(msSinceEpoch: Double) -> String {
+        relativeFormatter.localizedString(for: Date(timeIntervalSince1970: msSinceEpoch / 1000), relativeTo: .now)
     }
 }
 
