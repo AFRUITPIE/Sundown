@@ -250,3 +250,103 @@ struct DiffView: View {
         .background(.fill.quinary, in: .rect(cornerRadius: 8))
     }
 }
+
+#if DEBUG
+#Preview("Bash tool call") {
+    ToolCallView(call: .sample(name: "Bash", kind: .bash,
+                                input: ["command": "swift test --filter ThreadModelTests", "description": "Run ThreadModel tests"],
+                                status: .completed, outputText: "Test Suite 'ThreadModelTests' passed.\nExecuted 6 tests, with 0 failures.", secondsAgo: 30),
+                 thread: .sampleIdleChat())
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("File edit") {
+    ToolCallView(call: .sample(name: "Edit", kind: .fileEdit, input: [
+        "file_path": "/Users/hayden/Code/tether-app/TetherKit/Sources/TetherKit/ThreadModel.swift",
+        "old_string": "    public private(set) var lastSeq = 0",
+        "new_string": "    public private(set) var lastSeq = 0\n    public private(set) var isPreview = false",
+    ], status: .completed, secondsAgo: 30), thread: .sampleIdleChat())
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("File read") {
+    ToolCallView(call: .sample(name: "Read", kind: .fileRead,
+                                input: ["file_path": "/Users/hayden/Code/tether-app/TetherKit/Sources/TetherUI/ItemViews.swift"],
+                                status: .completed, secondsAgo: 30), thread: .sampleIdleChat())
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("Grep") {
+    ToolCallView(call: .sample(name: "Grep", kind: .grep, input: ["pattern": "upsertTurn", "path": "TetherKit/Sources/TetherKit"],
+                                status: .completed, outputText: "ThreadModel.swift:145:    private func upsertTurn(_ t: Turn) {", secondsAgo: 30),
+                 thread: .sampleIdleChat())
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("Todo list") {
+    ToolCallView(call: .sample(name: "TodoWrite", kind: .todoWrite, input: ["todos": [
+        ["content": "Add PreviewSupport.swift", "activeForm": "Adding PreviewSupport.swift", "status": "completed"],
+        ["content": "Add #Preview blocks to every TetherUI view", "activeForm": "Adding #Preview blocks", "status": "in_progress"],
+        ["content": "Render every preview in Xcode and fix issues", "activeForm": "Rendering previews", "status": "pending"],
+    ]], status: .completed, secondsAgo: 30), thread: .sampleIdleChat())
+        .padding(20)
+        .frame(width: 560)
+}
+
+// #Preview bodies are result-builder closures (no `guard`/control flow), so this pulls the
+// subagent's `Item.ToolCall` out of the gallery thread for the preview below.
+@MainActor
+private func sampleSubagentCall(in thread: ThreadModel) -> Item.ToolCall {
+    guard case .toolCall(let t) = thread.items.first(where: { $0.id == "tool-subagent-explore" }) else { fatalError("missing sample subagent call") }
+    return t
+}
+
+#Preview("Subagent (running, with children)") {
+    let thread = ThreadModel.sampleToolCalls()
+    ToolCallView(call: sampleSubagentCall(in: thread), thread: thread)
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("MCP call") {
+    ToolCallView(call: .sample(name: "mcp__xcode__RenderPreview", kind: .mcp, input: ["file": "ItemViews.swift", "preview": "Bash tool call"],
+                                status: .completed, outputText: "Rendered 1 preview.", secondsAgo: 30), thread: .sampleIdleChat())
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("Other / denied") {
+    ToolCallView(call: .sample(name: "NotebookRead", kind: .other, input: ["notebook_path": "/Users/hayden/Code/tether-app/notes.ipynb"],
+                                status: .denied, secondsAgo: 30), thread: .sampleIdleChat())
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("Failed") {
+    ToolCallView(call: .sample(name: "Bash", kind: .bash, input: ["command": "./scripts/deploy.sh production"], status: .failed,
+                                outputText: "Error: SSH connection to deploy-01 timed out", isError: true, secondsAgo: 30), thread: .sampleIdleChat())
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("Todo list (standalone)") {
+    TodoListView(todos: [
+        ["content": "Add PreviewSupport.swift", "status": "completed"],
+        ["content": "Add #Preview blocks", "activeForm": "Adding #Preview blocks", "status": "in_progress"],
+        ["content": "Render every preview", "status": "pending"],
+    ])
+    .padding(20)
+    .frame(width: 420)
+}
+
+#Preview("Diff") {
+    DiffView(old: "func title() -> String {\n    return name\n}", new: "func title() -> String {\n    guard !name.isEmpty else { return \"Untitled\" }\n    return name\n}")
+        .padding(20)
+        .frame(width: 480)
+}
+
+#endif

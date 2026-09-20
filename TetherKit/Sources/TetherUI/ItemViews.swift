@@ -125,3 +125,79 @@ struct NoticeView: View {
         .foregroundStyle(notice.level == .warning ? AnyShapeStyle(.orange) : notice.level == .error ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
     }
 }
+
+#if DEBUG
+#Preview("User message") {
+    ScrollView {
+        ItemView(item: .sampleUserMessage("Can you clean up the build directory before we cut a release?", secondsAgo: 30), thread: .sampleIdleChat())
+            .padding(.horizontal, 28)
+            .padding(.vertical, 16)
+            .frame(maxWidth: 920)
+    }
+    .frame(width: 640, height: 200)
+}
+
+#Preview("User message (synthetic)") {
+    ScrollView {
+        ItemView(item: .sampleUserMessage("Compacted 3 earlier turns to stay under the context limit.", secondsAgo: 30, synthetic: true, origin: "compaction"), thread: .sampleIdleChat())
+            .padding(.horizontal, 28)
+            .padding(.vertical, 16)
+            .frame(maxWidth: 920)
+    }
+    .frame(width: 640, height: 160)
+}
+
+#Preview("Agent message") {
+    ScrollView {
+        ItemView(item: .sampleAgentMessage("Sure — I ran `rm -rf .build` and confirmed the workspace still builds cleanly.", secondsAgo: 10), thread: .sampleIdleChat())
+            .padding(.horizontal, 28)
+            .padding(.vertical, 16)
+            .frame(maxWidth: 920)
+    }
+    .frame(width: 640, height: 160)
+}
+
+#Preview("Reasoning (collapsed)") {
+    ScrollView {
+        ItemView(item: .sampleReasoning("Let me check ThreadModel.swift before answering, so this matches what's actually there.", secondsAgo: 5), thread: .sampleIdleChat())
+            .padding(28)
+    }
+    .frame(width: 640, height: 120)
+}
+
+#Preview("Notice") {
+    ScrollView {
+        VStack(alignment: .leading, spacing: 10) {
+            ItemView(item: .sampleNotice("Switched to Claude Sonnet 5 after a rate limit on Opus.", kind: "modelFallback", level: .warning, secondsAgo: 5), thread: .sampleIdleChat())
+            ItemView(item: .sampleNotice("Interrupted by user.", kind: "interrupted", level: .info, secondsAgo: 5), thread: .sampleIdleChat())
+            ItemView(item: .sampleNotice("$ swift build --target TetherKit", kind: "localCommandOutput", secondsAgo: 5), thread: .sampleIdleChat())
+        }
+        .padding(28)
+    }
+    .frame(width: 640, height: 220)
+}
+
+#Preview("Error item") {
+    ScrollView {
+        ItemView(item: .error(.init(id: "err-1", createdAt: 0, message: "The model reported an internal error and the turn could not continue.")), thread: .sampleIdleChat())
+            .padding(28)
+    }
+    .frame(width: 640, height: 160)
+}
+
+#Preview("Full transcript") {
+    let thread = ThreadModel.sampleIdleChat()
+    ScrollView {
+        LazyVStack(alignment: .leading, spacing: 14) {
+            ForEach(thread.topLevelItems, id: \.id) { item in
+                ItemView(item: item, thread: thread)
+            }
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 16)
+        .frame(maxWidth: 920)
+    }
+    .frame(width: 760, height: 560)
+}
+
+#endif

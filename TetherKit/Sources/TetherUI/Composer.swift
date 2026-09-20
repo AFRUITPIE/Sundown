@@ -192,3 +192,45 @@ struct Composer<Controls: View>: View {
         images.append(Attachment(data: png, mediaType: "image/png"))
     }
 }
+
+#if DEBUG
+#Preview("Idle") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.sampleIdleChat()
+    GlassEffectContainer {
+        Composer(connection: connection, cwd: thread.cwd, thread: thread) {
+            ThreadControls(thread: thread, connection: connection)
+        } onStop: {
+        } submit: { _ in }
+    }
+    .padding(20)
+    .frame(width: 560)
+}
+
+#Preview("Running (shows Stop)") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.sampleRunningTurn()
+    GlassEffectContainer {
+        Composer(connection: connection, cwd: thread.cwd, thread: thread) {
+            ThreadControls(thread: thread, connection: connection)
+        } onStop: {
+        } submit: { _ in }
+    }
+    .padding(20)
+    .frame(width: 560)
+}
+
+#Preview("New chat (no thread yet)") {
+    let connection = HostConnection.sample()
+    GlassEffectContainer {
+        Composer(connection: connection, cwd: nil, placeholder: "Choose a folder, then ask Claude…") {
+            ModelPicker(selection: .constant(nil), models: connection.models)
+            EffortPicker(selection: .constant(nil), levels: EffortLevel.allCases)
+            PermissionModePicker(selection: .constant(.default))
+        } submit: { _ in }
+    }
+    .padding(20)
+    .frame(width: 560)
+}
+
+#endif

@@ -242,3 +242,71 @@ struct ElicitationPrompt: View {
         }
     }
 }
+
+#if DEBUG
+// #Preview bodies are result-builder closures (no `guard`/control flow), so these helpers pull
+// the typed params back out of the `PendingRequest` samples for them.
+private func params(_ request: ServerRequest) -> PermissionRequestParams {
+    guard case .permissionRequest(let p) = request else { fatalError("not a permission request") }
+    return p
+}
+private func params(_ request: ServerRequest) -> QuestionRequestParams {
+    guard case .questionRequest(let p) = request else { fatalError("not a question request") }
+    return p
+}
+private func params(_ request: ServerRequest) -> PlanApproveParams {
+    guard case .planApprove(let p) = request else { fatalError("not a plan request") }
+    return p
+}
+private func params(_ request: ServerRequest) -> ElicitationRequestParams {
+    guard case .elicitationRequest(let p) = request else { fatalError("not an elicitation request") }
+    return p
+}
+
+#Preview("Permission request") {
+    PermissionPrompt(params: params(PendingRequest.samplePermission().request), respond: { _ in })
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("Permission request (edit)") {
+    PermissionPrompt(params: params(PendingRequest.samplePermission(
+        toolName: "Edit", displayName: "Edit",
+        description: "Edit TetherKit/Sources/TetherKit/ThreadModel.swift",
+        input: ["file_path": "/Users/hayden/Code/tether-app/TetherKit/Sources/TetherKit/ThreadModel.swift",
+                "old_string": "    public private(set) var lastSeq = 0",
+                "new_string": "    public private(set) var lastSeq = 0\n    public private(set) var isPreview = false"],
+        decisionReason: nil
+    ).request), respond: { _ in })
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("Question") {
+    QuestionPrompt(params: params(PendingRequest.sampleQuestion().request), respond: { _ in })
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("Plan approval") {
+    PlanPrompt(params: params(PendingRequest.samplePlan().request), respond: { _ in })
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("Elicitation") {
+    ElicitationPrompt(params: params(PendingRequest.sampleElicitation().request), respond: { _ in })
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("Dialog / unknown (PendingRequestView)") {
+    VStack(spacing: 16) {
+        PendingRequestView(pending: .sampleDialog(), thread: .sampleIdleChat())
+        PendingRequestView(pending: .sampleUnknown(), thread: .sampleIdleChat())
+    }
+    .padding(20)
+    .frame(width: 560)
+}
+
+#endif

@@ -167,3 +167,47 @@ struct CodeBlock: View {
         .background(.fill.quinary, in: .rect(cornerRadius: 8))
     }
 }
+
+#if DEBUG
+#Preview("Markdown") {
+    ScrollView {
+        MarkdownView(text: sampleMarkdownPreviewText)
+            .padding(20)
+    }
+    .frame(width: 480, height: 420)
+}
+
+#Preview("Code block") {
+    CodeBlock(code: """
+    case .itemAgentMessageDelta(let e):
+        mutate(e.itemId) { if case .agentMessage(var m) = $0 { m.text += e.delta } }
+    """, language: "swift")
+        .padding(20)
+        .frame(width: 460)
+}
+
+#Preview("Code block (truncated)") {
+    CodeBlock(code: (1...30).map { "line \($0) of output" }.joined(separator: "\n"), language: "output", lineLimit: 8)
+        .padding(20)
+        .frame(width: 420)
+}
+
+private let sampleMarkdownPreviewText = """
+# Release notes
+
+## What's new
+
+- Native **Liquid Glass** controls for the composer and prompt cards
+- `#Preview` support across every `TetherUI` view
+- Faster reconnect after the daemon restarts
+
+Run the tests with:
+
+```swift
+swift test --filter ThreadModelTests
+```
+
+> Transcript content stays on standard fills — glass is reserved for the controls layer.
+"""
+
+#endif

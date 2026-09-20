@@ -191,3 +191,36 @@ struct AddSSHHostSheet: View {
         .frame(width: 440)
     }
 }
+
+#if DEBUG
+#Preview("SettingsView") {
+    SettingsView(app: .sample())
+}
+
+#Preview("DefaultsSettings") {
+    DefaultsSettings(app: .sample())
+        .frame(width: 500, height: 300)
+}
+
+#Preview("HostsSettings") {
+    HostsSettings(app: .sample())
+        .frame(width: 640, height: 420)
+}
+
+#Preview("HostEditor") {
+    let connection = HostConnection.sample()
+    HostEditor(host: connection.host, connection: connection) { _ in }
+        .frame(width: 460, height: 500)
+}
+
+#Preview("HostEditor (SSH)") {
+    let host = HostConfig(name: "build-box", kind: .ssh(destination: "build-box"), env: ["AWS_PROFILE": "tether", "AWS_REGION": "us-west-2"])
+    HostEditor(host: host, connection: .sampleFailed()) { _ in }
+        .frame(width: 460, height: 500)
+}
+
+#Preview("AddSSHHostSheet") {
+    AddSSHHostSheet { _ in }
+}
+
+#endif

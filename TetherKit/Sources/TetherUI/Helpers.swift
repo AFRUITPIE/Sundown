@@ -100,3 +100,18 @@ struct StatusDot: View {
         .help(status.rawValue)
     }
 }
+
+#if DEBUG
+#Preview("StatusDot") {
+    HStack(spacing: 12) {
+        ForEach([ThreadStatus.idle, .running, .requiresAction, .starting, .error, .closed], id: \.self) { status in
+            VStack(spacing: 4) {
+                StatusDot(status: status)
+                Text(status.rawValue).font(.caption2)
+            }
+        }
+    }
+    .padding(20)
+}
+
+#endif

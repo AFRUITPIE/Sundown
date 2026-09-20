@@ -348,3 +348,134 @@ struct ThreadInspector: View {
         usage = await connection.contextUsage(thread)
     }
 }
+
+#if DEBUG
+#Preview("Idle chat") {
+    let connection = HostConnection.sample()
+    NavigationStack {
+        ThreadView(thread: .sampleIdleChat(), connection: connection)
+    }
+    .frame(width: 900, height: 700)
+}
+
+#Preview("Running turn") {
+    let connection = HostConnection.sample()
+    NavigationStack {
+        ThreadView(thread: .sampleRunningTurn(), connection: connection)
+    }
+    .frame(width: 900, height: 700)
+}
+
+#Preview("Pending permission") {
+    let connection = HostConnection.sample()
+    NavigationStack {
+        ThreadView(thread: .samplePendingPermission(), connection: connection)
+    }
+    .frame(width: 900, height: 700)
+}
+
+// ThreadView's inspector visibility is @AppStorage-backed (a real user preference), so this
+// preview can't force it open without touching that saved value — see the dedicated
+// "ThreadInspector" preview below for the inspector's own content. This one instead shows a
+// thread with a rich variety of tool calls.
+#Preview("Tool call gallery") {
+    NavigationStack {
+        ThreadView(thread: .sampleToolCalls(), connection: .sample())
+    }
+    .frame(width: 1100, height: 760)
+}
+
+#Preview("BottomBar (composer)") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.sampleIdleChat()
+    VStack {
+        Spacer()
+        BottomBar(thread: thread, connection: connection)
+    }
+    .frame(width: 900, height: 220)
+}
+
+#Preview("BottomBar (pending request)") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.samplePendingPermission()
+    VStack {
+        Spacer()
+        BottomBar(thread: thread, connection: connection)
+    }
+    .frame(width: 900, height: 320)
+}
+
+#Preview("TranscriptView") {
+    TranscriptView(thread: .sampleToolCalls())
+        .frame(width: 900, height: 760)
+}
+
+#Preview("TurnFooter") {
+    VStack(alignment: .trailing, spacing: 12) {
+        TurnFooter(result: .sample(), status: .completed)
+        TurnFooter(result: .sample(subtype: "error_during_execution", isError: true, errors: ["SSH connection to deploy-01 timed out"]), status: .failed)
+        TurnFooter(result: .sample(), status: .interrupted)
+    }
+    .padding(20)
+    .frame(width: 500)
+}
+
+#Preview("StatusStrip") {
+    VStack(alignment: .leading, spacing: 16) {
+        StatusStrip(thread: .sampleErrorTurn())
+        StatusStrip(thread: .sampleApiRetry())
+    }
+    .padding(20)
+    .frame(width: 560)
+}
+
+#Preview("AuthStatusView") {
+    AuthStatusView(status: .init(threadId: "preview-thread", seq: 1, isAuthenticating: true,
+                                  output: ["Visit https://device.sso.us-west-2.amazonaws.com/", "Enter code: ABCD-EFGH"], error: nil))
+        .padding(20)
+        .frame(width: 480)
+}
+
+#Preview("ThreadControls") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.sampleIdleChat()
+    HStack(spacing: 4) { ThreadControls(thread: thread, connection: connection) }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("ModelPicker") {
+    ModelPicker(selection: .constant("claude-sonnet-5-20250929"), models: ModelInfo.sampleCatalog)
+        .padding(20)
+        .frame(width: 260)
+}
+
+#Preview("EffortPicker") {
+    EffortPicker(selection: .constant(.high), levels: [.low, .medium, .high, .max])
+        .padding(20)
+        .frame(width: 260)
+}
+
+#Preview("PermissionModePicker") {
+    PermissionModePicker(selection: .constant(.acceptEdits))
+        .padding(20)
+        .frame(width: 260)
+}
+
+#Preview("ThreadInspector") {
+    NavigationSplitView {
+        Text("Sidebar")
+    } detail: {
+        Text("Detail")
+            .inspector(isPresented: .constant(true)) {
+                ThreadInspector(thread: .sampleToolCalls(), connection: .sample())
+                    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+            }
+    }
+    .frame(width: 900, height: 700)
+}
+
+#endif

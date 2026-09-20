@@ -295,3 +295,71 @@ struct RemoteFolderPicker: View {
         }
     }
 }
+
+#if DEBUG
+// #Preview bodies are result-builder closures (no `if`/control flow), so the selection is set here.
+@MainActor
+private func rootPreviewApp() -> AppModel {
+    let app = AppModel.sample()
+    if let connection = app.connections.values.first, let chat = connection.chats.first {
+        app.selection = .thread(host: connection.id, id: chat.id)
+    }
+    return app
+}
+
+#Preview("RootView") {
+    RootView(app: rootPreviewApp())
+        .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (no selection)") {
+    RootView(app: .sample())
+        .frame(width: 1100, height: 760)
+}
+
+#Preview("SidebarView") {
+    let app = AppModel.sample(connections: [.sample(), .sampleFailed(), .sampleConnecting()])
+    NavigationSplitView {
+        SidebarView(app: app)
+    } detail: {
+        Text("Detail")
+    }
+    .frame(width: 320, height: 640)
+}
+
+#Preview("HostSection") {
+    let connection = HostConnection.sample()
+    List {
+        HostSection(app: .sample(connections: [connection]), connection: connection, search: "")
+    }
+    .listStyle(.sidebar)
+    .frame(width: 300, height: 420)
+}
+
+#Preview("ChatRow") {
+    List {
+        ChatRow(thread: .sampleIdleChat())
+        ChatRow(thread: .sampleRunningTurn())
+        ChatRow(thread: .samplePendingPermission())
+        ChatRow(thread: .sampleErrorTurn())
+    }
+    .frame(width: 300, height: 240)
+}
+
+#Preview("NewChatView") {
+    let connection = HostConnection.sample()
+    NavigationStack {
+        NewChatView(app: .sample(connections: [connection]), hostId: connection.id)
+    }
+    .frame(width: 900, height: 700)
+}
+
+#Preview("RemoteFolderPicker") {
+    // No client (unlike `.sample()`): `listDirectory` fails fast with "Not connected", so the
+    // preview shows a clear empty state instead of an fs/list call that hangs forever.
+    let connection = HostConnection(host: .local)
+    connection.previewSeed(state: .connected)
+    return RemoteFolderPicker(connection: connection) { _ in }
+}
+
+#endif
