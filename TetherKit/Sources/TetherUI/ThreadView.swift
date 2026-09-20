@@ -15,19 +15,6 @@ struct ThreadView: View {
             .scrollEdgeEffectStyle(.soft, for: .bottom)
             .navigationTitle(thread.title)
             .navigationSubtitle(thread.cwd?.abbreviatingHome ?? "")
-            // In the chat's own content, right-aligned, rather than the window toolbar: the
-            // toolbar is one bar across the whole window, so its trailing edge is the window's,
-            // and these controls ended up sitting over the inspector. A bar at the top of this
-            // column ends where the column does — the same scoping as Xcode's editor bar.
-            .safeAreaBar(edge: .top) {
-                HStack(spacing: 8) {
-                    Spacer(minLength: 0)
-                    ThreadControls(thread: thread, connection: connection)
-                }
-                .controlSize(.small)
-                .padding(.horizontal, Layout.gutter)
-                .padding(.vertical, 6)
-            }
             .task(id: thread.id) { await connection.open(thread) }
     }
 }

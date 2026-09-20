@@ -82,6 +82,12 @@ struct AppToolbar: ToolbarContent {
     @Bindable var app: AppModel
 
     var body: some ToolbarContent {
+        // Declared before the inspector button and in the same placement, so the order across the
+        // trailing edge matches SF Symbols: the value pop-ups, then the inspector toggle. Being
+        // real toolbar items is also what gives them the system's glass capsules.
+        ToolbarItemGroup(placement: .primaryAction) {
+            sessionControls
+        }
         ToolbarItem(placement: .primaryAction) {
             if app.isThreadSelected {
                 Button {
@@ -97,6 +103,25 @@ struct AppToolbar: ToolbarContent {
         }
     }
 
+}
+
+extension AppToolbar {
+    /// Model, effort and permissions for whatever is selected: a live chat's own state, or the
+    /// New Chat screen's draft.
+    @ViewBuilder var sessionControls: some View {
+        switch app.selection {
+        case .thread:
+            if let thread = app.selectedThread, let c = app.selectedConnection {
+                ThreadControls(thread: thread, connection: c)
+            }
+        case .newChat(let h):
+            if let c = app.connection(h) {
+                NewChatControls(app: app, connection: c)
+            }
+        case nil:
+            EmptyView()
+        }
+    }
 }
 
 /// Chats per host, most recent first. Two levels only: host section → chat.
@@ -277,17 +302,6 @@ struct NewChatView: View {
         .frame(maxWidth: 560)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("New Chat")
-        .safeAreaBar(edge: .top) {
-            if let connection {
-                HStack(spacing: 8) {
-                    Spacer(minLength: 0)
-                    NewChatControls(app: app, connection: connection)
-                }
-                .controlSize(.small)
-                .padding(.horizontal, Layout.gutter)
-                .padding(.vertical, 6)
-            }
-        }
         .safeAreaBar(edge: .bottom) {
             if let connection {
                 GlassEffectContainer(spacing: 10) {
