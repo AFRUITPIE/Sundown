@@ -71,8 +71,11 @@ struct TranscriptView: View {
                 if !thread.historyLoaded {
                     ProgressView().frame(maxWidth: .infinity).padding(40)
                 }
-                ForEach(thread.topLevelItems, id: \.id) { item in
-                    ItemView(item: item, thread: thread).id(item.id)
+                ForEach(foldTranscriptRows(thread.topLevelItems), id: \.id) { row in
+                    switch row {
+                    case .item(let item): ItemView(item: item, thread: thread).id(item.id)
+                    case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread).id(row.id)
+                    }
                 }
                 if let turn = thread.turns.last, turn.status != .inProgress, let r = turn.result {
                     TurnFooter(result: r, status: turn.status)

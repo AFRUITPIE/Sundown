@@ -2,7 +2,11 @@ import SwiftUI
 import TetherKit
 import TetherProtocol
 
-/// Collapsible card for a tool call, with kind-specific rendering.
+/// One quiet transcript line for a tool call: a small icon, a plain-text description, and a
+/// disclosure chevron that expands to the same kind-specific detail as always — no fill, no
+/// border, no bold title. Color only shows up when the call needs attention (failed, denied,
+/// or still running); a finished call is just secondary/tertiary text, same as everything else
+/// in the transcript that isn't asking for a reaction.
 struct ToolCallView: View {
     let call: Item.ToolCall
     let thread: ThreadModel
@@ -19,20 +23,21 @@ struct ToolCallView: View {
             }
             .buttonStyle(.plain)
             if expanded || alwaysShowBody {
-                Divider().padding(.vertical, 6)
-                detail.frame(maxWidth: .infinity, alignment: .leading)
+                detail
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(.fill.quinary, in: .rect(cornerRadius: 8))
+                    .padding(.top, 6)
+                    .padding(.leading, 24)
             }
         }
-        .padding(10)
-        .background(.fill.quinary, in: .rect(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(borderColor.opacity(0.3)))
     }
 
     private var alwaysShowBody: Bool {
         call.kind == .todoWrite || (call.kind == .subagent && call.status == .running)
     }
 
-    private var borderColor: Color {
+    private var accentColor: Color {
         switch call.status {
         case .failed: return .red
         case .denied: return .orange
@@ -43,14 +48,16 @@ struct ToolCallView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: symbol).foregroundStyle(.secondary).frame(width: 16)
-            Text(title).fontWeight(.medium)
-            Text(subtitle).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            Image(systemName: symbol).foregroundStyle(accentColor).frame(width: 16)
+            Text(title).foregroundStyle(.secondary)
+            if !subtitle.isEmpty {
+                Text(subtitle).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+            }
             Spacer(minLength: 8)
             if let s = call.elapsedSeconds, call.status == .running {
                 Text(Format.duration(s)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
-            statusIcon
+            statusGlyph
             Image(systemName: "chevron.right")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -59,13 +66,14 @@ struct ToolCallView: View {
         .font(.callout)
     }
 
-    @ViewBuilder private var statusIcon: some View {
+    /// Nothing for a completed call (no checkmark shouting at you) — a glyph appears only when
+    /// there's something to notice.
+    @ViewBuilder private var statusGlyph: some View {
         switch call.status {
         case .pending, .running: ProgressView().controlSize(.small)
-        case .completed: Image(systemName: "checkmark").foregroundStyle(.green)
-        case .failed: Image(systemName: "xmark").foregroundStyle(.red)
-        case .denied: Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
-        case .interrupted: Image(systemName: "stop.fill").foregroundStyle(.secondary)
+        case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).font(.caption)
+        case .denied: Image(systemName: "hand.raised.fill").foregroundStyle(.orange).font(.caption)
+        case .interrupted: Image(systemName: "stop.fill").foregroundStyle(.tertiary).font(.caption2)
         default: EmptyView()
         }
     }
@@ -94,10 +102,12 @@ struct ToolCallView: View {
 
     private var title: String {
         switch call.kind {
-        case .bash: return "Bash"
+        case .bash: return "Ran a command"
         case .fileRead: return "Read"
         case .fileWrite: return "Write"
         case .fileEdit: return "Edit"
+        case .grep, .glob: return "Searched for"
+        case .webSearch: return "Searched the web for"
         case .subagent: return input.string("subagent_type").map { "Agent · \($0)" } ?? "Agent"
         case .mcp:
             let parts = call.name.split(separator: "_", omittingEmptySubsequences: true)
@@ -113,10 +123,9 @@ struct ToolCallView: View {
         case .bash: return input.string("description") ?? input.string("command") ?? ""
         case .fileRead, .fileWrite, .fileEdit, .notebookEdit:
             return (input.string("file_path") ?? input.string("notebook_path") ?? "").abbreviatingHome
-        case .grep: return input.string("pattern") ?? ""
-        case .glob: return input.string("pattern") ?? ""
+        case .grep, .glob: return input.string("pattern").map { "\"\($0)\"" } ?? ""
         case .webFetch: return input.string("url") ?? ""
-        case .webSearch: return input.string("query") ?? ""
+        case .webSearch: return input.string("query").map { "\"\($0)\"" } ?? ""
         case .subagent: return input.string("description") ?? ""
         case .skill: return input.string("skill") ?? input.string("command") ?? ""
         default: return ""
@@ -173,6 +182,49 @@ struct ToolCallView: View {
     @ViewBuilder private var output: some View {
         if let text = call.outputText, !text.isEmpty {
             CodeBlock(code: text, language: call.isError == true ? "error" : "output", lineLimit: 14)
+        }
+    }
+}
+
+/// A folded run of consecutive, unremarkable finished tool calls (see `foldTranscriptRows`),
+/// shown as one quiet "Used N tools" line. Expanding it reveals the individual calls, each
+/// still its own `ToolCallView` — expanding one of those shows that call's detail exactly as
+/// it would if it weren't part of a group.
+struct ToolCallGroupView: View {
+    let calls: [Item.ToolCall]
+    let thread: ThreadModel
+    @State private var expanded: Bool
+
+    init(calls: [Item.ToolCall], thread: ThreadModel, initiallyExpanded: Bool = false) {
+        self.calls = calls
+        self.thread = thread
+        self._expanded = State(initialValue: initiallyExpanded)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "square.stack").foregroundStyle(.secondary).frame(width: 16)
+                    Text("Used \(calls.count) tools").foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .font(.callout)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
+                }
+                .padding(.leading, 24)
+            }
         }
     }
 }
@@ -331,6 +383,49 @@ private func sampleSubagentCall(in thread: ThreadModel) -> Item.ToolCall {
                                 outputText: "Error: SSH connection to deploy-01 timed out", isError: true, secondsAgo: 30), thread: .sampleIdleChat())
         .padding(20)
         .frame(width: 560)
+}
+
+// #Preview bodies can't have `let`/control flow either, so this builds the sample run of
+// finished calls the two group previews below both use.
+@MainActor
+private func sampleFinishedRun() -> [Item.ToolCall] {
+    [
+        .sample(name: "Read", kind: .fileRead, input: ["file_path": "/Users/hayden/Code/tether-app/TetherKit/Sources/TetherUI/ThreadView.swift"],
+                status: .completed, secondsAgo: 40),
+        .sample(name: "Grep", kind: .grep, input: ["pattern": "TranscriptView"], status: .completed,
+                outputText: "ThreadView.swift:74:    ForEach(foldTranscriptRows(thread.topLevelItems), id: \\.id) { row in", secondsAgo: 36),
+        .sample(name: "Edit", kind: .fileEdit, input: [
+            "file_path": "/Users/hayden/Code/tether-app/TetherKit/Sources/TetherUI/ThreadView.swift",
+            "old_string": "ForEach(thread.topLevelItems, id: \\.id) { item in",
+            "new_string": "ForEach(foldTranscriptRows(thread.topLevelItems), id: \\.id) { row in",
+        ], status: .completed, secondsAgo: 30),
+        .sample(name: "Bash", kind: .bash, input: ["command": "swift build", "description": "Build TetherKit"],
+                status: .completed, outputText: "Build complete!", secondsAgo: 24),
+        .sample(name: "Read", kind: .fileRead, input: ["file_path": "/Users/hayden/Code/tether-app/TetherKit/Sources/TetherUI/ItemViews.swift"],
+                status: .completed, secondsAgo: 18),
+    ]
+}
+
+#Preview("Tool group (collapsed)") {
+    ToolCallGroupView(calls: sampleFinishedRun(), thread: .sampleIdleChat())
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("Tool group (expanded)") {
+    ToolCallGroupView(calls: sampleFinishedRun(), thread: .sampleIdleChat(), initiallyExpanded: true)
+        .padding(20)
+        .frame(width: 560)
+}
+
+#Preview("Running call beside a finished group") {
+    VStack(alignment: .leading, spacing: 10) {
+        ToolCallGroupView(calls: sampleFinishedRun(), thread: .sampleIdleChat())
+        ToolCallView(call: .sample(name: "Bash", kind: .bash, input: ["command": "swift test", "description": "Run the test suite"],
+                                    status: .running, elapsedSeconds: 4, secondsAgo: 4), thread: .sampleIdleChat())
+    }
+    .padding(20)
+    .frame(width: 560)
 }
 
 #Preview("Todo list (standalone)") {

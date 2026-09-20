@@ -13,7 +13,7 @@ struct ItemView: View {
         case .agentMessage(let m):
             MarkdownView(text: m.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
-        case .reasoning(let r): ReasoningView(reasoning: r)
+        case .reasoning(let r): ReasoningView(reasoning: r, thread: thread)
         case .toolCall(let t): ToolCallView(call: t, thread: thread)
         case .compaction(let c):
             HStack {
@@ -80,15 +80,49 @@ struct UserMessageView: View {
     }
 }
 
+/// Collapsed by default — a quiet "Thought" (or "Thought for 12s") line — so the model's
+/// internal monologue doesn't compete with its actual reply. While the item is still streaming
+/// (it's the last item in the thread and the thread is running) it stays expanded so the text
+/// is visible as it arrives, then collapses once something follows it. A person who explicitly
+/// toggles it overrides that for the rest of this item's life.
 struct ReasoningView: View {
     let reasoning: Item.Reasoning
-    @State private var expanded = false
+    let thread: ThreadModel
+    @State private var userExpanded: Bool?
+
+    init(reasoning: Item.Reasoning, thread: ThreadModel, initiallyExpanded: Bool? = nil) {
+        self.reasoning = reasoning
+        self.thread = thread
+        self._userExpanded = State(initialValue: initiallyExpanded)
+    }
+
+    private var isStreaming: Bool {
+        thread.isRunning && thread.items.last?.id == reasoning.id
+    }
+
+    private var isExpanded: Bool { userExpanded ?? isStreaming }
+
+    /// There's no explicit duration on the wire, so this is the closest proxy to "how long did
+    /// it think": the gap between this item starting and whatever came right after it (the next
+    /// item, or the turn finishing if this was the turn's last item).
+    private var elapsedSeconds: Double? {
+        guard !isStreaming, let index = thread.items.firstIndex(where: { $0.id == reasoning.id }) else { return nil }
+        let stopMs = index + 1 < thread.items.count
+            ? thread.items[index + 1].createdAt
+            : thread.turns.first { $0.id == reasoning.turnId }?.completedAt
+        guard let stopMs, stopMs > reasoning.createdAt else { return nil }
+        return (stopMs - reasoning.createdAt) / 1000
+    }
+
+    private var label: String {
+        elapsedSeconds.map { "Thought for \(Format.duration($0))" } ?? "Thought"
+    }
 
     var body: some View {
         if reasoning.redacted == true && reasoning.text.isEmpty {
             Label("Thought", systemImage: "brain").font(.caption).foregroundStyle(.tertiary)
         } else {
-            DisclosureGroup(isExpanded: $expanded) {
+            DisclosureGroup(isExpanded: Binding(get: { isExpanded }, set: { userExpanded = $0 })) {
                 Text(reasoning.text)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -96,11 +130,9 @@ struct ReasoningView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 4)
             } label: {
-                Label(expanded ? "Thinking" : (reasoning.text.split(separator: "\n").first.map(String.init) ?? "Thinking"),
-                      systemImage: "brain")
+                Text(label)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
         }
     }
@@ -157,12 +189,51 @@ struct NoticeView: View {
     .frame(width: 640, height: 160)
 }
 
+// #Preview bodies can't have `let`/control flow, so this builds a thread where a reasoning
+// item is followed by a reply a few seconds later — enough for `ReasoningView` to derive
+// "Thought for Ns" — and pulls the `Item.Reasoning` back out for the previews below.
+@MainActor
+private func sampleFinishedReasoning() -> (Item.Reasoning, ThreadModel) {
+    let thread = ThreadModel.sample(status: .idle, items: [
+        .sampleUserMessage("Can you check how ThreadModel tracks turns before answering?", secondsAgo: 20),
+        .sampleReasoning("Let me check ThreadModel.swift before answering, so this matches what's actually there.", secondsAgo: 14),
+        .sampleAgentMessage("It keeps two parallel timelines: items and turns.", secondsAgo: 2),
+    ])
+    guard case .reasoning(let r) = thread.items[1] else { fatalError("expected the reasoning item") }
+    return (r, thread)
+}
+
 #Preview("Reasoning (collapsed)") {
+    let (reasoning, thread) = sampleFinishedReasoning()
     ScrollView {
-        ItemView(item: .sampleReasoning("Let me check ThreadModel.swift before answering, so this matches what's actually there.", secondsAgo: 5), thread: .sampleIdleChat())
+        ReasoningView(reasoning: reasoning, thread: thread)
             .padding(28)
     }
     .frame(width: 640, height: 120)
+}
+
+#Preview("Reasoning (expanded)") {
+    let (reasoning, thread) = sampleFinishedReasoning()
+    ScrollView {
+        ReasoningView(reasoning: reasoning, thread: thread, initiallyExpanded: true)
+            .padding(28)
+    }
+    .frame(width: 640, height: 160)
+}
+
+#Preview("Reasoning (streaming)") {
+    // The thread is still running and this is the last item — no duration yet, and it stays
+    // expanded on its own (no user toggle) so the text is visible as it arrives.
+    let thread = ThreadModel.sample(status: .running, items: [
+        .sampleUserMessage("Can you check how ThreadModel tracks turns before answering?", secondsAgo: 6),
+        .sampleReasoning("Let me check ThreadModel.swift before answering, so this matches what's actually there.", secondsAgo: 2),
+    ])
+    guard case .reasoning(let reasoning) = thread.items.last else { fatalError("expected the reasoning item") }
+    return ScrollView {
+        ReasoningView(reasoning: reasoning, thread: thread)
+            .padding(28)
+    }
+    .frame(width: 640, height: 160)
 }
 
 #Preview("Notice") {
