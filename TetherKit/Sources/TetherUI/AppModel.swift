@@ -105,3 +105,18 @@ public final class AppModel {
         if let data = try? JSONEncoder().encode(s) { defaults.set(data, forKey: Self.hostsKey) }
     }
 }
+
+#if DEBUG
+extension AppModel {
+    /// Replaces `hosts`/`connections` with pre-seeded ones for `#Preview`s, bypassing persistence
+    /// and the real `HostConnection(host:)` this init would otherwise create. Never touches the
+    /// network.
+    public static func sample(connections: [HostConnection] = [.sample()]) -> AppModel {
+        // An ephemeral suite so previews never read or write the app's real saved hosts.
+        let app = AppModel(defaults: UserDefaults(suiteName: "tether.preview.\(UUID().uuidString)") ?? .standard)
+        app.hosts = connections.map(\.host)
+        app.connections = Dictionary(uniqueKeysWithValues: connections.map { ($0.id, $0) })
+        return app
+    }
+}
+#endif

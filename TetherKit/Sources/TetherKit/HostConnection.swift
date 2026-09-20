@@ -396,3 +396,29 @@ final class OnceFlag: @unchecked Sendable {
     private var done = false
     func claim() -> Bool { lock.withLock { if done { return false }; done = true; return true } }
 }
+
+#if DEBUG
+extension HostConnection {
+    /// Seeds this connection's in-memory state for `#Preview`s. Never touches the network, spawns
+    /// a process, or calls a real daemon — the `private(set)` properties above can only be written
+    /// from within this file, so `PreviewSupport.swift` calls through to this instead of duplicating them.
+    public func previewSeed(
+        state: State = .connected,
+        client: RPCClient? = nil,
+        serverInfo: InitializeResult? = nil,
+        account: AccountInfo? = nil,
+        models: [ModelInfo] = [],
+        projects: [ProjectListResult.Project] = [],
+        chats: [ThreadModel] = []
+    ) {
+        self.state = state
+        self.client = client
+        self.serverInfo = serverInfo
+        self.account = account
+        self.models = models
+        self.projects = projects
+        self.chats = chats
+        for chat in chats { threads[chat.id] = chat }
+    }
+}
+#endif
