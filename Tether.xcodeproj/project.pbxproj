@@ -128,7 +128,7 @@
 			);
 			name = "Bundle Tether server binaries";
 			shellPath = /bin/sh;
-			shellScript = "# Copies the standalone tether server builds (tether-server: mise run compile) into the app.\nDIST=\"$SRCROOT/../tether-server/dist\"\nDEST=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/servers\"\nmkdir -p \"$DEST\"\nif ls \"$DIST\"/tether-*-darwin-* >/dev/null 2>&1; then\n  cp -f \"$DIST\"/tether-*-darwin-* \"$DIST\"/tether-*-linux-* \"$DEST\"/ 2>/dev/null || true\nelse\n  echo \"warning: no server binaries in $DIST (run: cd ../tether-server && mise run compile)\"\nfi\n";
+			shellScript = "\"$SRCROOT/Scripts/fetch-server-binaries.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

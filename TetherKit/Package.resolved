@@ -1,0 +1,15 @@
+{
+  "originHash" : "6b5f8e9eb9733155574f527f328ebafdc8b5d77541fe0efbf6ee20615ee1ead4",
+  "pins" : [
+    {
+      "identity" : "tether-server",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/AFRUITPIE/tether-server.git",
+      "state" : {
+        "revision" : "08b3b469287a602e008cfe1b870213368f7dd74c",
+        "version" : "0.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}
