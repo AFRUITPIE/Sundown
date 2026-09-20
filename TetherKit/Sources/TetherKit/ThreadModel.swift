@@ -23,6 +23,10 @@ public final class ThreadModel: Identifiable {
     public private(set) var pending: [PendingRequest] = []
     public private(set) var lastSeq = 0
     public private(set) var historyLoaded = false
+    /// Whether older items exist before the first one held. The transcript is loaded from its end.
+    public private(set) var hasMoreHistory = false
+    /// True while an older page is being fetched, so the view asks for one page at a time.
+    public internal(set) var loadingOlder = false
     public private(set) var promptSuggestion: String?
     public private(set) var tasks: [String: TaskEventNotification] = [:]
     public private(set) var authStatus: ThreadAuthStatusNotification?
@@ -94,13 +98,32 @@ public final class ThreadModel: Identifiable {
     }
 
     /// Replace transcript with server history (thread/read or thread/resume includeHistory).
-    func loadHistory(items newItems: [Item], turns newTurns: [Turn], seq: Int?) {
+    func loadHistory(items newItems: [Item], turns newTurns: [Turn], seq: Int?, hasMore: Bool = false) {
         if let seq { lastSeq = seq }
         items = newItems
         turns = newTurns
+        reindex()
+        hasMoreHistory = hasMore
+        historyLoaded = true
+    }
+
+    /// Add an older page to the front. The transcript is read from its end, so everything before
+    /// what is already held arrives this way — a session run for days has far more history than
+    /// is worth holding, let alone laying out, before anyone asks for it.
+    func prependHistory(items older: [Item], hasMore: Bool) {
+        hasMoreHistory = hasMore
+        guard !older.isEmpty else { return }
+        // Defensive: a page that overlaps what is held would otherwise duplicate rows.
+        let known = Set(items.map(\.id))
+        let fresh = older.filter { !known.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+        items.insert(contentsOf: fresh, at: 0)
+        reindex()
+    }
+
+    private func reindex() {
         index = Dictionary(uniqueKeysWithValues: items.enumerated().map { ($1.id, $0) })
         itemsVersion &+= 1
-        historyLoaded = true
     }
 
     func setLastSeq(_ s: Int) {

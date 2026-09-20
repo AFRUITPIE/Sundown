@@ -307,12 +307,18 @@ public final class HostConnection: Identifiable {
         }
     }
 
+    /// How much of a transcript to open with, and how much to add per page after that. A session
+    /// run for days is tens of thousands of items; the end of it is what anyone opens it to see.
+    public static let initialHistoryLimit = 150
+    public static let olderHistoryPageSize = 100
+
     private func loadHistory(_ model: ThreadModel, force: Bool) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         if model.historyLoaded && !force { return }
-        let r = try await client.call(Methods.ThreadRead.self, .init(threadId: model.id, cwd: model.cwd))
+        let r = try await client.call(Methods.ThreadRead.self, .init(
+            threadId: model.id, cwd: model.cwd, limit: Self.initialHistoryLimit))
         if let s = r.summary { model.setSummary(s) }
-        model.loadHistory(items: r.items, turns: r.turns, seq: r.historySeq)
+        model.loadHistory(items: r.items, turns: r.turns, seq: r.historySeq, hasMore: r.hasMore ?? false)
         if let seq = r.historySeq {
             // Loaded in the daemon: stream everything after the snapshot.
             let sub = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: seq))
@@ -398,6 +404,22 @@ public final class HostConnection: Identifiable {
     /// Throws rather than returning nil on failure: the daemon only answers this for a thread it
     /// currently has loaded, so an archived chat fails with `threadNotLoaded` every time. Swallowing
     /// that left the inspector spinning forever with nothing to explain it.
+    /// Fetch the page of items before the ones already held. One page at a time: the view asks
+    /// whenever the top comes into range, which it does repeatedly while a page is arriving.
+    public func loadOlderHistory(_ model: ThreadModel) async {
+        guard let client, model.hasMoreHistory, !model.loadingOlder else { return }
+        guard let oldest = model.items.first?.id else { return }
+        model.loadingOlder = true
+        defer { model.loadingOlder = false }
+        do {
+            let r = try await client.call(Methods.ThreadRead.self, .init(
+                threadId: model.id, cwd: model.cwd, limit: Self.olderHistoryPageSize, before: oldest))
+            model.prependHistory(items: r.items, hasMore: r.hasMore ?? false)
+        } catch {
+            appendLog("Loading older history for \(model.id) failed: \(error.localizedDescription)")
+        }
+    }
+
     public func contextUsage(_ model: ThreadModel) async throws -> JSONValue? {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         return try await client.call(Methods.ThreadContextUsage.self, .init(threadId: model.id, detail: .summary)).usage

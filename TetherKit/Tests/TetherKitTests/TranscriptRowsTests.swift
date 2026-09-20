@@ -85,3 +85,43 @@ struct TranscriptRowsTests {
         #expect(calls.map(\.id) == ["t1", "t2"])
     }
 }
+
+@MainActor
+@Suite
+struct PagedHistoryTests {
+    private func msg(_ id: String) -> Item { .agentMessage(.init(id: id, createdAt: 0, text: id)) }
+
+    @Test func prependPutsOlderItemsInFront() {
+        let thread = ThreadModel(id: "t")
+        thread.loadHistory(items: [msg("c"), msg("d")], turns: [], seq: nil, hasMore: true)
+        #expect(thread.hasMoreHistory)
+        thread.prependHistory(items: [msg("a"), msg("b")], hasMore: false)
+        #expect(thread.items.map(\.id) == ["a", "b", "c", "d"])
+        #expect(!thread.hasMoreHistory)
+    }
+
+    /// The index backs `itemIndex(of:)` and delta application, so it has to survive a prepend.
+    @Test func prependReindexes() {
+        let thread = ThreadModel(id: "t")
+        thread.loadHistory(items: [msg("c")], turns: [], seq: nil, hasMore: true)
+        thread.prependHistory(items: [msg("a"), msg("b")], hasMore: false)
+        #expect(thread.itemIndex(of: "a") == 0)
+        #expect(thread.itemIndex(of: "c") == 2)
+    }
+
+    /// A page that overlaps what is held would otherwise show the same rows twice.
+    @Test func prependDropsItemsAlreadyHeld() {
+        let thread = ThreadModel(id: "t")
+        thread.loadHistory(items: [msg("b"), msg("c")], turns: [], seq: nil, hasMore: true)
+        thread.prependHistory(items: [msg("a"), msg("b")], hasMore: false)
+        #expect(thread.items.map(\.id) == ["a", "b", "c"])
+    }
+
+    @Test func emptyPageOnlyUpdatesTheFlag() {
+        let thread = ThreadModel(id: "t")
+        thread.loadHistory(items: [msg("a")], turns: [], seq: nil, hasMore: true)
+        thread.prependHistory(items: [], hasMore: false)
+        #expect(thread.items.map(\.id) == ["a"])
+        #expect(!thread.hasMoreHistory)
+    }
+}

@@ -60,11 +60,28 @@ struct TranscriptView: View {
     @Environment(\.readingWidth) private var readingWidth
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
+    /// Paging older history only starts once the transcript has settled at its end. Before that
+    /// the top of a short page is on screen, and asking for older items there would walk the
+    /// whole session backwards without anyone having scrolled.
+    @State private var readyForPaging = false
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
                 if !thread.historyLoaded { unloadedState }
+                if thread.historyLoaded, thread.hasMoreHistory {
+                    // Asking for the previous page when the top of this one comes into view, the
+                    // mirror of the anchor at the end. `loadOlderHistory` takes one page at a
+                    // time, so repeated calls while a page is in flight are harmless.
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .onScrollVisibilityChange(threshold: 0.01) { visible in
+                            guard visible, readyForPaging else { return }
+                            Task { await connection?.loadOlderHistory(thread) }
+                        }
+                }
                 ForEach(thread.rows, id: \.id) { row in
                     switch row {
                     case .item(let item): ItemView(item: item, thread: thread).id(item.id)
@@ -111,7 +128,13 @@ struct TranscriptView: View {
         .onChange(of: thread.historyLoaded) {
             guard thread.historyLoaded else { return }
             atBottom = true
+            readyForPaging = false
             position.scrollTo(edge: .bottom)
+        }
+        // The first content-size change after loading is the transcript settling at its end;
+        // paging older history is only sensible after that.
+        .onScrollGeometryChange(for: Bool.self) { $0.contentSize.height > 0 } action: { _, hasContent in
+            if hasContent, thread.historyLoaded { readyForPaging = true }
         }
         .overlay(alignment: .bottom) {
             if !atBottom {
