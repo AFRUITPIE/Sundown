@@ -4,13 +4,17 @@ import TetherProtocol
 
 public struct RootView: View {
     @Bindable var app: AppModel
+    /// Seeded rather than fixed so a preview can render the window with the sidebar collapsed —
+    /// which is the only way to see that New Chat goes away with it.
+    @State private var columns: NavigationSplitViewVisibility
 
-    public init(app: AppModel) {
+    public init(app: AppModel, columnVisibility: NavigationSplitViewVisibility = .automatic) {
         self.app = app
+        self._columns = State(initialValue: columnVisibility)
     }
 
     public var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             SidebarView(app: app)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
@@ -74,25 +78,14 @@ public struct RootView: View {
     }
 }
 
-/// One stable toolbar for the whole window: New Chat and the inspector toggle never move, and
-/// the session controls (model, effort, permissions) switch between a live thread's state and
-/// the New Chat screen's draft state depending on `app.selection` — matching Xcode's chrome,
-/// where the toolbar itself never changes shape as the selection changes.
+/// What is left in the window toolbar once each control sits with the thing it acts on: the
+/// inspector toggle, beside the system's own sidebar toggle and the window title. New Chat moved
+/// into the sidebar it creates rows in, and the session controls into the chat they configure.
+/// (HIG, Toolbars: "Choose items deliberately to avoid overcrowding.")
 struct AppToolbar: ToolbarContent {
     @Bindable var app: AppModel
 
     var body: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Button("New Chat", systemImage: "square.and.pencil") { app.newChat() }
-                .help("New Chat (⌘N)")
-        }
-        ToolbarItem {
-            // Icon-only: a toolbar item gets its ideal (unconstrained) width from SwiftUI before
-            // NSToolbar decides what fits, so staying compact up front is what keeps this from
-            // pushing the inspector button into overflow.
-            HStack(spacing: 4) { sessionControls }
-                .labelStyle(.iconOnly)
-        }
         ToolbarItem(placement: .primaryAction) {
             // A plain Button (not a Toggle) so the icon never lights up while open — Xcode's own
             // right-sidebar button behaves the same way.
@@ -102,20 +95,6 @@ struct AppToolbar: ToolbarContent {
         }
     }
 
-    @ViewBuilder private var sessionControls: some View {
-        switch app.selection {
-        case .thread:
-            if let thread = app.selectedThread, let c = app.selectedConnection {
-                HStack(spacing: 4) { ThreadControls(thread: thread, connection: c) }
-            }
-        case .newChat(let h):
-            if let c = app.connection(h) {
-                HStack(spacing: 4) { NewChatControls(app: app, connection: c) }
-            }
-        case nil:
-            EmptyView()
-        }
-    }
 }
 
 /// Chats per host, most recent first. Two levels only: host section → chat.
@@ -133,6 +112,29 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .searchable(text: $search, placement: .sidebar, prompt: "Search")
+        // Attached to the sidebar's own content, so it belongs to that column and goes away with
+        // it when the sidebar collapses, instead of floating in the window-wide toolbar.
+        // In the sidebar's own content, not its toolbar: a `.toolbar` declared on a column is
+        // still hoisted into the window-wide titlebar, so it stayed put when the sidebar
+        // collapsed. A bottom bar belongs to the column and goes away with it — the same place
+        // Reminders puts New List.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                Divider()
+                Button {
+                    app.newChat()
+                } label: {
+                    Label("New Chat", systemImage: "square.and.pencil")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .help("New Chat (⌘N)")
+            }
+            .background(.bar)
+        }
     }
 }
 
@@ -283,9 +285,16 @@ struct NewChatView: View {
         .safeAreaBar(edge: .bottom) {
             if let connection {
                 GlassEffectContainer(spacing: 10) {
-                    Composer(connection: connection, cwd: directory, placeholder: directory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…", submit: { input in
-                        await start(connection, input)
-                    })
+                    VStack(spacing: 10) {
+                        HStack(spacing: 6) {
+                            NewChatControls(app: app, connection: connection)
+                            Spacer(minLength: 0)
+                        }
+                        .controlSize(.small)
+                        Composer(connection: connection, cwd: directory, placeholder: directory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…", submit: { input in
+                            await start(connection, input)
+                        })
+                    }
                 }
                 .padding(.horizontal, Layout.gutter)
                 .padding(.bottom, 14)
@@ -425,6 +434,11 @@ private func rootPreviewApp() -> AppModel {
     let app = AppModel.sample()
     app.newChat()
     return RootView(app: app)
+        .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (sidebar collapsed)") {
+    RootView(app: rootPreviewApp(), columnVisibility: .detailOnly)
         .frame(width: 1100, height: 760)
 }
 

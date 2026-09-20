@@ -28,6 +28,15 @@ struct BottomBar: View {
         GlassEffectContainer(spacing: 10) {
             VStack(spacing: 10) {
                 StatusStrip(thread: thread)
+                // The chat's own settings, in the chat rather than the window toolbar: they act on
+                // this conversation, and on what the composer beneath them is about to send.
+                if thread.pending.isEmpty {
+                    HStack(spacing: 6) {
+                        ThreadControls(thread: thread, connection: connection)
+                        Spacer(minLength: 0)
+                    }
+                    .controlSize(.small)
+                }
                 if let p = thread.pending.first {
                     PendingRequestView(pending: p, thread: thread)
                         .id(p.id)
@@ -281,32 +290,29 @@ struct ThreadControls: View {
     }
 }
 
-/// Toolbar menus: a Menu whose content is an inline Picker gives native checkmarks and a clear label.
+// These three choose one value from a flat set of mutually exclusive options and show the current
+// one on the button, which is a pop-up button — not the pull-down button a bare `Menu` produces.
+// (HIG, Pop-up buttons: "Use a pop-up button to present a flat list of mutually exclusive options
+// or states"; use a pull-down button instead to "offer a list of actions".) `.menu` is the picker
+// style that renders as one. The help text is the introductory label HIG asks for, so the options
+// are predictable without opening the menu.
 struct ModelPicker: View {
     @Binding var selection: String?
     let models: [ModelInfo]
 
-    private var title: String {
-        guard let s = selection else { return "Default" }
-        return models.first { $0.value == s || $0.resolvedModel == s }?.displayName ?? s
-    }
-
     var body: some View {
-        Menu {
-            Picker("Model", selection: $selection) {
-                Text("Default").tag(String?.none)
-                ForEach(models, id: \.value) { m in
-                    Text(m.displayName).tag(Optional(m.value))
-                }
-                // Keep a custom or Bedrock model ID selectable even if the CLI does not list it.
-                if let s = selection, !models.contains(where: { $0.value == s || $0.resolvedModel == s }) {
-                    Text(s).tag(Optional(s))
-                }
+        Picker("Model", selection: $selection) {
+            Text("Default").tag(String?.none)
+            ForEach(models, id: \.value) { m in
+                Text(m.displayName).tag(Optional(m.value))
             }
-            .pickerStyle(.inline)
-        } label: {
-            Label(title, systemImage: "cpu")
+            // Keep a custom or Bedrock model ID selectable even if the CLI does not list it.
+            if let s = selection, !models.contains(where: { $0.value == s || $0.resolvedModel == s }) {
+                Text(s).tag(Optional(s))
+            }
         }
+        .pickerStyle(.menu)
+        .labelsHidden()
         .help("Model")
     }
 }
@@ -316,15 +322,12 @@ struct EffortPicker: View {
     let levels: [EffortLevel]
 
     var body: some View {
-        Menu {
-            Picker("Effort", selection: $selection) {
-                Text("Default").tag(EffortLevel?.none)
-                ForEach(levels, id: \.self) { Text($0.rawValue.capitalized).tag(Optional($0)) }
-            }
-            .pickerStyle(.inline)
-        } label: {
-            Label(selection?.rawValue.capitalized ?? "Effort", systemImage: "gauge.with.dots.needle.50percent")
+        Picker("Effort", selection: $selection) {
+            Text("Default effort").tag(EffortLevel?.none)
+            ForEach(levels, id: \.self) { Text($0.rawValue.capitalized).tag(Optional($0)) }
         }
+        .pickerStyle(.menu)
+        .labelsHidden()
         .help("Reasoning effort")
     }
 }
@@ -333,28 +336,93 @@ struct PermissionModePicker: View {
     @Binding var selection: PermissionMode
 
     var body: some View {
-        Menu {
-            Picker("Permissions", selection: $selection) {
-                ForEach([PermissionMode.default, .acceptEdits, .plan, .auto, .dontAsk, .bypassPermissions], id: \.self) { m in
-                    Label(m.label, systemImage: m.symbol).tag(m)
-                }
+        Picker("Permissions", selection: $selection) {
+            ForEach([PermissionMode.default, .acceptEdits, .plan, .auto, .dontAsk, .bypassPermissions], id: \.self) { m in
+                Label(m.label, systemImage: m.symbol).tag(m)
             }
-            .pickerStyle(.inline)
-        } label: {
-            Label(selection.label, systemImage: selection.symbol)
         }
-        .help("Permission mode: \(selection.label)")
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .help("Permission mode")
     }
 }
 
-/// Standard trailing inspector: session settings, context window, cost, MCP and tasks.
+/// Trailing inspector, split into three panes. A segmented control switches them: it's one click
+/// per pane and shows every choice at once, which HIG prefers over a pop-up button for switching
+/// panes, and a tab view's enclosure would be redundant inside a column that is already enclosed.
+/// Three segments, equal width, text only — no mixing text and icons in one control.
 struct ThreadInspector: View {
     let thread: ThreadModel
     let connection: HostConnection
+    @State private var pane: Pane
     @State private var usage: Loaded<JSONValue?> = .loading
     @State private var customModel = ""
 
+    init(thread: ThreadModel, connection: HostConnection, pane: Pane = .tasks) {
+        self.thread = thread
+        self.connection = connection
+        self._pane = State(initialValue: pane)
+    }
+
+    enum Pane: String, CaseIterable, Identifiable {
+        case tasks = "Tasks"
+        case session = "Session"
+        case mcp = "MCP"
+        var id: Self { self }
+    }
+
     var body: some View {
+        VStack(spacing: 0) {
+            Picker("Inspector pane", selection: $pane) {
+                ForEach(Pane.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+            Group {
+                switch pane {
+                case .tasks: tasksPane
+                case .session: sessionPane
+                case .mcp: mcpPane
+                }
+            }
+            .formStyle(.grouped)
+            // Let the inspector's own material show through: a grouped Form paints its background
+            // below the titlebar area, which reads as a header strip sitting on top of the column.
+            .scrollContentBackground(.hidden)
+            // Values truncate instead of widening the column (a min width > max width loops the split view).
+            .lineLimit(1)
+        }
+        // Keyed on the thread too: two chats with the same turn count would otherwise leave the
+        // task un-rerun, and the inspector would keep showing the previous chat's context.
+        .task(id: Key(threadId: thread.id, turns: thread.turns.count)) { await refresh() }
+    }
+
+    private struct Key: Equatable { let threadId: String; let turns: Int }
+
+    // MARK: panes
+
+    private var tasks: [TaskEventNotification] { thread.tasks.values.sorted { $0.seq < $1.seq } }
+
+    @ViewBuilder private var tasksPane: some View {
+        if tasks.isEmpty {
+            InspectorEmptyState("No Tasks", symbol: "person.2",
+                                detail: "Subagents and workflows this chat starts show up here while they run.")
+        } else {
+            Form {
+                Section {
+                    ForEach(tasks, id: \.taskId) { t in
+                        TaskRow(task: t)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var sessionPane: some View {
         Form {
             Section("Context") {
                 switch usage {
@@ -379,13 +447,22 @@ struct ThreadInspector: View {
                     LabeledContent("Duration", value: Format.duration(last.durationMs / 1000))
                 }
             }
-            Section("Model") {
+            Section {
                 LabeledContent("Current") { Text(thread.info?.model ?? "Default").truncationMode(.middle) }
-                TextField("Custom model ID", text: $customModel, prompt: Text("us.anthropic.claude-…"))
+                // A bordered field, not a bare one: inside a grouped Form an unbordered TextField
+                // showing only its prompt is indistinguishable from a LabeledContent value, so an
+                // empty field read as though a custom model were already set.
+                TextField("Custom ID", text: $customModel, prompt: Text("us.anthropic.claude-…"))
+                    .textFieldStyle(.roundedBorder)
                     .onSubmit {
                         guard !customModel.isEmpty else { return }
                         Task { await connection.setModel(thread, customModel) }
                     }
+            } header: {
+                Text("Model")
+            } footer: {
+                Text("Set a model the CLI doesn't list, such as a Bedrock ID.")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(nil)
             }
             if let info = thread.info {
                 Section("Session") {
@@ -395,34 +472,48 @@ struct ThreadInspector: View {
                     if let o = info.outputStyle { LabeledContent("Output style", value: o) }
                     LabeledContent("Thread ID") { Text(info.threadId).textSelection(.enabled).font(.caption.monospaced()).truncationMode(.middle) }
                 }
-                if let servers = info.mcpServers, !servers.isEmpty {
-                    Section("MCP servers") {
-                        ForEach(servers, id: \.name) { s in
-                            LabeledContent(s.name, value: s.status)
+            }
+        }
+    }
+
+    @ViewBuilder private var mcpPane: some View {
+        let servers = thread.info?.mcpServers ?? []
+        if servers.isEmpty {
+            InspectorEmptyState("No MCP Servers", symbol: "puzzlepiece.extension",
+                                detail: thread.info == nil
+                                    ? "Server status arrives once this chat is running."
+                                    : "This chat's Claude Code configuration has no MCP servers.")
+        } else {
+            Form {
+                Section {
+                    ForEach(servers, id: \.name) { s in
+                        LabeledContent(s.name) {
+                            Label(s.status, systemImage: symbol(for: s.status))
+                                .foregroundStyle(tint(for: s.status))
                         }
                     }
                 }
             }
-            if !thread.tasks.isEmpty {
-                Section("Tasks") {
-                    ForEach(thread.tasks.values.sorted { $0.seq < $1.seq }, id: \.taskId) { t in
-                        LabeledContent(t.description ?? t.taskId, value: t.status ?? t.event)
-                    }
-                }
-            }
         }
-        .formStyle(.grouped)
-        // Let the inspector's own material show through: a grouped Form paints its background
-        // below the titlebar area, which reads as a header strip sitting on top of the column.
-        .scrollContentBackground(.hidden)
-        // Values truncate instead of widening the column (a min width > max width loops the split view).
-        .lineLimit(1)
-        // Keyed on the thread too: two chats with the same turn count would otherwise leave the
-        // task un-rerun, and the inspector would keep showing the previous chat's context.
-        .task(id: Key(threadId: thread.id, turns: thread.turns.count)) { await refresh() }
     }
 
-    private struct Key: Equatable { let threadId: String; let turns: Int }
+    /// Status carries a symbol as well as a color, so it doesn't rely on color alone.
+    private func symbol(for status: String) -> String {
+        switch status {
+        case "connected", "ready": return "checkmark.circle.fill"
+        case "connecting", "pending": return "clock"
+        case "failed", "error": return "exclamationmark.triangle.fill"
+        default: return "circle"
+        }
+    }
+
+    private func tint(for status: String) -> Color {
+        switch status {
+        case "connected", "ready": return .green
+        case "failed", "error": return .red
+        default: return .secondary
+        }
+    }
 
     @ViewBuilder private func contextBody(_ u: JSONValue?) -> some View {
         if let u {
@@ -458,6 +549,50 @@ struct ThreadInspector: View {
         } catch {
             usage = .failed(error.localizedDescription)
         }
+    }
+}
+
+/// One subagent or workflow run: what it is, and whether it's still going.
+struct TaskRow: View {
+    let task: TaskEventNotification
+
+    private var isRunning: Bool {
+        let state = task.status ?? task.event
+        return !["completed", "failed", "stopped", "task_completed", "task_failed"].contains(state)
+    }
+
+    var body: some View {
+        LabeledContent {
+            if isRunning {
+                ProgressView().controlSize(.small)
+            } else {
+                Text(task.status ?? task.event).foregroundStyle(.secondary)
+            }
+        } label: {
+            Text(task.description ?? task.taskId).lineLimit(2)
+        }
+    }
+}
+
+/// An inspector pane with nothing in it yet — says which, rather than showing a blank column.
+struct InspectorEmptyState: View {
+    let title: String
+    let symbol: String
+    let detail: String
+
+    init(_ title: String, symbol: String, detail: String) {
+        self.title = title
+        self.symbol = symbol
+        self.detail = detail
+    }
+
+    var body: some View {
+        ContentUnavailableView {
+            Label(title, systemImage: symbol)
+        } description: {
+            Text(detail).lineLimit(nil)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -608,6 +743,58 @@ enum Loaded<Value> {
     PermissionModePicker(selection: .constant(.acceptEdits))
         .padding(20)
         .frame(width: 260)
+}
+
+#Preview("Inspector — Tasks") {
+    NavigationSplitView {
+        Text("Sidebar")
+    } detail: {
+        Text("Detail")
+            .inspector(isPresented: .constant(true)) {
+                ThreadInspector(thread: .sampleWithTasks(), connection: .sample())
+                    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+            }
+    }
+    .frame(width: 900, height: 560)
+}
+
+#Preview("Inspector — Tasks (empty)") {
+    NavigationSplitView {
+        Text("Sidebar")
+    } detail: {
+        Text("Detail")
+            .inspector(isPresented: .constant(true)) {
+                ThreadInspector(thread: .sampleIdleChat(), connection: .sample())
+                    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+            }
+    }
+    .frame(width: 900, height: 560)
+}
+
+#Preview("Inspector — Session") {
+    NavigationSplitView {
+        Text("Sidebar")
+    } detail: {
+        Text("Detail")
+            .inspector(isPresented: .constant(true)) {
+                ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), pane: .session)
+                    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+            }
+    }
+    .frame(width: 900, height: 700)
+}
+
+#Preview("Inspector — MCP") {
+    NavigationSplitView {
+        Text("Sidebar")
+    } detail: {
+        Text("Detail")
+            .inspector(isPresented: .constant(true)) {
+                ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), pane: .mcp)
+                    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+            }
+    }
+    .frame(width: 900, height: 480)
 }
 
 #Preview("ThreadInspector") {

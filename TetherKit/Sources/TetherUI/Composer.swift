@@ -61,14 +61,27 @@ struct Composer: View {
     private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty }
 
     var body: some View {
+        // The suggestion sits above the field rather than inside it: it's an offer to act, not
+        // part of what you're writing, and putting it in the glass made it read as entered text.
+        VStack(alignment: .leading, spacing: 8) {
+            if let s = thread?.promptSuggestion, text.isEmpty {
+                Button { text = s } label: {
+                    Label(s, systemImage: "sparkles").lineLimit(1)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.small)
+                .font(.callout)
+                .help("Use this suggestion")
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            field
+        }
+        .animation(.snappy, value: thread?.promptSuggestion)
+    }
+
+    private var field: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !images.isEmpty { attachments }
-            if let s = thread?.promptSuggestion, text.isEmpty {
-                Button { text = s } label: { Label(s, systemImage: "sparkles").lineLimit(1) }
-                    .buttonStyle(.borderless)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
             TextField(thread?.isRunning == true ? "Send a message while Claude works…" : placeholder, text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...12)

@@ -34,6 +34,7 @@ public final class HostConnection: Identifiable {
     private var openRequested = Set<String>()
     private var bufferedDeltas: [ServerNotification] = []
     private var deltaFlushTask: Task<Void, Never>?
+    private var chatsRefreshTask: Task<Void, Never>?
 
     public init(host: HostConfig) {
         self.host = host
@@ -107,6 +108,8 @@ public final class HostConnection: Identifiable {
         subscribed.removeAll()
         deltaFlushTask?.cancel()
         deltaFlushTask = nil
+        chatsRefreshTask?.cancel()
+        chatsRefreshTask = nil
         bufferedDeltas.removeAll()
         notificationTask?.cancel()
         for t in threads.values { t.clearPending() }
@@ -156,6 +159,20 @@ public final class HostConnection: Identifiable {
         let model = thread(tid)
         model.apply(n)
         if case .threadStarted(let e) = n, let cwd = Optional(e.thread.cwd) { attach(model, toProject: cwd) }
+        // Claude names a session as it runs, and nothing notifies us when it does — the name only
+        // shows up in thread/list. Without this the sidebar keeps whatever it had at connect time,
+        // which for a chat started this launch is the opening prompt, forever.
+        if case .turnCompleted = n { scheduleChatsRefresh() }
+    }
+
+    private func scheduleChatsRefresh() {
+        guard chatsRefreshTask == nil else { return }
+        chatsRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, !Task.isCancelled else { return }
+            self.chatsRefreshTask = nil
+            await self.loadChats()
+        }
     }
 
     private func scheduleDeltaFlush() {

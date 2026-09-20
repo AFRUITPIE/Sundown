@@ -44,13 +44,23 @@ public final class ThreadModel: Identifiable {
         if let s = summary { status = s.status }
     }
 
+    /// Claude's name for the session when it has one, then the first thing that was asked.
+    /// A session only gets named after it has run for a bit, and `thread/started` carries no
+    /// title at all, so the prompt fallback is what a brand-new chat shows.
     public var title: String {
+        if let t = summary?.customTitle, !t.isEmpty { return t }
         if let t = info?.title, !t.isEmpty { return t }
         if let s = summary?.title, !s.isEmpty { return s }
+        if let p = summary?.firstPrompt, !p.isEmpty { return String(p.prefix(80)) }
         for case .userMessage(let m) in items where m.synthetic != true {
             for case .text(let t) in m.content { return String(t.text.prefix(80)) }
         }
-        return "New thread"
+        return "New Chat"
+    }
+
+    /// True while the title is only the opening prompt — Claude hasn't named this session yet.
+    public var isUnnamed: Bool {
+        (summary?.customTitle ?? info?.title ?? summary?.title ?? "").isEmpty
     }
 
     public var cwd: String? { info?.cwd ?? summary?.cwd }

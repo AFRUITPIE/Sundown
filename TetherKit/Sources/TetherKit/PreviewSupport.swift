@@ -225,15 +225,38 @@ extension ThreadModel {
         items: [Item] = [],
         turns: [Turn] = [],
         pending: [PendingRequest] = [],
+        tasks: [TaskEventNotification] = [],
+        mcpServers: [McpServerStatus]? = nil,
         lastError: String? = nil
     ) -> ThreadModel {
         let thread = ThreadModel(id: id)
         thread.loadHistory(items: items, turns: turns, seq: nil)
         thread.setInfo(.init(threadId: id, status: status, cwd: cwd, title: title, model: model, effort: effort,
-                              permissionMode: permissionMode, lastSeq: 0))
+                              permissionMode: permissionMode, mcpServers: mcpServers, lastSeq: 0))
         for p in pending { thread.addPending(p) }
+        for t in tasks { thread.apply(.taskEvent(t)) }
         if let lastError { thread.setError(lastError) }
         return thread
+    }
+
+    /// A chat with subagents running and MCP servers configured, for the inspector's panes.
+    public static func sampleWithTasks() -> ThreadModel {
+        sample(
+            title: "Audit the SwiftUI views",
+            status: .running,
+            tasks: [
+                .init(threadId: "preview-thread", seq: 1, event: "task_started", taskId: "task-1",
+                      description: "Explore the inspector column", status: "running", data: [:]),
+                .init(threadId: "preview-thread", seq: 2, event: "task_started", taskId: "task-2",
+                      description: "Check every pane for empty states", status: "running", data: [:]),
+                .init(threadId: "preview-thread", seq: 3, event: "task_completed", taskId: "task-3",
+                      description: "Read the HIG pages on pop-up buttons", status: "completed", data: [:]),
+            ],
+            mcpServers: [
+                .init(name: "xcode", status: "connected"),
+                .init(name: "computer-use", status: "connected"),
+                .init(name: "reminders", status: "failed"),
+            ])
     }
 
     /// A finished conversation: a question, some visible thinking, and a Markdown reply that
