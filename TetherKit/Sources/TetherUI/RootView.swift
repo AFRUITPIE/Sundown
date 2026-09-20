@@ -18,19 +18,21 @@ public struct RootView: View {
             SidebarView(app: app)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
+            // The inspector is attached here rather than to the split view so the window toolbar
+            // splits at the column boundary: items the detail declares end where the detail ends
+            // instead of running on over the inspector. It was on the split view to keep the
+            // inspector full height under a toolbar with no background of its own, which the
+            // system now handles — the toolbar takes up glass when content scrolls under it.
+            //
+            // Only a chat has anything to inspect, so on the New Chat screen the inspector closes
+            // and its button goes away rather than offering an empty column. The preference is
+            // untouched, so it comes back as it was on the next chat.
             detail
-        }
-        // Attached to the split view itself (not the detail column) so the inspector spans the
-        // full window height and slides in under a toolbar that never moves, like Xcode's right
-        // sidebar — and one stable toolbar here means New Chat/Inspector never disappear when
-        // switching between the sidebar, a chat and the New Chat screen.
-        // Only a chat has anything to inspect, so on the New Chat screen the inspector closes and
-        // its button goes away rather than offering an empty column. The preference is untouched,
-        // so it comes back as it was on the next chat.
-        .inspector(isPresented: Binding(get: { app.showInspector && app.isThreadSelected },
-                                        set: { app.showInspector = $0 })) {
-            inspector
-                .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+                .inspector(isPresented: Binding(get: { app.showInspector && app.isThreadSelected },
+                                                set: { app.showInspector = $0 })) {
+                    inspector
+                        .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+                }
         }
         .toolbar { AppToolbar(app: app) }
         .environment(\.readingWidth, app.transcriptWidth.points)
@@ -82,12 +84,6 @@ struct AppToolbar: ToolbarContent {
     @Bindable var app: AppModel
 
     var body: some ToolbarContent {
-        // Declared before the inspector button and in the same placement, so the order across the
-        // trailing edge matches SF Symbols: the value pop-ups, then the inspector toggle. Being
-        // real toolbar items is also what gives them the system's glass capsules.
-        ToolbarItemGroup(placement: .primaryAction) {
-            sessionControls
-        }
         ToolbarItem(placement: .primaryAction) {
             if app.isThreadSelected {
                 Button {
@@ -302,6 +298,11 @@ struct NewChatView: View {
         .frame(maxWidth: 560)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle("New Chat")
+        .safeAreaBar(edge: .top) {
+            if let connection {
+                SessionControlBar { NewChatControls(app: app, connection: connection) }
+            }
+        }
         .safeAreaBar(edge: .bottom) {
             if let connection {
                 GlassEffectContainer(spacing: 10) {

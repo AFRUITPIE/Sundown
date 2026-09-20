@@ -13,8 +13,14 @@ struct ThreadView: View {
                 BottomBar(thread: thread, connection: connection)
             }
             .scrollEdgeEffectStyle(.soft, for: .bottom)
+            // Same treatment at the top, so the transcript fades under the controls the way it
+            // fades under the composer instead of meeting them at a hard rule.
+            .scrollEdgeEffectStyle(.soft, for: .top)
             .navigationTitle(thread.title)
             .navigationSubtitle(thread.cwd?.abbreviatingHome ?? "")
+            .safeAreaBar(edge: .top) {
+                SessionControlBar { ThreadControls(thread: thread, connection: connection) }
+            }
             .task(id: thread.id) { await connection.open(thread) }
     }
 }
@@ -47,6 +53,34 @@ struct BottomBar: View {
         .padding(.bottom, 14)
         .frame(maxWidth: readingWidth)
         .frame(maxWidth: .infinity)
+    }
+}
+
+/// The chat's own controls, at the trailing edge of the chat's own column.
+///
+/// Not in the window toolbar: that is one bar across the whole window, so its trailing edge is the
+/// window's and these ran over the inspector. Declaring them from inside the column does not help
+/// — a unified toolbar orders by hierarchy depth, not by column, so the inner items went furthest
+/// trailing and pushed the inspector's own button inward.
+///
+/// Glass here is explicit for the same reason: outside a toolbar the system does not supply it.
+/// One capsule holds the group rather than each control, so nothing stacks glass on glass.
+struct SessionControlBar<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        GlassEffectContainer(spacing: 8) {
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                HStack(spacing: 8) { content }
+                    .controlSize(.small)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+            }
+        }
+        .padding(.horizontal, Layout.gutter)
+        .padding(.vertical, 6)
     }
 }
 
