@@ -74,6 +74,45 @@ The product should feel like a standard current macOS app. Prefer native SwiftUI
 - Progress indicators are transient. Every failed, unavailable, disconnected, or not-loaded path needs an explanatory state and a useful recovery action.
 - Previews are part of the product-development workflow. Add representative `#Preview` coverage when adding or materially changing a view; seed samples through the real reducers where practical.
 
+## Task tracking
+
+Work is tracked in GitHub Issues on `AFRUITPIE/tether-app` (private), not in a
+checked-in task file. Several agents work on this repository independently and
+cannot see each other's transcripts, so the issue list is the shared state.
+
+Use the `gh` CLI:
+
+```sh
+gh issue list                      # what is open
+gh issue view <n>                  # the full description and discussion
+gh issue comment <n> --body "..."  # claim it, or record a finding
+gh issue close <n> --comment "..." # say what landed and how it was verified
+```
+
+Before starting, claim the issue with a comment so another agent does not
+duplicate the work. Record anything you learn that changes the shape of the
+task — a wrong assumption, a protocol detail, a rejected approach — as a
+comment rather than only in a commit message; the next agent reads the issue,
+not your transcript.
+
+Reference the issue in the commit that addresses it (`Fixes #12`) so the log
+and the tracker stay tied together. Open a new issue rather than expanding an
+existing one when you find something unrelated in passing.
+
+Issues labelled `verify` are changes that are written but not yet confirmed in
+the running app. They usually cover motion or system behaviour that previews
+cannot show, so they need `RunProject`, not `RenderPreview`.
+
+Server-side work belongs to `AFRUITPIE/tether-server`; use `gh --repo` to file
+it there when a change crosses the boundary.
+
+## Commit messages
+
+Commits carry no agent attribution: no `Co-Authored-By` trailer, no "generated
+with" footer, no mention of the tool that wrote them. The author is always the
+repository owner. Mentions of Claude Code as a product are fine and expected —
+this app is a client for it.
+
 ## Generated code boundary
 
 `TetherProtocol` is generated in the server repository. Never hand-edit:
