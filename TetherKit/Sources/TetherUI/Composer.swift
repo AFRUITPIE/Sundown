@@ -5,13 +5,11 @@ import UniformTypeIdentifiers
 
 /// Prompt field: native multi-line TextField (Return sends, ⌥Return adds a line) with native
 /// input suggestions for `/` commands and `@` file mentions, image attachments, and send-while-running.
-struct Composer<Controls: View>: View {
+struct Composer: View {
     let connection: HostConnection
     let cwd: String?
     var thread: ThreadModel?
     var placeholder = "Ask Claude…"
-    /// Session controls (model, effort, permissions) shown under the text, left of Send.
-    @ViewBuilder var controls: Controls
     var onStop: (() -> Void)?
     let submit: ([UserInput]) async -> Void
 
@@ -87,15 +85,6 @@ struct Composer<Controls: View>: View {
                 }
                 .padding(.top, 4)
             HStack(spacing: 4) {
-                // Full labels when there is room, icons only when narrow.
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 4) { controls }
-                    HStack(spacing: 4) { controls }.labelStyle(.iconOnly)
-                }
-                .menuStyle(.button)
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-                .lineLimit(1)
                 Spacer(minLength: 0)
                 if showStop {
                     Button("Stop", systemImage: "stop.fill") { onStop?() }
@@ -198,10 +187,7 @@ struct Composer<Controls: View>: View {
     let connection = HostConnection.sample()
     let thread = ThreadModel.sampleIdleChat()
     GlassEffectContainer {
-        Composer(connection: connection, cwd: thread.cwd, thread: thread) {
-            ThreadControls(thread: thread, connection: connection)
-        } onStop: {
-        } submit: { _ in }
+        Composer(connection: connection, cwd: thread.cwd, thread: thread, onStop: {}, submit: { _ in })
     }
     .padding(20)
     .frame(width: 560)
@@ -211,10 +197,7 @@ struct Composer<Controls: View>: View {
     let connection = HostConnection.sample()
     let thread = ThreadModel.sampleRunningTurn()
     GlassEffectContainer {
-        Composer(connection: connection, cwd: thread.cwd, thread: thread) {
-            ThreadControls(thread: thread, connection: connection)
-        } onStop: {
-        } submit: { _ in }
+        Composer(connection: connection, cwd: thread.cwd, thread: thread, onStop: {}, submit: { _ in })
     }
     .padding(20)
     .frame(width: 560)
@@ -223,11 +206,7 @@ struct Composer<Controls: View>: View {
 #Preview("New chat (no thread yet)") {
     let connection = HostConnection.sample()
     GlassEffectContainer {
-        Composer(connection: connection, cwd: nil, placeholder: "Choose a folder, then ask Claude…") {
-            ModelPicker(selection: .constant(nil), models: connection.models)
-            EffortPicker(selection: .constant(nil), levels: EffortLevel.allCases)
-            PermissionModePicker(selection: .constant(.default))
-        } submit: { _ in }
+        Composer(connection: connection, cwd: nil, placeholder: "Choose a folder, then ask Claude…", submit: { _ in })
     }
     .padding(20)
     .frame(width: 560)

@@ -16,6 +16,15 @@ public struct RootView: View {
         } detail: {
             detail
         }
+        // Attached to the split view itself (not the detail column) so the inspector spans the
+        // full window height and slides in under a toolbar that never moves, like Xcode's right
+        // sidebar — and one stable toolbar here means New Chat/Inspector never disappear when
+        // switching between the sidebar, a chat and the New Chat screen.
+        .inspector(isPresented: $app.showInspector) {
+            inspector
+                .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+        }
+        .toolbar { AppToolbar(app: app) }
         .task { app.connectAll() }
     }
 
@@ -37,6 +46,61 @@ public struct RootView: View {
             }
         }
     }
+
+    /// The inspector needs a selected thread + its connection; otherwise there's nothing to show.
+    @ViewBuilder private var inspector: some View {
+        if let thread = app.selectedThread, let connection = app.selectedConnection {
+            ThreadInspector(thread: thread, connection: connection)
+        } else {
+            ContentUnavailableView {
+                Label("No Thread Selected", systemImage: "sidebar.trailing")
+            }
+        }
+    }
+}
+
+/// One stable toolbar for the whole window: New Chat and the inspector toggle never move, and
+/// the session controls (model, effort, permissions) switch between a live thread's state and
+/// the New Chat screen's draft state depending on `app.selection` — matching Xcode's chrome,
+/// where the toolbar itself never changes shape as the selection changes.
+struct AppToolbar: ToolbarContent {
+    @Bindable var app: AppModel
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button("New Chat", systemImage: "square.and.pencil") { app.newChat() }
+                .help("New Chat (⌘N)")
+        }
+        ToolbarItem {
+            // Icon-only: a toolbar item gets its ideal (unconstrained) width from SwiftUI before
+            // NSToolbar decides what fits, so staying compact up front is what keeps this from
+            // pushing the inspector button into overflow.
+            HStack(spacing: 4) { sessionControls }
+                .labelStyle(.iconOnly)
+        }
+        ToolbarItem(placement: .primaryAction) {
+            // A plain Button (not a Toggle) so the icon never lights up while open — Xcode's own
+            // right-sidebar button behaves the same way.
+            Button("Inspector", systemImage: "sidebar.trailing") { app.showInspector.toggle() }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help(app.showInspector ? "Hide Inspector" : "Show Inspector")
+        }
+    }
+
+    @ViewBuilder private var sessionControls: some View {
+        switch app.selection {
+        case .thread(let h, let id):
+            if let c = app.connection(h) {
+                HStack(spacing: 4) { ThreadControls(thread: c.thread(id), connection: c) }
+            }
+        case .newChat(let h):
+            if let c = app.connection(h) {
+                HStack(spacing: 4) { NewChatControls(app: app, connection: c) }
+            }
+        case nil:
+            EmptyView()
+        }
+    }
 }
 
 /// Chats per host, most recent first. Two levels only: host section → chat.
@@ -54,12 +118,6 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .searchable(text: $search, placement: .sidebar, prompt: "Search")
-        .toolbar {
-            ToolbarItem {
-                Button("New Chat", systemImage: "square.and.pencil") { app.newChat() }
-                    .help("New Chat (⌘N)")
-            }
-        }
     }
 }
 
@@ -164,12 +222,9 @@ struct ChatRow: View {
 
 /// Compose a new chat: choose the host and working directory, then send the first message.
 struct NewChatView: View {
-    let app: AppModel
+    @Bindable var app: AppModel
     @State var hostId: UUID
     @State private var directory: String?
-    @State private var model: String?
-    @State private var effort: EffortLevel?
-    @State private var mode: PermissionMode = .default
     @State private var error: String?
     @State private var choosingLocalFolder = false
     @State private var choosingRemoteFolder = false
@@ -206,13 +261,9 @@ struct NewChatView: View {
         .safeAreaBar(edge: .bottom) {
             if let connection {
                 GlassEffectContainer(spacing: 10) {
-                    Composer(connection: connection, cwd: directory, placeholder: directory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…") {
-                        ModelPicker(selection: $model, models: connection.models)
-                        EffortPicker(selection: $effort, levels: connection.models.first { $0.value == model }?.supportedEffortLevels ?? EffortLevel.allCases)
-                        PermissionModePicker(selection: $mode)
-                    } submit: { input in
+                    Composer(connection: connection, cwd: directory, placeholder: directory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…", submit: { input in
                         await start(connection, input)
-                    }
+                    })
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 14)
@@ -226,9 +277,6 @@ struct NewChatView: View {
             if let connection { RemoteFolderPicker(connection: connection) { directory = $0 } }
         }
         .onAppear {
-            model = app.defaultModel
-            effort = app.defaultEffort.map { EffortLevel(rawValue: $0) }
-            mode = PermissionMode(rawValue: app.defaultPermissionMode)
             directory = directory ?? connection?.projects.first?.cwd
         }
         .onChange(of: hostId) { directory = connection?.projects.first?.cwd }
@@ -241,11 +289,29 @@ struct NewChatView: View {
     private func start(_ connection: HostConnection, _ input: [UserInput]) async {
         guard let cwd = directory else { error = "Choose a folder first."; return }
         do {
-            let t = try await connection.startThread(cwd: cwd, input: input, options: .init(model: model, effort: effort, permissionMode: mode))
+            let t = try await connection.startThread(cwd: cwd, input: input,
+                                                       options: .init(model: app.draftModel, effort: app.draftEffort, permissionMode: app.draftPermissionMode))
             app.selection = .thread(host: connection.id, id: t.id)
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+/// Model, effort and permission menus for the New Chat screen (shown in the window toolbar),
+/// bound to the app's draft session-control state until the thread starts.
+struct NewChatControls: View {
+    @Bindable var app: AppModel
+    let connection: HostConnection
+
+    private var currentModelInfo: ModelInfo? {
+        connection.models.first { $0.value == app.draftModel || $0.resolvedModel == app.draftModel } ?? connection.models.first
+    }
+
+    var body: some View {
+        ModelPicker(selection: $app.draftModel, models: connection.models)
+        EffortPicker(selection: $app.draftEffort, levels: currentModelInfo?.supportedEffortLevels ?? EffortLevel.allCases)
+        PermissionModePicker(selection: $app.draftPermissionMode)
     }
 }
 
@@ -314,6 +380,20 @@ private func rootPreviewApp() -> AppModel {
 
 #Preview("RootView (no selection)") {
     RootView(app: .sample())
+        .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (inspector open)") {
+    let app = rootPreviewApp()
+    app.showInspector = true
+    return RootView(app: app)
+        .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (new chat)") {
+    let app = AppModel.sample()
+    app.newChat()
+    return RootView(app: app)
         .frame(width: 1100, height: 760)
 }
 

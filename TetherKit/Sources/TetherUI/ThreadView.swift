@@ -5,7 +5,6 @@ import TetherProtocol
 struct ThreadView: View {
     let thread: ThreadModel
     let connection: HostConnection
-    @AppStorage("tether.inspector") private var showInspector = false
 
     var body: some View {
         TranscriptView(thread: thread)
@@ -16,11 +15,6 @@ struct ThreadView: View {
             .scrollEdgeEffectStyle(.soft, for: .bottom)
             .navigationTitle(thread.title)
             .navigationSubtitle(thread.cwd?.abbreviatingHome ?? "")
-            .toolbar { ThreadToolbar(thread: thread, connection: connection, showInspector: $showInspector) }
-            .inspector(isPresented: $showInspector) {
-                ThreadInspector(thread: thread, connection: connection)
-                    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
-            }
             .task(id: thread.id) { await connection.open(thread) }
     }
 }
@@ -39,13 +33,11 @@ struct BottomBar: View {
                         .id(p.id)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else {
-                    Composer(connection: connection, cwd: thread.cwd, thread: thread) {
-                        ThreadControls(thread: thread, connection: connection)
-                    } onStop: {
+                    Composer(connection: connection, cwd: thread.cwd, thread: thread, onStop: {
                         Task { await connection.interrupt(thread) }
-                    } submit: { input in
+                    }, submit: { input in
                         await connection.send(thread, input: input)
-                    }
+                    })
                 }
             }
             .animation(.snappy, value: thread.pending.first?.id)
@@ -162,21 +154,7 @@ struct AuthStatusView: View {
     }
 }
 
-struct ThreadToolbar: ToolbarContent {
-    let thread: ThreadModel
-    let connection: HostConnection
-    @Binding var showInspector: Bool
-
-    var body: some ToolbarContent {
-        ToolbarItem(placement: .primaryAction) {
-            Toggle("Inspector", systemImage: "sidebar.trailing", isOn: $showInspector)
-                .keyboardShortcut("i", modifiers: [.command, .option])
-        }
-    }
-
-}
-
-/// Model, effort, fast mode and permission menus for a live chat (lives in the composer).
+/// Model, effort, fast mode and permission menus for a live chat (shown in the window toolbar).
 struct ThreadControls: View {
     let thread: ThreadModel
     let connection: HostConnection
@@ -374,13 +352,26 @@ struct ThreadInspector: View {
     .frame(width: 900, height: 700)
 }
 
-// ThreadView's inspector visibility is @AppStorage-backed (a real user preference), so this
-// preview can't force it open without touching that saved value — see the dedicated
-// "ThreadInspector" preview below for the inspector's own content. This one instead shows a
-// thread with a rich variety of tool calls.
+// Inspector visibility now lives on AppModel (hoisted so `.inspector` can span the whole window),
+// so a bare ThreadView never shows one — see "Tool call gallery (inspector open)" below, which
+// wraps this same thread in a NavigationSplitView with the inspector forced open explicitly.
+// This preview shows the transcript alone: a thread with a rich variety of tool calls.
 #Preview("Tool call gallery") {
     NavigationStack {
         ThreadView(thread: .sampleToolCalls(), connection: .sample())
+    }
+    .frame(width: 1100, height: 760)
+}
+
+#Preview("Tool call gallery (inspector open)") {
+    NavigationSplitView {
+        Text("Sidebar")
+    } detail: {
+        ThreadView(thread: .sampleToolCalls(), connection: .sample())
+    }
+    .inspector(isPresented: .constant(true)) {
+        ThreadInspector(thread: .sampleToolCalls(), connection: .sample())
+            .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
     }
     .frame(width: 1100, height: 760)
 }

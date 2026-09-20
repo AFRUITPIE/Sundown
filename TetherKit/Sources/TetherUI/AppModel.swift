@@ -22,6 +22,22 @@ public final class AppModel {
     public private(set) var hosts: [HostConfig] = []
     public private(set) var connections: [UUID: HostConnection] = [:]
     public var selection: SidebarSelection?
+
+    /// Whether the trailing inspector is shown. Lives here (not on ThreadView) so `.inspector`
+    /// can wrap the whole NavigationSplitView and span the full window height, like Xcode's
+    /// right sidebar, instead of just the detail column.
+    public var showInspector: Bool {
+        get { access(keyPath: \.showInspector); return inspectorStorage }
+        set { withMutation(keyPath: \.showInspector) { inspectorStorage = newValue } }
+    }
+    @ObservationIgnored @AppStorage("tether.inspector") private var inspectorStorage = false
+
+    /// Draft session-control values for the New Chat screen (shown in the window toolbar and
+    /// used to start the thread). Not persisted — reset to the app defaults by `newChat()`.
+    public var draftModel: String?
+    public var draftEffort: EffortLevel?
+    public var draftPermissionMode: PermissionMode = .default
+
     /// Defaults for new threads, per app (persisted).
     public var defaultModel: String? { didSet { save() } }
     public var defaultEffort: String? { didSet { save() } }
@@ -32,6 +48,9 @@ public final class AppModel {
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        // Use the same store as `defaults` (real UserDefaults for the app, an isolated suite for
+        // previews) so `.sample()` never reads or writes the real "tether.inspector" value.
+        _inspectorStorage = AppStorage(wrappedValue: false, "tether.inspector", store: defaults)
         load()
         for h in hosts { connections[h.id] = HostConnection(host: h) }
     }
@@ -70,6 +89,9 @@ public final class AppModel {
     /// Start composing a new chat on the currently selected host (or this Mac).
     public func newChat() {
         selection = .newChat(host: selection?.hostId ?? HostConfig.local.id)
+        draftModel = defaultModel
+        draftEffort = defaultEffort.map(EffortLevel.init(rawValue:))
+        draftPermissionMode = PermissionMode(rawValue: defaultPermissionMode)
     }
 
     public var selectedConnection: HostConnection? {
