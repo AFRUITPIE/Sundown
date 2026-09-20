@@ -404,8 +404,12 @@ public final class HostConnection: Identifiable {
     }
 
     /// Whether the daemon has this thread live, and so can answer questions about it (context
-    /// usage, MCP status). A thread read from disk isn't loaded until something resumes it.
-    public func isLoaded(_ model: ThreadModel) -> Bool { subscribed.contains(model.id) }
+    /// usage, MCP status). Being subscribed is no longer enough on its own: a session another
+    /// client owns is followed from its transcript, which streams items but cannot answer
+    /// anything else — and the daemon reports exactly that by leaving it `notLoaded`.
+    public func isLoaded(_ model: ThreadModel) -> Bool {
+        subscribed.contains(model.id) && model.info?.status != .notLoaded
+    }
 
     /// Slash commands for a directory, narrowed to a thread's own set when the daemon has it
     /// loaded. Takes the cwd directly so the New Chat composer — which has no thread yet — still
