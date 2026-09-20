@@ -24,6 +24,13 @@ extension String {
     }
 }
 
+/// One reading column, shared by the transcript and the bar beneath it so the composer lines up
+/// with the text above it instead of sitting a few points wider on each side.
+enum Layout {
+    static let readingWidth: CGFloat = 920
+    static let gutter: CGFloat = 28
+}
+
 enum Format {
     static func cost(_ usd: Double) -> String {
         usd < 0.01 ? String(format: "$%.4f", usd) : String(format: "$%.2f", usd)

@@ -21,7 +21,11 @@ public enum SidebarSelection: Hashable, Sendable {
 public final class AppModel {
     public private(set) var hosts: [HostConfig] = []
     public private(set) var connections: [UUID: HostConnection] = [:]
-    public var selection: SidebarSelection?
+    /// Resolving a selection creates the thread's model if it doesn't exist yet, which mutates
+    /// observable state — so it happens here, when the selection changes, and never while a view
+    /// is rendering (SwiftUI redraws the window when state changes mid-update).
+    public var selection: SidebarSelection? { didSet { resolveSelection() } }
+    public private(set) var selectedThread: ThreadModel?
 
     /// Whether the trailing inspector is shown. Lives here (not on ThreadView) so `.inspector`
     /// can wrap the whole NavigationSplitView and span the full window height, like Xcode's
@@ -98,9 +102,12 @@ public final class AppModel {
         selection.flatMap { connections[$0.hostId] }
     }
 
-    public var selectedThread: ThreadModel? {
-        guard case .thread(let h, let id) = selection, let c = connections[h] else { return nil }
-        return c.thread(id)
+    private func resolveSelection() {
+        guard case .thread(let h, let id) = selection, let c = connections[h] else {
+            selectedThread = nil
+            return
+        }
+        selectedThread = c.thread(id)
     }
 
     // MARK: persistence

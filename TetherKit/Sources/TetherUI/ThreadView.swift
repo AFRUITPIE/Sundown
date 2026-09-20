@@ -42,9 +42,9 @@ struct BottomBar: View {
             }
             .animation(.snappy, value: thread.pending.first?.id)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, Layout.gutter)
         .padding(.bottom, 14)
-        .frame(maxWidth: 940)
+        .frame(maxWidth: Layout.readingWidth)
         .frame(maxWidth: .infinity)
     }
 }
@@ -53,17 +53,6 @@ struct TranscriptView: View {
     let thread: ThreadModel
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
-
-    /// Changes whenever streamed content grows.
-    private var contentVersion: Int {
-        thread.items.count &+ (thread.items.last.map { item -> Int in
-            switch item {
-            case .agentMessage(let m): return m.text.count
-            case .reasoning(let r): return r.text.count
-            default: return 0
-            }
-        } ?? 0)
-    }
 
     var body: some View {
         ScrollView {
@@ -83,11 +72,48 @@ struct TranscriptView: View {
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 16)
-            .frame(maxWidth: 920)
+            .frame(maxWidth: Layout.readingWidth)
             .frame(maxWidth: .infinity)
         }
-        // Start at the bottom and stay pinned there as streamed content grows.
+        // Start at the bottom, and follow new output only while the reader is already there —
+        // scrolling up to read something stays put, with a way back to the live end.
         .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .scrollPosition($position)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            // The composer sits in the bottom safe area, so the furthest the content can scroll
+            // includes the insets — comparing against contentSize alone reads as "not at the
+            // bottom" while sitting right at it.
+            let maxOffset = geometry.contentSize.height + geometry.contentInsets.top
+                + geometry.contentInsets.bottom - geometry.containerSize.height
+            return geometry.contentOffset.y >= maxOffset - 40
+        } action: { _, isAtBottom in
+            atBottom = isAtBottom
+        }
+        // Rows in a LazyVStack are measured as they come into range, so the content keeps growing
+        // for a while after history arrives — following the content size covers both that and
+        // streamed output, where watching the items alone would stop short of the end.
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, _ in
+            guard atBottom else { return }
+            position.scrollTo(edge: .bottom)
+        }
+        // A newly opened chat starts at its latest message, wherever the reader left the last one.
+        .onChange(of: thread.historyLoaded) {
+            guard thread.historyLoaded else { return }
+            atBottom = true
+            position.scrollTo(edge: .bottom)
+        }
+        .overlay(alignment: .bottom) {
+            if !atBottom {
+                Button("Jump to Latest", systemImage: "arrow.down") {
+                    withAnimation { position.scrollTo(edge: .bottom) }
+                }
+                .buttonStyle(.glass)
+                .controlSize(.small)
+                .padding(.bottom, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.snappy, value: atBottom)
     }
 }
 
@@ -320,6 +346,9 @@ struct ThreadInspector: View {
             }
         }
         .formStyle(.grouped)
+        // Let the inspector's own material show through: a grouped Form paints its background
+        // below the titlebar area, which reads as a header strip sitting on top of the column.
+        .scrollContentBackground(.hidden)
         // Values truncate instead of widening the column (a min width > max width loops the split view).
         .lineLimit(1)
         .task(id: thread.turns.count) { await refresh() }

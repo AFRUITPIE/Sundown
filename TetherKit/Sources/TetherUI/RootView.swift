@@ -25,14 +25,18 @@ public struct RootView: View {
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
         }
         .toolbar { AppToolbar(app: app) }
+        // Without this the titlebar paints its own background across the top of every column,
+        // so the inspector looks like it starts below a header strip instead of running the
+        // full height of the window the way the sidebar does.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .task { app.connectAll() }
     }
 
     @ViewBuilder private var detail: some View {
         switch app.selection {
-        case .thread(let h, let id):
-            if let c = app.connection(h) {
-                ThreadView(thread: c.thread(id), connection: c).id(id)
+        case .thread(_, let id):
+            if let thread = app.selectedThread, let c = app.selectedConnection {
+                ThreadView(thread: thread, connection: c).id(id)
             }
         case .newChat(let h):
             NewChatView(app: app, hostId: h).id(h)
@@ -89,9 +93,9 @@ struct AppToolbar: ToolbarContent {
 
     @ViewBuilder private var sessionControls: some View {
         switch app.selection {
-        case .thread(let h, let id):
-            if let c = app.connection(h) {
-                HStack(spacing: 4) { ThreadControls(thread: c.thread(id), connection: c) }
+        case .thread:
+            if let thread = app.selectedThread, let c = app.selectedConnection {
+                HStack(spacing: 4) { ThreadControls(thread: thread, connection: c) }
             }
         case .newChat(let h):
             if let c = app.connection(h) {
@@ -265,9 +269,9 @@ struct NewChatView: View {
                         await start(connection, input)
                     })
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, Layout.gutter)
                 .padding(.bottom, 14)
-                .frame(maxWidth: 940)
+                .frame(maxWidth: Layout.readingWidth)
             }
         }
         .fileImporter(isPresented: $choosingLocalFolder, allowedContentTypes: [.folder]) { result in
