@@ -44,22 +44,16 @@ public final class ThreadModel: Identifiable {
     @ObservationIgnored private var cachedRows: (version: Int, rows: [TranscriptRow])?
     @ObservationIgnored private var cachedChildren: (version: Int, byParent: [String: [Item]])?
 
+    /// Claude's name for the session once it has one, else the opening prompt. Stored rather than
+    /// computed: a title that reads `items` would make every streamed delta invalidate the sidebar
+    /// row and the window title.
+    public private(set) var title = "New Chat"
+
     public init(id: String, summary: ThreadSummary? = nil) {
         self.id = id
         self.summary = summary
         if let s = summary { status = s.status }
-    }
-
-    /// Claude's name for the session once it has one, else the opening prompt.
-    public var title: String {
-        if let t = summary?.customTitle, !t.isEmpty { return t }
-        if let t = info?.title, !t.isEmpty { return t }
-        if let s = summary?.title, !s.isEmpty { return s }
-        if let p = summary?.firstPrompt, !p.isEmpty { return String(p.prefix(80)) }
-        for case .userMessage(let m) in items where m.synthetic != true {
-            for case .text(let t) in m.content { return String(t.text.prefix(80)) }
-        }
-        return "New Chat"
+        refreshTitle()
     }
 
     /// True while the title is only the opening prompt — Claude hasn't named this session yet.
@@ -94,11 +88,29 @@ public final class ThreadModel: Identifiable {
     func setInfo(_ i: ThreadInfo) {
         info = i
         status = i.status
+        refreshTitle()
     }
 
     func setSummary(_ s: ThreadSummary) {
         summary = s
         if info == nil { status = s.status }
+        refreshTitle()
+    }
+
+    private func refreshTitle() {
+        let next = derivedTitle()
+        if next != title { title = next }
+    }
+
+    private func derivedTitle() -> String {
+        if let t = summary?.customTitle, !t.isEmpty { return t }
+        if let t = info?.title, !t.isEmpty { return t }
+        if let s = summary?.title, !s.isEmpty { return s }
+        if let p = summary?.firstPrompt, !p.isEmpty { return String(p.prefix(80)) }
+        for case .userMessage(let m) in items where m.synthetic != true {
+            for case .text(let t) in m.content { return String(t.text.prefix(80)) }
+        }
+        return "New Chat"
     }
 
     /// Replace transcript with server history (thread/read or thread/resume includeHistory).
@@ -122,9 +134,13 @@ public final class ThreadModel: Identifiable {
         reindex()
     }
 
+    /// Every bulk replacement of `items` goes through here, so the fallback title is refreshed
+    /// once per history load rather than once per streamed delta.
     private func reindex() {
         index = Dictionary(uniqueKeysWithValues: items.enumerated().map { ($1.id, $0) })
         itemsVersion &+= 1
+        refreshTaskEntries()
+        refreshTitle()
     }
 
     /// Drops the transcript so the next open reads it afresh.
@@ -148,7 +164,9 @@ public final class ThreadModel: Identifiable {
         }
         switch n {
         case .threadStarted(let e): setInfo(e.thread)
-        case .threadUpdated(let e): info = e.thread
+        case .threadUpdated(let e):
+            info = e.thread
+            refreshTitle()
         case .threadStatusChanged(let e):
             status = e.status
             activity = e.activity?.rawValue
@@ -167,9 +185,12 @@ public final class ThreadModel: Identifiable {
             mutate(e.itemId) { if case .reasoning(var m) = $0 { m.text += e.delta; $0 = .reasoning(m) } }
         case .itemToolCallProgress(let e):
             mutate(e.itemId) { if case .toolCall(var t) = $0 { t.elapsedSeconds = e.elapsedSeconds; $0 = .toolCall(t) } }
-        case .taskEvent(let e): tasks[e.taskId] = e
+        case .taskEvent(let e):
+            tasks[e.taskId] = e
+            refreshTaskEntries()
         case .taskBackgroundChanged(let e):
             backgroundTaskIDs = Set((e.tasks.arrayValue ?? []).compactMap { $0["task_id"]?.stringValue })
+            refreshTaskEntries()
         case .threadPromptSuggestion(let e): promptSuggestion = e.suggestion
         case .threadAuthStatus(let e): authStatus = e
         case .threadApiRetry(let e): apiRetry = e
@@ -228,12 +249,16 @@ public final class ThreadModel: Identifiable {
             items.append(item)
         }
         itemsVersion &+= 1
+        if item.isSubagentCall { refreshTaskEntries() }
+        // Only an opening user message can move the title, and only until Claude names the session.
+        if isUnnamed, case .userMessage(let m) = item, m.synthetic != true { refreshTitle() }
     }
 
     private func mutate(_ id: String, _ f: (inout Item) -> Void) {
         guard let i = index[id] else { return }
         f(&items[i])
         itemsVersion &+= 1
+        if items[i].isSubagentCall { refreshTaskEntries() }
     }
 
     /// Items belonging to a subagent (Task/Agent tool) — rendered nested in its card.
@@ -279,8 +304,61 @@ public final class ThreadModel: Identifiable {
         return rows
     }
 
+    /// Subagent and workflow runs, as the Tasks inspector lists them: every subagent tool call,
+    /// then the tasks the SDK reported that no call of ours matches.
+    ///
+    /// Stored, and rebuilt only when `tasks`, `backgroundTaskIDs` or a subagent call changes: computed
+    /// from `items` it would make every streamed delta invalidate the Tasks inspector.
+    public private(set) var taskEntries: [InspectorTaskEntry] = []
+
+    private func refreshTaskEntries() {
+        // Includes agents launched by other agents, which have no top-level row.
+        let calls = items.compactMap { item -> Item.ToolCall? in
+            guard case .toolCall(let call) = item, call.kind == .subagent else { return nil }
+            return call
+        }
+        var matchedTaskIDs = Set<String>()
+        var entries = calls.map { call in
+            let task = taskEvent(forToolUseId: call.id)
+            if let task { matchedTaskIDs.insert(task.taskId) }
+            return InspectorTaskEntry(
+                id: call.id,
+                call: call,
+                task: task,
+                isBackgrounded: isTaskBackgrounded(toolUseId: call.id)
+            )
+        }
+        entries += tasks.values
+            .filter { !matchedTaskIDs.contains($0.taskId) }
+            .sorted { $0.seq < $1.seq }
+            .map {
+                InspectorTaskEntry(
+                    id: "task:\($0.taskId)",
+                    call: nil,
+                    task: $0,
+                    isBackgrounded: backgroundTaskIDs.contains($0.taskId)
+                )
+            }
+        taskEntries = entries
+    }
+
     /// Position of an item in the transcript, for views that need to know what came after it.
     public func itemIndex(of id: String) -> Int? { index[id] }
+}
+
+private extension Item {
+    var isSubagentCall: Bool {
+        if case .toolCall(let call) = self { return call.kind == .subagent }
+        return false
+    }
+}
+
+/// One subagent or workflow run: the tool call that started it, its newest lifecycle event, or both.
+public struct InspectorTaskEntry: Identifiable {
+    public let id: String
+    public let call: Item.ToolCall?
+    public let task: TaskEventNotification?
+    public let isBackgrounded: Bool
 }
 
 /// Each field is nil when unchanged; `model` and `effort` can be changed to nil (automatic).

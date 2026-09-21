@@ -402,7 +402,7 @@ struct ThreadInspector: View {
 
     // MARK: panes
 
-    private var taskEntries: [InspectorTaskEntry] { inspectorTaskEntries(thread: thread) }
+    private var taskEntries: [InspectorTaskEntry] { thread.taskEntries }
 
     @ViewBuilder private var tasksPane: some View {
         if let selectedTaskID, let entry = taskEntries.first(where: { $0.id == selectedTaskID }) {
@@ -533,45 +533,6 @@ struct ThreadInspector: View {
             usage = .failed(error.localizedDescription)
         }
     }
-}
-
-struct InspectorTaskEntry: Identifiable {
-    let id: String
-    let call: Item.ToolCall?
-    let task: TaskEventNotification?
-    let isBackgrounded: Bool
-}
-
-@MainActor
-func inspectorTaskEntries(thread: ThreadModel) -> [InspectorTaskEntry] {
-    // Includes agents launched by other agents, which have no top-level row.
-    let calls = thread.items.compactMap { item -> Item.ToolCall? in
-        guard case .toolCall(let call) = item, call.kind == .subagent else { return nil }
-        return call
-    }
-    var matchedTaskIDs = Set<String>()
-    var entries = calls.map { call in
-        let task = thread.taskEvent(forToolUseId: call.id)
-        if let task { matchedTaskIDs.insert(task.taskId) }
-        return InspectorTaskEntry(
-            id: call.id,
-            call: call,
-            task: task,
-            isBackgrounded: thread.isTaskBackgrounded(toolUseId: call.id)
-        )
-    }
-    entries += thread.tasks.values
-        .filter { !matchedTaskIDs.contains($0.taskId) }
-        .sorted { $0.seq < $1.seq }
-        .map {
-            InspectorTaskEntry(
-                id: "task:\($0.taskId)",
-                call: nil,
-                task: $0,
-                isBackgrounded: thread.backgroundTaskIDs.contains($0.taskId)
-            )
-        }
-    return entries
 }
 
 /// One subagent or workflow run: what it is, and whether it's still going.

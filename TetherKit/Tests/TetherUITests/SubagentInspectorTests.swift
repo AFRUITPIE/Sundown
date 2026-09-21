@@ -9,7 +9,7 @@ struct SubagentInspectorTests {
     @Test func nestedSubagentContentRoutesToOneInspectorEntry() {
         let thread = ThreadModel.sampleToolCalls()
 
-        let entries = inspectorTaskEntries(thread: thread)
+        let entries = thread.taskEntries
         let entry = entries.first { $0.id == "tool-subagent-explore" }
 
         #expect(entry?.call?.kind == .subagent)
@@ -37,7 +37,7 @@ struct SubagentInspectorTests {
             data: [:]
         )))
 
-        let entry = inspectorTaskEntries(thread: thread).first { $0.id == "tool-subagent-explore" }
+        let entry = thread.taskEntries.first { $0.id == "tool-subagent-explore" }
 
         #expect(entry?.task?.taskId == "task-explore")
         #expect(entry?.task?.summary == "Reading view files")
@@ -46,7 +46,7 @@ struct SubagentInspectorTests {
 
     @Test func terminalLifecycleUsesQuietChatSummaries() {
         let thread = ThreadModel.sampleToolCalls()
-        guard let call = inspectorTaskEntries(thread: thread)
+        guard let call = thread.taskEntries
             .first(where: { $0.id == "tool-subagent-explore" })?.call else {
             Issue.record("Missing subagent fixture")
             return
@@ -83,7 +83,7 @@ struct SubagentInspectorTests {
             ]]
         )))
 
-        guard let entry = inspectorTaskEntries(thread: thread)
+        guard let entry = thread.taskEntries
             .first(where: { $0.id == "tool-subagent-explore" }), let call = entry.call else {
             Issue.record("Missing subagent fixture")
             return
