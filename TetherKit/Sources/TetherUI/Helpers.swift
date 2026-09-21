@@ -122,6 +122,42 @@ extension Array where Element == ModelInfo {
     }
 }
 
+/// Symbols the session menus and Settings' New Chat defaults share, so one value never reads
+/// differently in two places. `SessionSymbolTests` checks that every one of them resolves.
+enum SessionSymbol {
+    static let model = "sparkle"
+    static let fastMode = "hare"
+    /// Not a gauge: every needle position means a level, and Automatic is the absence of one.
+    /// "A" in a circle is what the system uses elsewhere for automatic, and it keeps the round
+    /// silhouette the gauges have.
+    static let automaticEffort = "a.circle"
+}
+
+extension EffortLevel {
+    /// "xhigh" isn't a word; the rest are just capitalised.
+    var label: String { self == .xhigh ? "Extra High" : rawValue.capitalized }
+
+    /// A gauge whose needle sits where this level falls among the ones the model supports, so the
+    /// icon-only control says "how hard" without a word. A level the model doesn't list shows the
+    /// Automatic symbol rather than claiming a position on a scale it isn't on.
+    func symbol(in levels: [EffortLevel]) -> String {
+        guard let index = levels.firstIndex(of: self) else { return SessionSymbol.automaticEffort }
+        guard levels.count > 1 else { return "gauge.with.dots.needle.50percent" }
+        // The gauge family only draws these five needle positions; pick the nearest.
+        let needles = [0, 33, 50, 67, 100]
+        let position = Double(index) / Double(levels.count - 1) * 100
+        let nearest = needles.min { abs(Double($0) - position) < abs(Double($1) - position) } ?? 50
+        return "gauge.with.dots.needle.\(nearest)percent"
+    }
+}
+
+extension Optional where Wrapped == EffortLevel {
+    /// No effort is a real choice: the model then decides per turn.
+    var label: String { self?.label ?? "Automatic" }
+
+    func symbol(in levels: [EffortLevel]) -> String { self?.symbol(in: levels) ?? SessionSymbol.automaticEffort }
+}
+
 extension PermissionMode {
     /// One word each: a pop-up button is as wide as its widest item.
     var label: String {
@@ -148,6 +184,9 @@ extension PermissionMode {
         default: return rawValue
         }
     }
+
+    /// The one mode that lets Claude act without ever asking; shown in red.
+    var isDangerous: Bool { self == .bypassPermissions }
 
     var symbol: String {
         switch self {

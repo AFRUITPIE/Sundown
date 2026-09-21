@@ -47,6 +47,8 @@ public final class AppModel {
     public var draftModel: String?
     public var draftEffort: EffortLevel?
     public var draftPermissionMode: PermissionMode = .default
+    /// Carried into `startThread`; off unless the user asks for it on this chat.
+    public var draftFastMode = false
 
     /// How wide the transcript may get (persisted).
     public var transcriptWidth: TranscriptWidth = .narrow { didSet { save() } }
@@ -120,6 +122,7 @@ public final class AppModel {
         draftModel = defaultModel ?? connections[hostID]?.models.defaultValue
         draftEffort = defaultEffort.map(EffortLevel.init(rawValue:))
         draftPermissionMode = PermissionMode(rawValue: defaultPermissionMode)
+        draftFastMode = false
     }
 
     private func resolveSelection() {

@@ -196,7 +196,7 @@ extension PendingRequest {
 // MARK: - Model catalog
 
 extension ModelInfo {
-    /// A small, realistic model list — enough to exercise ModelPicker/EffortPicker.
+    /// A small, realistic model list — enough to exercise the session menus.
     /// Shaped like what `model/list` actually returns: short family display names, the version
     /// only in `resolvedModel`, and a leading "default" alias that resolves to one of the others.
     public static let sampleCatalog: [ModelInfo] = [
@@ -230,6 +230,8 @@ extension ThreadModel {
         model: String? = "opus",
         effort: EffortLevel? = .high,
         permissionMode: PermissionMode = .default,
+        fastModeState: ThreadInfo.FastModeState? = nil,
+        fastModeDisabledReason: String? = nil,
         items: [Item] = [],
         turns: [Turn] = [],
         pending: [PendingRequest] = [],
@@ -240,7 +242,8 @@ extension ThreadModel {
         let thread = ThreadModel(id: id)
         thread.loadHistory(items: items, turns: turns, seq: nil)
         thread.setInfo(.init(threadId: id, status: status, cwd: cwd, title: title, model: model, effort: effort,
-                              permissionMode: permissionMode, mcpServers: mcpServers, lastSeq: 0))
+                              permissionMode: permissionMode, fastModeState: fastModeState,
+                              fastModeDisabledReason: fastModeDisabledReason, mcpServers: mcpServers, lastSeq: 0))
         for p in pending { thread.addPending(p) }
         for t in tasks { thread.apply(.taskEvent(t)) }
         if let lastError { thread.setError(lastError) }

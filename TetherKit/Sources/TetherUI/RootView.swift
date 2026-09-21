@@ -21,9 +21,13 @@ public struct RootView: View {
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(app.selectedThread?.title ?? "New Chat")
                 .navigationSubtitle(app.selectedThread?.cwd?.abbreviatingHome ?? "")
-                .toolbar {
-                    ToolbarItem(placement: .navigation) { NewChatButton(app: app) }
-                    ToolbarItem(placement: .principal) { SessionControls(app: app) }
+                // Identified, so View ▸ Customize Toolbar… can rearrange these and the window
+                // remembers the arrangement. Every item is still declared unconditionally.
+                .toolbar(id: "main") {
+                    ToolbarItem(id: "newChat", placement: .navigation) { NewChatButton(app: app) }
+                    ToolbarItem(id: "model", placement: .principal) { ModelMenu(settings: .current(app)) }
+                    ToolbarItem(id: "effort", placement: .principal) { EffortMenu(settings: .current(app)) }
+                    ToolbarItem(id: "permissions", placement: .principal) { PermissionsMenu(settings: .current(app)) }
                 }
         }
         // Attached to the split view, so it is full height and present on every screen.
@@ -72,22 +76,6 @@ struct NewChatButton: View {
         .buttonBorderShape(.circle)
         .accessibilityLabel("New Chat")
         .help("New Chat (⌘N)")
-    }
-}
-
-/// Session controls for the selected chat, or for the New Chat draft. The branch is inside the
-/// toolbar item's view, never around the item itself.
-struct SessionControls: View {
-    @Bindable var app: AppModel
-
-    var body: some View {
-        HStack(spacing: 4) {
-            if let thread = app.selectedThread, let connection = app.connection {
-                ThreadControls(thread: thread, connection: connection)
-            } else if let connection = app.connection {
-                NewChatControls(app: app, connection: connection)
-            }
-        }
     }
 }
 
@@ -220,31 +208,12 @@ struct NewChatView: View {
         guard let cwd = directory else { error = "Choose a folder first."; return }
         do {
             let t = try await connection.startThread(cwd: cwd, input: input,
-                                                       options: .init(model: app.draftModel, effort: app.draftEffort, permissionMode: app.draftPermissionMode))
+                                                       options: .init(model: app.draftModel, effort: app.draftEffort,
+                                                                      permissionMode: app.draftPermissionMode, fastMode: app.draftFastMode))
             app.open(threadID: t.id, on: connection.id)
         } catch {
             self.error = error.localizedDescription
         }
-    }
-}
-
-/// Session controls for the New Chat screen, bound to the app's draft.
-struct NewChatControls: View {
-    @Bindable var app: AppModel
-    let connection: HostConnection
-
-    private var currentModelInfo: ModelInfo? {
-        let value = connection.models.concreteValue(for: app.draftModel ?? app.defaultModel)
-        return connection.models.concrete.first { $0.value == value } ?? connection.models.concrete.first
-    }
-
-    var body: some View {
-        // Also resolved here: the catalog usually lands after `newChat()` seeded the draft.
-        ModelPicker(selection: Binding(get: { connection.models.concreteValue(for: app.draftModel ?? app.defaultModel) },
-                                       set: { app.draftModel = $0 }),
-                    models: connection.models)
-        EffortPicker(selection: $app.draftEffort, levels: currentModelInfo?.supportedEffortLevels ?? EffortLevel.allCases)
-        PermissionModePicker(selection: $app.draftPermissionMode)
     }
 }
 

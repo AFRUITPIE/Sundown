@@ -28,6 +28,8 @@ struct TetherApp: App {
                 TranscriptWidthCommands(app: app)
                 ShellViewCommands(app: app)
             }
+            // View ▸ Show Toolbar / Customize Toolbar…, for the identified toolbar in RootView.
+            ToolbarCommands()
         }
         Settings { SettingsView(app: app) }
             .defaultSize(width: 660, height: 400)

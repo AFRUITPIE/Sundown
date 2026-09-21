@@ -258,91 +258,6 @@ struct AuthStatusView: View {
     }
 }
 
-/// Model, effort, fast mode and permission menus for a live chat (shown in the window toolbar).
-struct ThreadControls: View {
-    let thread: ThreadModel
-    let connection: HostConnection
-
-    private var currentModelInfo: ModelInfo? {
-        let m = connection.models.concreteValue(for: thread.model)
-        return connection.models.concrete.first { $0.value == m } ?? connection.models.concrete.first
-    }
-
-    var body: some View {
-        // The catalog's default until the thread reports its model; a pop-up can't show no selection.
-        ModelPicker(selection: Binding(get: { connection.models.concreteValue(for: thread.model) },
-                                       set: { m in Task { await connection.setModel(thread, m) } }),
-                    models: connection.models)
-        EffortPicker(selection: Binding(get: { thread.effort }, set: { e in Task { await connection.setEffort(thread, e) } }),
-                     levels: currentModelInfo?.supportedEffortLevels ?? EffortLevel.allCases)
-        PermissionModePicker(selection: Binding(
-            get: { thread.permissionMode ?? .default },
-            set: { m in Task { await connection.setPermissionMode(thread, m) } }))
-        if currentModelInfo?.supportsFastMode == true {
-            Toggle("Fast", systemImage: "hare", isOn: Binding(
-                get: { thread.fastMode },
-                set: { on in Task { await connection.setFastMode(thread, on) } }))
-                .toggleStyle(.button)
-                .disabled(thread.info?.fastModeDisabledReason != nil)
-                .help(thread.info?.fastModeDisabledReason.map { "Fast mode unavailable: \($0)" } ?? "Fast mode")
-        }
-    }
-}
-
-// Pop-up buttons (`Picker` with `.menu`): each picks one value from a flat set and shows it.
-// Text-only, like the SF Symbols app's family and weight pop-ups.
-struct ModelPicker: View {
-    @Binding var selection: String?
-    let models: [ModelInfo]
-
-    var body: some View {
-        // The CLI's "Default" pseudo-model is shown as the real model it resolves to.
-        Picker("Model", selection: $selection) {
-            ForEach(models.concrete, id: \.value) { m in
-                Text(m.shortName).tag(Optional(m.value))
-            }
-            // Keep a custom or Bedrock model ID selectable even if the CLI does not list it.
-            if let s = selection, !models.contains(where: { $0.value == s || $0.resolvedModel == s }) {
-                Text(s).tag(Optional(s))
-            }
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .help("Model")
-    }
-}
-
-struct EffortPicker: View {
-    @Binding var selection: EffortLevel?
-    let levels: [EffortLevel]
-
-    var body: some View {
-        Picker("Effort", selection: $selection) {
-            // A real choice here: no effort lets the model decide per turn.
-            Text("Automatic").tag(EffortLevel?.none)
-            ForEach(levels, id: \.self) { Text($0.rawValue.capitalized).tag(Optional($0)) }
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .help("Reasoning effort")
-    }
-}
-
-struct PermissionModePicker: View {
-    @Binding var selection: PermissionMode
-
-    var body: some View {
-        Picker("Permissions", selection: $selection) {
-            ForEach([PermissionMode.default, .acceptEdits, .plan, .auto, .dontAsk, .bypassPermissions], id: \.self) { m in
-                Text(m.label).tag(m)
-            }
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .help("Permission mode")
-    }
-}
-
 /// Trailing inspector: three panes behind a segmented control.
 struct ThreadInspector: View {
     let thread: ThreadModel
@@ -772,35 +687,6 @@ enum Loaded<Value> {
                                   output: ["Visit https://device.sso.us-west-2.amazonaws.com/", "Enter code: ABCD-EFGH"], error: nil))
         .padding(20)
         .frame(width: 480)
-}
-
-#Preview("ThreadControls") {
-    let connection = HostConnection.sample()
-    let thread = ThreadModel.sampleIdleChat()
-    HStack(spacing: 4) { ThreadControls(thread: thread, connection: connection) }
-        .menuStyle(.button)
-        .buttonStyle(.borderless)
-        .controlSize(.small)
-        .padding(20)
-        .frame(width: 560)
-}
-
-#Preview("ModelPicker") {
-    ModelPicker(selection: .constant("sonnet"), models: ModelInfo.sampleCatalog)
-        .padding(20)
-        .frame(width: 260)
-}
-
-#Preview("EffortPicker") {
-    EffortPicker(selection: .constant(.high), levels: [.low, .medium, .high, .max])
-        .padding(20)
-        .frame(width: 260)
-}
-
-#Preview("PermissionModePicker") {
-    PermissionModePicker(selection: .constant(.acceptEdits))
-        .padding(20)
-        .frame(width: 260)
 }
 
 #Preview("Inspector — Tasks") {
