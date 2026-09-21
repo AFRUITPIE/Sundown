@@ -2,27 +2,29 @@ import SwiftUI
 import TetherKit
 import TetherProtocol
 
-/// One quiet transcript line for a tool call: a small icon, a plain-text description, and a
-/// disclosure chevron that expands to the same kind-specific detail as always — no fill, no
-/// border, no bold title. Color only shows up when the call needs attention (failed, denied,
-/// or still running); a finished call is just secondary/tertiary text, same as everything else
-/// in the transcript that isn't asking for a reaction.
+/// One quiet transcript line for a tool call, expanding to kind-specific detail. Color only
+/// appears when the call needs attention: failed, denied or still running.
 struct ToolCallView: View {
     let call: Item.ToolCall
     let thread: ThreadModel
     @State private var expanded = false
+    @Environment(\.inspectSubagent) private var inspectSubagent
 
     private var input: JSONValue { call.input }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
+                if call.kind == .subagent {
+                    inspectSubagent(call.id)
+                } else {
+                    withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
+                }
             } label: {
                 header.contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if expanded || alwaysShowBody {
+            if call.kind != .subagent, expanded || alwaysShowBody {
                 detail
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
@@ -34,7 +36,7 @@ struct ToolCallView: View {
     }
 
     private var alwaysShowBody: Bool {
-        call.kind == .todoWrite || (call.kind == .subagent && call.status == .running)
+        call.kind == .todoWrite
     }
 
     private var accentColor: Color {
@@ -58,16 +60,15 @@ struct ToolCallView: View {
                 Text(Format.duration(s)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
             statusGlyph
-            Image(systemName: "chevron.right")
+            Image(systemName: call.kind == .subagent ? "sidebar.trailing" : "chevron.right")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
-                .rotationEffect(.degrees(expanded ? 90 : 0))
+                .rotationEffect(.degrees(call.kind == .subagent ? 0 : expanded ? 90 : 0))
         }
         .font(.callout)
     }
 
-    /// Nothing for a completed call (no checkmark shouting at you) — a glyph appears only when
-    /// there's something to notice.
+    /// A glyph only when there's something to notice.
     @ViewBuilder private var statusGlyph: some View {
         switch call.status {
         case .pending, .running: ProgressView().controlSize(.small)
@@ -108,7 +109,12 @@ struct ToolCallView: View {
         case .fileEdit: return "Edit"
         case .grep, .glob: return "Searched for"
         case .webSearch: return "Searched the web for"
-        case .subagent: return input.string("subagent_type").map { "Agent · \($0)" } ?? "Agent"
+        case .subagent:
+            return SubagentLifecycle.title(
+                call: call,
+                task: thread.taskEvent(forToolUseId: call.id),
+                isBackgrounded: thread.isTaskBackgrounded(toolUseId: call.id)
+            )
         case .mcp:
             let parts = call.name.split(separator: "_", omittingEmptySubsequences: true)
             return parts.count >= 3 ? "\(parts[1]) · \(parts[2...].joined(separator: "_"))" : call.name
@@ -155,20 +161,7 @@ struct ToolCallView: View {
         case .todoWrite:
             TodoListView(todos: input["todos"]?.arrayValue ?? [])
         case .subagent:
-            VStack(alignment: .leading, spacing: 8) {
-                if let p = input.string("prompt") {
-                    Text(p).font(.callout).foregroundStyle(.secondary).lineLimit(expanded ? nil : 3)
-                }
-                let children = thread.children(of: call.id)
-                if !children.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(children, id: \.id) { ItemView(item: $0, thread: thread) }
-                    }
-                    .padding(.leading, 10)
-                    .overlay(alignment: .leading) { Rectangle().fill(.quaternary).frame(width: 2) }
-                }
-                if call.status != .running { output }
-            }
+            EmptyView() // Subagent transcripts belong in the Tasks inspector.
         default:
             VStack(alignment: .leading, spacing: 6) {
                 if input.objectValue?.isEmpty == false {
@@ -186,10 +179,43 @@ struct ToolCallView: View {
     }
 }
 
-/// A folded run of consecutive, unremarkable finished tool calls (see `foldTranscriptRows`),
-/// shown as one quiet "Used N tools" line. Expanding it reveals the individual calls, each
-/// still its own `ToolCallView` — expanding one of those shows that call's detail exactly as
-/// it would if it weren't part of a group.
+struct InspectSubagentAction: Sendable {
+    var open: @MainActor @Sendable (String) -> Void
+    @MainActor func callAsFunction(_ toolUseId: String) { open(toolUseId) }
+}
+
+private struct InspectSubagentKey: EnvironmentKey {
+    static let defaultValue = InspectSubagentAction(open: { _ in })
+}
+
+extension EnvironmentValues {
+    var inspectSubagent: InspectSubagentAction {
+        get { self[InspectSubagentKey.self] }
+        set { self[InspectSubagentKey.self] = newValue }
+    }
+}
+
+enum SubagentLifecycle {
+    static func title(call: Item.ToolCall, task: TaskEventNotification?, isBackgrounded: Bool = false) -> String {
+        let state = (task?.status ?? task?.event ?? call.status.rawValue).lowercased()
+        if isBackgrounded || state.contains("background") { return "Agent running in background" }
+        if state.contains("fail") { return "Agent failed" }
+        if state.contains("stop") || state.contains("interrupt") { return "Agent stopped" }
+        if state.contains("complete") || state.contains("finish") { return "Agent finished" }
+        if state.contains("start") || state.contains("progress") || state.contains("running") || state.contains("pending") {
+            return "Agent running"
+        }
+        return "Agent"
+    }
+
+    static func isRunning(call: Item.ToolCall?, task: TaskEventNotification?) -> Bool {
+        let state = (task?.status ?? task?.event ?? call?.status.rawValue ?? "").lowercased()
+        return !state.contains("complete") && !state.contains("finish") && !state.contains("fail")
+            && !state.contains("stop") && !state.contains("interrupt") && state != ""
+    }
+}
+
+/// A folded run of finished tool calls (see `foldTranscriptRows`) as one "Used N tools" line.
 struct ToolCallGroupView: View {
     let calls: [Item.ToolCall]
     let thread: ThreadModel
@@ -254,8 +280,7 @@ struct DiffView: View {
     let new: String
     var lineLimit = 24
     @State private var expanded = false
-    // A diff is O(old x new) and nothing about it changes between redraws, but the transcript is
-    // re-evaluated on every streamed delta — so an expanded edit would recompute it each frame.
+    // Cached: the diff is O(old × new) and the transcript redraws on every streamed delta.
     @State private var cache = DiffCache()
 
     struct Line: Hashable { let sign: Character; let text: String }
@@ -306,8 +331,8 @@ struct DiffView: View {
     }
 }
 
-/// Memoizes one diff. Held in `@State` so it lives as long as the view it belongs to, the same
-/// way `MarkdownCache` does for parsed markdown.
+/// Memoizes one diff for the life of its view.
+@MainActor
 final class DiffCache {
     private var key: (old: String, new: String)?
     private var cached: [DiffView.Line] = []
@@ -366,8 +391,7 @@ final class DiffCache {
         .frame(width: 560)
 }
 
-// #Preview bodies are result-builder closures (no `guard`/control flow), so this pulls the
-// subagent's `Item.ToolCall` out of the gallery thread for the preview below.
+// The gallery thread's subagent call, for the preview below.
 @MainActor
 private func sampleSubagentCall(in thread: ThreadModel) -> Item.ToolCall {
     guard case .toolCall(let t) = thread.items.first(where: { $0.id == "tool-subagent-explore" }) else { fatalError("missing sample subagent call") }
@@ -402,8 +426,7 @@ private func sampleSubagentCall(in thread: ThreadModel) -> Item.ToolCall {
         .frame(width: 560)
 }
 
-// #Preview bodies can't have `let`/control flow either, so this builds the sample run of
-// finished calls the two group previews below both use.
+// A run of finished calls for the group previews.
 @MainActor
 private func sampleFinishedRun() -> [Item.ToolCall] {
     [

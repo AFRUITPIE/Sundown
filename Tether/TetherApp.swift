@@ -23,12 +23,12 @@ struct TetherApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New Chat") { app.newChat() }.keyboardShortcut("n")
             }
-            // A view preference belongs in the View menu as well as Settings, so changing it
-            // doesn't mean leaving the window to do it.
+            // Also in the View menu, so changing it doesn't mean opening Settings.
             CommandGroup(after: .toolbar) {
                 TranscriptWidthCommands(app: app)
             }
         }
         Settings { SettingsView(app: app) }
+            .defaultSize(width: 660, height: 400)
     }
 }

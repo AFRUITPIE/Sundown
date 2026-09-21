@@ -21,20 +21,14 @@ public enum SidebarSelection: Hashable, Sendable {
 public final class AppModel {
     public private(set) var hosts: [HostConfig] = []
     public private(set) var connections: [UUID: HostConnection] = [:]
-    /// Resolving a selection creates the thread's model if it doesn't exist yet, which mutates
-    /// observable state — so it happens here, when the selection changes, and never while a view
-    /// is rendering (SwiftUI redraws the window when state changes mid-update).
-    public var selection: SidebarSelection? { didSet { resolveSelection() } }
+    /// Resolved here rather than in a view body: resolving can create the thread's model.
+    public var selection: SidebarSelection? { didSet { resolveSelection(leaving: oldValue) } }
     public private(set) var selectedThread: ThreadModel?
 
-    /// Whether the trailing inspector is shown. Lives here (not on ThreadView) so `.inspector`
-    /// can wrap the whole NavigationSplitView and span the full window height, like Xcode's
-    /// right sidebar, instead of just the detail column.
+    /// Whether the trailing inspector is shown (persisted).
     public var showInspector: Bool {
         get { access(keyPath: \.showInspector); return inspectorStorage }
-        // Guarded the way the @Observable macro guards its own setters: without it, writing the
-        // value it already has still notifies every observer. The framework writes this one
-        // whenever it restores or collapses the inspector, so the redundant writes are frequent.
+        // Guarded like @Observable's own setters; the framework rewrites this value often.
         set {
             guard newValue != inspectorStorage else { return }
             withMutation(keyPath: \.showInspector) { inspectorStorage = newValue }
@@ -42,14 +36,12 @@ public final class AppModel {
     }
     @ObservationIgnored @AppStorage("tether.inspector") private var inspectorStorage = false
 
-    /// Draft session-control values for the New Chat screen (shown in the window toolbar and
-    /// used to start the thread). Not persisted — reset to the app defaults by `newChat()`.
+    /// The New Chat screen's session controls, reset to the defaults by `newChat()`.
     public var draftModel: String?
     public var draftEffort: EffortLevel?
     public var draftPermissionMode: PermissionMode = .default
 
-    /// How wide the transcript may get (persisted). Narrow by default: capped line length is
-    /// easier to read than text that fills a wide window.
+    /// How wide the transcript may get (persisted).
     public var transcriptWidth: TranscriptWidth = .narrow { didSet { save() } }
 
     /// Defaults for new threads, per app (persisted).
@@ -62,8 +54,7 @@ public final class AppModel {
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        // Use the same store as `defaults` (real UserDefaults for the app, an isolated suite for
-        // previews) so `.sample()` never reads or writes the real "tether.inspector" value.
+        // Same store as `defaults`, so previews never touch the real value.
         _inspectorStorage = AppStorage(wrappedValue: false, "tether.inspector", store: defaults)
         load()
         for h in hosts { connections[h.id] = HostConnection(host: h) }
@@ -108,16 +99,13 @@ public final class AppModel {
     public func newChat() {
         let host = selection?.hostId ?? HostConfig.local.id
         selection = .newChat(host: host)
-        // A concrete model, not "whatever the CLI decides": nothing in the protocol reports the
-        // CLI's own default, so the app's default is the one set in Settings, falling back to the
-        // top of that host's catalog until one is chosen.
+        // Always a concrete model: the Settings default, else the catalog's.
         draftModel = defaultModel ?? connections[host]?.models.defaultValue
         draftEffort = defaultEffort.map(EffortLevel.init(rawValue:))
         draftPermissionMode = PermissionMode(rawValue: defaultPermissionMode)
     }
 
-    /// Whether a chat is on screen, as opposed to the New Chat screen — the inspector has
-    /// nothing to show without one.
+    /// Whether a chat, rather than New Chat, is on screen.
     public var isThreadSelected: Bool {
         if case .thread = selection { return true }
         return false
@@ -127,12 +115,16 @@ public final class AppModel {
         selection.flatMap { connections[$0.hostId] }
     }
 
-    private func resolveSelection() {
-        guard case .thread(let h, let id) = selection, let c = connections[h] else {
+    private func resolveSelection(leaving old: SidebarSelection?) {
+        let previous = selectedThread
+        if case .thread(let h, let id) = selection, let c = connections[h] {
+            selectedThread = c.thread(id)
+        } else {
             selectedThread = nil
-            return
         }
-        selectedThread = c.thread(id)
+        if let previous, previous !== selectedThread, let host = old?.hostId {
+            connections[host]?.leave(previous)
+        }
     }
 
     // MARK: persistence
@@ -165,11 +157,8 @@ public final class AppModel {
 
 #if DEBUG
 extension AppModel {
-    /// Replaces `hosts`/`connections` with pre-seeded ones for `#Preview`s, bypassing persistence
-    /// and the real `HostConnection(host:)` this init would otherwise create. Never touches the
-    /// network.
+    /// Pre-seeded hosts and connections for `#Preview`s, off persistence and the network.
     public static func sample(connections: [HostConnection] = [.sample()]) -> AppModel {
-        // An ephemeral suite so previews never read or write the app's real saved hosts.
         let app = AppModel(defaults: UserDefaults(suiteName: "tether.preview.\(UUID().uuidString)") ?? .standard)
         app.hosts = connections.map(\.host)
         app.connections = Dictionary(uniqueKeysWithValues: connections.map { ($0.id, $0) })

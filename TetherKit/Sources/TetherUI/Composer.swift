@@ -61,8 +61,7 @@ struct Composer: View {
     private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty }
 
     var body: some View {
-        // The suggestion sits above the field rather than inside it: it's an offer to act, not
-        // part of what you're writing, and putting it in the glass made it read as entered text.
+        // Above the field, not in it: it's an offer, not text you've written.
         VStack(alignment: .leading, spacing: 8) {
             if let s = thread?.promptSuggestion, text.isEmpty {
                 Button { text = s } label: {
@@ -126,8 +125,7 @@ struct Composer: View {
         .onPasteCommand(of: [.png, .tiff, .jpeg], perform: { _ = drop($0) })
         .onAppear { focused = true }
         .task(id: cwd) { commands = await connection.commands(cwd: cwd, thread: thread) }
-        // Keyed on the query so each keystroke cancels the last search instead of racing it —
-        // otherwise a slow reply can land after a newer one and rewrite the list.
+        // Keyed on the query so a slow reply can't overwrite a newer one.
         .task(id: mentionQuery) {
             guard let q = mentionQuery, let cwd else { fileMatches = []; return }
             try? await Task.sleep(for: .milliseconds(120))

@@ -9,10 +9,7 @@ public struct RootView: View {
         self.app = app
     }
 
-    // No columnVisibility binding. Nothing here ever wrote it — it existed so a preview could show
-    // the sidebar collapsed — and holding it meant every sidebar toggle wrote this view's state,
-    // re-running this body and rebuilding the toolbar on the frame the column started animating.
-    // NavigationSplitView manages and restores that visibility itself.
+    // No columnVisibility binding: writing it on every sidebar toggle rebuilt the toolbar mid-animation.
     public var body: some View {
         NavigationSplitView {
             SidebarView(app: app)
@@ -31,8 +28,7 @@ public struct RootView: View {
             if let thread = app.selectedThread, let c = app.selectedConnection {
                 ChatDetail(app: app, thread: thread, connection: c)
             } else {
-                // The host this chat belongs to is gone (removed in Settings while it was
-                // selected); an empty detail column would just look broken.
+                // The chat's host was removed while it was selected.
                 ContentUnavailableView {
                     Label("Host Unavailable", systemImage: "exclamationmark.triangle")
                 } description: {
@@ -45,24 +41,19 @@ public struct RootView: View {
         case .newChat(let h):
             NewChatView(app: app, hostId: h).id(h)
         case nil:
-            // Selection is initialized to New Chat. Keep the same useful screen as a defensive
-            // fallback if a List transiently clears its optional selection.
+            // Fallback if the List transiently clears its selection.
             NewChatView(app: app, hostId: HostConfig.local.id)
         }
     }
 
 }
 
-/// Window actions stay in one stable toolbar. New Chat sits beside the system sidebar toggle and
-/// follows that column's visibility; the inspector toggle anchors the opposite edge.
-/// (HIG, Toolbars: "Choose items deliberately to avoid overcrowding.")
+/// One stable window toolbar: New Chat beside the sidebar toggle, the inspector toggle at the trailing edge.
 struct AppToolbar: ToolbarContent {
     @Bindable var app: AppModel
 
     var body: some ToolbarContent {
-        // Declared by the window, not by the sidebar column. A toolbar item declared on a column
-        // is removed from the toolbar when that column collapses, and removing one item relayouts
-        // every other one — which is why collapsing the sidebar made the whole toolbar jump.
+        // Declared by the window: an item declared on a column is removed when it collapses, which relayouts every other item.
         ToolbarItem(placement: .navigation) {
             Button {
                 app.newChat()
@@ -81,8 +72,7 @@ struct AppToolbar: ToolbarContent {
 }
 
 extension AppToolbar {
-    /// Model, effort and permissions for whatever is selected: a live chat's own state, or the
-    /// New Chat screen's draft.
+    /// Session controls for the selected chat, or the New Chat draft.
     @ViewBuilder var sessionControls: some View {
         switch app.selection {
         case .thread:
@@ -99,35 +89,31 @@ extension AppToolbar {
     }
 }
 
-/// A chat and its inspector.
-///
-/// Its own view so that reading `showInspector` — which `.inspector(isPresented:)` does — happens
-/// here rather than in `RootView.body`. Built there, every inspector toggle re-ran the root body,
-/// which re-emits the window's `.toolbar`, so NSToolbar rebuilt its items on the frame the column
-/// began animating: the buttons visibly popping out and back.
-///
-/// The binding is the stored preference directly. The framework restores and writes back this
-/// presentation itself — dragging the divider closed, the Inspector menu command — so a binding
-/// whose getter could disagree with what its setter writes ended up persisting the framework's
-/// `false` over the preference. Only a chat has anything to inspect, so hanging the inspector
-/// here is also what keeps it off the New Chat screen.
+/// A chat and its inspector. Separate from `RootView` so reading `showInspector` invalidates only
+/// this view, not the window toolbar. Hanging the inspector here also keeps it off New Chat.
 struct ChatDetail: View {
     @Bindable var app: AppModel
     let thread: ThreadModel
     let connection: HostConnection
+    @State private var inspectedTaskID: String?
 
     var body: some View {
         ThreadView(thread: thread, connection: connection)
+            .environment(\.inspectSubagent, InspectSubagentAction { toolUseId in
+                inspectedTaskID = toolUseId
+                app.showInspector = true
+            })
             .inspector(isPresented: $app.showInspector) {
-                ThreadInspector(thread: thread, connection: connection)
+                ThreadInspector(thread: thread, connection: connection, selectedTaskID: $inspectedTaskID)
+                    .environment(\.inspectSubagent, InspectSubagentAction { toolUseId in
+                        inspectedTaskID = toolUseId
+                    })
                     .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
             }
     }
 }
 
-/// The inspector's toolbar button, as its own view so reading `showInspector` for the tooltip
-/// invalidates only this button. Read from `AppToolbar.body` it rebuilt the whole toolbar — four
-/// pickers and a toggle — on the frame the inspector column began animating.
+/// Its own view so reading `showInspector` invalidates only this button, not the whole toolbar.
 struct InspectorToggle: View {
     @Bindable var app: AppModel
 
@@ -176,8 +162,7 @@ struct HostSection: View {
         Section {
             switch connection.state {
             case .connected:
-                // A connected host with nothing to list used to render as a bare header with a
-                // blank space under it, which reads as still loading.
+                // Otherwise an empty host reads as still loading.
                 if filtered.isEmpty {
                     Label(search.isEmpty ? "No chats yet" : "No matches",
                           systemImage: search.isEmpty ? "bubble.left" : "magnifyingglass")
@@ -275,9 +260,7 @@ struct ChatRow: View {
 struct NewChatView: View {
     @Bindable var app: AppModel
     @Environment(\.readingWidth) private var readingWidth
-    /// Read from the selection rather than held locally: the toolbar's session controls resolve
-    /// their host from the selection too, so a privately-held copy meant picking a different host
-    /// here left the Model picker listing the previous host's catalog.
+    /// From the selection, which the toolbar's session controls also read.
     let hostId: UUID
     @State private var directory: String?
     @State private var error: String?
@@ -332,8 +315,7 @@ struct NewChatView: View {
         .sheet(isPresented: $choosingRemoteFolder) {
             if let connection { RemoteFolderPicker(connection: connection) { directory = $0 } }
         }
-        // The host is usually still connecting when this appears, so the project list arrives
-        // after the fact — without the second hook the folder picker stays empty for good.
+        // Projects usually arrive after this appears.
         .onAppear { useFirstProjectIfUnset() }
         .onChange(of: connection?.projects.first?.cwd) { useFirstProjectIfUnset() }
         .onChange(of: hostId) {
@@ -363,8 +345,7 @@ struct NewChatView: View {
     }
 }
 
-/// Model, effort and permission menus for the New Chat screen (shown in the window toolbar),
-/// bound to the app's draft session-control state until the thread starts.
+/// Session controls for the New Chat screen, bound to the app's draft.
 struct NewChatControls: View {
     @Bindable var app: AppModel
     let connection: HostConnection
@@ -375,8 +356,7 @@ struct NewChatControls: View {
     }
 
     var body: some View {
-        // Resolved here as well as in `newChat()`: the host is usually still connecting when the
-        // screen appears, so the catalog lands after the draft was seeded.
+        // Also resolved here: the catalog usually lands after `newChat()` seeded the draft.
         ModelPicker(selection: Binding(get: { connection.models.concreteValue(for: app.draftModel ?? app.defaultModel) },
                                        set: { app.draftModel = $0 }),
                     models: connection.models)
@@ -505,8 +485,7 @@ private func rootPreviewApp() -> AppModel {
 }
 
 #Preview("RemoteFolderPicker") {
-    // No client (unlike `.sample()`): `listDirectory` fails fast with "Not connected", so the
-    // preview shows a clear empty state instead of an fs/list call that hangs forever.
+    // No client, so `listDirectory` fails fast and the preview shows the empty state.
     let connection = HostConnection(host: .local)
     connection.previewSeed(state: .connected)
     return RemoteFolderPicker(connection: connection) { _ in }

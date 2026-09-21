@@ -29,14 +29,16 @@ public final class ThreadModel: Identifiable {
     public internal(set) var loadingOlder = false
     public private(set) var promptSuggestion: String?
     public private(set) var tasks: [String: TaskEventNotification] = [:]
+    /// IDs from the SDK's latest level-triggered background-task snapshot.
+    public private(set) var backgroundTaskIDs: Set<String> = []
     public private(set) var authStatus: ThreadAuthStatusNotification?
     public private(set) var apiRetry: ThreadApiRetryNotification?
     public private(set) var lastError: String?
+    /// Settings chosen while the daemon hasn't loaded the thread, applied when it resumes.
+    public private(set) var pendingSettings = PendingSettings()
     public var totalCostUsd: Double { turns.compactMap { $0.result?.totalCostUsd }.reduce(0, +) }
     private var index: [String: Int] = [:]
-    /// Bumped by every change to `items`. Derived collections below key their caches off it, so
-    /// they cost one pass per change instead of one per SwiftUI body evaluation — during
-    /// streaming the transcript is rendered far more often than it is mutated.
+    /// Bumped by every change to `items`; the derived collections below cache against it.
     public private(set) var itemsVersion = 0
     @ObservationIgnored private var cachedTopLevel: (version: Int, items: [Item])?
     @ObservationIgnored private var cachedRows: (version: Int, rows: [TranscriptRow])?
@@ -48,9 +50,7 @@ public final class ThreadModel: Identifiable {
         if let s = summary { status = s.status }
     }
 
-    /// Claude's name for the session when it has one, then the first thing that was asked.
-    /// A session only gets named after it has run for a bit, and `thread/started` carries no
-    /// title at all, so the prompt fallback is what a brand-new chat shows.
+    /// Claude's name for the session once it has one, else the opening prompt.
     public var title: String {
         if let t = summary?.customTitle, !t.isEmpty { return t }
         if let t = info?.title, !t.isEmpty { return t }
@@ -68,14 +68,18 @@ public final class ThreadModel: Identifiable {
     }
 
     public var cwd: String? { info?.cwd ?? summary?.cwd }
+    public var model: String? { pendingSettings.model ?? info?.model }
+    public var effort: EffortLevel? { pendingSettings.effort ?? info?.effort }
+    public var permissionMode: PermissionMode? { pendingSettings.permissionMode ?? info?.permissionMode }
+    public var fastMode: Bool { pendingSettings.fastMode ?? (info?.fastModeState == "on") }
+
+    /// Watched from its transcript while another client runs it; the daemon hasn't loaded it.
+    public var isFollowed: Bool { info?.status == .notLoaded }
     public var isRunning: Bool { status == .running || status == .requiresAction }
     public var currentTurn: Turn? { turns.last.flatMap { $0.status == .inProgress ? $0 : nil } }
 
-    /// True while the model is working with nothing on screen to show for it. Reasoning items
-    /// aren't rendered, so without this the transcript sits empty through the thinking phase.
-    /// Keyed on the last item rather than the turn: items don't always carry a `turnId`, and what
-    /// matters is whether the newest thing in the transcript is already showing progress — a tool
-    /// call that is running has its own spinner, and a reply that has started speaks for itself.
+    /// True while the model is working with nothing on screen to show for it. Keyed on the last
+    /// item: a running tool call has its own spinner, and a reply that has started speaks for itself.
     public var isThinking: Bool {
         guard status == .running else { return false }
         switch items.last {
@@ -107,13 +111,10 @@ public final class ThreadModel: Identifiable {
         historyLoaded = true
     }
 
-    /// Add an older page to the front. The transcript is read from its end, so everything before
-    /// what is already held arrives this way — a session run for days has far more history than
-    /// is worth holding, let alone laying out, before anyone asks for it.
+    /// Add an older page to the front.
     func prependHistory(items older: [Item], hasMore: Bool) {
         hasMoreHistory = hasMore
         guard !older.isEmpty else { return }
-        // Defensive: a page that overlaps what is held would otherwise duplicate rows.
         let known = Set(items.map(\.id))
         let fresh = older.filter { !known.contains($0.id) }
         guard !fresh.isEmpty else { return }
@@ -126,8 +127,16 @@ public final class ThreadModel: Identifiable {
         itemsVersion &+= 1
     }
 
-    func setLastSeq(_ s: Int) {
-        lastSeq = max(lastSeq, s)
+    /// Drops the transcript so the next open reads it afresh.
+    func unload() {
+        items = []
+        turns = []
+        tasks = [:]
+        backgroundTaskIDs = []
+        reindex()
+        lastSeq = 0
+        hasMoreHistory = false
+        historyLoaded = false
     }
 
     // MARK: notifications
@@ -159,6 +168,8 @@ public final class ThreadModel: Identifiable {
         case .itemToolCallProgress(let e):
             mutate(e.itemId) { if case .toolCall(var t) = $0 { t.elapsedSeconds = e.elapsedSeconds; $0 = .toolCall(t) } }
         case .taskEvent(let e): tasks[e.taskId] = e
+        case .taskBackgroundChanged(let e):
+            backgroundTaskIDs = Set((e.tasks.arrayValue ?? []).compactMap { $0["task_id"]?.stringValue })
         case .threadPromptSuggestion(let e): promptSuggestion = e.suggestion
         case .threadAuthStatus(let e): authStatus = e
         case .threadApiRetry(let e): apiRetry = e
@@ -185,6 +196,15 @@ public final class ThreadModel: Identifiable {
     func clearPending() {
         for p in pending { p.respond(nil) }
         pending.removeAll()
+    }
+
+    func editPendingSettings(_ edit: (inout PendingSettings) -> Void) {
+        edit(&pendingSettings)
+    }
+
+    func takePendingSettings() -> PendingSettings {
+        defer { pendingSettings = PendingSettings() }
+        return pendingSettings
     }
 
     func setError(_ message: String?) {
@@ -228,6 +248,21 @@ public final class ThreadModel: Identifiable {
         return byParent[toolUseId] ?? []
     }
 
+    /// The newest lifecycle event for a subagent tool call (task IDs aren't tool-use IDs).
+    public func taskEvent(forToolUseId toolUseId: String) -> TaskEventNotification? {
+        tasks.values
+            .filter { $0.toolUseId == toolUseId }
+            .max { $0.seq < $1.seq }
+    }
+
+    /// Background state arrives either as a task event patch or as the SDK's full list.
+    public func isTaskBackgrounded(toolUseId: String) -> Bool {
+        guard let task = taskEvent(forToolUseId: toolUseId) else { return false }
+        return backgroundTaskIDs.contains(task.taskId)
+            || task.data["is_backgrounded"]?.boolValue == true
+            || task.data["patch"]?["is_backgrounded"]?.boolValue == true
+    }
+
     public var topLevelItems: [Item] {
         if let c = cachedTopLevel, c.version == itemsVersion { return c.items }
         let top = items.filter { $0.parentToolUseId == nil }
@@ -246,6 +281,14 @@ public final class ThreadModel: Identifiable {
 
     /// Position of an item in the transcript, for views that need to know what came after it.
     public func itemIndex(of id: String) -> Int? { index[id] }
+}
+
+/// Each field is nil when unchanged; `model` and `effort` can be changed to nil (automatic).
+public struct PendingSettings: Sendable, Equatable {
+    public var model: String??
+    public var effort: EffortLevel??
+    public var permissionMode: PermissionMode?
+    public var fastMode: Bool?
 }
 
 extension Item {

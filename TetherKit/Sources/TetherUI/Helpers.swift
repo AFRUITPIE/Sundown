@@ -28,10 +28,7 @@ extension String {
     }
 }
 
-/// How wide the transcript is allowed to get. Long lines are hard to track back to the start of
-/// the next one, so the text is capped rather than filling the window — Narrow keeps it near the
-/// 45–75 characters that read comfortably, and the wider settings trade that for fewer wraps in
-/// code blocks and diffs.
+/// How wide the transcript may get. Narrow keeps lines near a comfortable 45–75 characters.
 public enum TranscriptWidth: String, CaseIterable, Identifiable, Sendable {
     case narrow, medium, wide
 
@@ -48,8 +45,7 @@ public enum TranscriptWidth: String, CaseIterable, Identifiable, Sendable {
 }
 
 extension EnvironmentValues {
-    /// The transcript's maximum width, so the composer and any bar beneath it line up with the
-    /// text above instead of sitting a few points wider on each side.
+    /// The transcript's maximum width, shared with the composer so their edges line up.
     @Entry var readingWidth: CGFloat = TranscriptWidth.narrow.points
 }
 
@@ -70,8 +66,7 @@ enum Format {
         n >= 1_000_000 ? String(format: "%.1fM", n / 1_000_000) : n >= 1000 ? String(format: "%.1fk", n / 1000) : String(Int(n))
     }
 
-    /// Shared: building a formatter costs more than the formatting, and the sidebar formats one
-    /// per row on every pass.
+    /// Shared: building a formatter costs more than using one.
     @MainActor private static let relativeFormatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .abbreviated
@@ -85,11 +80,8 @@ enum Format {
 }
 
 extension ModelInfo {
-    /// The catalog's own `displayName` is the bare family — "Opus", "Sonnet", "Fable" — but the
-    /// version is what separates one generation from the next, and it only appears in
-    /// `resolvedModel`. So the name is built from there: claude-opus-5 → "Opus 5",
-    /// claude-fable-5-1 → "Fable 5.1", claude-haiku-4-5-20251001 → "Haiku 4.5" (a trailing
-    /// build date is not a version anyone says out loud).
+    /// Family and version from `resolvedModel` (the catalog's `displayName` has no version):
+    /// claude-opus-5 → "Opus 5", claude-haiku-4-5-20251001 → "Haiku 4.5".
     var shortName: String {
         guard let resolved = resolvedModel else { return displayName }
         var parts = resolved.split(separator: "-").map(String.init)
@@ -100,9 +92,7 @@ extension ModelInfo {
         return version.isEmpty ? family.capitalized : "\(family.capitalized) \(version)"
     }
 
-    /// The CLI lists a pseudo-model for "whatever I would pick". It isn't a model, but its
-    /// `resolvedModel` names the one it stands for — which is what lets the app show that model
-    /// by name instead of the word Default.
+    /// The CLI's "whatever I would pick" pseudo-model; `resolvedModel` names the real one.
     var isDefaultAlias: Bool { value == "default" }
 }
 
@@ -119,9 +109,8 @@ extension Array where Element == ModelInfo {
         return concrete.first?.value
     }
 
-    /// Maps whatever the server reports for a thread onto a row that exists in the picker,
-    /// following the "default" alias through to the model it resolves to. An ID the CLI doesn't
-    /// list — a Bedrock one, say — is returned unchanged so it stays selectable.
+    /// Maps a reported model onto a picker row, following the default alias. Unlisted IDs (Bedrock)
+    /// come back unchanged so they stay selectable.
     func concreteValue(for id: String?) -> String? {
         guard let id else { return defaultValue }
         if let exact = concrete.first(where: { $0.value == id || $0.resolvedModel == id }) { return exact.value }
@@ -134,9 +123,7 @@ extension Array where Element == ModelInfo {
 }
 
 extension PermissionMode {
-    /// Short enough for a pop-up button: NSPopUpButton is as wide as its widest menu item, so
-    /// "Bypass permissions" set the width of the control even while "Ask" was selected. The menu
-    /// shows all six together, which is the context that makes one word each readable.
+    /// One word each: a pop-up button is as wide as its widest item.
     var label: String {
         switch self {
         case .default: return "Ask"
@@ -149,7 +136,7 @@ extension PermissionMode {
         }
     }
 
-    /// The same modes spelled out, for Settings and anywhere else with room for a sentence.
+    /// Spelled out, for Settings.
     var longLabel: String {
         switch self {
         case .default: return "Ask before edits"

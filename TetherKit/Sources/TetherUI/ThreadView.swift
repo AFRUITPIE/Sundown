@@ -13,8 +13,7 @@ struct ThreadView: View {
                 BottomBar(thread: thread, connection: connection)
             }
             .scrollEdgeEffectStyle(.soft, for: .bottom)
-            // Same treatment at the top, so the transcript fades under the controls the way it
-            // fades under the composer instead of meeting them at a hard rule.
+            // The same soft edge under the toolbar.
             .scrollEdgeEffectStyle(.soft, for: .top)
             .navigationTitle(thread.title)
             .navigationSubtitle(thread.cwd?.abbreviatingHome ?? "")
@@ -66,9 +65,7 @@ struct TranscriptView: View {
             LazyVStack(alignment: .leading, spacing: 14) {
                 if !thread.historyLoaded { unloadedState }
                 if thread.historyLoaded, thread.hasMoreHistory {
-                    // Asking for the previous page when the top of this one comes into view, the
-                    // mirror of the anchor at the end. `loadOlderHistory` takes one page at a
-                    // time, so repeated calls while a page is in flight are harmless.
+                    // Ask for the previous page when the top comes into view; one page is fetched at a time.
                     ProgressView()
                         .controlSize(.small)
                         .frame(maxWidth: .infinity)
@@ -88,15 +85,8 @@ struct TranscriptView: View {
                 if let turn = thread.turns.last, turn.status != .inProgress, let r = turn.result {
                     TurnFooter(result: r, status: turn.status)
                 }
-                // Whether the end of the transcript is on screen, asked rather than calculated.
-                // The arithmetic this replaces added the top inset to the maximum offset,
-                // inflating it by about the height of the toolbar, so with a 40pt tolerance the
-                // test could never come true and the button never went away.
-                //
-                // The last child rather than an overlay on the stack: an overlay has to be sized
-                // against the stack, which asks a LazyVStack for a height it can only give by
-                // measuring every row — and re-measuring all of them on each frame of a column
-                // resize is the one thing worth avoiding here.
+                // Whether the end is on screen. The last child rather than an overlay, which would make
+                // the LazyVStack measure every row.
                 Color.clear
                     .frame(height: 1)
                     .allowsHitTesting(false)
@@ -109,14 +99,10 @@ struct TranscriptView: View {
             .frame(maxWidth: readingWidth)
             .frame(maxWidth: .infinity)
         }
-        // Every role, not just `.initialOffset`. The anchor also governs how the scroll view
-        // handles content- and container-size changes, and narrowing it to the initial offset
-        // meant reimplementing that by hand — a scrollTo on every contentSize change, which fires
-        // on every frame of a column resize as the text rewraps, writing state and fighting the
-        // scroll view's own adjustment. The framework does this in its layout pass for free.
+        // Every role, so the framework also keeps the bottom pinned through content and size changes.
         .defaultScrollAnchor(.bottom)
         .scrollPosition($position)
-        // A newly opened chat starts at its latest message, wherever the reader left the last one.
+        // A newly opened chat starts at its latest message.
         .onChange(of: thread.historyLoaded) {
             guard thread.historyLoaded else { return }
             atBottom = true
@@ -134,16 +120,13 @@ struct TranscriptView: View {
                 .help("Jump to Latest")
                 .padding(.bottom, 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
-                // Scoped to the button. Applied to the ScrollView it animated every layout change
-                // in the transcript whenever this flipped, which a column resize does repeatedly.
+                // Scoped to the button so the transcript's own layout changes don't animate.
                 .animation(.snappy, value: atBottom)
             }
         }
     }
 
-    /// What stands in for the transcript before it arrives. A bare spinner is only right while
-    /// something is actually in flight — if the load failed, or the host isn't reachable, that
-    /// says so and offers the way out, rather than turning forever.
+    /// Stands in for the transcript before it arrives; a failure says so and offers a way out.
     @ViewBuilder private var unloadedState: some View {
         Group {
             if let error = thread.lastError {
@@ -198,9 +181,8 @@ struct TranscriptPlaceholder<Actions: View>: View {
     }
 }
 
-/// Marks the wait before a turn has anything to show. Reasoning itself isn't rendered, so this
-/// is all there is between sending and the first words of the reply — it comes from the thread's
-/// status rather than reasoning items, so it works with thinking off or redacted too.
+/// Marks the wait before a turn has anything to show. From the thread's status, so it works
+/// with thinking off or redacted.
 struct ThinkingLine: View {
     var body: some View {
         Label("Thinking…", systemImage: "ellipsis")
@@ -283,24 +265,23 @@ struct ThreadControls: View {
     let connection: HostConnection
 
     private var currentModelInfo: ModelInfo? {
-        let m = connection.models.concreteValue(for: thread.info?.model)
+        let m = connection.models.concreteValue(for: thread.model)
         return connection.models.concrete.first { $0.value == m } ?? connection.models.concrete.first
     }
 
     var body: some View {
-        // Falls back to the catalog's first entry only until the server reports the thread's real
-        // model — with no Default row, an unmatched selection would draw as a blank button.
-        ModelPicker(selection: Binding(get: { connection.models.concreteValue(for: thread.info?.model) },
+        // The catalog's default until the thread reports its model; a pop-up can't show no selection.
+        ModelPicker(selection: Binding(get: { connection.models.concreteValue(for: thread.model) },
                                        set: { m in Task { await connection.setModel(thread, m) } }),
                     models: connection.models)
-        EffortPicker(selection: Binding(get: { thread.info?.effort ?? nil }, set: { e in Task { await connection.setEffort(thread, e) } }),
+        EffortPicker(selection: Binding(get: { thread.effort }, set: { e in Task { await connection.setEffort(thread, e) } }),
                      levels: currentModelInfo?.supportedEffortLevels ?? EffortLevel.allCases)
         PermissionModePicker(selection: Binding(
-            get: { thread.info?.permissionMode ?? .default },
+            get: { thread.permissionMode ?? .default },
             set: { m in Task { await connection.setPermissionMode(thread, m) } }))
         if currentModelInfo?.supportsFastMode == true {
             Toggle("Fast", systemImage: "hare", isOn: Binding(
-                get: { thread.info?.fastModeState == "on" },
+                get: { thread.fastMode },
                 set: { on in Task { await connection.setFastMode(thread, on) } }))
                 .toggleStyle(.button)
                 .disabled(thread.info?.fastModeDisabledReason != nil)
@@ -309,23 +290,14 @@ struct ThreadControls: View {
     }
 }
 
-// These three choose one value from a flat set of mutually exclusive options and show the current
-// one on the button, which is a pop-up button — not the pull-down button a bare `Menu` produces.
-// (HIG, Pop-up buttons: "Use a pop-up button to present a flat list of mutually exclusive options
-// or states"; use a pull-down button instead to "offer a list of actions".) `.menu` is the picker
-// style that renders as one. The help text is the introductory label HIG asks for, so the options
-// are predictable without opening the menu.
-//
-// All three are text-only, matching the family and weight pop-ups in the SF Symbols app — which
-// stay text-only even for weight, an ordinal value a gauge could have described.
+// Pop-up buttons (`Picker` with `.menu`): each picks one value from a flat set and shows it.
+// Text-only, like the SF Symbols app's family and weight pop-ups.
 struct ModelPicker: View {
     @Binding var selection: String?
     let models: [ModelInfo]
 
     var body: some View {
-        // No "Default (recommended)" row: the CLI lists it as a pseudo-model, but its
-        // `resolvedModel` says which real model it stands for, so the picker shows that one
-        // selected instead of a word that names nothing.
+        // The CLI's "Default" pseudo-model is shown as the real model it resolves to.
         Picker("Model", selection: $selection) {
             ForEach(models.concrete, id: \.value) { m in
                 Text(m.shortName).tag(Optional(m.value))
@@ -347,8 +319,7 @@ struct EffortPicker: View {
 
     var body: some View {
         Picker("Effort", selection: $selection) {
-            // Unlike the model, this one is a real choice and not a stand-in for an unknown:
-            // sending no effort is what lets a model that supports it decide per turn.
+            // A real choice here: no effort lets the model decide per turn.
             Text("Automatic").tag(EffortLevel?.none)
             ForEach(levels, id: \.self) { Text($0.rawValue.capitalized).tag(Optional($0)) }
         }
@@ -373,20 +344,20 @@ struct PermissionModePicker: View {
     }
 }
 
-/// Trailing inspector, split into three panes. A segmented control switches them: it's one click
-/// per pane and shows every choice at once, which HIG prefers over a pop-up button for switching
-/// panes, and a tab view's enclosure would be redundant inside a column that is already enclosed.
-/// Three segments, equal width, text only — no mixing text and icons in one control.
+/// Trailing inspector: three panes behind a segmented control.
 struct ThreadInspector: View {
     let thread: ThreadModel
     let connection: HostConnection
     @State private var pane: Pane
+    @Binding private var selectedTaskID: String?
     @State private var usage: Loaded<JSONValue?> = .loading
 
-    init(thread: ThreadModel, connection: HostConnection, pane: Pane = .tasks) {
+    init(thread: ThreadModel, connection: HostConnection, pane: Pane = .tasks,
+         selectedTaskID: Binding<String?> = .constant(nil)) {
         self.thread = thread
         self.connection = connection
         self._pane = State(initialValue: pane)
+        self._selectedTaskID = selectedTaskID
     }
 
     enum Pane: String, CaseIterable, Identifiable {
@@ -415,32 +386,38 @@ struct ThreadInspector: View {
                 }
             }
             .formStyle(.grouped)
-            // Let the inspector's own material show through: a grouped Form paints its background
-            // below the titlebar area, which reads as a header strip sitting on top of the column.
+            // Let the inspector's material show through instead of the grouped Form's background.
             .scrollContentBackground(.hidden)
             // Values truncate instead of widening the column (a min width > max width loops the split view).
             .lineLimit(1)
         }
-        // Keyed on the thread too: two chats with the same turn count would otherwise leave the
-        // task un-rerun, and the inspector would keep showing the previous chat's context.
+        // Keyed on the thread too, or two chats with the same turn count share a stale result.
         .task(id: Key(threadId: thread.id, turns: thread.turns.count)) { await refresh() }
+        .onChange(of: selectedTaskID) {
+            if selectedTaskID != nil { pane = .tasks }
+        }
     }
 
     private struct Key: Equatable { let threadId: String; let turns: Int }
 
     // MARK: panes
 
-    private var tasks: [TaskEventNotification] { thread.tasks.values.sorted { $0.seq < $1.seq } }
+    private var taskEntries: [InspectorTaskEntry] { inspectorTaskEntries(thread: thread) }
 
     @ViewBuilder private var tasksPane: some View {
-        if tasks.isEmpty {
+        if let selectedTaskID, let entry = taskEntries.first(where: { $0.id == selectedTaskID }) {
+            InspectorTaskDetail(entry: entry, thread: thread) { self.selectedTaskID = nil }
+        } else if taskEntries.isEmpty {
             InspectorEmptyState("No Tasks", symbol: "person.2",
                                 detail: "Subagents and workflows this chat starts show up here while they run.")
         } else {
             Form {
                 Section {
-                    ForEach(tasks, id: \.taskId) { t in
-                        TaskRow(task: t)
+                    ForEach(taskEntries) { entry in
+                        Button { selectedTaskID = entry.id } label: {
+                            TaskRow(entry: entry)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -452,8 +429,7 @@ struct ThreadInspector: View {
             Section("Context") {
                 switch usage {
                 case .loading:
-                    // Transient by contract: every other branch below replaces it with something
-                    // readable, so this can't be left spinning at a dead end.
+                    // Transient: every other branch replaces it.
                     ProgressView().frame(maxWidth: .infinity)
                 case .failed(let message):
                     Label(message, systemImage: "exclamationmark.triangle")
@@ -543,8 +519,7 @@ struct ThreadInspector: View {
     }
 
     private func refresh() async {
-        // The daemon only answers for a thread it has loaded, so say so rather than spinning:
-        // sending a message resumes the thread and the next refresh succeeds.
+        // The daemon only answers for a loaded thread; sending a message loads it.
         guard connection.isLoaded(thread) else {
             usage = .failed("Available once this chat is running — send a message to resume it.")
             return
@@ -560,24 +535,143 @@ struct ThreadInspector: View {
     }
 }
 
+struct InspectorTaskEntry: Identifiable {
+    let id: String
+    let call: Item.ToolCall?
+    let task: TaskEventNotification?
+    let isBackgrounded: Bool
+}
+
+@MainActor
+func inspectorTaskEntries(thread: ThreadModel) -> [InspectorTaskEntry] {
+    // Includes agents launched by other agents, which have no top-level row.
+    let calls = thread.items.compactMap { item -> Item.ToolCall? in
+        guard case .toolCall(let call) = item, call.kind == .subagent else { return nil }
+        return call
+    }
+    var matchedTaskIDs = Set<String>()
+    var entries = calls.map { call in
+        let task = thread.taskEvent(forToolUseId: call.id)
+        if let task { matchedTaskIDs.insert(task.taskId) }
+        return InspectorTaskEntry(
+            id: call.id,
+            call: call,
+            task: task,
+            isBackgrounded: thread.isTaskBackgrounded(toolUseId: call.id)
+        )
+    }
+    entries += thread.tasks.values
+        .filter { !matchedTaskIDs.contains($0.taskId) }
+        .sorted { $0.seq < $1.seq }
+        .map {
+            InspectorTaskEntry(
+                id: "task:\($0.taskId)",
+                call: nil,
+                task: $0,
+                isBackgrounded: thread.backgroundTaskIDs.contains($0.taskId)
+            )
+        }
+    return entries
+}
+
 /// One subagent or workflow run: what it is, and whether it's still going.
 struct TaskRow: View {
-    let task: TaskEventNotification
-
-    private var isRunning: Bool {
-        let state = task.status ?? task.event
-        return !["completed", "failed", "stopped", "task_completed", "task_failed"].contains(state)
-    }
+    let entry: InspectorTaskEntry
 
     var body: some View {
-        LabeledContent {
-            if isRunning {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.task?.description ?? entry.call?.summary
+                     ?? entry.call?.input.string("description") ?? entry.task?.taskId ?? "Task")
+                    .lineLimit(2)
+                Text(statusText).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 4)
+            if SubagentLifecycle.isRunning(call: entry.call, task: entry.task) {
                 ProgressView().controlSize(.small)
             } else {
-                Text(task.status ?? task.event).foregroundStyle(.secondary)
+                Image(systemName: statusSymbol).foregroundStyle(.secondary)
             }
-        } label: {
-            Text(task.description ?? task.taskId).lineLimit(2)
+            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+        }
+    }
+
+    private var statusText: String {
+        if entry.isBackgrounded { return "Running in Background" }
+        guard let call = entry.call else {
+            return (entry.task?.status ?? entry.task?.event ?? "Task").replacingOccurrences(of: "_", with: " ").capitalized
+        }
+        return SubagentLifecycle.title(call: call, task: entry.task, isBackgrounded: entry.isBackgrounded)
+    }
+
+    private var statusSymbol: String {
+        let state = (entry.task?.status ?? entry.task?.event ?? entry.call?.status.rawValue ?? "").lowercased()
+        if state.contains("fail") { return "exclamationmark.circle" }
+        if state.contains("stop") || state.contains("interrupt") { return "stop.circle" }
+        return "checkmark.circle"
+    }
+}
+
+struct InspectorTaskDetail: View {
+    let entry: InspectorTaskEntry
+    let thread: ThreadModel
+    let close: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button("All Tasks", systemImage: "chevron.left", action: close)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                Text(entry.task?.description ?? entry.call?.input.string("description") ?? "Task")
+                    .font(.headline)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+            Form {
+                Section("Status") {
+                    if let call = entry.call {
+                        LabeledContent(
+                            "State",
+                            value: SubagentLifecycle.title(
+                                call: call,
+                                task: entry.task,
+                                isBackgrounded: entry.isBackgrounded
+                            )
+                        )
+                        if let seconds = call.elapsedSeconds {
+                            LabeledContent("Elapsed", value: Format.duration(seconds))
+                        }
+                    } else if let task = entry.task {
+                        LabeledContent("State", value: entry.isBackgrounded
+                            ? "Running in Background"
+                            : task.status ?? task.event)
+                    }
+                    if let summary = entry.task?.summary, !summary.isEmpty {
+                        Text(summary).lineLimit(nil).textSelection(.enabled)
+                    }
+                }
+                if let prompt = entry.call?.input.string("prompt"), !prompt.isEmpty {
+                    Section("Prompt") {
+                        Text(prompt).lineLimit(nil).textSelection(.enabled)
+                    }
+                }
+                if let toolUseId = entry.call?.id {
+                    let children = thread.children(of: toolUseId)
+                    if !children.isEmpty {
+                        Section("Activity") {
+                            ForEach(children, id: \.id) { ItemView(item: $0, thread: thread) }
+                        }
+                    } else if let output = entry.call?.outputText, !output.isEmpty {
+                        Section("Result") {
+                            Text(output).lineLimit(nil).textSelection(.enabled)
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -604,8 +698,7 @@ struct InspectorEmptyState: View {
     }
 }
 
-/// A value that has to be fetched: every case renders as something, so a view can never be left
-/// showing a spinner that has nothing behind it.
+/// A fetched value. Every case renders, so no spinner is left with nothing behind it.
 enum Loaded<Value> {
     case loading
     case ready(Value)
@@ -649,10 +742,7 @@ enum Loaded<Value> {
     .frame(width: 900, height: 700)
 }
 
-// Inspector visibility now lives on AppModel (hoisted so `.inspector` can span the whole window),
-// so a bare ThreadView never shows one — see "Tool call gallery (inspector open)" below, which
-// wraps this same thread in a NavigationSplitView with the inspector forced open explicitly.
-// This preview shows the transcript alone: a thread with a rich variety of tool calls.
+// The transcript alone; the inspector is on AppModel, so see "Tool call gallery (inspector open)".
 #Preview("Tool call gallery") {
     NavigationStack {
         ThreadView(thread: .sampleToolCalls(), connection: .sample())
@@ -764,6 +854,20 @@ enum Loaded<Value> {
             }
     }
     .frame(width: 900, height: 560)
+}
+
+#Preview("Inspector — Subagent Detail") {
+    NavigationSplitView {
+        Text("Sidebar")
+    } detail: {
+        Text("Detail")
+            .inspector(isPresented: .constant(true)) {
+                ThreadInspector(thread: .sampleToolCalls(), connection: .sample(),
+                                selectedTaskID: .constant("tool-subagent-explore"))
+                    .inspectorColumnWidth(min: 260, ideal: 320, max: 420)
+            }
+    }
+    .frame(width: 1000, height: 700)
 }
 
 #Preview("Inspector — Tasks (empty)") {

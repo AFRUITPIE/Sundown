@@ -8,8 +8,7 @@ public struct HostBootstrapper: Sendable {
         public let version: String
         public let platform: String // e.g. darwin-arm64, linux-x64
 
-        /// Numeric per component, so "0.10.0" orders above "0.9.0" where a string compare would
-        /// not. A pre-release suffix is ignored for ordering; we never ship two at one version.
+        /// Numeric per component, so 0.10.0 orders above 0.9.0.
         var versionOrder: [Int] {
             version.split(separator: "-")[0].split(separator: ".").map { Int($0) ?? 0 }
         }
@@ -31,7 +30,6 @@ public struct HostBootstrapper: Sendable {
     }
 
     /// Directories searched for `tether-<version>-<platform>` binaries.
-    /// Version compared numerically per component, so 0.10.0 sorts above 0.9.0.
     public var searchDirectories: [URL]
     public var log: @Sendable (String) -> Void
 
@@ -56,11 +54,8 @@ public struct HostBootstrapper: Sendable {
             }
             if !out.isEmpty { break }
         }
-        // Newest first. A bundle can hold more than one version — an incremental build leaves the
-        // previous one behind — and taking whatever the directory happened to list first meant
-        // running an old server against a new app. Worse, it was self-concealing: the old binary
-        // reports the old version, matches the running daemon's, and so never triggers the
-        // upgrade that would have replaced it.
+        // Newest first: an incremental build can leave an older version in the bundle, and running it
+        // would also match the old daemon's version and so never trigger the upgrade.
         return out.sorted { $1.versionOrder.lexicographicallyPrecedes($0.versionOrder) }
     }
 
@@ -73,8 +68,10 @@ public struct HostBootstrapper: Sendable {
             case .ssh(let dest): return ("/usr/bin/ssh", Self.sshOptions + [dest, custom])
             }
         }
-        let binaries = availableBinaries()
-        guard let version = binaries.first?.version else { throw BootstrapError.noBinaries }
+        let all = availableBinaries()
+        guard let version = all.first?.version else { throw BootstrapError.noBinaries }
+        // Only the newest version: an older one for this platform would be installed under the new name.
+        let binaries = all.filter { $0.version == version }
         let remotePath = "~/.tether/bin/tether-\(version)"
         switch host.kind {
         case .local:

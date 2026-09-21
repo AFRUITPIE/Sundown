@@ -13,8 +13,7 @@ struct ItemView: View {
         case .agentMessage(let m):
             MarkdownView(text: m.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
-        // Reasoning never renders: `foldTranscriptRows` drops it from the transcript, and a
-        // subagent's nested items go through here too.
+        // Reasoning never renders; subagent items come through here too.
         case .reasoning: EmptyView()
         case .toolCall(let t): ToolCallView(call: t, thread: thread)
         case .compaction(let c):
@@ -43,6 +42,7 @@ struct ItemView: View {
 
 struct UserMessageView: View {
     let message: Item.UserMessage
+    @State private var images = MessageImageCache()
 
     var body: some View {
         HStack {
@@ -59,7 +59,7 @@ struct UserMessageView: View {
                             .textSelection(.enabled)
                             .lineLimit(message.synthetic == true ? 6 : nil)
                     case .image(let img):
-                        if let data = Data(base64Encoded: img.data), let ns = NSImage(data: data) {
+                        if let ns = images.image(for: img.data) {
                             Image(nsImage: ns).resizable().scaledToFit().frame(maxWidth: 240, maxHeight: 180)
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
@@ -79,6 +79,18 @@ struct UserMessageView: View {
                         in: RoundedRectangle(cornerRadius: 12))
             .foregroundStyle(message.synthetic == true ? .secondary : .primary)
         }
+    }
+}
+
+@MainActor
+private final class MessageImageCache {
+    private var values: [String: NSImage] = [:]
+
+    func image(for base64: String) -> NSImage? {
+        if let value = values[base64] { return value }
+        guard let data = Data(base64Encoded: base64), let value = NSImage(data: data) else { return nil }
+        values[base64] = value
+        return value
     }
 }
 

@@ -6,6 +6,7 @@ import TetherProtocol
 @MainActor
 @Observable
 public final class HostConnection: Identifiable {
+    typealias TransportProvider = @Sendable (HostConfig) async throws -> any Transport
     public enum State: Equatable {
         case disconnected
         case connecting(String)
@@ -35,15 +36,23 @@ public final class HostConnection: Identifiable {
     private var bufferedDeltas: [ServerNotification] = []
     private var deltaFlushTask: Task<Void, Never>?
     private var chatsRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private let transportProvider: TransportProvider?
 
-    /// Reported to the daemon on connect, and written to its log. It was hardcoded to "0.1.0",
-    /// which made the log say the wrong thing about which client was attached.
+    /// Reported to the daemon on connect.
     static let appVersion: String =
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
 
     public init(host: HostConfig) {
         self.host = host
         self.id = host.id
+        self.transportProvider = nil
+    }
+
+    /// Test seam for reconnect/replay coverage.
+    init(host: HostConfig, transportProvider: @escaping TransportProvider) {
+        self.host = host
+        self.id = host.id
+        self.transportProvider = transportProvider
     }
 
     public func update(host: HostConfig) {
@@ -60,22 +69,28 @@ public final class HostConnection: Identifiable {
         if case .connecting = state { return }
         state = .connecting("Starting…")
         do {
-            let boot = HostBootstrapper(log: { [weak self] m in Task { @MainActor in self?.appendLog(m); self?.state = .connecting(m) } })
-            let cmd = try await boot.connectCommand(for: host)
-            appendLog("$ \(([cmd.executable] + cmd.arguments).joined(separator: " "))")
-            let transport = ProcessTransport(executable: cmd.executable, arguments: cmd.arguments)
+            let transport: any Transport
+            if let transportProvider {
+                transport = try await transportProvider(host)
+            } else {
+                let boot = HostBootstrapper(log: { [weak self] m in Task { @MainActor in self?.appendLog(m); self?.state = .connecting(m) } })
+                let cmd = try await boot.connectCommand(for: host)
+                appendLog("$ \(([cmd.executable] + cmd.arguments).joined(separator: " "))")
+                transport = ProcessTransport(executable: cmd.executable, arguments: cmd.arguments)
+            }
             let client = RPCClient(transport: transport)
             self.client = client
             await client.setServerRequestHandler { [weak self] req in await self?.handleServerRequest(req) }
-            await client.onClose { [weak self] error in
-                Task { @MainActor in self?.connectionLost(error) }
+            await client.onClose { [weak self, weak client] error in
+                Task { @MainActor in if let client { self?.connectionLost(client, error) } }
             }
             startNotificationPump(client)
             await client.start()
             state = .connecting("Handshaking…")
             let initResult = try await client.call(Methods.Initialize.self, .init(
                 clientInfo: .init(name: "tether-app", title: "Tether", version: Self.appVersion),
-                capabilities: .init(experimentalApi: true),
+                // Reasoning isn't shown, so its per-token deltas are only cost.
+                capabilities: .init(experimentalApi: true, optOutNotificationMethods: ["item/reasoning/delta"]),
                 env: host.env.isEmpty ? nil : host.env))
             try await client.notify("initialized")
             serverInfo = initResult
@@ -87,6 +102,7 @@ public final class HostConnection: Identifiable {
             await refreshCatalog()
         } catch {
             appendLog("Connection failed: \(error.localizedDescription)")
+            await tearDown()
             state = .failed(error.localizedDescription)
             scheduleReconnect()
         }
@@ -94,11 +110,7 @@ public final class HostConnection: Identifiable {
 
     public func disconnect() async {
         wantsConnection = false
-        notificationTask?.cancel()
-        await client?.close()
-        client = nil
-        subscribed.removeAll()
-        for t in threads.values { t.clearPending() }
+        await tearDown()
         state = .disconnected
     }
 
@@ -107,8 +119,22 @@ public final class HostConnection: Identifiable {
         await connect()
     }
 
-    private func connectionLost(_ error: any Error) {
-        guard client != nil else { return }
+    /// Only for the client that closed: a `reconnect()` can have replaced it by the time this runs.
+    private func connectionLost(_ closed: RPCClient, _ error: any Error) {
+        guard client === closed else { return }
+        detach()
+        appendLog("Disconnected: \(error.localizedDescription)")
+        state = .failed(error.localizedDescription)
+        scheduleReconnect()
+    }
+
+    private func tearDown() async {
+        let old = client
+        detach()
+        await old?.close()
+    }
+
+    private func detach() {
         client = nil
         subscribed.removeAll()
         deltaFlushTask?.cancel()
@@ -118,9 +144,6 @@ public final class HostConnection: Identifiable {
         bufferedDeltas.removeAll()
         notificationTask?.cancel()
         for t in threads.values { t.clearPending() }
-        appendLog("Disconnected: \(error.localizedDescription)")
-        state = .failed(error.localizedDescription)
-        scheduleReconnect()
     }
 
     private func scheduleReconnect() {
@@ -149,8 +172,7 @@ public final class HostConnection: Identifiable {
         guard n.threadId != nil else { return }
         switch n {
         case .itemAgentMessageDelta, .itemReasoningDelta, .itemToolCallProgress:
-            // Partial messages arrive per token. Applying each one separately redraws the
-            // transcript at the model's typing speed, so they're batched into a frame.
+            // Per-token; batched into one update per frame.
             bufferedDeltas.append(n)
             scheduleDeltaFlush()
         default:
@@ -164,9 +186,7 @@ public final class HostConnection: Identifiable {
         let model = thread(tid)
         model.apply(n)
         if case .threadStarted(let e) = n, let cwd = Optional(e.thread.cwd) { attach(model, toProject: cwd) }
-        // Claude names a session as it runs, and nothing notifies us when it does — the name only
-        // shows up in thread/list. Without this the sidebar keeps whatever it had at connect time,
-        // which for a chat started this launch is the opening prompt, forever.
+        // Claude's name for a session only appears in thread/list; nothing announces it.
         if case .turnCompleted = n { scheduleChatsRefresh() }
     }
 
@@ -199,7 +219,7 @@ public final class HostConnection: Identifiable {
         for delta in deltas { apply(delta) }
     }
 
-    /// After reconnecting, catch every loaded thread up from its last seen seq (the daemon kept running).
+    /// After reconnecting, catch every open thread up from its last seen seq (the daemon kept running).
     private func resubscribeAll() async {
         guard let client else { return }
         for model in threads.values where model.historyLoaded {
@@ -221,8 +241,7 @@ public final class HostConnection: Identifiable {
         }
     }
 
-    /// Load any thread that was requested via `open(_:)` while we weren't connected yet
-    /// (selected on launch before `connect()` finished, or during a reconnect).
+    /// Load threads `open(_:)` was asked for before the connection was up.
     private func openRequestedThreads() async {
         for id in openRequested {
             guard let model = threads[id], !model.historyLoaded else { continue }
@@ -293,14 +312,24 @@ public final class HostConnection: Identifiable {
         }
     }
 
-    /// Open a thread: loads history and, if it is live in the daemon, subscribes to it.
-    /// If we're not connected yet (e.g. the thread was selected on launch, before `connect()`
-    /// finished, or while reconnecting), defer instead of failing: `connect()` will load it via
-    /// `openRequestedThreads()` once it succeeds.
+    /// Load a thread's history and subscribe to it. Before the connection is up this defers to
+    /// `connect()` rather than failing.
     public func open(_ model: ThreadModel) async {
         openRequested.insert(model.id)
         guard case .connected = state else { return }
         await loadRequestedThread(model)
+    }
+
+    /// The thread is no longer on screen. A followed one is let go: the daemon keeps a file watcher
+    /// and the whole parsed transcript for each, and reopening reads it afresh. A live thread stays
+    /// subscribed, which is cheap and keeps its sidebar status current.
+    /// Synchronous so a quick reselect can't open the thread before this unloads it.
+    public func leave(_ model: ThreadModel) {
+        openRequested.remove(model.id)
+        guard model.isFollowed, subscribed.contains(model.id), let client else { return }
+        subscribed.remove(model.id)
+        model.unload()
+        Task { _ = try? await client.call(Methods.ThreadUnsubscribe.self, .init(threadId: model.id)) }
     }
 
     private func loadRequestedThread(_ model: ThreadModel) async {
@@ -312,8 +341,7 @@ public final class HostConnection: Identifiable {
         }
     }
 
-    /// How much of a transcript to open with, and how much to add per page after that. A session
-    /// run for days is tens of thousands of items; the end of it is what anyone opens it to see.
+    /// Transcripts load from the end, a page at a time.
     public static let initialHistoryLimit = 150
     public static let olderHistoryPageSize = 100
 
@@ -353,12 +381,23 @@ public final class HostConnection: Identifiable {
     public func send(_ model: ThreadModel, input: [UserInput]) async {
         guard let client else { model.setError("Not connected"); return }
         do {
-            if !subscribed.contains(model.id) {
-                // Not loaded in the daemon yet: resume (server replays nothing; we already have history).
-                let r = try await client.call(Methods.ThreadResume.self, .init(threadId: model.id, cwd: model.cwd, afterSeq: nil, includeHistory: true))
-                model.loadHistory(items: r.items ?? model.items, turns: r.turns ?? model.turns, seq: r.historySeq)
+            // Not loaded in the daemon, or only followed: resume it there. A follower numbers its
+            // events separately, so the history is reloaded to take up the live thread's seqs.
+            if !subscribed.contains(model.id) || model.isFollowed {
+                // Resumed with what the controls show: the session's own settings, or the ones
+                // picked while it wasn't loaded.
+                let pending = model.takePendingSettings()
+                let r = try await client.call(Methods.ThreadResume.self, .init(
+                    threadId: model.id, cwd: model.cwd,
+                    model: pending.model ?? model.info?.model,
+                    effort: pending.effort ?? model.info?.effort,
+                    permissionMode: pending.permissionMode ?? model.info?.permissionMode,
+                    includeHistory: true, limit: Self.initialHistoryLimit))
+                model.loadHistory(items: r.items ?? model.items, turns: r.turns ?? model.turns,
+                                  seq: r.historySeq, hasMore: r.hasMore ?? false)
                 model.setInfo(r.thread)
                 subscribed.insert(model.id)
+                try await apply(pending, to: model, over: r.thread, client)
             }
             _ = try await client.call(Methods.TurnStart.self, .init(threadId: model.id, input: input))
             model.setError(nil)
@@ -371,20 +410,44 @@ public final class HostConnection: Identifiable {
         _ = try? await client?.call(Methods.TurnInterrupt.self, .init(threadId: model.id))
     }
 
+    // Settings for a thread the daemon hasn't loaded are held until it resumes, rather than
+    // failing with "not loaded": there is nothing there to change yet.
+
     public func setModel(_ model: ThreadModel, _ value: String?) async {
+        guard isLoaded(model) else { return model.editPendingSettings { $0.model = .some(value) } }
         await perform(model) { try await $0.call(Methods.ThreadSetModel.self, .init(threadId: model.id, model: value)) }
     }
 
     public func setEffort(_ model: ThreadModel, _ value: EffortLevel?) async {
+        guard isLoaded(model) else { return model.editPendingSettings { $0.effort = .some(value) } }
         await perform(model) { try await $0.call(Methods.ThreadSetEffort.self, .init(threadId: model.id, effort: value)) }
     }
 
     public func setPermissionMode(_ model: ThreadModel, _ value: PermissionMode) async {
+        guard isLoaded(model) else { return model.editPendingSettings { $0.permissionMode = value } }
         await perform(model) { try await $0.call(Methods.ThreadSetPermissionMode.self, .init(threadId: model.id, mode: value)) }
     }
 
     public func setFastMode(_ model: ThreadModel, _ on: Bool) async {
+        guard isLoaded(model) else { return model.editPendingSettings { $0.fastMode = on } }
         await perform(model) { try await $0.call(Methods.ThreadSetFastMode.self, .init(threadId: model.id, enabled: on)) }
+    }
+
+    /// Whatever resume didn't take: a thread that was already live ignores its settings, and
+    /// fast mode isn't a resume option.
+    private func apply(_ pending: PendingSettings, to model: ThreadModel, over info: ThreadInfo, _ client: RPCClient) async throws {
+        if let m = pending.model, m != info.model {
+            _ = try await client.call(Methods.ThreadSetModel.self, .init(threadId: model.id, model: m))
+        }
+        if let e = pending.effort, e != info.effort {
+            _ = try await client.call(Methods.ThreadSetEffort.self, .init(threadId: model.id, effort: e))
+        }
+        if let p = pending.permissionMode, p != info.permissionMode {
+            _ = try await client.call(Methods.ThreadSetPermissionMode.self, .init(threadId: model.id, mode: p))
+        }
+        if let f = pending.fastMode, f != (info.fastModeState == "on") {
+            _ = try await client.call(Methods.ThreadSetFastMode.self, .init(threadId: model.id, enabled: f))
+        }
     }
 
     public func rename(_ model: ThreadModel, _ title: String) async {
@@ -406,11 +469,7 @@ public final class HostConnection: Identifiable {
         openRequested.remove(model.id)
     }
 
-    /// Throws rather than returning nil on failure: the daemon only answers this for a thread it
-    /// currently has loaded, so an archived chat fails with `threadNotLoaded` every time. Swallowing
-    /// that left the inspector spinning forever with nothing to explain it.
-    /// Fetch the page of items before the ones already held. One page at a time: the view asks
-    /// whenever the top comes into range, which it does repeatedly while a page is arriving.
+    /// Fetch the page before the items already held, one page at a time.
     public func loadOlderHistory(_ model: ThreadModel) async {
         guard let client, model.hasMoreHistory, !model.loadingOlder else { return }
         guard let oldest = model.items.first?.id else { return }
@@ -425,24 +484,21 @@ public final class HostConnection: Identifiable {
         }
     }
 
+    /// Throws so the inspector can explain a thread the daemon hasn't loaded.
     public func contextUsage(_ model: ThreadModel) async throws -> JSONValue? {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         return try await client.call(Methods.ThreadContextUsage.self, .init(threadId: model.id, detail: .summary)).usage
     }
 
-    /// Whether the daemon has this thread live, and so can answer questions about it (context
-    /// usage, MCP status). Being subscribed is no longer enough on its own: a session another
-    /// client owns is followed from its transcript, which streams items but cannot answer
-    /// anything else — and the daemon reports exactly that by leaving it `notLoaded`.
+    /// Whether the daemon has this thread live and can answer questions about it (context usage,
+    /// MCP status). A followed thread is subscribed but not loaded.
     public func isLoaded(_ model: ThreadModel) -> Bool {
-        subscribed.contains(model.id) && model.info?.status != .notLoaded
+        subscribed.contains(model.id) && !model.isFollowed
     }
 
-    /// Slash commands for a directory, narrowed to a thread's own set when the daemon has it
-    /// loaded. Takes the cwd directly so the New Chat composer — which has no thread yet — still
-    /// gets the project's commands instead of an empty list.
+    /// Slash commands for a directory, narrowed to a thread's own set when it is loaded.
     public func commands(cwd: String?, thread: ThreadModel? = nil) async -> [SlashCommand] {
-        let threadId = thread.flatMap { subscribed.contains($0.id) ? $0.id : nil }
+        let threadId = thread.flatMap { isLoaded($0) ? $0.id : nil }
         return (try? await client?.call(Methods.CommandList.self, .init(cwd: cwd ?? thread?.cwd, threadId: threadId)).commands) ?? []
     }
 
@@ -497,9 +553,7 @@ final class OnceFlag: @unchecked Sendable {
 
 #if DEBUG
 extension HostConnection {
-    /// Seeds this connection's in-memory state for `#Preview`s. Never touches the network, spawns
-    /// a process, or calls a real daemon — the `private(set)` properties above can only be written
-    /// from within this file, so `PreviewSupport.swift` calls through to this instead of duplicating them.
+    /// Seeds in-memory state for `#Preview`s without touching the network.
     public func previewSeed(
         state: State = .connected,
         client: RPCClient? = nil,
