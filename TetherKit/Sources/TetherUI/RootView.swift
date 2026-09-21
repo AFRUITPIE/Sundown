@@ -4,6 +4,7 @@ import TetherProtocol
 
 public struct RootView: View {
     @Bindable var app: AppModel
+    @State private var inspectedTaskID: String?
 
     public init(app: AppModel) {
         self.app = app
@@ -15,134 +16,141 @@ public struct RootView: View {
             SidebarView(app: app)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
-            detail
+            DetailView(app: app)
+                // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
+                // every item is then declared once and unconditionally, so nothing moves on selection.
+                .navigationTitle(app.selectedThread?.title ?? "New Chat")
+                .navigationSubtitle(app.selectedThread?.cwd?.abbreviatingHome ?? "")
+                .toolbar {
+                    ToolbarItem(placement: .navigation) { NewChatButton(app: app) }
+                    ToolbarItem(placement: .principal) { SessionControls(app: app) }
+                }
         }
-        .toolbar { AppToolbar(app: app) }
+        // Attached to the split view, so it is full height and present on every screen.
+        .inspector(isPresented: $app.showInspector) {
+            InspectorView(app: app, selectedTaskID: $inspectedTaskID)
+                .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+                // Declared by the inspector so the toggle sits above its column.
+                .toolbar {
+                    Spacer()
+                    InspectorToggle(isPresented: $app.showInspector)
+                }
+        }
+        .environment(\.inspectSubagent, InspectSubagentAction { toolUseId in
+            inspectedTaskID = toolUseId
+            app.showInspector = true
+        })
         .environment(\.readingWidth, app.transcriptWidth.points)
         .task { app.connectAll() }
     }
-
-    @ViewBuilder private var detail: some View {
-        switch app.selection {
-        case .thread(let host, _):
-            if let thread = app.selectedThread, let c = app.selectedConnection {
-                ChatDetail(app: app, thread: thread, connection: c)
-            } else {
-                // The chat's host was removed while it was selected.
-                ContentUnavailableView {
-                    Label("Host Unavailable", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text("The host for this chat is no longer configured.")
-                } actions: {
-                    Button("New Chat") { app.newChat() }
-                }
-                .id(host)
-            }
-        case .newChat(let h):
-            NewChatView(app: app, hostId: h).id(h)
-        case nil:
-            // Fallback if the List transiently clears its selection.
-            NewChatView(app: app, hostId: HostConfig.local.id)
-        }
-    }
-
 }
 
-/// One stable window toolbar: New Chat beside the sidebar toggle, the inspector toggle at the trailing edge.
-struct AppToolbar: ToolbarContent {
+/// The selected chat, or the New Chat form. One container, so the detail column is never torn down.
+struct DetailView: View {
     @Bindable var app: AppModel
-
-    var body: some ToolbarContent {
-        // Declared by the window: an item declared on a column is removed when it collapses, which relayouts every other item.
-        ToolbarItem(placement: .navigation) {
-            Button {
-                app.newChat()
-            } label: {
-                Image(systemName: "square.and.pencil")
-            }
-            .buttonBorderShape(.circle)
-            .accessibilityLabel("New Chat")
-            .help("New Chat (⌘N)")
-        }
-        ToolbarItemGroup(placement: .primaryAction) {
-            sessionControls
-            InspectorToggle(app: app)
-        }
-    }
-}
-
-extension AppToolbar {
-    /// Session controls for the selected chat, or the New Chat draft.
-    @ViewBuilder var sessionControls: some View {
-        switch app.selection {
-        case .thread:
-            if let thread = app.selectedThread, let c = app.selectedConnection {
-                ThreadControls(thread: thread, connection: c)
-            }
-        case .newChat(let h):
-            if let c = app.connection(h) {
-                NewChatControls(app: app, connection: c)
-            }
-        case nil:
-            EmptyView()
-        }
-    }
-}
-
-/// A chat and its inspector. Separate from `RootView` so reading `showInspector` invalidates only
-/// this view, not the window toolbar. Hanging the inspector here also keeps it off New Chat.
-struct ChatDetail: View {
-    @Bindable var app: AppModel
-    let thread: ThreadModel
-    let connection: HostConnection
-    @State private var inspectedTaskID: String?
 
     var body: some View {
-        ThreadView(thread: thread, connection: connection)
-            .environment(\.inspectSubagent, InspectSubagentAction { toolUseId in
-                inspectedTaskID = toolUseId
-                app.showInspector = true
-            })
-            .inspector(isPresented: $app.showInspector) {
-                ThreadInspector(thread: thread, connection: connection, selectedTaskID: $inspectedTaskID)
-                    .environment(\.inspectSubagent, InspectSubagentAction { toolUseId in
-                        inspectedTaskID = toolUseId
-                    })
-                    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
-            }
+        if let thread = app.selectedThread, let connection = app.connection {
+            // The only `.id()` in the shell: a different chat gets its own composer draft and scroll position.
+            ThreadView(thread: thread, connection: connection)
+                .id(thread.id)
+        } else {
+            NewChatView(app: app)
+        }
     }
 }
 
-/// Its own view so reading `showInspector` invalidates only this button, not the whole toolbar.
+struct NewChatButton: View {
+    let app: AppModel
+
+    var body: some View {
+        Button {
+            app.newChat()
+        } label: {
+            Image(systemName: "square.and.pencil")
+        }
+        .buttonBorderShape(.circle)
+        .accessibilityLabel("New Chat")
+        .help("New Chat (⌘N)")
+    }
+}
+
+/// Session controls for the selected chat, or for the New Chat draft. The branch is inside the
+/// toolbar item's view, never around the item itself.
+struct SessionControls: View {
+    @Bindable var app: AppModel
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let thread = app.selectedThread, let connection = app.connection {
+                ThreadControls(thread: thread, connection: connection)
+            } else if let connection = app.connection {
+                NewChatControls(app: app, connection: connection)
+            }
+        }
+    }
+}
+
+/// The inspector's content: the selected chat's, or a placeholder so the column is never blank.
+struct InspectorView: View {
+    let app: AppModel
+    @Binding var selectedTaskID: String?
+
+    var body: some View {
+        if let thread = app.selectedThread, let connection = app.connection {
+            ThreadInspector(thread: thread, connection: connection, selectedTaskID: $selectedTaskID)
+                // Already in the inspector: showing a subagent only changes which task is selected.
+                .environment(\.inspectSubagent, InspectSubagentAction { selectedTaskID = $0 })
+        } else {
+            ContentUnavailableView("No Session", systemImage: "sidebar.trailing")
+        }
+    }
+}
+
+/// A plain button, not a `Toggle`: a toggle would tint itself on, unlike every other toolbar control.
+/// ⌥⌘I lives on the View menu instead, which works whether or not the inspector is open.
 struct InspectorToggle: View {
-    @Bindable var app: AppModel
+    @Binding var isPresented: Bool
 
     var body: some View {
-        if app.isThreadSelected {
-            Button {
-                app.showInspector.toggle()
-            } label: {
-                Image(systemName: "sidebar.trailing")
-            }
-            .buttonBorderShape(.circle)
-            .accessibilityLabel("Inspector")
-            .keyboardShortcut("i", modifiers: [.command, .option])
-            .help(app.showInspector ? "Hide Inspector" : "Show Inspector")
+        Button {
+            isPresented.toggle()
+        } label: {
+            Image(systemName: "sidebar.trailing")
         }
+        .accessibilityLabel("Inspector")
+        .help(isPresented ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
     }
 }
 
-/// Chats per host, most recent first. Two levels only: host section → chat.
+/// View-menu items for the shell. Kept here with the views they drive.
+public struct ShellViewCommands: View {
+    @Bindable var app: AppModel
+
+    public init(app: AppModel) {
+        self.app = app
+    }
+
+    public var body: some View {
+        Picker("Group By", selection: $app.sidebarGrouping) {
+            ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+        }
+        Divider()
+        // The one claim on ⌥⌘I: a menu command works with the inspector open or closed.
+        Button(app.showInspector ? "Hide Inspector" : "Show Inspector") { app.showInspector.toggle() }
+            .keyboardShortcut("i", modifiers: [.command, .option])
+    }
+}
+
+/// The current host's chats, most recent first. (Phase 3 adds grouping and the host selector.)
 struct SidebarView: View {
     @Bindable var app: AppModel
     @State private var search = ""
 
     var body: some View {
-        List(selection: $app.selection) {
-            ForEach(app.hosts) { host in
-                if let c = app.connection(host.id) {
-                    HostSection(app: app, connection: c, search: search)
-                }
+        List(selection: $app.threadID) {
+            if let connection = app.connection {
+                HostSection(app: app, connection: connection, search: search)
             }
         }
         .listStyle(.sidebar)
@@ -171,7 +179,7 @@ struct HostSection: View {
                 ForEach(filtered) { t in
                     ChatRow(thread: t)
                         .badge(t.pending.count)
-                        .tag(SidebarSelection.thread(host: connection.id, id: t.id))
+                        .tag(t.id)
                         .contextMenu { menu(for: t) }
                 }
             case .connecting(let m):
@@ -219,7 +227,7 @@ struct HostSection: View {
             renaming = t
         }
         Button("Duplicate") {
-            Task { if let f = await connection.fork(t) { app.selection = .thread(host: connection.id, id: f.id) } }
+            Task { if let f = await connection.fork(t) { app.open(threadID: f.id) } }
         }
         if let cwd = t.cwd, connection.host.isLocal {
             Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: cwd) }
@@ -260,20 +268,18 @@ struct ChatRow: View {
 struct NewChatView: View {
     @Bindable var app: AppModel
     @Environment(\.readingWidth) private var readingWidth
-    /// From the selection, which the toolbar's session controls also read.
-    let hostId: UUID
     @State private var directory: String?
     @State private var error: String?
     @State private var choosingLocalFolder = false
     @State private var choosingRemoteFolder = false
 
-    private var connection: HostConnection? { app.connection(hostId) }
+    /// The same host the sidebar shows, so its chats and this draft always agree.
+    private var connection: HostConnection? { app.connection }
 
     var body: some View {
         Form {
             Section {
-                Picker("Host", selection: Binding(get: { hostId },
-                                                   set: { app.selection = .newChat(host: $0) })) {
+                Picker("Host", selection: $app.hostID) {
                     ForEach(app.hosts) { Text($0.name).tag($0.id) }
                 }
                 Picker("Folder", selection: Binding(get: { directory }, set: { new in
@@ -296,7 +302,6 @@ struct NewChatView: View {
         .formStyle(.grouped)
         .frame(maxWidth: 560)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .navigationTitle("New Chat")
         .safeAreaBar(edge: .bottom) {
             if let connection {
                 GlassEffectContainer(spacing: 10) {
@@ -318,7 +323,7 @@ struct NewChatView: View {
         // Projects usually arrive after this appears.
         .onAppear { useFirstProjectIfUnset() }
         .onChange(of: connection?.projects.first?.cwd) { useFirstProjectIfUnset() }
-        .onChange(of: hostId) {
+        .onChange(of: app.hostID) {
             directory = nil
             useFirstProjectIfUnset()
         }
@@ -338,7 +343,7 @@ struct NewChatView: View {
         do {
             let t = try await connection.startThread(cwd: cwd, input: input,
                                                        options: .init(model: app.draftModel, effort: app.draftEffort, permissionMode: app.draftPermissionMode))
-            app.selection = .thread(host: connection.id, id: t.id)
+            app.open(threadID: t.id, on: connection.id)
         } catch {
             self.error = error.localizedDescription
         }
@@ -417,9 +422,7 @@ struct RemoteFolderPicker: View {
 @MainActor
 private func rootPreviewApp() -> AppModel {
     let app = AppModel.sample()
-    if let connection = app.connections.values.first, let chat = connection.chats.first {
-        app.selection = .thread(host: connection.id, id: chat.id)
-    }
+    if let chat = app.connection?.chats.first { app.open(threadID: chat.id) }
     return app
 }
 
@@ -447,9 +450,29 @@ private func rootPreviewApp() -> AppModel {
         .frame(width: 1400, height: 760)
 }
 
+// The narrowest supported window: every toolbar item must still fit.
+// The preview host cannot resize, so a third column here loops its constraint pass; the
+// running app at the same width is fine, and "RootView (inspector open)" covers that case.
+#Preview("RootView (narrow window)") {
+    RootView(app: rootPreviewApp())
+        .frame(width: 900, height: 600)
+}
+
 #Preview("SidebarView") {
     let app = AppModel.sample(connections: [.sample(), .sampleFailed(), .sampleConnecting()])
     NavigationSplitView {
+        SidebarView(app: app)
+    } detail: {
+        Text("Detail")
+    }
+    .frame(width: 320, height: 640)
+}
+
+#Preview("SidebarView (host failed)") {
+    let failed = HostConnection.sampleFailed()
+    let app = AppModel.sample(connections: [.sample(), failed])
+    app.hostID = failed.id
+    return NavigationSplitView {
         SidebarView(app: app)
     } detail: {
         Text("Detail")
@@ -477,9 +500,8 @@ private func rootPreviewApp() -> AppModel {
 }
 
 #Preview("NewChatView") {
-    let connection = HostConnection.sample()
     NavigationStack {
-        NewChatView(app: .sample(connections: [connection]), hostId: connection.id)
+        NewChatView(app: .sample())
     }
     .frame(width: 900, height: 700)
 }

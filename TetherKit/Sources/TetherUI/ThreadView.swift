@@ -15,8 +15,7 @@ struct ThreadView: View {
             .scrollEdgeEffectStyle(.soft, for: .bottom)
             // The same soft edge under the toolbar.
             .scrollEdgeEffectStyle(.soft, for: .top)
-            .navigationTitle(thread.title)
-            .navigationSubtitle(thread.cwd?.abbreviatingHome ?? "")
+            // Title and subtitle belong to the shell's detail container, not to this view.
             .task(id: thread.id) { await connection.open(thread) }
     }
 }

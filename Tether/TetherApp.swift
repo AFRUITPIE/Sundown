@@ -14,7 +14,7 @@ struct TetherApp: App {
                     #if DEBUG
                     // Debug: launch with TETHER_OPEN_THREAD=<id> to open a chat directly.
                     if let id = ProcessInfo.processInfo.environment["TETHER_OPEN_THREAD"] {
-                        app.selection = .thread(host: HostConfig.local.id, id: id)
+                        app.open(threadID: id, on: HostConfig.local.id)
                     }
                     #endif
                 }
@@ -26,6 +26,7 @@ struct TetherApp: App {
             // Also in the View menu, so changing it doesn't mean opening Settings.
             CommandGroup(after: .toolbar) {
                 TranscriptWidthCommands(app: app)
+                ShellViewCommands(app: app)
             }
         }
         Settings { SettingsView(app: app) }
