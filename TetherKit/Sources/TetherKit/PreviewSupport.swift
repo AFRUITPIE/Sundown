@@ -247,6 +247,19 @@ extension ThreadModel {
         return thread
     }
 
+    /// A chat as `thread/list` first hands it over: a title, a folder and a timestamp, with no
+    /// transcript. Most of what the sidebar shows is this, so its grouping previews are built of it.
+    public static func sampleListed(
+        id: String = "listed-\(UUID().uuidString)",
+        title: String,
+        cwd: String?,
+        secondsAgo: Double,
+        status: ThreadStatus = .notLoaded
+    ) -> ThreadModel {
+        ThreadModel(id: id, summary: .init(threadId: id, title: title, cwd: cwd,
+                                           updatedAt: preview(secondsAgo: secondsAgo), status: status))
+    }
+
     /// A chat with subagents running and MCP servers configured, for the inspector's panes.
     public static func sampleWithTasks() -> ThreadModel {
         sample(
@@ -423,11 +436,19 @@ extension HostConnection {
     /// A connected "This Mac" host with a model catalog, a couple of projects, and a spread of
     /// chats for the sidebar. Never touches the network or spawns a process.
     public static func sample() -> HostConnection {
+        let day: Double = 86_400
         let chats = [
             ThreadModel.sampleRunningTurn(),
             ThreadModel.samplePendingPermission(),
             ThreadModel.sampleIdleChat(),
             ThreadModel.sampleErrorTurn(),
+            // Listed-only chats, spread across the date buckets and a few folders — including two
+            // folders that share a last path component, which must stay two sections.
+            .sampleListed(title: "Fold completed tool calls into a group", cwd: "/Users/hayden/Code/tether-app", secondsAgo: 3 * 3_600),
+            .sampleListed(title: "Why does reconnect replay from zero?", cwd: "/Users/hayden/Code/tether-server", secondsAgo: day + 4 * 3_600),
+            .sampleListed(title: "Bump the pinned server version", cwd: nil, secondsAgo: 3 * day),
+            .sampleListed(title: "Sidebar grouping spike", cwd: "/Users/hayden/Developer/archive/tether-app", secondsAgo: 12 * day),
+            .sampleListed(title: "First pass at the SSH bootstrapper", cwd: "/Users/hayden/Code/tether-server", secondsAgo: 45 * day),
         ]
         let connection = HostConnection(host: .local)
         connection.previewSeed(
@@ -448,6 +469,21 @@ extension HostConnection {
                 .init(cwd: "/Users/hayden/Code/tether-server", lastActivity: preview(secondsAgo: 3_600), threadCount: 2),
             ],
             chats: chats)
+        return connection
+    }
+
+    /// A connected host that has never been used: the sidebar's "No Chats" state.
+    public static func sampleEmpty() -> HostConnection {
+        let connection = HostConnection(host: .local)
+        connection.previewSeed(state: .connected, client: RPCClient(transport: PreviewTransport()),
+                               models: ModelInfo.sampleCatalog)
+        return connection
+    }
+
+    /// A host nobody has connected to yet this launch.
+    public static func sampleDisconnected() -> HostConnection {
+        let connection = HostConnection(host: .init(name: "build-box", kind: .ssh(destination: "build-box")))
+        connection.previewSeed(state: .disconnected)
         return connection
     }
 
