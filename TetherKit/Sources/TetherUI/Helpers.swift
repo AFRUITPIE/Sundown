@@ -246,48 +246,4 @@ extension PermissionMode {
 extension ThreadStatus {
     /// Title case, never the wire value: the inspector shows "Not Loaded", not `notLoaded`.
     var label: String { rawValue.humanized }
-
-    var color: Color {
-        switch self {
-        case .running, .starting: return .blue
-        case .requiresAction: return .orange
-        case .error: return .red
-        case .idle: return .green
-        default: return .secondary
-        }
-    }
 }
-
-struct StatusDot: View {
-    let status: ThreadStatus
-    var body: some View {
-        Group {
-            if status == .running || status == .starting {
-                ProgressView().controlSize(.mini)
-            } else if status == .requiresAction {
-                Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
-            } else if status == .idle {
-                Circle().fill(.green.opacity(0.8)).frame(width: 6, height: 6)
-            } else {
-                Color.clear.frame(width: 6, height: 6)
-            }
-        }
-        .frame(width: 14, height: 14)
-        .help(status.label)
-    }
-}
-
-#if DEBUG
-#Preview("StatusDot") {
-    HStack(spacing: 12) {
-        ForEach([ThreadStatus.idle, .running, .requiresAction, .starting, .error, .closed], id: \.self) { status in
-            VStack(spacing: 4) {
-                StatusDot(status: status)
-                Text(status.rawValue).font(.caption2)
-            }
-        }
-    }
-    .padding(20)
-}
-
-#endif
