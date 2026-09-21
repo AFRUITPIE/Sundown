@@ -59,10 +59,36 @@ public enum TranscriptWidth: String, CaseIterable, Identifiable, Sendable {
 extension EnvironmentValues {
     /// The transcript's maximum width, shared with the composer so their edges line up.
     @Entry var readingWidth: CGFloat = TranscriptWidth.narrow.points
+
+    /// What the composer's field starts with. Empty everywhere in the app; previews set it to show
+    /// the field with a draft in it, which is otherwise the composer's own private state.
+    @Entry var composerDraft: String = ""
 }
 
 enum Layout {
     static let gutter: CGFloat = 28
+}
+
+extension View {
+    /// The shared reading column. The transcript, the bottom bar and the New Chat composer all go
+    /// through this one modifier, so their left and right edges cannot drift apart — the gutter is
+    /// inside the maximum width, and what is left over is split evenly.
+    func readingColumn() -> some View {
+        modifier(ReadingColumn())
+    }
+}
+
+/// The environment read lives here rather than in each caller, so a width change invalidates only
+/// the column itself.
+private struct ReadingColumn: ViewModifier {
+    @Environment(\.readingWidth) private var readingWidth
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, Layout.gutter)
+            .frame(maxWidth: readingWidth)
+            .frame(maxWidth: .infinity)
+    }
 }
 
 enum Format {

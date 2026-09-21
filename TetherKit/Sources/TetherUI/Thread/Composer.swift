@@ -5,18 +5,25 @@ import UniformTypeIdentifiers
 
 /// Prompt field: native multi-line TextField (Return sends, ⌥Return adds a line) with native
 /// input suggestions for `/` commands and `@` file mentions, image attachments, and send-while-running.
+///
+/// The only thread properties it reads are `promptSuggestion` and `isRunning`, both of which change
+/// at turn boundaries rather than per streamed delta, so a running turn doesn't re-render the field.
 struct Composer: View {
     let connection: HostConnection
     let cwd: String?
     var thread: ThreadModel?
     var placeholder = "Ask Claude…"
+    /// A server request is waiting: the draft stays, but it has to be answered before sending.
+    var awaitingAnswer = false
     var onStop: (() -> Void)?
     let submit: ([UserInput]) async -> Void
 
+    @Environment(\.composerDraft) private var composerDraft
     @State private var text = ""
     @State private var images: [Attachment] = []
     @State private var commands: [SlashCommand] = []
     @State private var fileMatches: [String] = []
+    @State private var suggestions: [Suggestion] = []
     @FocusState private var focused: Bool
 
     struct Attachment: Identifiable {
@@ -25,7 +32,7 @@ struct Composer: View {
         let mediaType: String
     }
 
-    struct Suggestion: Identifiable {
+    struct Suggestion: Identifiable, Equatable {
         let id: String
         let title: String
         let detail: String?
@@ -33,7 +40,10 @@ struct Composer: View {
         let completion: String
     }
 
-    private var suggestions: [Suggestion] {
+    /// What the field offers for this text. Pure, and run from `onChange`/the lookups rather than
+    /// from `body`: filtering the whole command catalog on every keystroke was the composer's
+    /// largest per-keystroke cost, and it ran again on every unrelated thread update.
+    nonisolated static func matchingSuggestions(for text: String, commands: [SlashCommand], fileMatches: [String]) -> [Suggestion] {
         if text.hasPrefix("/"), !text.contains(" "), !text.contains("\n") {
             let q = text.dropFirst()
             return commands
@@ -112,8 +122,8 @@ struct Composer: View {
                         .fontWeight(.semibold)
                         .buttonStyle(.glassProminent)
                         .buttonBorderShape(.circle)
-                        .disabled(!canSend)
-                        .help(thread?.isRunning == true ? "Add to the running turn" : "Send")
+                        .disabled(!canSend || awaitingAnswer)
+                        .help(sendHelp)
                 }
             }
         }
@@ -121,17 +131,40 @@ struct Composer: View {
         .padding(.trailing, 10)
         .padding(.vertical, 10)
         .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 24))
+        // Under a prompt card the composer is still there and still typable, just clearly not the
+        // thing being asked of you.
+        .opacity(awaitingAnswer ? 0.7 : 1)
         .onDrop(of: [.image, .fileURL], isTargeted: nil, perform: drop)
         .onPasteCommand(of: [.png, .tiff, .jpeg], perform: { _ = drop($0) })
-        .onAppear { focused = true }
-        .task(id: cwd) { commands = await connection.commands(cwd: cwd, thread: thread) }
+        .onAppear {
+            focused = true
+            #if DEBUG
+            // Previews only: the field's text is otherwise private state.
+            if text.isEmpty, !composerDraft.isEmpty { text = composerDraft }
+            #endif
+        }
+        .onChange(of: text) { refreshSuggestions() }
+        .task(id: cwd) {
+            commands = await connection.commands(cwd: cwd, thread: thread)
+            refreshSuggestions()
+        }
         // Keyed on the query so a slow reply can't overwrite a newer one.
         .task(id: mentionQuery) {
-            guard let q = mentionQuery, let cwd else { fileMatches = []; return }
+            guard let q = mentionQuery, let cwd else {
+                fileMatches = []
+                refreshSuggestions()
+                return
+            }
             try? await Task.sleep(for: .milliseconds(120))
             guard !Task.isCancelled else { return }
             fileMatches = await connection.searchFiles(cwd: cwd, query: q)
+            refreshSuggestions()
         }
+    }
+
+    private var sendHelp: String {
+        if awaitingAnswer { return "Answer the request above first" }
+        return thread?.isRunning == true ? "Add to the running turn" : "Send"
     }
 
     private var attachments: some View {
@@ -155,8 +188,12 @@ struct Composer: View {
         }
     }
 
+    private func refreshSuggestions() {
+        suggestions = Self.matchingSuggestions(for: text, commands: commands, fileMatches: fileMatches)
+    }
+
     private func send() {
-        guard canSend else { return }
+        guard canSend, !awaitingAnswer else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var input: [UserInput] = []
         if !trimmed.isEmpty { input.append(.text(.init(text: trimmed))) }
@@ -212,6 +249,18 @@ struct Composer: View {
     GlassEffectContainer {
         Composer(connection: connection, cwd: thread.cwd, thread: thread, onStop: {}, submit: { _ in })
     }
+    .padding(20)
+    .frame(width: 560)
+}
+
+/// A draft with a request still to answer: the text is kept, Send is off, Stop is still there.
+#Preview("Awaiting an answer (draft kept)") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.samplePendingPermission()
+    GlassEffectContainer {
+        Composer(connection: connection, cwd: thread.cwd, thread: thread, awaitingAnswer: true, onStop: {}, submit: { _ in })
+    }
+    .environment(\.composerDraft, "…and once that's done, run the package tests")
     .padding(20)
     .frame(width: 560)
 }

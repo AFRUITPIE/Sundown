@@ -1,6 +1,5 @@
 import SwiftUI
 import TetherKit
-import TetherProtocol
 
 public struct RootView: View {
     @Bindable var app: AppModel
@@ -114,140 +113,6 @@ public struct ShellViewCommands: View {
     }
 }
 
-/// Compose a new chat: choose the host and working directory, then send the first message.
-struct NewChatView: View {
-    @Bindable var app: AppModel
-    @Environment(\.readingWidth) private var readingWidth
-    @State private var directory: String?
-    @State private var error: String?
-    @State private var choosingLocalFolder = false
-    @State private var choosingRemoteFolder = false
-
-    /// The same host the sidebar shows, so its chats and this draft always agree.
-    private var connection: HostConnection? { app.connection }
-
-    var body: some View {
-        Form {
-            Section {
-                Picker("Host", selection: $app.hostID) {
-                    ForEach(app.hosts) { Text($0.name).tag($0.id) }
-                }
-                Picker("Folder", selection: Binding(get: { directory }, set: { new in
-                    if new == "__choose__" { chooseFolder() } else { directory = new }
-                })) {
-                    Text("Choose a folder").tag(String?.none)
-                    ForEach(connection?.projects.prefix(15) ?? [], id: \.cwd) { p in
-                        Text(p.cwd.abbreviatingHome).tag(Optional(p.cwd))
-                    }
-                    if let d = directory, !(connection?.projects.contains { $0.cwd == d } ?? false) {
-                        Text(d.abbreviatingHome).tag(Optional(d))
-                    }
-                    Divider()
-                    Text("Choose…").tag(Optional("__choose__"))
-                }
-            } footer: {
-                if let e = error { Text(e).foregroundStyle(.red) }
-            }
-        }
-        .formStyle(.grouped)
-        .frame(maxWidth: 560)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .safeAreaBar(edge: .bottom) {
-            if let connection {
-                GlassEffectContainer(spacing: 10) {
-                    Composer(connection: connection, cwd: directory, placeholder: directory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…", submit: { input in
-                        await start(connection, input)
-                    })
-                }
-                .padding(.horizontal, Layout.gutter)
-                .padding(.bottom, 14)
-                .frame(maxWidth: readingWidth)
-            }
-        }
-        .fileImporter(isPresented: $choosingLocalFolder, allowedContentTypes: [.folder]) { result in
-            if case .success(let url) = result { directory = url.path }
-        }
-        .sheet(isPresented: $choosingRemoteFolder) {
-            if let connection { RemoteFolderPicker(connection: connection) { directory = $0 } }
-        }
-        // Projects usually arrive after this appears.
-        .onAppear { useFirstProjectIfUnset() }
-        .onChange(of: connection?.projects.first?.cwd) { useFirstProjectIfUnset() }
-        .onChange(of: app.hostID) {
-            directory = nil
-            useFirstProjectIfUnset()
-        }
-    }
-
-    private func useFirstProjectIfUnset() {
-        guard directory == nil else { return }
-        directory = connection?.projects.first?.cwd
-    }
-
-    private func chooseFolder() {
-        if connection?.host.isLocal == true { choosingLocalFolder = true } else { choosingRemoteFolder = true }
-    }
-
-    private func start(_ connection: HostConnection, _ input: [UserInput]) async {
-        guard let cwd = directory else { error = "Choose a folder first."; return }
-        do {
-            let t = try await connection.startThread(cwd: cwd, input: input,
-                                                       options: .init(model: app.draftModel, effort: app.draftEffort,
-                                                                      permissionMode: app.draftPermissionMode, fastMode: app.draftFastMode))
-            app.open(threadID: t.id, on: connection.id)
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-}
-
-/// Browse directories on a remote host via fs/list.
-struct RemoteFolderPicker: View {
-    let connection: HostConnection
-    let done: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var path = "~"
-    @State private var entries: [FsListResult.Entry] = []
-    @State private var error: String?
-    @State private var selection: String?
-
-    var body: some View {
-        NavigationStack {
-            List(entries.filter(\.isDirectory), id: \.path, selection: $selection) { e in
-                Label(e.name, systemImage: "folder")
-                    .onTapGesture(count: 2) { path = e.path; Task { await load() } }
-            }
-            .navigationTitle(path.abbreviatingHome)
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    Button("Enclosing Folder", systemImage: "chevron.up") {
-                        path = (path as NSString).deletingLastPathComponent
-                        Task { await load() }
-                    }
-                }
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Choose") { done(selection ?? path); dismiss() }
-                }
-            }
-            .overlay { if let error { ContentUnavailableView(error, systemImage: "exclamationmark.triangle") } }
-        }
-        .frame(width: 520, height: 420)
-        .task { await load() }
-    }
-
-    private func load() async {
-        do {
-            entries = try await connection.listDirectory(path)
-            if let first = entries.first { path = (first.path as NSString).deletingLastPathComponent }
-            selection = nil
-            error = nil
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-}
-
 #if DEBUG
 // #Preview bodies are result-builder closures (no `if`/control flow), so the selection is set here.
 @MainActor
@@ -287,20 +152,6 @@ private func rootPreviewApp() -> AppModel {
 #Preview("RootView (narrow window)") {
     RootView(app: rootPreviewApp())
         .frame(width: 900, height: 600)
-}
-
-#Preview("NewChatView") {
-    NavigationStack {
-        NewChatView(app: .sample())
-    }
-    .frame(width: 900, height: 700)
-}
-
-#Preview("RemoteFolderPicker") {
-    // No client, so `listDirectory` fails fast and the preview shows the empty state.
-    let connection = HostConnection(host: .local)
-    connection.previewSeed(state: .connected)
-    return RemoteFolderPicker(connection: connection) { _ in }
 }
 
 #endif

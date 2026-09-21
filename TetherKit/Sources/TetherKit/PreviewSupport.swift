@@ -263,6 +263,14 @@ extension ThreadModel {
                                            updatedAt: preview(secondsAgo: secondsAgo), status: status))
     }
 
+    /// A chat whose transcript hasn't arrived — what the transcript stands in for. With a message
+    /// the read itself failed; without one the connection's own state has to explain it.
+    public static func sampleUnloaded(lastError: String? = nil) -> ThreadModel {
+        let thread = sampleListed(title: "Deploy to production", cwd: "/Users/hayden/Code/tether-app", secondsAgo: 300)
+        if let lastError { thread.setError(lastError) }
+        return thread
+    }
+
     /// A chat with subagents running and MCP servers configured, for the inspector's panes.
     public static func sampleWithTasks() -> ThreadModel {
         sample(
