@@ -79,22 +79,6 @@ struct NewChatButton: View {
     }
 }
 
-/// The inspector's content: the selected chat's, or a placeholder so the column is never blank.
-struct InspectorView: View {
-    let app: AppModel
-    @Binding var selectedTaskID: String?
-
-    var body: some View {
-        if let thread = app.selectedThread, let connection = app.connection {
-            ThreadInspector(thread: thread, connection: connection, selectedTaskID: $selectedTaskID)
-                // Already in the inspector: showing a subagent only changes which task is selected.
-                .environment(\.inspectSubagent, InspectSubagentAction { selectedTaskID = $0 })
-        } else {
-            ContentUnavailableView("No Session", systemImage: "sidebar.trailing")
-        }
-    }
-}
-
 /// A plain button, not a `Toggle`: a toggle would tint itself on, unlike every other toolbar control.
 /// ⌥⌘I lives on the View menu instead, which works whether or not the inspector is open.
 struct InspectorToggle: View {

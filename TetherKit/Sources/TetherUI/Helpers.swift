@@ -26,6 +26,18 @@ extension String {
         let home = NSHomeDirectory()
         return hasPrefix(home) ? "~" + dropFirst(home.count) : self
     }
+
+    /// A server's own word for a state, as UI text: `notLoaded` → "Not Loaded", `needs-auth` →
+    /// "Needs Auth", `task_started` → "Task Started". Statuses reach us as raw strings so that
+    /// unknown future ones still display; none of them should reach the user spelled that way.
+    var humanized: String {
+        var out = ""
+        for character in replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " ") {
+            if character.isUppercase, let last = out.last, !last.isWhitespace { out.append(" ") }
+            out.append(character)
+        }
+        return out.capitalized
+    }
 }
 
 /// How wide the transcript may get. Narrow keeps lines near a comfortable 45–75 characters.
@@ -202,6 +214,9 @@ extension PermissionMode {
 }
 
 extension ThreadStatus {
+    /// Title case, never the wire value: the inspector shows "Not Loaded", not `notLoaded`.
+    var label: String { rawValue.humanized }
+
     var color: Color {
         switch self {
         case .running, .starting: return .blue
@@ -228,7 +243,7 @@ struct StatusDot: View {
             }
         }
         .frame(width: 14, height: 14)
-        .help(status.rawValue)
+        .help(status.label)
     }
 }
 

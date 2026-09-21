@@ -275,6 +275,8 @@ extension ThreadModel {
                       description: "Check every pane for empty states", status: "running", data: [:]),
                 .init(threadId: "preview-thread", seq: 3, event: "task_completed", taskId: "task-3",
                       description: "Read the HIG pages on pop-up buttons", status: "completed", data: [:]),
+                .init(threadId: "preview-thread", seq: 4, event: "task_failed", taskId: "task-4",
+                      description: "Render every inspector pane", status: "failed", data: [:]),
             ],
             mcpServers: [
                 .init(name: "xcode", status: "connected"),
