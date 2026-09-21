@@ -197,6 +197,10 @@ extension Optional where Wrapped == EffortLevel {
 }
 
 extension PermissionMode {
+    /// The modes offered, ordered as they escalate with the dangerous one last. Shared by the
+    /// toolbar menu and Settings so the two lists can't drift apart.
+    static let selectable: [PermissionMode] = [.default, .acceptEdits, .plan, .auto, .dontAsk, .bypassPermissions]
+
     /// One word each: a pop-up button is as wide as its widest item.
     var label: String {
         switch self {
@@ -206,20 +210,20 @@ extension PermissionMode {
         case .auto: return "Auto"
         case .dontAsk: return "Deny"
         case .bypassPermissions: return "Bypass"
-        default: return rawValue
+        default: return rawValue.humanized
         }
     }
 
-    /// Spelled out, for Settings.
+    /// Spelled out, for menu rows and Settings. Title Case, like every other macOS menu item.
     var longLabel: String {
         switch self {
-        case .default: return "Ask before edits"
-        case .acceptEdits: return "Accept edits"
-        case .plan: return "Plan mode"
+        case .default: return "Ask Before Edits"
+        case .acceptEdits: return "Accept Edits"
+        case .plan: return "Plan Mode"
         case .auto: return "Auto"
-        case .dontAsk: return "Don't ask (deny)"
-        case .bypassPermissions: return "Bypass permissions"
-        default: return rawValue
+        case .dontAsk: return "Don't Ask"
+        case .bypassPermissions: return "Bypass Permissions"
+        default: return rawValue.humanized
         }
     }
 

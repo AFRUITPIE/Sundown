@@ -7,6 +7,8 @@ import TetherProtocol
 /// How the sidebar groups a host's chats (persisted).
 public enum SidebarGrouping: String, CaseIterable, Sendable {
     case date, directory
+
+    public var label: String { rawValue.capitalized }
 }
 
 /// App-wide state: configured hosts, their live connections, and what the window is showing.

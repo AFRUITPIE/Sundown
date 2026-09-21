@@ -94,6 +94,22 @@ struct InspectorToggle: View {
     }
 }
 
+/// The transcript width as a View submenu with the current value checked. Also in Settings ▸
+/// General, so changing it doesn't mean opening Settings.
+public struct TranscriptWidthCommands: View {
+    @Bindable var app: AppModel
+
+    public init(app: AppModel) {
+        self.app = app
+    }
+
+    public var body: some View {
+        Picker("Transcript Width", selection: $app.transcriptWidth) {
+            ForEach(TranscriptWidth.allCases) { Text($0.label).tag($0) }
+        }
+    }
+}
+
 /// View-menu items for the shell. Kept here with the views they drive.
 public struct ShellViewCommands: View {
     @Bindable var app: AppModel
@@ -104,7 +120,7 @@ public struct ShellViewCommands: View {
 
     public var body: some View {
         Picker("Group By", selection: $app.sidebarGrouping) {
-            ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+            ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
         }
         Divider()
         // The one claim on ⌥⌘I: a menu command works with the inspector open or closed.

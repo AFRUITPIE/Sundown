@@ -500,6 +500,24 @@ extension HostConnection {
         return connection
     }
 
+    /// A connected SSH box with environment overrides and a Bedrock account — the second shape
+    /// the Hosts settings have to show.
+    public static func sampleConnectedSSH() -> HostConnection {
+        let connection = HostConnection(host: .init(name: "build-box", kind: .ssh(destination: "build-box"),
+                                                    env: ["AWS_PROFILE": "tether", "AWS_REGION": "us-west-2"]))
+        connection.previewSeed(
+            state: .connected,
+            client: RPCClient(transport: PreviewTransport()),
+            serverInfo: .init(
+                serverInfo: .init(name: "tether-server", version: "0.4.0"),
+                protocolVersion: tetherProtocolVersion,
+                host: .init(hostname: "build-box.local", platform: "linux", arch: "x86_64", home: "/home/hayden", pid: 812, mode: .daemon),
+                claude: .init(path: "/usr/local/bin/claude", version: "2.1.4")),
+            account: .init(tokenSource: "env", apiProvider: "bedrock"),
+            models: ModelInfo.sampleCatalog)
+        return connection
+    }
+
     /// A second host (an SSH box) mid-connection, to show the sidebar's other connection states.
     public static func sampleConnecting() -> HostConnection {
         let connection = HostConnection(host: .init(name: "build-box", kind: .ssh(destination: "build-box")))

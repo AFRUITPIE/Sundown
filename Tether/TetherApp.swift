@@ -31,7 +31,7 @@ struct TetherApp: App {
             // View ▸ Show Toolbar / Customize Toolbar…, for the identified toolbar in RootView.
             ToolbarCommands()
         }
+        // No `defaultSize`: each Settings pane sizes the window to what it holds.
         Settings { SettingsView(app: app) }
-            .defaultSize(width: 660, height: 400)
     }
 }

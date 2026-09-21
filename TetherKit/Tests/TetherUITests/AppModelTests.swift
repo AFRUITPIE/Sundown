@@ -132,7 +132,6 @@ struct AppModelTests {
 struct SettingsDestinationTests {
     @Test func stableDestinationsRoundTrip() {
         #expect(SettingsDestination(storedValue: SettingsDestination.general.storedValue) == .general)
-        #expect(SettingsDestination(storedValue: SettingsDestination.chats.storedValue) == .chats)
         #expect(SettingsDestination(storedValue: SettingsDestination.hosts.storedValue) == .hosts)
     }
 
@@ -140,8 +139,12 @@ struct SettingsDestinationTests {
         #expect(SettingsDestination(storedValue: "unknown") == .general)
     }
 
-    @Test func sidebarDestinationsMigrateToTheirToolbarPane() {
-        #expect(SettingsDestination(storedValue: "newChats") == .chats)
+    /// Panes earlier builds had: the new-chat defaults moved into General, and a per-host
+    /// destination is now a selection inside Hosts.
+    @Test func retiredDestinationsMigrateToThePaneThatAbsorbedThem() {
+        #expect(SettingsDestination(storedValue: "chats") == .general)
+        #expect(SettingsDestination(storedValue: "newChats") == .general)
+        #expect(SettingsDestination(storedValue: "hosts") == .hosts)
         #expect(SettingsDestination(storedValue: "host:\(UUID().uuidString)") == .hosts)
     }
 }

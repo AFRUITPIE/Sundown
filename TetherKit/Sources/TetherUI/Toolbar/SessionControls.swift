@@ -138,14 +138,12 @@ struct EffortMenu: View {
 struct PermissionsMenu: View {
     let settings: SessionSettings
 
-    /// Ordered as they escalate, with the dangerous one last.
-    private let modes: [PermissionMode] = [.default, .acceptEdits, .plan, .auto, .dontAsk, .bypassPermissions]
     private var mode: PermissionMode { settings.permissionMode.wrappedValue }
 
     var body: some View {
         Menu {
             Picker("Permissions", selection: settings.permissionMode) {
-                ForEach(modes, id: \.self) { mode in
+                ForEach(PermissionMode.selectable, id: \.self) { mode in
                     Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
                 }
             }
@@ -250,7 +248,7 @@ private struct SessionControlsPreview: View {
         }
         Section("Permissions") {
             Picker("Permissions", selection: settings.permissionMode) {
-                ForEach([PermissionMode.default, .acceptEdits, .plan, .auto, .dontAsk, .bypassPermissions], id: \.self) { mode in
+                ForEach(PermissionMode.selectable, id: \.self) { mode in
                     Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
                 }
             }
