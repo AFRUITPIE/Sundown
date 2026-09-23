@@ -10,7 +10,7 @@ This repository builds on its own. Clone it, open `Tether.xcodeproj`, and build:
 - The app target's build phase (`Scripts/fetch-server-binaries.sh`) puts the standalone server binaries in the bundle. It prefers a sibling `../tether-server/dist` when that has binaries for the pinned version, and otherwise downloads that version's GitHub release once and caches it under `DERIVED_FILE_DIR`.
 - `.tether-server-version` is the pin. Bump it when the app needs a newer server, after that version has been released.
 
-Both repositories are private, so the download needs the GitHub CLI authenticated (`gh auth status`), and SwiftPM needs git credentials for the same account.
+`tether-server` is public, so SwiftPM can resolve the protocol package without credentials. The app repository remains private.
 
 Working on the protocol or the server at the same time still wants both checkouts side by side. Override the package with the local copy rather than editing the manifest:
 
@@ -173,8 +173,8 @@ swift test --package-path TetherKit
 
 The shared Xcode scheme also contains `TetherAppUITests`. Its launch sets
 `TETHER_UI_TEST_MODE=1`, which uses an in-process JSON-RPC fixture and fails closed before any
-daemon or SSH launch. The PR workflow runs it on `xcode-27` and needs the read-only
-`TETHER_SERVER_READ_TOKEN` secret solely for the private SwiftPM protocol package.
+daemon or SSH launch. The PR workflow runs it on `xcode-27` and resolves the public
+SwiftPM protocol package without a repository secret.
 
 Live tests use a real Claude CLI session and can incur cost:
 

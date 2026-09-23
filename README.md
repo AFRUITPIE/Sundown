@@ -29,7 +29,6 @@ management, chat streaming, and reconnection without inference calls. Run it loc
 **Test** action. `TETHER_E2E=1` is the separate, opt-in live suite and can incur cost.
 
 The PR workflow runs both suites on the `xcode-27` GitHub runner and uploads the `.xcresult`
-bundle. Add a repository secret named `TETHER_SERVER_READ_TOKEN` with read-only Contents access
-to the private `AFRUITPIE/tether-server` repository; SwiftPM needs it to resolve the pinned
-`TetherProtocol` package. The workflow skips bundling server binaries, because fixture tests do
-not use them. No Claude credentials are supplied to CI.
+bundle. SwiftPM resolves the pinned `TetherProtocol` package from the public
+`AFRUITPIE/tether-server` repository. The workflow skips bundling server binaries, because fixture
+tests do not use them. No Claude credentials are supplied to CI.

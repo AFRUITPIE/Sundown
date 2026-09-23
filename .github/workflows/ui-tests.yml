@@ -16,21 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # SwiftPM resolves the private TetherProtocol package from tether-server.
-      # This token needs read-only Contents access to that repository.
-      - name: Configure private package access
-        env:
-          TETHER_SERVER_READ_TOKEN: ${{ secrets.TETHER_SERVER_READ_TOKEN }}
-        run: |
-          if [[ -z "$TETHER_SERVER_READ_TOKEN" ]]; then
-            echo "TETHER_SERVER_READ_TOKEN is required for the private TetherProtocol package" >&2
-            exit 1
-          fi
-          credentials="$RUNNER_TEMP/tether-git-credentials"
-          printf 'https://x-access-token:%s@github.com\n' "$TETHER_SERVER_READ_TOKEN" > "$credentials"
-          chmod 600 "$credentials"
-          git config --global credential.helper "store --file=$credentials"
-
       - name: Run package tests
         run: swift test --package-path TetherKit
 
@@ -56,7 +41,3 @@ jobs:
           path: ${{ runner.temp }}/TetherUITests.xcresult
           if-no-files-found: ignore
           retention-days: 7
-
-      - name: Remove private package credentials
-        if: always()
-        run: rm -f "$RUNNER_TEMP/tether-git-credentials"
