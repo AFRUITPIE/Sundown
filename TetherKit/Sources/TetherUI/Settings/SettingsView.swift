@@ -1,8 +1,7 @@
 import SwiftUI
 import TetherKit
 
-/// Two panes, the way a macOS Settings window is built: what the app does (General) and what it
-/// connects to (Hosts). Each pane sizes the window itself; nothing is pinned here.
+/// Settings areas are selected from the sidebar; host management stays in its own pane.
 public struct SettingsView: View {
     @Bindable var app: AppModel
     @AppStorage("tether.settingsPane") private var storedSelection = SettingsDestination.general.storedValue
@@ -12,20 +11,31 @@ public struct SettingsView: View {
     }
 
     public var body: some View {
-        TabView(selection: selection) {
-            Tab("General", systemImage: "gearshape", value: SettingsDestination.general) {
-                GeneralSettings(app: app)
+        NavigationSplitView {
+            List(selection: selection) {
+                Label("General", systemImage: "gearshape")
+                    .tag(SettingsDestination.general)
+                Label("Hosts", systemImage: "network")
+                    .tag(SettingsDestination.hosts)
             }
-            Tab("Hosts", systemImage: "network", value: SettingsDestination.hosts) {
-                HostsSettings(app: app)
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 230)
+        } detail: {
+            Group {
+                switch SettingsDestination(storedValue: storedSelection) {
+                case .general: GeneralSettings(app: app)
+                case .hosts: HostsSettings(app: app)
+                }
             }
+            .navigationTitle(SettingsDestination(storedValue: storedSelection).title)
         }
+        .frame(minWidth: 880, minHeight: 470)
     }
 
-    private var selection: Binding<SettingsDestination> {
+    private var selection: Binding<SettingsDestination?> {
         Binding(
             get: { SettingsDestination(storedValue: storedSelection) },
-            set: { storedSelection = $0.storedValue }
+            set: { if let value = $0 { storedSelection = value.storedValue } }
         )
     }
 }
@@ -49,10 +59,25 @@ enum SettingsDestination: Hashable {
         case .hosts: "hosts"
         }
     }
+
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .hosts: "Hosts"
+        }
+    }
 }
 
 #if DEBUG
-#Preview("Settings") {
+#Preview("Settings — General") {
     SettingsView(app: .sample())
+}
+
+#Preview("Settings — Hosts") {
+    let ssh = HostConnection.sampleConnectedSSH()
+    let defaults = UserDefaults(suiteName: "SettingsPreview.Hosts")!
+    defaults.set("hosts", forKey: "tether.settingsPane")
+    return SettingsView(app: .sample(connections: [.sample(), ssh]))
+        .defaultAppStorage(defaults)
 }
 #endif

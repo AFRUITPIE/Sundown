@@ -31,7 +31,7 @@ struct TetherApp: App {
             // View ▸ Show Toolbar / Customize Toolbar…, for the identified toolbar in RootView.
             ToolbarCommands()
         }
-        // No `defaultSize`: each Settings pane sizes the window to what it holds.
+        // The Settings view supplies the split window's minimum size.
         Settings { SettingsView(app: app) }
     }
 }

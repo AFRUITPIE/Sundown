@@ -26,7 +26,6 @@ struct HostsSettings: View {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 680, height: 470)
         // Opens on the host the window is showing. Set once the list exists rather than in `init`:
         // a selection arriving with the list's first layout is one the list has nowhere to put.
         .task { if selection == nil { selection = app.hostID } }

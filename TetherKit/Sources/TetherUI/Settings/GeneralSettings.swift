@@ -25,8 +25,6 @@ struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
-        // A Settings pane sets its own width; the height is whatever these two sections need.
-        .frame(width: 480)
     }
 
     // MARK: new-chat defaults
