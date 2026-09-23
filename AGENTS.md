@@ -171,6 +171,11 @@ Package tests:
 swift test --package-path TetherKit
 ```
 
+The shared Xcode scheme also contains `TetherAppUITests`. Its launch sets
+`TETHER_UI_TEST_MODE=1`, which uses an in-process JSON-RPC fixture and fails closed before any
+daemon or SSH launch. The PR workflow runs it on `xcode-27` and needs the read-only
+`TETHER_SERVER_READ_TOKEN` secret solely for the private SwiftPM protocol package.
+
 Live tests use a real Claude CLI session and can incur cost:
 
 ```sh

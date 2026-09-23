@@ -21,6 +21,7 @@ struct AddSSHHostSheet: View {
                         }
                     }
                     TextField("Destination", text: $destination, prompt: Text("Alias or user@host"))
+                        .accessibilityIdentifier("host.destination")
                     TextField("Name", text: $name, prompt: Text(destination.isEmpty ? "Optional" : destination))
                 }
             }

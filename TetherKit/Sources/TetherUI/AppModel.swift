@@ -184,6 +184,19 @@ public final class AppModel {
 
 #if DEBUG
 extension AppModel {
+    /// The launched XCTest app uses the real UI and reducer with only in-process transports.
+    public static func uiTestFixture() -> AppModel {
+        let failFirst = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "connect-failure"
+        let pendingPermission = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "permission"
+        let ssh = HostConfig(name: "Fixture SSH", kind: .ssh(destination: "fixture.invalid"))
+        let app = sample(connections: [
+            UITestFixture.connection(failFirstConnect: failFirst, pendingPermission: pendingPermission),
+            UITestFixture.connection(host: ssh)
+        ])
+        app.open(threadID: UITestFixture.threadID)
+        return app
+    }
+
     /// Pre-seeded hosts and connections for `#Preview`s and tests, off persistence and the network.
     public static func sample(connections: [HostConnection] = [.sample()], defaults: UserDefaults? = nil) -> AppModel {
         let app = AppModel(defaults: defaults ?? UserDefaults(suiteName: "tether.preview.\(UUID().uuidString)") ?? .standard)

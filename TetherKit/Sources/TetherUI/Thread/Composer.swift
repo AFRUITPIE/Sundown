@@ -92,6 +92,7 @@ struct Composer: View {
         VStack(alignment: .leading, spacing: 8) {
             if !images.isEmpty { attachments }
             TextField(thread?.isRunning == true ? "Send a message while Claude works…" : placeholder, text: $text, axis: .vertical)
+                .accessibilityIdentifier("composer.input")
                 .textFieldStyle(.plain)
                 .lineLimit(1...12)
                 .focused($focused)
@@ -118,6 +119,7 @@ struct Composer: View {
                         .help("Stop (⌘.)")
                 } else {
                     Button("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up", action: send)
+                        .accessibilityIdentifier("composer.send")
                         .labelStyle(.iconOnly)
                         .fontWeight(.semibold)
                         .buttonStyle(.glassProminent)

@@ -4,12 +4,20 @@ import TetherUI
 
 @main
 struct TetherApp: App {
-    @State private var app = AppModel()
+    @State private var app: AppModel = {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1" {
+            return AppModel.uiTestFixture()
+        }
+        #endif
+        return AppModel()
+    }()
 
     var body: some Scene {
         WindowGroup("Tether") {
             RootView(app: app)
-                .frame(minWidth: 900, minHeight: 600)
+                // The inspector adds a column; the window must grow with its minimum width.
+                .frame(minWidth: app.showInspector ? 1160 : 900, minHeight: 600)
                 .onAppear {
                     #if DEBUG
                     // Debug: launch with TETHER_OPEN_THREAD=<id> to open a chat directly.

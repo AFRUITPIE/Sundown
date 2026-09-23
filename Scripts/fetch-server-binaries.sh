@@ -6,6 +6,12 @@
 # release is downloaded once and cached, which is what lets this repo be cloned on its own.
 set -euo pipefail
 
+# PR UI tests run entirely against an in-process fixture. No server binary is used there.
+if [[ "${TETHER_SKIP_SERVER_BINARIES:-}" == "1" ]]; then
+    echo "note: skipping server binaries for fixture UI tests"
+    exit 0
+fi
+
 VERSION="$(tr -d '[:space:]' < "$SRCROOT/.tether-server-version")"
 DEST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/servers"
 CACHE="${DERIVED_FILE_DIR:-$SRCROOT/.build}/tether-server/$VERSION"

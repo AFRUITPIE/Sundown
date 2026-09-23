@@ -77,7 +77,9 @@ struct HostDetail: View {
             } footer: {
                 // The one thing about a connection the user can act on.
                 if let message = connection.state.failureMessage {
-                    Text(message).foregroundStyle(.secondary)
+                    Text(message)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("host.connectionError")
                 }
             }
         }

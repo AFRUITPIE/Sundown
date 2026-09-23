@@ -152,7 +152,7 @@ private func rootPreviewApp() -> AppModel {
     let app = rootPreviewApp()
     app.showInspector = true
     return RootView(app: app)
-        .frame(width: 1100, height: 760)
+        .frame(width: 1160, height: 760)
 }
 
 #Preview("RootView (wide transcript)") {
@@ -162,9 +162,8 @@ private func rootPreviewApp() -> AppModel {
         .frame(width: 1400, height: 760)
 }
 
-// The narrowest supported window: every toolbar item must still fit.
-// The preview host cannot resize, so a third column here loops its constraint pass; the
-// running app at the same width is fine, and "RootView (inspector open)" covers that case.
+// The narrowest window without the inspector: every toolbar item must still fit.
+// The inspector preview uses the wider minimum that TetherApp applies while it is open.
 #Preview("RootView (narrow window)") {
     RootView(app: rootPreviewApp())
         .frame(width: 900, height: 600)
