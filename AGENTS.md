@@ -84,7 +84,7 @@ The product should feel like a standard current macOS app. Prefer native SwiftUI
 - The sidebar shows one host — a pop-up under the search field when more than one is configured — grouped by date or by directory (View menu and the list's context menu), most recent first, using Claude's generated session title when available. Connection states are an overlay, not rows.
 - The composer stays mounted under a pending prompt (Send disabled) so a draft survives it.
 - Settings apply immediately; text fields commit on Return or focus loss. No Save/Revert.
-- Settings uses a General/Hosts sidebar; the Hosts pane contains the host list and selected host's details.
+- Settings uses a General/Hosts sidebar; the Hosts pane selects a host above its detail form.
 - Copy is terse and title case. An empty state is a title; add a description only when it says something the title doesn't and the user can act on it. Never show raw enum or wire values.
 - Prompt suggestions are buttons above the composer, not text inside its glass field.
 - Transcript and composer share the selected reading width: Narrow (default), Medium, or Wide.

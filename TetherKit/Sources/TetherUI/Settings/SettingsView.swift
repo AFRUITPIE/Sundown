@@ -29,7 +29,7 @@ public struct SettingsView: View {
             }
             .navigationTitle(SettingsDestination(storedValue: storedSelection).title)
         }
-        .frame(minWidth: 880, minHeight: 470)
+        .frame(minWidth: 700, minHeight: 470)
     }
 
     private var selection: Binding<SettingsDestination?> {

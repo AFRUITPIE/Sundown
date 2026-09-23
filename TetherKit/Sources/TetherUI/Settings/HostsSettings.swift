@@ -1,8 +1,7 @@
 import SwiftUI
 import TetherKit
 
-/// The hosts Tether can run Claude Code on: a source list with the usual add/remove bar, and the
-/// selected host's settings beside it. Everything here applies as it is edited.
+/// Host management stays in one Settings pane. A picker chooses which host's form is shown.
 struct HostsSettings: View {
     @Bindable var app: AppModel
     @State private var selection: UUID?
@@ -19,15 +18,12 @@ struct HostsSettings: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            hostList
-                .frame(width: 208)
+        VStack(spacing: 0) {
+            hostPicker
             Divider()
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        // Opens on the host the window is showing. Set once the list exists rather than in `init`:
-        // a selection arriving with the list's first layout is one the list has nowhere to put.
         .task { if selection == nil { selection = app.hostID } }
         .sheet(isPresented: $addingHost) {
             AddSSHHostSheet { host in
@@ -49,61 +45,43 @@ struct HostsSettings: View {
         }
     }
 
-    private var hostList: some View {
-        // Read once, outside the rows: the list builds those lazily, and an observable read from
-        // inside one lands in the middle of its own diff.
-        let states = Dictionary(uniqueKeysWithValues:
-            app.hosts.map { ($0.id, app.connection($0.id)?.state ?? .disconnected) })
-        return VStack(spacing: 0) {
-            // Rows are identified by `HostConfig.id`, which is what `selection` holds.
-            List(app.hosts, selection: $selection) { host in
-                let state = states[host.id] ?? .disconnected
-                HStack(spacing: 8) {
-                    Image(systemName: host.isLocal ? "laptopcomputer" : "network")
-                        .frame(width: 18)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(host.name).lineLimit(1)
-                        // Only when it adds something: not "This Mac" under "This Mac", nor an alias under itself.
-                        if let destination = host.sshDestination, destination != host.name {
-                            Text(destination)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                    Spacer(minLength: 4)
-                    // A symbol, never colour alone, and no spinner: a row that animates while a
-                    // host reconnects would pull the eye across the window.
-                    Image(systemName: state.symbol)
-                        .foregroundStyle(state.tint)
-                        .help(state.help)
-                        .accessibilityLabel(state.help)
+    private var hostPicker: some View {
+        HStack(spacing: 12) {
+            Picker("Host", selection: hostSelection) {
+                ForEach(app.hosts) { host in
+                    Label(host.name, systemImage: host.isLocal ? "laptopcomputer" : "network")
+                        .tag(host.id)
                 }
             }
-            .listStyle(.inset)
-            listButtons
+            .pickerStyle(.menu)
+            Spacer(minLength: 12)
+
+            Button {
+                addingHost = true
+            } label: {
+                Image(systemName: "plus")
+            }
+            .accessibilityLabel("Add SSH Host")
+            .help("Add SSH Host")
+
+            Button {
+                hostToRemove = removableHost
+            } label: {
+                Image(systemName: "minus")
+            }
+            .disabled(removableHost == nil)
+            .accessibilityLabel("Remove Host")
+            .help("Remove Host")
         }
+        .padding()
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    /// The standard bar under a source list: add on the left, remove next to it.
-    private var listButtons: some View {
-        VStack(spacing: 0) {
-            Divider()
-            HStack(spacing: 0) {
-                Button { addingHost = true } label: { Image(systemName: "plus").frame(width: 24, height: 20) }
-                    .accessibilityLabel("Add SSH Host")
-                    .help("Add SSH Host")
-                Button { hostToRemove = removableHost } label: { Image(systemName: "minus").frame(width: 24, height: 20) }
-                    .disabled(removableHost == nil)
-                    .accessibilityLabel("Remove Host")
-                    .help("Remove Host")
-                Spacer()
-            }
-            .buttonStyle(.borderless)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-        }
+    private var hostSelection: Binding<UUID> {
+        Binding(
+            get: { selectedHost?.id ?? HostConfig.local.id },
+            set: { selection = $0 }
+        )
     }
 
     @ViewBuilder private var detail: some View {
