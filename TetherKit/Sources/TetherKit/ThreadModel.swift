@@ -157,9 +157,11 @@ public final class ThreadModel: Identifiable {
 
     // MARK: notifications
 
-    func apply(_ n: ServerNotification) {
+    /// Returns false for a notification already applied (a replay overlap, or a stale stream's).
+    @discardableResult
+    func apply(_ n: ServerNotification) -> Bool {
         if let seq = n.seq {
-            if seq <= lastSeq, lastSeq > 0 { return } // already applied (replay overlap)
+            if seq <= lastSeq, lastSeq > 0 { return false }
             lastSeq = seq
         }
         switch n {
@@ -171,7 +173,9 @@ public final class ThreadModel: Identifiable {
             status = e.status
             activity = e.activity?.rawValue
             if e.status == .idle { apiRetry = nil }
-        case .threadClosed: status = .closed
+        case .threadClosed:
+            status = .closed
+            settleTasks()
         case .turnStarted(let e):
             upsertTurn(e.turn)
             promptSuggestion = nil
@@ -186,7 +190,7 @@ public final class ThreadModel: Identifiable {
         case .itemToolCallProgress(let e):
             mutate(e.itemId) { if case .toolCall(var t) = $0 { t.elapsedSeconds = e.elapsedSeconds; $0 = .toolCall(t) } }
         case .taskEvent(let e):
-            tasks[e.taskId] = e
+            tasks[e.taskId] = merged(e, into: tasks[e.taskId])
             refreshTaskEntries()
         case .taskBackgroundChanged(let e):
             backgroundTaskIDs = Set((e.tasks.arrayValue ?? []).compactMap { $0["task_id"]?.stringValue })
@@ -200,6 +204,7 @@ public final class ThreadModel: Identifiable {
             pending.removeAll { $0.id == e.requestId }
         default: break
         }
+        return true
     }
 
     func addPending(_ p: PendingRequest) {
@@ -237,6 +242,40 @@ public final class ThreadModel: Identifiable {
     }
 
     // MARK: helpers
+
+    /// A task's latest event, keeping what earlier ones said: only `started` carries the
+    /// description, and an `updated` patch can omit the tool call the task belongs to.
+    private func merged(_ event: TaskEventNotification, into previous: TaskEventNotification?) -> TaskEventNotification {
+        guard let previous else { return event }
+        var event = event
+        if event.toolUseId == nil { event.toolUseId = previous.toolUseId }
+        if event.description == nil { event.description = previous.description }
+        if event.summary == nil { event.summary = previous.summary }
+        if event.status == nil { event.status = previous.status }
+        // Only `started` says what kind of task it is.
+        if case .object(var data) = event.data, data["task_type"] == nil, let type = previous.data["task_type"] {
+            data["task_type"] = type
+            event.data = .object(data)
+        }
+        return event
+    }
+
+    /// The thread's process has ended, and every task it was running with it; none will report again.
+    private func settleTasks() {
+        backgroundTaskIDs = []
+        for (id, task) in tasks where InspectorTaskEntry.isRunning(task) {
+            var stopped = task
+            stopped.status = "stopped"
+            tasks[id] = stopped
+        }
+        refreshTaskEntries()
+    }
+
+    /// Whether a tool call is the chat's own rather than a subagent's.
+    public func isTopLevelCall(_ toolUseId: String) -> Bool {
+        guard let i = index[toolUseId] else { return false }
+        return items[i].parentToolUseId == nil
+    }
 
     private func upsertTurn(_ t: Turn) {
         if let i = turns.lastIndex(where: { $0.id == t.id }) { turns[i] = t } else { turns.append(t) }
@@ -359,6 +398,19 @@ public struct InspectorTaskEntry: Identifiable {
     public let call: Item.ToolCall?
     public let task: TaskEventNotification?
     public let isBackgrounded: Bool
+
+    /// The CLI still has a task for it: it can be stopped or, while it blocks the turn, backgrounded.
+    public var isTaskRunning: Bool { task.map(Self.isRunning) ?? false }
+
+    static func isRunning(_ task: TaskEventNotification) -> Bool {
+        task.event != "notification" && !["completed", "failed", "stopped", "killed"].contains(task.status ?? "")
+    }
+
+    /// Only a command or an agent can be sent to the background (the CLI's Control-B).
+    public var canMoveToBackground: Bool {
+        guard isTaskRunning, !isBackgrounded, task?.toolUseId != nil else { return false }
+        return ["local_bash", "local_agent"].contains(task?.data["task_type"]?.stringValue ?? "")
+    }
 }
 
 /// Each field is nil when unchanged; `model` and `effort` can be changed to nil (automatic).

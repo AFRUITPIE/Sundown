@@ -129,6 +129,37 @@ struct ReattachTests {
         await connection.disconnect()
     }
 
+    /// The daemon closed the thread's query (it exited, or was closed or rewound): the next send
+    /// resumes it and takes up the new stream's numbering, rather than turning into a subscription
+    /// to the process that ended and dropping every event of the new one.
+    @Test func aThreadWhoseQueryEndedResumesOnTheNextSend() async throws {
+        let newStream = 1_790_000_000_000_000
+        let script = ReattachScript(
+            reads: [readResult(text: "before", sequence: 40)],
+            subscriptions: [subscribeResult(lastSequence: 40, status: .idle)],
+            resume: .init(thread: .init(threadId: threadID, status: .idle, cwd: "/work/project", lastSeq: newStream + 2),
+                          items: [.agentMessage(.init(id: "answer", createdAt: 1, text: "before"))],
+                          turns: [], historySeq: newStream + 2)
+        )
+        let transport = ScriptedTransport(script: script)
+        let connection = makeConnection(transports: [transport])
+        await connection.connect()
+        let thread = connection.thread(threadID)
+        await connection.open(thread)
+        transport.emit(method: "thread/closed", params: ["threadId": .string(threadID), "seq": 41])
+        try await waitUntil { thread.status == .closed }
+
+        await connection.send(thread, input: [.text(.init(text: "again"))])
+
+        #expect(await script.calls().contains("thread/resume"))
+        #expect(thread.lastSeq == newStream + 2)
+        transport.emit(method: "thread/status/changed", params: [
+            "threadId": .string(threadID), "seq": .number(Double(newStream + 3)), "status": "running",
+        ])
+        try await waitUntil { thread.status == .running }
+        await connection.disconnect()
+    }
+
     @Test func settingsChosenForAnUnloadedThreadApplyWhenItResumes() async throws {
         let script = ReattachScript(
             reads: [readResult(text: "watched", sequence: 7)],

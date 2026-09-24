@@ -40,7 +40,7 @@ struct ThreadInspector: View {
     var body: some View {
         Group {
             switch pane {
-            case .tasks: TasksPane(thread: thread, selectedTaskID: $selectedTaskID)
+            case .tasks: TasksPane(thread: thread, connection: connection, selectedTaskID: $selectedTaskID)
             case .session: SessionPane(thread: thread, connection: connection)
             case .mcp: MCPPane(thread: thread)
             }
