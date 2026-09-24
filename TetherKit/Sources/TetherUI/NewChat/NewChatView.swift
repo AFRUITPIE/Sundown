@@ -10,15 +10,12 @@ struct NewChatView: View {
     @State private var choosingLocalFolder = false
     @State private var choosingRemoteFolder = false
 
-    /// The same host the sidebar shows, so its chats and this draft always agree.
+    /// The host is selected in the toolbar and scopes both this draft and the sidebar.
     private var connection: HostConnection? { app.connection }
 
     var body: some View {
         Form {
             Section {
-                Picker("Host", selection: $app.hostID) {
-                    ForEach(app.hosts) { Text($0.name).tag($0.id) }
-                }
                 Picker("Folder", selection: Binding(get: { directory }, set: { new in
                     if new == "__choose__" { chooseFolder() } else { directory = new }
                 })) {

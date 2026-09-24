@@ -23,6 +23,7 @@ public struct RootView: View {
                 // Identified, so View ▸ Customize Toolbar… can rearrange these and the window
                 // remembers the arrangement. Every item is still declared unconditionally.
                 .toolbar(id: "main") {
+                    ToolbarItem(id: "host", placement: .navigation) { HostMenu(app: app) }
                     ToolbarItem(id: "newChat", placement: .navigation) { NewChatButton(app: app) }
                     ToolbarItem(id: "model", placement: .principal) { ModelMenu(settings: .current(app)) }
                     ToolbarItem(id: "effort", placement: .principal) { EffortMenu(settings: .current(app)) }
@@ -35,8 +36,10 @@ public struct RootView: View {
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
                 // Declared by the inspector so the toggle sits above its column.
                 .toolbar {
-                    Spacer()
-                    InspectorToggle(isPresented: $app.showInspector)
+                    ToolbarSpacer(.flexible)
+                    ToolbarItem(placement: .primaryAction) {
+                        InspectorToggle(isPresented: $app.showInspector)
+                    }
                 }
         }
         .environment(\.inspectSubagent, InspectSubagentAction { toolUseId in
@@ -60,6 +63,34 @@ struct DetailView: View {
         } else {
             NewChatView(app: app)
         }
+    }
+}
+
+/// The host scopes both the sidebar and the New Chat draft, so it belongs with navigation.
+struct HostMenu: View {
+    @Bindable var app: AppModel
+
+    private var hostName: String {
+        app.hosts.first(where: { $0.id == app.hostID })?.name ?? "Host"
+    }
+
+    var body: some View {
+        Menu {
+            Picker("Host", selection: $app.hostID) {
+                ForEach(app.hosts) { Text($0.name).tag($0.id) }
+            }
+            .pickerStyle(.inline)
+            Divider()
+            if let connection = app.connection {
+                Button("Reconnect") { Task { await connection.reconnect() } }
+            }
+        } label: {
+            Label(hostName, systemImage: app.connection?.host.isLocal == true ? "desktopcomputer" : "network")
+        }
+        .labelStyle(.titleAndIcon)
+        .accessibilityLabel("Host")
+        .accessibilityValue(hostName)
+        .help("Host: \(hostName)")
     }
 }
 
@@ -146,6 +177,19 @@ private func rootPreviewApp() -> AppModel {
 #Preview("RootView (default new chat)") {
     RootView(app: .sample())
         .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (two hosts)") {
+    RootView(app: .sample(connections: [.sample(), .sampleConnectedSSH()]))
+        .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (remote host, narrow)") {
+    let ssh = HostConnection.sampleConnectedSSH()
+    let app = AppModel.sample(connections: [.sample(), ssh])
+    app.hostID = ssh.id
+    return RootView(app: app)
+        .frame(width: 900, height: 600)
 }
 
 #Preview("RootView (inspector open)") {

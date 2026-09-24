@@ -60,8 +60,10 @@ struct SessionSettings {
         return models.concrete.first { $0.value == value }
     }
 
-    /// What the model control shows: "Opus 5", or the raw id of an unlisted (Bedrock) model.
-    var modelLabel: String { currentModel?.shortName ?? model.wrappedValue ?? "Model" }
+    /// Keep an unlisted provider ID available in the menu and tooltip without letting it widen
+    /// the whole toolbar. The visible width is set by the catalog's widest natural label.
+    var modelLabel: String { currentModel?.shortName ?? (model.wrappedValue == nil ? "Model" : "Custom") }
+    var modelDescription: String { currentModel?.shortName ?? model.wrappedValue ?? "Model" }
 
     /// The levels this model offers; the gauge's needle is spread across them.
     var effortLevels: [EffortLevel] { currentModel?.supportedEffortLevels ?? EffortLevel.allCases }
@@ -81,14 +83,7 @@ struct ModelMenu: View {
     var body: some View {
         Menu {
             Picker("Model", selection: settings.model) {
-                ForEach(settings.models.concrete, id: \.value) { model in
-                    Text(model.shortName).tag(Optional(model.value))
-                }
-                // A custom or Bedrock id the CLI doesn't list stays selectable.
-                if let id = settings.model.wrappedValue,
-                   !settings.models.contains(where: { $0.value == id || $0.resolvedModel == id }) {
-                    Text(id).tag(Optional(id))
-                }
+                ModelChoices(settings: settings)
             }
             .pickerStyle(.inline)
             Divider()
@@ -96,14 +91,21 @@ struct ModelMenu: View {
                 .disabled(settings.fastModeUnavailable != nil)
                 .help(settings.fastModeUnavailable ?? "Answer faster, with less reasoning")
         } label: {
-            Label(settings.modelLabel, systemImage: SessionSymbol.model)
+            ZStack(alignment: .leading) {
+                Label("Model", systemImage: SessionSymbol.model).hidden()
+                Label("Custom", systemImage: SessionSymbol.model).hidden()
+                ForEach(settings.models.concrete, id: \.value) { model in
+                    Label(model.shortName, systemImage: SessionSymbol.model).hidden()
+                }
+                Label(settings.modelLabel, systemImage: SessionSymbol.model)
+            }
         }
         // Toolbar items are icon-only by default; this is the one that has to say a name.
         .labelStyle(.titleAndIcon)
         .disabled(!settings.isEnabled)
-        .help("Model: \(settings.modelLabel)")
+        .help("Model: \(settings.modelDescription)")
         .accessibilityLabel("Model")
-        .accessibilityValue(settings.modelLabel)
+        .accessibilityValue(settings.modelDescription)
     }
 }
 
@@ -117,16 +119,13 @@ struct EffortMenu: View {
     var body: some View {
         Menu {
             Picker("Effort", selection: settings.effort) {
-                Label("Automatic", systemImage: SessionSymbol.automaticEffort).tag(EffortLevel?.none)
-                ForEach(levels, id: \.self) { level in
-                    Label(level.label, systemImage: level.symbol(in: levels)).tag(Optional(level))
-                }
+                EffortChoices(settings: settings)
             }
             .pickerStyle(.inline)
         } label: {
-            Label("Effort", systemImage: value.symbol(in: levels))
+            Image(systemName: value.symbol(in: levels))
+                .frame(width: 20, height: 20)
         }
-        .labelStyle(.iconOnly)
         .disabled(!settings.isEnabled)
         .help("Effort: \(value.label)")
         .accessibilityLabel("Effort")
@@ -143,25 +142,98 @@ struct PermissionsMenu: View {
     var body: some View {
         Menu {
             Picker("Permissions", selection: settings.permissionMode) {
-                ForEach(PermissionMode.selectable, id: \.self) { mode in
-                    Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
-                }
+                PermissionChoices()
             }
             .pickerStyle(.inline)
         } label: {
             // Only the dangerous mode styles its label: an unconditional `.foregroundStyle` would
             // also paint over the disabled appearance.
             if mode.isDangerous {
-                Label(mode.label, systemImage: mode.symbol).foregroundStyle(.red)
+                Image(systemName: mode.symbol)
+                    .frame(width: 20, height: 20)
+                    .foregroundStyle(.red)
             } else {
-                Label(mode.label, systemImage: mode.symbol)
+                Image(systemName: mode.symbol)
+                    .frame(width: 20, height: 20)
             }
         }
-        .labelStyle(.iconOnly)
         .disabled(!settings.isEnabled)
         .help("Permissions: \(mode.longLabel)")
         .accessibilityLabel("Permissions")
         .accessibilityValue(mode.longLabel)
+    }
+}
+
+/// The toolbar and menu bar use the same choices, so one never offers a stale set of values.
+private struct ModelChoices: View {
+    let settings: SessionSettings
+
+    var body: some View {
+        ForEach(settings.models.concrete, id: \.value) { model in
+            Text(model.shortName).tag(Optional(model.value))
+        }
+        // A custom or Bedrock id the CLI doesn't list stays selectable.
+        if let id = settings.model.wrappedValue,
+           !settings.models.contains(where: { $0.value == id || $0.resolvedModel == id }) {
+            Text(id).tag(Optional(id))
+        }
+    }
+}
+
+private struct EffortChoices: View {
+    let settings: SessionSettings
+
+    var body: some View {
+        Label("Automatic", systemImage: SessionSymbol.automaticEffort).tag(EffortLevel?.none)
+        ForEach(settings.effortLevels, id: \.self) { level in
+            Label(level.label, systemImage: level.symbol(in: settings.effortLevels)).tag(Optional(level))
+        }
+    }
+}
+
+private struct PermissionChoices: View {
+    var body: some View {
+        ForEach(PermissionMode.selectable, id: \.self) { mode in
+            Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
+        }
+    }
+}
+
+/// All toolbar selectors also live in the menu bar, where they remain available if the toolbar
+/// is hidden or customized. New Chat and Inspector already have File and View menu commands.
+public struct SessionCommands: Commands {
+    @Bindable var app: AppModel
+
+    public init(app: AppModel) { self.app = app }
+
+    public var body: some Commands {
+        CommandMenu("Session") {
+            SessionCommandItems(app: app)
+        }
+    }
+}
+
+private struct SessionCommandItems: View {
+    @Bindable var app: AppModel
+
+    var body: some View {
+        let settings = SessionSettings.current(app)
+        Picker("Host", selection: $app.hostID) {
+            ForEach(app.hosts) { Text($0.name).tag($0.id) }
+        }
+        Divider()
+        Picker("Model", selection: settings.model) { ModelChoices(settings: settings) }
+            .disabled(!settings.isEnabled)
+        Picker("Effort", selection: settings.effort) { EffortChoices(settings: settings) }
+            .disabled(!settings.isEnabled)
+        Picker("Permissions", selection: settings.permissionMode) { PermissionChoices() }
+            .disabled(!settings.isEnabled)
+        Toggle("Fast Mode", isOn: settings.fastMode)
+            .disabled(!settings.isEnabled || settings.fastModeUnavailable != nil)
+        Divider()
+        if let connection = app.connection {
+            Button("Reconnect") { Task { await connection.reconnect() } }
+        }
     }
 }
 

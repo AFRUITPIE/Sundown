@@ -36,6 +36,7 @@ struct TetherApp: App {
                 TranscriptWidthCommands(app: app)
                 ShellViewCommands(app: app)
             }
+            SessionCommands(app: app)
             // View ▸ Show Toolbar / Customize Toolbar…, for the identified toolbar in RootView.
             ToolbarCommands()
         }

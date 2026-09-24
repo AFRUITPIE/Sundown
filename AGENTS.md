@@ -73,15 +73,15 @@ The daemon, not the app, owns live Claude queries. Closing or disconnecting the 
 
 The product should feel like a standard current macOS app. Prefer native SwiftUI components and behavior over custom chrome. Check the relevant Apple Human Interface Guidelines and API documentation for every interaction or presentation change.
 
-- Target the current project baseline (Xcode 27, Swift 6, macOS 26.6+). Do not add compatibility shims for older systems unless requested.
+- Target the current project baseline (Xcode 27, Swift 6, macOS 27+). Do not add compatibility shims for older systems unless requested.
 - Let system layout and intrinsic sizing work. Avoid hand-computed geometry, arbitrary fixed production sizes, and `.fixedSize()` as a general layout repair. Fixed frames in previews and small icon/status geometry are fine.
 - Liquid Glass belongs to controls: toolbar controls, composer, and prompt cards. Transcript content uses ordinary fills. Never stack glass on glass; controls inside a glass card use standard bordered styles.
 - The shell is `NavigationSplitView` + one `.toolbar(id:)` on the detail container + one `.inspector` on the split view. No `GeometryReader`, preference keys, `columnVisibility` bindings, or `.id()` on containers other than `ThreadView(...).id(thread.id)`.
 - Every toolbar item is unconditional: never an `if`/`switch` around a `ToolbarItem`. Something unavailable is disabled, not removed, so nothing moves when the selection or a column changes. The toolbar is user-customizable (`ToolbarCommands`).
-- Toolbar, leading to trailing: sidebar toggle, New Chat (always visible; `Command-N` too), title and directory, then model, effort and permissions, then the inspector toggle.
-- Model, effort and permissions are three compact pull-down menus with inline pickers: the model by name, effort as a gauge that follows the level, permissions as the mode's symbol (red for bypass). Fast Mode is a toggle inside the model menu. Settings uses the same symbols and labels; the mappings live in `Helpers.swift`.
+- Toolbar, leading to trailing: sidebar toggle, host menu, New Chat (always visible; `Command-N` too), title and directory, then model, effort and permissions, then the inspector toggle.
+- Model, effort and permissions are three compact, stable-width pull-down menus with inline pickers: the model by name, effort as a gauge that follows the level, permissions as the mode's symbol (red for bypass). Fast Mode is a toggle inside the model menu. The Session menu bar commands provide the same choices when the toolbar is hidden or customized. Settings uses the same symbols and labels; the mappings live in `Helpers.swift`.
 - The inspector is full-height, attached to the split view, and present on every screen (`No Session` on New Chat). Its toggle is a plain button declared in the inspector's own toolbar, so it sits above the column and never tints. It uses a segmented control with `Tasks`, `Session`, and `MCP`; `Tasks` is first and default.
-- The sidebar shows one host — a pop-up under the search field when more than one is configured — grouped by date or by directory (View menu and the list's context menu), most recent first, using Claude's generated session title when available. Connection states are an overlay, not rows.
+- The sidebar shows one host selected from the toolbar host menu, grouped by date or by directory (View menu and the list's context menu), most recent first, using Claude's generated session title when available. Connection states are an overlay, not rows.
 - The composer stays mounted under a pending prompt (Send disabled) so a draft survives it.
 - Settings apply immediately; text fields commit on Return or focus loss. No Save/Revert.
 - Settings uses a General/Hosts sidebar; the Hosts pane selects a host above its detail form.

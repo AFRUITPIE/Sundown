@@ -47,7 +47,6 @@ struct SidebarView: View {
             }
             Button("Cancel", role: .cancel) { renaming = nil }
         }
-        .safeAreaBar(edge: .top) { hostSelector }
     }
 
     // MARK: rows
@@ -97,26 +96,6 @@ struct SidebarView: View {
             Text(section.title).help(help)
         } else {
             Text(section.title)
-        }
-    }
-
-    // MARK: host selector
-
-    /// Only worth a control when there is something to switch between; the one host's name is
-    /// already the window's, and Settings is where hosts are added.
-    @ViewBuilder private var hostSelector: some View {
-        if app.hosts.count > 1 {
-            Picker("Host", selection: $app.hostID) {
-                ForEach(app.hosts) { Text($0.name).tag($0.id) }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            // Leading, with the pop-up's own bezel inset taken off, so its title lines up with
-            // the row titles under it.
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 6)
-            .padding(.bottom, 6)
-            .contextMenu { hostActions }
         }
     }
 
@@ -192,6 +171,7 @@ struct SidebarView: View {
 #if DEBUG
 /// The sidebar as the split view hosts it: same column width as RootView, so truncation and
 /// alignment here are the ones the app has.
+@MainActor
 private func sidebarPreview(_ app: AppModel, search: String = "") -> some View {
     NavigationSplitView {
         SidebarView(app: app, search: search)
