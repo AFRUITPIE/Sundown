@@ -84,7 +84,6 @@ struct AppModelTests {
         app.defaultPermissionMode = "plan"
         app.transcriptWidth = .wide
         app.showInspector = true
-        app.inspectorPane = .mcp
         app.sidebarGrouping = .directory
         app.hostID = other
 
@@ -95,7 +94,6 @@ struct AppModelTests {
         #expect(restored.defaultPermissionMode == "plan")
         #expect(restored.transcriptWidth == .wide)
         #expect(restored.showInspector)
-        #expect(restored.inspectorPane == .mcp)
         #expect(restored.sidebarGrouping == .directory)
         #expect(restored.hostID == other)
     }
@@ -112,7 +110,6 @@ struct AppModelTests {
         #expect(app.defaultModel == "opus")
         #expect(app.transcriptWidth == .medium)
         #expect(!app.showInspector)
-        #expect(app.inspectorPane == .tasks)
         #expect(app.sidebarGrouping == .date)
         #expect(app.hostID == HostConfig.local.id)
     }

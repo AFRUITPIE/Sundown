@@ -41,8 +41,6 @@ public final class AppModel {
 
     /// Whether the trailing inspector is shown (persisted).
     public var showInspector = false { didSet { save() } }
-    /// The inspector pane to show when opened, even after closing it (persisted).
-    public var inspectorPane: InspectorPane = .tasks { didSet { save() } }
 
     /// How the sidebar groups chats (persisted).
     public var sidebarGrouping: SidebarGrouping = .date { didSet { save() } }
@@ -154,7 +152,6 @@ public final class AppModel {
         var defaultPermissionMode: String?
         var transcriptWidth: String?
         var showInspector: Bool?
-        var inspectorPane: String?
         var hostID: UUID?
         var sidebarGrouping: String?
     }
@@ -171,7 +168,6 @@ public final class AppModel {
         defaultPermissionMode = s.defaultPermissionMode ?? "default"
         transcriptWidth = s.transcriptWidth.flatMap(TranscriptWidth.init(rawValue:)) ?? .narrow
         showInspector = s.showInspector ?? false
-        inspectorPane = s.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
         sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
         // After `hosts`: the setter validates against it.
         hostID = s.hostID ?? HostConfig.local.id
@@ -181,8 +177,7 @@ public final class AppModel {
         guard !isLoading else { return }
         let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
-                       showInspector: showInspector, inspectorPane: inspectorPane.rawValue,
-                       hostID: hostID, sidebarGrouping: sidebarGrouping.rawValue)
+                       showInspector: showInspector, hostID: hostID, sidebarGrouping: sidebarGrouping.rawValue)
         if let data = try? JSONEncoder().encode(s) { defaults.set(data, forKey: Self.hostsKey) }
     }
 }

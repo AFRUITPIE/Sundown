@@ -1,67 +1,65 @@
 import SwiftUI
 import TetherKit
 
-public enum InspectorPane: String, CaseIterable, Identifiable {
-    case tasks = "Tasks"
-    case session = "Session"
-    case mcp = "MCP"
-
-    public var id: Self { self }
-
-    var symbol: String {
-        switch self {
-        case .tasks: "checklist"
-        case .session: "info.circle"
-        case .mcp: "puzzlepiece.extension"
-        }
-    }
-}
-
 /// The inspector's content: the selected chat's, or a placeholder so the column is never blank.
 struct InspectorView: View {
-    @Bindable var app: AppModel
+    let app: AppModel
     @Binding var selectedTaskID: String?
 
     var body: some View {
         if let thread = app.selectedThread, let connection = app.connection {
-            ThreadInspector(thread: thread, connection: connection, pane: $app.inspectorPane,
-                            selectedTaskID: $selectedTaskID)
+            ThreadInspector(thread: thread, connection: connection, selectedTaskID: $selectedTaskID)
                 // Already in the inspector: showing a subagent only changes which task is selected.
-                .environment(\.inspectSubagent, InspectSubagentAction {
-                    selectedTaskID = $0
-                    app.inspectorPane = .tasks
-                })
+                .environment(\.inspectSubagent, InspectSubagentAction { selectedTaskID = $0 })
         } else {
             ContentUnavailableView("No Session", systemImage: "sidebar.trailing")
         }
     }
 }
 
-/// The toolbar chooses the pane. This shell reads nothing off the thread — each pane observes
-/// only what it shows, so a streaming delta redraws at most the pane that is open.
+/// Three panes behind a segmented control. This shell reads nothing off the thread — each pane
+/// observes only what it shows, so a streaming delta redraws at most the pane that is open.
 struct ThreadInspector: View {
     let thread: ThreadModel
     let connection: HostConnection
-    @Binding var pane: InspectorPane
+    @State private var pane: Pane
     @Binding private var selectedTaskID: String?
 
-    init(thread: ThreadModel, connection: HostConnection, pane: Binding<InspectorPane>,
+    init(thread: ThreadModel, connection: HostConnection, pane: Pane = .tasks,
          selectedTaskID: Binding<String?> = .constant(nil)) {
         self.thread = thread
         self.connection = connection
-        self._pane = pane
+        self._pane = State(initialValue: pane)
         self._selectedTaskID = selectedTaskID
     }
 
+    enum Pane: String, CaseIterable, Identifiable {
+        case tasks = "Tasks"
+        case session = "Session"
+        case mcp = "MCP"
+        var id: Self { self }
+    }
+
     var body: some View {
-        Group {
-            switch pane {
-            case .tasks: TasksPane(thread: thread, selectedTaskID: $selectedTaskID)
-            case .session: SessionPane(thread: thread, connection: connection)
-            case .mcp: MCPPane(thread: thread)
+        VStack(spacing: 0) {
+            Picker("Inspector", selection: $pane) {
+                ForEach(Pane.allCases) { Text($0.rawValue).tag($0) }
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+            Group {
+                switch pane {
+                case .tasks: TasksPane(thread: thread, selectedTaskID: $selectedTaskID)
+                case .session: SessionPane(thread: thread, connection: connection)
+                case .mcp: MCPPane(thread: thread)
+                }
+            }
+            .inspectorPaneStyle()
         }
-        .inspectorPaneStyle()
         .onChange(of: selectedTaskID) {
             if selectedTaskID != nil { pane = .tasks }
         }
