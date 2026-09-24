@@ -7,7 +7,7 @@ Tether.xcodeproj     macOS app target (signing, bundle, server-binary build phas
 Tether/              app entry point + assets
 TetherKit/           Swift package
   TetherKit          transport (local shell / ssh), JSON-RPC client, host bootstrap, stores
-  TetherUI           SwiftUI views (macOS 26 APIs, standard components, Liquid Glass on controls only)
+  TetherUI           SwiftUI views (macOS 27 APIs, standard components, Liquid Glass on controls only)
 ```
 
 Protocol types come from `TetherProtocol`, which is generated in `../tether-server`. Both repos sit side by side in `~/Code`.

@@ -35,11 +35,11 @@ or add `../tether-server` to the Xcode workspace, which takes precedence over th
 - `TetherKit/Sources/TetherUI`: views and app-level state.
   - `AppModel.swift`: hosts, the window's host and chat (`hostID`, `threadID`), new-chat drafts, and persisted preferences.
   - `RootView.swift`: the shell only — split view, the one toolbar, the one inspector, View-menu commands.
-  - `Sidebar/`: one host's chats; `SidebarSections.swift` is the pure, tested grouping (date or directory).
-  - `Toolbar/SessionControls.swift`: model, effort and permissions menus over one `SessionSettings` (live chat or draft).
-  - `Inspector/`: the segmented shell and one view per pane (`TasksPane`, `SessionPane`, `MCPPane`).
+  - `Sidebar/`: one host's chats, and `HostCommands` (the Host menu); `SidebarSections.swift` is the pure, tested grouping (date or directory).
+  - `Toolbar/`: `SessionControls` (the model, effort and permissions menus over one `SessionSettings`, live chat or draft, and the Chat menu) and `ReservedWidthLabel`.
+  - `Inspector/`: the tabbed shell, its toolbar toggle, and one view per pane (`TasksPane`, `SessionPane`, `MCPPane`).
   - `Thread/`: `ThreadView` (transcript over bottom bar), `TranscriptView`, `BottomBar`, `Composer` (`/` commands, `@` files, images).
-  - `NewChat/`: the new-chat form and the remote folder picker.
+  - `NewChat/`: the new-chat screen (folder pop-up above the composer) and the remote folder picker.
   - `Settings/`: General and Hosts panes, host detail, and the environment and log sheets.
   - `PromptViews.swift`: permission, question, plan, and elicitation requests.
   - `ItemViews.swift`, `ToolCallView.swift`, `Markdown.swift`: transcript rendering.
@@ -73,15 +73,18 @@ The daemon, not the app, owns live Claude queries. Closing or disconnecting the 
 
 The product should feel like a standard current macOS app. Prefer native SwiftUI components and behavior over custom chrome. Check the relevant Apple Human Interface Guidelines and API documentation for every interaction or presentation change.
 
-- Target the current project baseline (Xcode 27, Swift 6, macOS 26.6+). Do not add compatibility shims for older systems unless requested.
+- Target the current project baseline (Xcode 27, Swift 6, macOS 27+). Do not add compatibility shims for older systems unless requested.
 - Let system layout and intrinsic sizing work. Avoid hand-computed geometry, arbitrary fixed production sizes, and `.fixedSize()` as a general layout repair. Fixed frames in previews and small icon/status geometry are fine.
 - Liquid Glass belongs to controls: toolbar controls, composer, and prompt cards. Transcript content uses ordinary fills. Never stack glass on glass; controls inside a glass card use standard bordered styles.
 - The shell is `NavigationSplitView` + one `.toolbar(id:)` on the detail container + one `.inspector` on the split view. No `GeometryReader`, preference keys, `columnVisibility` bindings, or `.id()` on containers other than `ThreadView(...).id(thread.id)`.
 - Every toolbar item is unconditional: never an `if`/`switch` around a `ToolbarItem`. Something unavailable is disabled, not removed, so nothing moves when the selection or a column changes. The toolbar is user-customizable (`ToolbarCommands`).
-- Toolbar, leading to trailing: sidebar toggle, New Chat (always visible; `Command-N` too), title and directory, then model, effort and permissions, then the inspector toggle.
-- Model, effort and permissions are three compact pull-down menus with inline pickers: the model by name, effort as a gauge that follows the level, permissions as the mode's symbol (red for bypass). Fast Mode is a toggle inside the model menu. Settings uses the same symbols and labels; the mappings live in `Helpers.swift`.
-- The inspector is full-height, attached to the split view, and present on every screen (`No Session` on New Chat). Its toggle is a plain button declared in the inspector's own toolbar, so it sits above the column and never tints. It uses a segmented control with `Tasks`, `Session`, and `MCP`; `Tasks` is first and default.
-- The sidebar shows one host — a pop-up under the search field when more than one is configured — grouped by date or by directory (View menu and the list's context menu), most recent first, using Claude's generated session title when available. Connection states are an overlay, not rows.
+- Toolbar, leading to trailing: sidebar toggle, New Chat (always visible; `Command-N` too), title and subtitle, then model, effort and permissions (one `.primaryAction` item, trailing, so the title keeps the space and the three share one glass capsule), then the inspector toggle.
+- The subtitle is the chat's folder name (the New Chat draft's on New Chat), prefixed by the host when more than one is configured. The full path is in the Session pane, or the folder pop-up on New Chat.
+- Model, effort and permissions are three pull-down menus with inline pickers: the model by name (Fast Mode is a toggle in its menu), effort as a gauge that follows the level, permissions as the mode's symbol (red for bypass). Not pop-ups: an icon-only pop-up shows its rows as bare symbols. Each label reserves the width of its widest listed value (`ReservedWidthLabel`), so choosing among them never resizes a control. Settings uses the same symbols and labels; the mappings live in `Helpers.swift`.
+- Every toolbar control is also in the menu bar, since the toolbar can be hidden or customized: File ▸ New Chat, the Chat menu (model, Fast Mode, effort, permissions), and View (sidebar, inspector panes).
+- The inspector is full-height, attached to the split view, and present on every screen (`No Session` on New Chat). Its toggle is a plain button declared in the inspector's own toolbar, so it sits above the column and never tints. Inside, a `.pickerStyle(.tabs)` picker (`Tasks`, `Session`, `MCP`; `Tasks` first and default) sits in a top `safeAreaBar` over the pane. View ▸ Inspector repeats the panes (⌥⌘1–3 always show theirs); ⌥⌘I shows or hides it on the last pane.
+- The sidebar shows one host, chosen from the Host menu in the menu bar (hosts, Connect/Reconnect, Manage Hosts…). It is not a toolbar control: it changes only when switching sessions, and the subtitle names it whenever more than one host is configured. Switching host opens New Chat on it. Chats are grouped by date or by directory (View menu and the list's context menu), most recent first, using Claude's generated session title when available. Connection states are an overlay, not rows.
+- New Chat has no form: the folder pop-up sits above the composer, where a chat's status strip goes, so nothing scrolls under the toolbar and the detail column looks the same as a chat's. A host that isn't connected shows `NotConnectedView` over the detail area, as the sidebar does.
 - The composer stays mounted under a pending prompt (Send disabled) so a draft survives it.
 - Settings apply immediately; text fields commit on Return or focus loss. No Save/Revert.
 - Settings uses a General/Hosts sidebar; the Hosts pane selects a host above its detail form.

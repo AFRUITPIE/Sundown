@@ -42,6 +42,46 @@ struct AppModelTests {
         #expect(app.selectedThread == nil)
     }
 
+    @Test func newChatStartsInTheHostsMostRecentFolder() {
+        let app = AppModel.sample()
+        let first = app.connection?.projects.first?.cwd
+        #expect(first != nil)
+        #expect(app.draftDirectory == first)
+        app.draftError = "Choose a folder first."
+
+        app.newChat()
+
+        #expect(app.draftDirectory == first)
+        #expect(app.draftError == nil)
+    }
+
+    @Test func subtitleIsTheFolderNameWithOneHost() {
+        let app = AppModel.sample()
+        #expect(app.draftDirectory != nil)
+        #expect(app.subtitle == (app.draftDirectory as NSString?)?.lastPathComponent)
+    }
+
+    @Test func subtitleNamesTheHostWhenThereAreSeveral() {
+        let app = AppModel.sample(connections: [.sample(), .sampleFailed()])
+        let name = (app.draftDirectory as NSString?)?.lastPathComponent ?? ""
+        #expect(app.subtitle == "\(app.host?.name ?? "") · \(name)")
+
+        // A host with no projects yet: the host alone, not a dangling separator.
+        app.hostID = app.hosts[1].id
+        #expect(app.draftDirectory == nil)
+        #expect(app.subtitle == "staging")
+    }
+
+    @Test func subtitleFollowsTheOpenChatsFolder() {
+        let app = AppModel.sample()
+        guard let chat = app.connection?.chats.first(where: { $0.cwd != nil }) else {
+            Issue.record("the sample host has no chat with a folder")
+            return
+        }
+        app.open(threadID: chat.id)
+        #expect(app.subtitle == (chat.cwd! as NSString).lastPathComponent)
+    }
+
     @Test func switchingHostClearsTheSelectedChat() {
         let app = AppModel.sample(connections: [.sample(), .sampleFailed()])
         let other = app.hosts[1].id
@@ -84,6 +124,7 @@ struct AppModelTests {
         app.defaultPermissionMode = "plan"
         app.transcriptWidth = .wide
         app.showInspector = true
+        app.inspectorPane = .mcp
         app.sidebarGrouping = .directory
         app.hostID = other
 
@@ -94,6 +135,7 @@ struct AppModelTests {
         #expect(restored.defaultPermissionMode == "plan")
         #expect(restored.transcriptWidth == .wide)
         #expect(restored.showInspector)
+        #expect(restored.inspectorPane == .mcp)
         #expect(restored.sidebarGrouping == .directory)
         #expect(restored.hostID == other)
     }
@@ -110,8 +152,20 @@ struct AppModelTests {
         #expect(app.defaultModel == "opus")
         #expect(app.transcriptWidth == .medium)
         #expect(!app.showInspector)
+        #expect(app.inspectorPane == .tasks)
         #expect(app.sidebarGrouping == .date)
         #expect(app.hostID == HostConfig.local.id)
+    }
+
+    @Test func aPaneShortcutShowsItsPaneAndOpensTheInspector() {
+        let app = AppModel(defaults: isolatedDefaults())
+        app.openInspector(on: .session)
+        #expect(app.isInspecting(.session))
+        app.openInspector(on: .session)
+        #expect(app.isInspecting(.session))
+        app.showInspector = false
+        // The pane is kept, so ⌥⌘I reopens where the inspector was.
+        #expect(app.inspectorPane == .session)
     }
 
     @Test func newChatUsesTheConfiguredDefaults() {

@@ -17,6 +17,12 @@ struct SessionSymbolTests {
         }
     }
 
+    @Test func inspectorPaneSymbolsResolve() {
+        for pane in InspectorPane.allCases {
+            expectResolves(pane.symbol, "\(pane) → \(pane.symbol) does not exist on this OS")
+        }
+    }
+
     @Test func permissionModeSymbolsResolve() {
         for mode in PermissionMode.allCases + [PermissionMode(rawValue: "somethingNewerServersSend")] {
             expectResolves(mode.symbol, "\(mode.rawValue) → \(mode.symbol) does not exist on this OS")

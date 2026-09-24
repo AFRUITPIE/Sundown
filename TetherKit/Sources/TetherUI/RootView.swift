@@ -9,8 +9,8 @@ public struct RootView: View {
         self.app = app
     }
 
-    // No columnVisibility binding: writing it on every sidebar toggle rebuilt the toolbar mid-animation.
     public var body: some View {
+        // No columnVisibility binding: writing it on every sidebar toggle rebuilt the toolbar mid-animation.
         NavigationSplitView {
             SidebarView(app: app)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
@@ -19,36 +19,37 @@ public struct RootView: View {
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(app.selectedThread?.title ?? "New Chat")
-                .navigationSubtitle(app.selectedThread?.cwd?.abbreviatingHome ?? "")
+                .navigationSubtitle(app.subtitle)
                 // Identified, so View ▸ Customize Toolbar… can rearrange these and the window
                 // remembers the arrangement. Every item is still declared unconditionally.
                 .toolbar(id: "main") {
                     ToolbarItem(id: "newChat", placement: .navigation) { NewChatButton(app: app) }
-                    ToolbarItem(id: "model", placement: .principal) { ModelMenu(settings: .current(app)) }
-                    ToolbarItem(id: "effort", placement: .principal) { EffortMenu(settings: .current(app)) }
-                    ToolbarItem(id: "permissions", placement: .principal) { PermissionsMenu(settings: .current(app)) }
+                    ToolbarItem(id: "session", placement: .primaryAction) {
+                        ToolbarSessionControl(app: app, control: SessionMenus.init(settings:))
+                    }
+                    // Keeps the chat's settings apart from the inspector button beside them.
+                    ToolbarSpacer(.fixed, placement: .primaryAction)
                 }
         }
         // Attached to the split view, so it is full height and present on every screen.
         .inspector(isPresented: $app.showInspector) {
             InspectorView(app: app, selectedTaskID: $inspectedTaskID)
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
-                // Declared by the inspector so the toggle sits above its column.
                 .toolbar {
-                    Spacer()
-                    InspectorToggle(isPresented: $app.showInspector)
+                    ToolbarSpacer(.flexible)
+                    ToolbarItem { InspectorToggle(app: app) }
                 }
         }
         .environment(\.inspectSubagent, InspectSubagentAction { toolUseId in
             inspectedTaskID = toolUseId
-            app.showInspector = true
+            app.openInspector(on: .tasks)
         })
         .environment(\.readingWidth, app.transcriptWidth.points)
         .task { app.connectAll() }
     }
 }
 
-/// The selected chat, or the New Chat form. One container, so the detail column is never torn down.
+/// The selected chat, or the New Chat screen. One container, so the detail column is never torn down.
 struct DetailView: View {
     @Bindable var app: AppModel
 
@@ -72,25 +73,8 @@ struct NewChatButton: View {
         } label: {
             Image(systemName: "square.and.pencil")
         }
-        .buttonBorderShape(.circle)
         .accessibilityLabel("New Chat")
         .help("New Chat (⌘N)")
-    }
-}
-
-/// A plain button, not a `Toggle`: a toggle would tint itself on, unlike every other toolbar control.
-/// ⌥⌘I lives on the View menu instead, which works whether or not the inspector is open.
-struct InspectorToggle: View {
-    @Binding var isPresented: Bool
-
-    var body: some View {
-        Button {
-            isPresented.toggle()
-        } label: {
-            Image(systemName: "sidebar.trailing")
-        }
-        .accessibilityLabel("Inspector")
-        .help(isPresented ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
     }
 }
 
@@ -123,7 +107,14 @@ public struct ShellViewCommands: View {
             ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
         }
         Divider()
-        // The one claim on ⌥⌘I: a menu command works with the inspector open or closed.
+        // A shortcut always shows its pane, opening the inspector if needed; ⌥⌘I hides it.
+        Menu("Inspector") {
+            ForEach(InspectorPane.allCases) { pane in
+                Toggle(pane.label, isOn: Binding(get: { app.isInspecting(pane) },
+                                                 set: { _ in app.openInspector(on: pane) }))
+                    .keyboardShortcut(pane.shortcut, modifiers: [.command, .option])
+            }
+        }
         Button(app.showInspector ? "Hide Inspector" : "Show Inspector") { app.showInspector.toggle() }
             .keyboardShortcut("i", modifiers: [.command, .option])
     }

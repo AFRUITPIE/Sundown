@@ -131,7 +131,7 @@ private func sessionPreview(_ usage: Loaded<JSONValue?>) -> some View {
 /// The live pane: this preview's connection has no loaded thread, so it shows that state.
 #Preview("Session") {
     inspectorPreview {
-        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), pane: .session)
+        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), pane: .constant(.session))
     }
 }
 

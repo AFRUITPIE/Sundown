@@ -11,6 +11,38 @@ public enum SidebarGrouping: String, CaseIterable, Sendable {
     public var label: String { rawValue.capitalized }
 }
 
+/// The inspector's panes, in toolbar order (persisted).
+public enum InspectorPane: String, CaseIterable, Identifiable, Sendable {
+    case tasks, session, mcp
+
+    public var id: Self { self }
+
+    public var label: String {
+        switch self {
+        case .tasks: "Tasks"
+        case .session: "Session"
+        case .mcp: "MCP"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .tasks: "checklist"
+        case .session: "info"
+        case .mcp: "puzzlepiece.extension"
+        }
+    }
+
+    /// ⌥⌘1, ⌥⌘2, ⌥⌘3, as Xcode numbers its inspectors.
+    var shortcut: KeyEquivalent {
+        switch self {
+        case .tasks: "1"
+        case .session: "2"
+        case .mcp: "3"
+        }
+    }
+}
+
 /// App-wide state: configured hosts, their live connections, and what the window is showing.
 @MainActor
 @Observable
@@ -42,6 +74,19 @@ public final class AppModel {
     /// Whether the trailing inspector is shown (persisted).
     public var showInspector = false { didSet { save() } }
 
+    /// The pane the inspector shows, kept while it is closed (persisted).
+    public var inspectorPane: InspectorPane = .tasks { didSet { save() } }
+
+    /// True when the inspector is open on `pane`.
+    public func isInspecting(_ pane: InspectorPane) -> Bool { showInspector && inspectorPane == pane }
+
+    /// Shows `pane`, opening the inspector if it is closed.
+    public func openInspector(on pane: InspectorPane) {
+        if inspectorPane != pane { inspectorPane = pane }
+        if !showInspector { showInspector = true }
+    }
+
+
     /// How the sidebar groups chats (persisted).
     public var sidebarGrouping: SidebarGrouping = .date { didSet { save() } }
 
@@ -51,6 +96,11 @@ public final class AppModel {
     public var draftPermissionMode: PermissionMode = .default
     /// Carried into `startThread`; off unless the user asks for it on this chat.
     public var draftFastMode = false
+    /// The New Chat folder: the host's most recent project until one is chosen, nil before the
+    /// projects arrive.
+    public var draftDirectory: String?
+    /// Why the New Chat draft couldn't start, cleared with the draft.
+    var draftError: String?
 
     /// How wide the transcript may get (persisted).
     public var transcriptWidth: TranscriptWidth = .narrow { didSet { save() } }
@@ -73,6 +123,19 @@ public final class AppModel {
     }
 
     public func connection(_ id: UUID) -> HostConnection? { connections[id] }
+
+    /// The host the sidebar is showing.
+    public var host: HostConfig? { hosts.first { $0.id == hostID } }
+
+    /// The window's subtitle: the chat's folder name, or the New Chat folder's; the full path is in
+    /// the Session pane, or the folder pop-up on New Chat. Prefixed with the host when there is
+    /// more than one, since nothing else in the window names it.
+    public var subtitle: String {
+        let folder = selectedThread.map { $0.cwd } ?? draftDirectory
+        let name = folder.map { ($0 as NSString).lastPathComponent } ?? ""
+        guard hosts.count > 1, let host = host?.name else { return name }
+        return name.isEmpty ? host : "\(host) · \(name)"
+    }
 
     /// The connection for the host the sidebar is showing.
     public var connection: HostConnection? { connections[hostID] }
@@ -125,6 +188,8 @@ public final class AppModel {
         draftEffort = defaultEffort.map(EffortLevel.init(rawValue:))
         draftPermissionMode = PermissionMode(rawValue: defaultPermissionMode)
         draftFastMode = false
+        draftDirectory = connections[hostID]?.projects.first?.cwd
+        draftError = nil
     }
 
     private func resolveSelection() {
@@ -152,6 +217,7 @@ public final class AppModel {
         var defaultPermissionMode: String?
         var transcriptWidth: String?
         var showInspector: Bool?
+        var inspectorPane: String?
         var hostID: UUID?
         var sidebarGrouping: String?
     }
@@ -168,6 +234,7 @@ public final class AppModel {
         defaultPermissionMode = s.defaultPermissionMode ?? "default"
         transcriptWidth = s.transcriptWidth.flatMap(TranscriptWidth.init(rawValue:)) ?? .narrow
         showInspector = s.showInspector ?? false
+        inspectorPane = s.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
         sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
         // After `hosts`: the setter validates against it.
         hostID = s.hostID ?? HostConfig.local.id
@@ -177,7 +244,7 @@ public final class AppModel {
         guard !isLoading else { return }
         let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
-                       showInspector: showInspector, hostID: hostID, sidebarGrouping: sidebarGrouping.rawValue)
+                       showInspector: showInspector, inspectorPane: inspectorPane.rawValue, hostID: hostID, sidebarGrouping: sidebarGrouping.rawValue)
         if let data = try? JSONEncoder().encode(s) { defaults.set(data, forKey: Self.hostsKey) }
     }
 }

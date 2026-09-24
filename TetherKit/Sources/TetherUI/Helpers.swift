@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import TetherKit
 import TetherProtocol
 
 extension JSONValue {
@@ -240,6 +241,18 @@ extension PermissionMode {
         case .bypassPermissions: return "exclamationmark.shield"
         default: return "questionmark"
         }
+    }
+}
+
+extension HostConfig {
+    /// The same symbol in the sidebar's host menu and in Settings.
+    var symbol: String { isLocal ? "laptopcomputer" : "network" }
+}
+
+extension HostConnection.State {
+    var isConnecting: Bool {
+        if case .connecting = self { return true }
+        return false
     }
 }
 
