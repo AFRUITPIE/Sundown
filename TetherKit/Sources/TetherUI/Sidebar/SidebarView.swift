@@ -47,7 +47,6 @@ struct SidebarView: View {
             }
             Button("Cancel", role: .cancel) { renaming = nil }
         }
-        .safeAreaBar(edge: .top) { hostSelector }
     }
 
     // MARK: rows
@@ -100,29 +99,9 @@ struct SidebarView: View {
         }
     }
 
-    // MARK: host selector
-
-    /// Only worth a control when there is something to switch between; the one host's name is
-    /// already the window's, and Settings is where hosts are added.
-    @ViewBuilder private var hostSelector: some View {
-        if app.hosts.count > 1 {
-            Picker("Host", selection: $app.hostID) {
-                ForEach(app.hosts) { Text($0.name).tag($0.id) }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            // Leading, with the pop-up's own bezel inset taken off, so its title lines up with
-            // the row titles under it.
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 6)
-            .padding(.bottom, 6)
-            .contextMenu { hostActions }
-        }
-    }
-
     @ViewBuilder private var hostActions: some View {
         if let connection = app.connection {
-            Button("Reconnect") { Task { await connection.reconnect() } }
+            ConnectButton(connection: connection)
             if let info = connection.serverInfo {
                 Divider()
                 Text("Claude Code \(info.claude.version)")
@@ -164,20 +143,8 @@ struct SidebarView: View {
             switch connection.state {
             case .connecting(let message):
                 ContentUnavailableView { ProgressView() } description: { Text(message) }
-            case .failed(let message):
-                ContentUnavailableView {
-                    Label("Not Connected", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(message)
-                } actions: {
-                    Button("Try Again") { Task { await connection.reconnect() } }
-                }
-            case .disconnected:
-                ContentUnavailableView {
-                    Label("Not Connected", systemImage: "bolt.horizontal.circle")
-                } actions: {
-                    Button("Connect") { Task { await connection.connect() } }
-                }
+            case .failed, .disconnected:
+                NotConnectedView(connection: connection)
             case .connected:
                 if search.isEmpty {
                     ContentUnavailableView("No Chats", systemImage: "bubble.left")
@@ -189,9 +156,37 @@ struct SidebarView: View {
     }
 }
 
+/// A host that isn't connected, and how to connect it: the sidebar's empty state, and New Chat's.
+/// Empty while the host is connected or connecting.
+struct NotConnectedView: View {
+    let connection: HostConnection
+
+    var body: some View {
+        switch connection.state {
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("Not Connected", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Try Again") { Task { await connection.reconnect() } }
+            }
+        case .disconnected:
+            ContentUnavailableView {
+                Label("Not Connected", systemImage: "bolt.horizontal.circle")
+            } actions: {
+                Button("Connect") { Task { await connection.connect() } }
+            }
+        case .connecting, .connected:
+            EmptyView()
+        }
+    }
+}
+
 #if DEBUG
 /// The sidebar as the split view hosts it: same column width as RootView, so truncation and
 /// alignment here are the ones the app has.
+@MainActor
 private func sidebarPreview(_ app: AppModel, search: String = "") -> some View {
     NavigationSplitView {
         SidebarView(app: app, search: search)

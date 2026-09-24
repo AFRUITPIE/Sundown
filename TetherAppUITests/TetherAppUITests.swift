@@ -16,14 +16,105 @@ final class TetherAppUITests: XCTestCase {
         return app
     }
 
+    /// The inspector opens from its toolbar button, and its tabs switch panes.
     @MainActor
     func testExistingChatAndInspector() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
-        app.buttons["Inspector"].click()
-        XCTAssertTrue(app.radioButtons["Tasks"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.radioButtons["Session"].exists)
-        XCTAssertTrue(app.radioButtons["MCP"].exists)
+        let toggle = app.buttons["Inspector"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        // The fixture's store is fresh, so the inspector starts closed.
+        toggle.click()
+        let mcp = app.tabGroups["Inspector"].tabs["MCP"]
+        XCTAssertTrue(mcp.waitForExistence(timeout: 5))
+        mcp.click()
+        let empty = app.staticTexts["No MCP Servers"]
+        XCTAssertTrue(empty.waitForExistence(timeout: 5))
+        toggle.click()
+        XCTAssertTrue(empty.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testInspectorPaneShortcuts() {
+        let app = launch()
+        XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
+        // ⌥⌘3 opens the inspector on MCP; ⌥⌘I hides it and reopens it on the same pane.
+        app.typeKey("3", modifierFlags: [.command, .option])
+        let empty = app.staticTexts["No MCP Servers"]
+        XCTAssertTrue(empty.waitForExistence(timeout: 5))
+        app.typeKey("i", modifierFlags: [.command, .option])
+        XCTAssertTrue(empty.waitForNonExistence(timeout: 5))
+        app.typeKey("i", modifierFlags: [.command, .option])
+        XCTAssertTrue(empty.waitForExistence(timeout: 5))
+    }
+
+    /// The host is switched from the menu bar only, and the subtitle then names it.
+    @MainActor
+    func testHostMenuSwitchesHost() {
+        let app = launch()
+        XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.title.contains("This Mac"), window.title)
+        app.menuBars.menuBarItems["Host"].click()
+        app.menuBars.menuItems["Fixture SSH"].click()
+        let switched = NSPredicate(format: "title CONTAINS %@", "Fixture SSH")
+        expectation(for: switched, evaluatedWith: window)
+        waitForExpectations(timeout: 5)
+        // Switching host opens New Chat on it.
+        XCTAssertTrue(window.title.hasPrefix("New Chat"), window.title)
+    }
+
+    /// Choosing another value never resizes a session control or moves its neighbours.
+    @MainActor
+    func testSessionControlsKeepTheirWidth() {
+        let app = launch()
+        XCTAssertTrue(app.staticTexts["Fixture Chat"].waitForExistence(timeout: 15))
+        app.buttons["New Chat"].click()
+        let toolbar = app.toolbars.firstMatch
+        let effort = toolbar.menuButtons["Effort"]
+        let permissions = toolbar.menuButtons["Permissions"]
+        XCTAssertTrue(permissions.waitForExistence(timeout: 5))
+        let before = (effort.frame, permissions.frame)
+
+        choose("Bypass Permissions", in: "Permissions", app: app)
+        choose("Max", in: "Effort", app: app)
+
+        XCTAssertEqual(permissions.value as? String, "Bypass Permissions")
+        XCTAssertEqual(effort.frame, before.0)
+        XCTAssertEqual(permissions.frame, before.1)
+    }
+
+    /// Every toolbar control is also in the menu bar.
+    @MainActor
+    func testChatMenuRepeatsTheSessionControls() {
+        let app = launch()
+        XCTAssertTrue(app.staticTexts["Fixture Chat"].waitForExistence(timeout: 15))
+        app.menuBars.menuBarItems["Chat"].click()
+        for title in ["Model", "Fast Mode", "Effort", "Permissions"] {
+            XCTAssertTrue(app.menuBars.menuItems[title].exists, title)
+        }
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
+    /// New Chat keeps its folder with the composer, not in a form under the toolbar.
+    @MainActor
+    func testNewChatFolderSitsAboveTheComposer() {
+        let app = launch()
+        XCTAssertTrue(app.staticTexts["Fixture Chat"].waitForExistence(timeout: 15))
+        app.buttons["New Chat"].click()
+        let folder = app.popUpButtons["newChat.folder"]
+        let input = app.descendants(matching: .any)["composer.input"]
+        XCTAssertTrue(folder.waitForExistence(timeout: 5))
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        XCTAssertLessThan(folder.frame.maxY, input.frame.minY)
+        XCTAssertEqual(folder.value as? String, "/tmp/tether-fixture")
+    }
+
+    @MainActor
+    private func choose(_ item: String, in submenu: String, app: XCUIApplication) {
+        app.menuBars.menuBarItems["Chat"].click()
+        app.menuBars.menuItems[submenu].hover()
+        app.menuBars.menuItems[item].click()
     }
 
     @MainActor

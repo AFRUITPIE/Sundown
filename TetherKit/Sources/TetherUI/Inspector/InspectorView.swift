@@ -3,66 +3,75 @@ import TetherKit
 
 /// The inspector's content: the selected chat's, or a placeholder so the column is never blank.
 struct InspectorView: View {
-    let app: AppModel
+    @Bindable var app: AppModel
     @Binding var selectedTaskID: String?
 
     var body: some View {
         if let thread = app.selectedThread, let connection = app.connection {
-            ThreadInspector(thread: thread, connection: connection, selectedTaskID: $selectedTaskID)
-                // Already in the inspector: showing a subagent only changes which task is selected.
-                .environment(\.inspectSubagent, InspectSubagentAction { selectedTaskID = $0 })
+            ThreadInspector(thread: thread, connection: connection, pane: $app.inspectorPane,
+                            selectedTaskID: $selectedTaskID)
+                // Already in the inspector: showing a subagent only changes the pane and the task.
+                .environment(\.inspectSubagent, InspectSubagentAction { id in
+                    selectedTaskID = id
+                    app.openInspector(on: .tasks)
+                })
         } else {
             ContentUnavailableView("No Session", systemImage: "sidebar.trailing")
         }
     }
 }
 
-/// Three panes behind a segmented control. This shell reads nothing off the thread — each pane
-/// observes only what it shows, so a streaming delta redraws at most the pane that is open.
+/// A chat's inspector: tabs for its panes over the pane that is open. Reads nothing off the thread
+/// itself: each pane observes only what it shows, so a streaming delta redraws at most that pane.
 struct ThreadInspector: View {
     let thread: ThreadModel
     let connection: HostConnection
-    @State private var pane: Pane
-    @Binding private var selectedTaskID: String?
+    @Binding var pane: InspectorPane
+    @Binding var selectedTaskID: String?
 
-    init(thread: ThreadModel, connection: HostConnection, pane: Pane = .tasks,
+    init(thread: ThreadModel, connection: HostConnection, pane: Binding<InspectorPane> = .constant(.tasks),
          selectedTaskID: Binding<String?> = .constant(nil)) {
         self.thread = thread
         self.connection = connection
-        self._pane = State(initialValue: pane)
+        self._pane = pane
         self._selectedTaskID = selectedTaskID
     }
 
-    enum Pane: String, CaseIterable, Identifiable {
-        case tasks = "Tasks"
-        case session = "Session"
-        case mcp = "MCP"
-        var id: Self { self }
-    }
-
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("Inspector", selection: $pane) {
-                ForEach(Pane.allCases) { Text($0.rawValue).tag($0) }
+        Group {
+            switch pane {
+            case .tasks: TasksPane(thread: thread, selectedTaskID: $selectedTaskID)
+            case .session: SessionPane(thread: thread, connection: connection)
+            case .mcp: MCPPane(thread: thread)
             }
-            .pickerStyle(.segmented)
+        }
+        .inspectorPaneStyle()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // A bar, so a pane's form scrolls under it with the standard edge effect.
+        .safeAreaBar(edge: .top) {
+            // `.tabs` rather than `.segmented`: it switches views rather than choosing a value,
+            // and VoiceOver announces the options as tabs.
+            Picker("Inspector", selection: $pane) {
+                ForEach(InspectorPane.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.tabs)
             .labelsHidden()
-            .frame(maxWidth: .infinity)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            Divider()
-            Group {
-                switch pane {
-                case .tasks: TasksPane(thread: thread, selectedTaskID: $selectedTaskID)
-                case .session: SessionPane(thread: thread, connection: connection)
-                case .mcp: MCPPane(thread: thread)
-                }
-            }
-            .inspectorPaneStyle()
         }
-        .onChange(of: selectedTaskID) {
-            if selectedTaskID != nil { pane = .tasks }
+    }
+}
+
+/// The inspector's show/hide button: plain, like Xcode's, so it doesn't tint while the inspector
+/// is open. Declared by the inspector, so it sits above the column.
+struct InspectorToggle: View {
+    @Bindable var app: AppModel
+
+    var body: some View {
+        Button("Inspector", systemImage: "sidebar.trailing") {
+            app.showInspector.toggle()
         }
+        .help(app.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
     }
 }
 

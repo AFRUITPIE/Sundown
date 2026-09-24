@@ -54,13 +54,7 @@ struct HostDetail: View {
                         // The state is the row's point; the button gives way to it.
                         HostStatusLabel(state: connection.state)
                             .layoutPriority(1)
-                        Button(connection.state == .connected ? "Reconnect" : "Connect") {
-                            Task {
-                                if connection.state == .connected { await connection.reconnect() }
-                                else { await connection.connect() }
-                            }
-                        }
-                        .disabled(isConnecting(connection.state))
+                        ConnectButton(connection: connection)
                     }
                 }
                 if let server = connection.serverInfo {
@@ -111,11 +105,6 @@ struct HostDetail: View {
                 }
             }
         }
-    }
-
-    private func isConnecting(_ state: HostConnection.State) -> Bool {
-        if case .connecting = state { return true }
-        return false
     }
 
     /// Node's own words for a platform, as a person would write them.

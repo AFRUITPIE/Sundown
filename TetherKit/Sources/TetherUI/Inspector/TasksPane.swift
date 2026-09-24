@@ -12,7 +12,7 @@ struct TasksPane: View {
         if let selectedTaskID, let entry = entries.first(where: { $0.id == selectedTaskID }) {
             InspectorTaskDetail(entry: entry, thread: thread) { self.selectedTaskID = nil }
         } else if entries.isEmpty {
-            InspectorEmptyState("No Tasks", symbol: "person.2")
+            InspectorEmptyState("No Tasks", symbol: InspectorPane.tasks.symbol)
         } else {
             Form {
                 Section {

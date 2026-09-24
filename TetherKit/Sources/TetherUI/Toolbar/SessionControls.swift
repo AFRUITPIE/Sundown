@@ -73,6 +73,29 @@ struct SessionSettings {
     }
 }
 
+/// Resolves the session settings in its own body rather than in `RootView`'s, so what they read —
+/// the chat's model, effort and mode, the catalog — invalidates this toolbar item, not the shell.
+struct ToolbarSessionControl<Control: View>: View {
+    let app: AppModel
+    let control: (SessionSettings) -> Control
+
+    var body: some View { control(.current(app)) }
+}
+
+/// The chat's three settings as one toolbar item, so they share one glass capsule the way Xcode's
+/// scheme and run destination do. Separate items would each get their own.
+struct SessionMenus: View {
+    let settings: SessionSettings
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ModelMenu(settings: settings)
+            EffortMenu(settings: settings)
+            PermissionsMenu(settings: settings)
+        }
+    }
+}
+
 /// The one control that shows a word: which model is answering is what people look for.
 /// Fast Mode rides in its menu because it is a property of the model, not a fourth control.
 struct ModelMenu: View {
@@ -80,23 +103,13 @@ struct ModelMenu: View {
 
     var body: some View {
         Menu {
-            Picker("Model", selection: settings.model) {
-                ForEach(settings.models.concrete, id: \.value) { model in
-                    Text(model.shortName).tag(Optional(model.value))
-                }
-                // A custom or Bedrock id the CLI doesn't list stays selectable.
-                if let id = settings.model.wrappedValue,
-                   !settings.models.contains(where: { $0.value == id || $0.resolvedModel == id }) {
-                    Text(id).tag(Optional(id))
-                }
-            }
-            .pickerStyle(.inline)
+            ModelPicker(settings: settings)
+                .pickerStyle(.inline)
             Divider()
-            Toggle("Fast Mode", systemImage: SessionSymbol.fastMode, isOn: settings.fastMode)
-                .disabled(settings.fastModeUnavailable != nil)
-                .help(settings.fastModeUnavailable ?? "Answer faster, with less reasoning")
+            FastModeToggle(settings: settings)
         } label: {
-            Label(settings.modelLabel, systemImage: SessionSymbol.model)
+            ReservedWidthLabel(settings.modelLabel, systemImage: SessionSymbol.model,
+                               widestOf: settings.models.concrete.map(\.shortName) + [settings.modelLabel])
         }
         // Toolbar items are icon-only by default; this is the one that has to say a name.
         .labelStyle(.titleAndIcon)
@@ -107,7 +120,8 @@ struct ModelMenu: View {
     }
 }
 
-/// Icon-only: the gauge's needle carries the value, the tooltip spells it out.
+/// Icon-only: the gauge's needle carries the value, the tooltip spells it out. A pull-down with a
+/// checked list, like the model's, because a pop-up here would show its rows as bare gauges.
 struct EffortMenu: View {
     let settings: SessionSettings
 
@@ -116,15 +130,11 @@ struct EffortMenu: View {
 
     var body: some View {
         Menu {
-            Picker("Effort", selection: settings.effort) {
-                Label("Automatic", systemImage: SessionSymbol.automaticEffort).tag(EffortLevel?.none)
-                ForEach(levels, id: \.self) { level in
-                    Label(level.label, systemImage: level.symbol(in: levels)).tag(Optional(level))
-                }
-            }
-            .pickerStyle(.inline)
+            EffortPicker(settings: settings)
+                .pickerStyle(.inline)
         } label: {
-            Label("Effort", systemImage: value.symbol(in: levels))
+            ReservedWidthLabel("Effort", systemImage: value.symbol(in: levels),
+                               symbols: [SessionSymbol.automaticEffort] + levels.map { $0.symbol(in: levels) })
         }
         .labelStyle(.iconOnly)
         .disabled(!settings.isEnabled)
@@ -142,19 +152,17 @@ struct PermissionsMenu: View {
 
     var body: some View {
         Menu {
-            Picker("Permissions", selection: settings.permissionMode) {
-                ForEach(PermissionMode.selectable, id: \.self) { mode in
-                    Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
-                }
-            }
-            .pickerStyle(.inline)
+            PermissionsPicker(settings: settings)
+                .pickerStyle(.inline)
         } label: {
+            let label = ReservedWidthLabel(mode.label, systemImage: mode.symbol,
+                                           symbols: PermissionMode.selectable.map(\.symbol))
             // Only the dangerous mode styles its label: an unconditional `.foregroundStyle` would
             // also paint over the disabled appearance.
             if mode.isDangerous {
-                Label(mode.label, systemImage: mode.symbol).foregroundStyle(.red)
+                label.foregroundStyle(.red)
             } else {
-                Label(mode.label, systemImage: mode.symbol)
+                label
             }
         }
         .labelStyle(.iconOnly)
@@ -162,6 +170,82 @@ struct PermissionsMenu: View {
         .help("Permissions: \(mode.longLabel)")
         .accessibilityLabel("Permissions")
         .accessibilityValue(mode.longLabel)
+    }
+}
+
+// The menus' contents, shared with the Chat menu, where each picker is a submenu.
+
+struct ModelPicker: View {
+    let settings: SessionSettings
+
+    var body: some View {
+        Picker("Model", selection: settings.model) {
+            ForEach(settings.models.concrete, id: \.value) { model in
+                Text(model.shortName).tag(Optional(model.value))
+            }
+            // A custom or Bedrock id the CLI doesn't list stays selectable.
+            if let id = settings.model.wrappedValue,
+               !settings.models.contains(where: { $0.value == id || $0.resolvedModel == id }) {
+                Text(id).tag(Optional(id))
+            }
+        }
+    }
+}
+
+struct FastModeToggle: View {
+    let settings: SessionSettings
+
+    var body: some View {
+        Toggle("Fast Mode", systemImage: SessionSymbol.fastMode, isOn: settings.fastMode)
+            .disabled(settings.fastModeUnavailable != nil)
+            .help(settings.fastModeUnavailable ?? "The same model, with faster output")
+    }
+}
+
+struct EffortPicker: View {
+    let settings: SessionSettings
+
+    var body: some View {
+        let levels = settings.effortLevels
+        Picker("Effort", selection: settings.effort) {
+            Label("Automatic", systemImage: SessionSymbol.automaticEffort).tag(EffortLevel?.none)
+            ForEach(levels, id: \.self) { level in
+                Label(level.label, systemImage: level.symbol(in: levels)).tag(Optional(level))
+            }
+        }
+    }
+}
+
+struct PermissionsPicker: View {
+    let settings: SessionSettings
+
+    var body: some View {
+        Picker("Permissions", selection: settings.permissionMode) {
+            ForEach(PermissionMode.selectable, id: \.self) { mode in
+                Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
+            }
+        }
+    }
+}
+
+/// The Chat menu: the open chat's settings, or the New Chat draft's, for a hidden or customized
+/// toolbar.
+public struct ChatCommands: View {
+    let app: AppModel
+
+    public init(app: AppModel) {
+        self.app = app
+    }
+
+    public var body: some View {
+        let settings = SessionSettings.current(app)
+        Group {
+            ModelPicker(settings: settings)
+            FastModeToggle(settings: settings)
+            EffortPicker(settings: settings)
+            PermissionsPicker(settings: settings)
+        }
+        .disabled(!settings.isEnabled)
     }
 }
 
@@ -180,8 +264,8 @@ private func previewDraftSettings(connected: Bool = true) -> SessionSettings {
     return SessionSettings(draft: app, connection: connected ? connection : nil)
 }
 
-/// The three declared the way `RootView` declares them — one toolbar item each — so a preview
-/// shows the real glass shapes and spacing rather than three bare menus.
+/// Declared the way `RootView` declares them, so a preview shows the real glass shape and spacing
+/// rather than three bare menus.
 private struct SessionControlsPreview: View {
     let settings: SessionSettings
 
@@ -189,9 +273,7 @@ private struct SessionControlsPreview: View {
         NavigationStack {
             Color.clear
                 .toolbar {
-                    ToolbarItem(placement: .principal) { ModelMenu(settings: settings) }
-                    ToolbarItem(placement: .principal) { EffortMenu(settings: settings) }
-                    ToolbarItem(placement: .principal) { PermissionsMenu(settings: settings) }
+                    ToolbarItem(placement: .primaryAction) { SessionMenus(settings: settings) }
                 }
         }
         // Wide enough that the preview window's own title never pushes a control into the `»` overflow.
@@ -223,39 +305,19 @@ private struct SessionControlsPreview: View {
     SessionControlsPreview(settings: previewSettings(thread: .sample(model: "opus", effort: nil)))
 }
 
-/// A preview can't open a menu, so the same inline pickers are laid out here to check the rows'
+/// A preview can't open a menu, so the same pickers are laid out here to check the rows'
 /// symbols and wording.
 #Preview("Session menu contents") {
     let settings = previewSettings(thread: .sample(model: "sonnet", effort: .medium, fastModeState: .on))
     return Form {
         Section("Model") {
-            Picker("Model", selection: settings.model) {
-                ForEach(settings.models.concrete, id: \.value) { Text($0.shortName).tag(Optional($0.value)) }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-            Toggle("Fast Mode", systemImage: SessionSymbol.fastMode, isOn: settings.fastMode)
+            ModelPicker(settings: settings).labelsHidden()
+            FastModeToggle(settings: settings)
         }
-        Section("Effort") {
-            Picker("Effort", selection: settings.effort) {
-                Label("Automatic", systemImage: SessionSymbol.automaticEffort).tag(EffortLevel?.none)
-                ForEach(settings.effortLevels, id: \.self) { level in
-                    Label(level.label, systemImage: level.symbol(in: settings.effortLevels)).tag(Optional(level))
-                }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        }
-        Section("Permissions") {
-            Picker("Permissions", selection: settings.permissionMode) {
-                ForEach(PermissionMode.selectable, id: \.self) { mode in
-                    Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
-                }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        }
+        Section("Effort") { EffortPicker(settings: settings).labelsHidden() }
+        Section("Permissions") { PermissionsPicker(settings: settings).labelsHidden() }
     }
+    .pickerStyle(.inline)
     .formStyle(.grouped)
     .frame(width: 340, height: 760)
 }

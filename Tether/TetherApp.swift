@@ -36,6 +36,10 @@ struct TetherApp: App {
                 TranscriptWidthCommands(app: app)
                 ShellViewCommands(app: app)
             }
+            CommandMenu("Host") { HostCommands(app: app) }
+            CommandMenu("Chat") { ChatCommands(app: app) }
+            // View ▸ Show Sidebar, for the toolbar's sidebar button.
+            SidebarCommands()
             // View ▸ Show Toolbar / Customize Toolbar…, for the identified toolbar in RootView.
             ToolbarCommands()
         }

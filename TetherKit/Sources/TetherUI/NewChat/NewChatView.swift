@@ -2,11 +2,10 @@ import SwiftUI
 import TetherKit
 import TetherProtocol
 
-/// Compose a new chat: choose the host and working directory, then send the first message.
+/// Compose a new chat: choose the working directory, then send the first message. The host is
+/// the one the sidebar shows.
 struct NewChatView: View {
     @Bindable var app: AppModel
-    @State private var directory: String?
-    @State private var error: String?
     @State private var choosingLocalFolder = false
     @State private var choosingRemoteFolder = false
 
@@ -14,62 +13,79 @@ struct NewChatView: View {
     private var connection: HostConnection? { app.connection }
 
     var body: some View {
-        Form {
-            Section {
-                Picker("Host", selection: $app.hostID) {
-                    ForEach(app.hosts) { Text($0.name).tag($0.id) }
-                }
-                Picker("Folder", selection: Binding(get: { directory }, set: { new in
-                    if new == "__choose__" { chooseFolder() } else { directory = new }
-                })) {
-                    Text("Choose a folder").tag(String?.none)
-                    ForEach(connection?.projects.prefix(15) ?? [], id: \.cwd) { p in
-                        Text(p.cwd.abbreviatingHome).tag(Optional(p.cwd))
-                    }
-                    if let d = directory, !(connection?.projects.contains { $0.cwd == d } ?? false) {
-                        Text(d.abbreviatingHome).tag(Optional(d))
-                    }
-                    Divider()
-                    Text("Choose…").tag(Optional("__choose__"))
-                }
-            } footer: {
-                if let e = error { Text(e).foregroundStyle(.red) }
+        // No Form: a scrolling Form draws a hard scroll edge under the toolbar, which a chat
+        // doesn't have. The folder sits where a chat's status strip goes.
+        Color.clear
+            .overlay {
+                if let connection { NotConnectedView(connection: connection) }
             }
-        }
-        .formStyle(.grouped)
-        .frame(maxWidth: 560)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .safeAreaBar(edge: .bottom) {
-            if let connection {
-                // The same column the transcript and its bottom bar use, so the composer doesn't
-                // move sideways when the first message turns this screen into a chat.
-                GlassEffectContainer(spacing: 10) {
-                    Composer(connection: connection, cwd: directory, placeholder: directory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…", submit: { input in
-                        await start(connection, input)
-                    })
+            .safeAreaBar(edge: .bottom) {
+                if let connection {
+                    VStack(alignment: .leading, spacing: 10) {
+                        folderPicker
+                        if let error = app.draftError {
+                            Label(error, systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(.red)
+                        }
+                        GlassEffectContainer(spacing: 10) {
+                            Composer(connection: connection, cwd: app.draftDirectory,
+                                     placeholder: app.draftDirectory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…",
+                                     submit: { input in await start(connection, input) })
+                        }
+                    }
+                    .padding(.bottom, 14)
+                    // The same column the transcript and its bottom bar use, so the composer doesn't
+                    // move sideways when the first message turns this into a chat.
+                    .readingColumn()
                 }
-                .padding(.bottom, 14)
-                .readingColumn()
             }
+            .fileImporter(isPresented: $choosingLocalFolder, allowedContentTypes: [.folder]) { result in
+                if case .success(let url) = result { choose(url.path) }
+            }
+            .sheet(isPresented: $choosingRemoteFolder) {
+                if let connection { RemoteFolderPicker(connection: connection) { choose($0) } }
+            }
+            // `AppModel` seeds the folder with the host's first project; these fill it when the
+            // projects arrived after that.
+            .onAppear { useFirstProjectIfUnset() }
+            .onChange(of: connection?.projects.first?.cwd) { useFirstProjectIfUnset() }
+    }
+
+    /// Recent folders, then Other… for any folder.
+    private var folderPicker: some View {
+        Picker("Folder", selection: Binding(get: { app.draftDirectory }, set: { new in
+            if new == Self.otherTag { chooseFolder() } else { choose(new) }
+        })) {
+            // Only while there is nothing to select: a menu Picker needs a row for its value.
+            if app.draftDirectory == nil {
+                Text("No Folder").tag(String?.none)
+            }
+            ForEach(connection?.projects.prefix(15) ?? [], id: \.cwd) { p in
+                Text(p.cwd.abbreviatingHome).tag(Optional(p.cwd))
+            }
+            if let d = app.draftDirectory, !(connection?.projects.contains { $0.cwd == d } ?? false) {
+                Text(d.abbreviatingHome).tag(Optional(d))
+            }
+            Divider()
+            Text("Other…").tag(Optional(Self.otherTag))
         }
-        .fileImporter(isPresented: $choosingLocalFolder, allowedContentTypes: [.folder]) { result in
-            if case .success(let url) = result { directory = url.path }
-        }
-        .sheet(isPresented: $choosingRemoteFolder) {
-            if let connection { RemoteFolderPicker(connection: connection) { directory = $0 } }
-        }
-        // Projects usually arrive after this appears.
-        .onAppear { useFirstProjectIfUnset() }
-        .onChange(of: connection?.projects.first?.cwd) { useFirstProjectIfUnset() }
-        .onChange(of: app.hostID) {
-            directory = nil
-            useFirstProjectIfUnset()
-        }
+        .pickerStyle(.menu)
+        // Outside a Form the visible label is a separate text, so VoiceOver would hear only the path.
+        .accessibilityLabel("Folder")
+        .accessibilityIdentifier("newChat.folder")
+    }
+
+    /// Not a path: selecting it opens a folder chooser instead of becoming the selection.
+    private static let otherTag = "__other__"
+
+    private func choose(_ directory: String?) {
+        app.draftDirectory = directory
+        app.draftError = nil
     }
 
     private func useFirstProjectIfUnset() {
-        guard directory == nil else { return }
-        directory = connection?.projects.first?.cwd
+        guard app.draftDirectory == nil else { return }
+        app.draftDirectory = connection?.projects.first?.cwd
     }
 
     private func chooseFolder() {
@@ -77,14 +93,15 @@ struct NewChatView: View {
     }
 
     private func start(_ connection: HostConnection, _ input: [UserInput]) async {
-        guard let cwd = directory else { error = "Choose a folder first."; return }
+        guard let cwd = app.draftDirectory else { app.draftError = "Choose a folder first."; return }
+        app.draftError = nil
         do {
             let t = try await connection.startThread(cwd: cwd, input: input,
                                                        options: .init(model: app.draftModel, effort: app.draftEffort,
                                                                       permissionMode: app.draftPermissionMode, fastMode: app.draftFastMode))
             app.open(threadID: t.id, on: connection.id)
         } catch {
-            self.error = error.localizedDescription
+            app.draftError = error.localizedDescription
         }
     }
 }
@@ -93,6 +110,13 @@ struct NewChatView: View {
 #Preview("NewChatView") {
     NavigationStack {
         NewChatView(app: .sample())
+    }
+    .frame(width: 900, height: 700)
+}
+
+#Preview("NewChatView (not connected)") {
+    NavigationStack {
+        NewChatView(app: .sample(connections: [.sampleFailed()]))
     }
     .frame(width: 900, height: 700)
 }

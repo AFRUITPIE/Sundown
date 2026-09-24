@@ -49,7 +49,7 @@ struct HostsSettings: View {
         HStack(spacing: 12) {
             Picker("Host", selection: hostSelection) {
                 ForEach(app.hosts) { host in
-                    Label(host.name, systemImage: host.isLocal ? "laptopcomputer" : "network")
+                    Label(host.name, systemImage: host.symbol)
                         .tag(host.id)
                 }
             }
