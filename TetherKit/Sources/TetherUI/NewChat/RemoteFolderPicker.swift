@@ -7,7 +7,7 @@ struct RemoteFolderPicker: View {
     let connection: HostConnection
     let done: (String) -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var path = "~"
+    @State private var path = ""
     @State private var entries: [FsListResult.Entry] = []
     @State private var error: String?
     @State private var selection: String?
@@ -25,16 +25,24 @@ struct RemoteFolderPicker: View {
                         path = (path as NSString).deletingLastPathComponent
                         Task { await load() }
                     }
+                    .disabled(path.isEmpty || path == "/")
                 }
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Choose") { done(selection ?? path); dismiss() }
+                        .disabled(path.isEmpty || error != nil)
                 }
             }
             .overlay { if let error { ContentUnavailableView(error, systemImage: "exclamationmark.triangle") } }
         }
         .frame(width: 520, height: 420)
-        .task { await load() }
+        .task {
+            // The server expands "~" for listing, but thread/start uses cwd as a literal process
+            // directory. Keep the actual host path even when the folder has no visible children.
+            path = connection.serverInfo?.host.home ?? ""
+            if path.isEmpty { error = "Not connected"; return }
+            await load()
+        }
     }
 
     private func load() async {
