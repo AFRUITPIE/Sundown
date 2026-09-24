@@ -1,12 +1,10 @@
 import SwiftUI
 
-/// Lightweight block-level Markdown: fenced code, headings, lists, quotes, rules, paragraphs
-/// (inline syntax via AttributedString). Good enough for Claude's output without a dependency.
+/// Block-level Markdown (fenced code, headings, lists, quotes, rules, tables, paragraphs) with
+/// inline syntax via AttributedString.
 struct MarkdownView: View {
     let text: String
-    /// Parsing is pure but not cheap (a regex pass per line), and the same text is rendered again
-    /// on every layout — dragging the sidebar open re-parses every visible message per frame. The
-    /// cache is @State, so it lives as long as the row does and survives those re-renders.
+    /// Parses once per text change rather than once per layout pass.
     @State private var cache = MarkdownCache()
 
     enum Block: Hashable {
@@ -20,11 +18,14 @@ struct MarkdownView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(cache.blocks(for: text).enumerated()), id: \.offset) { _, block in
+        let blocks = cache.blocks(for: text)
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { i, block in
                 view(for: block)
+                    .padding(.top, i == 0 ? 0 : Self.spacing(after: blocks[i - 1], before: block))
             }
         }
+        .lineSpacing(3)
         .textSelection(.enabled)
     }
 
@@ -35,15 +36,16 @@ struct MarkdownView: View {
             CodeBlock(code: body, language: lang)
         case .heading(let level, let text):
             inline(text).font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline)
-                .padding(.top, 4)
+                .padding(.top, 6)
         case .paragraph(let text):
             inline(text)
         case .bullet(let indent, let marker, let text):
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(marker).foregroundStyle(.secondary).monospacedDigit()
+                    .frame(minWidth: 12, alignment: .trailing)
                 inline(text)
             }
-            .padding(.leading, CGFloat(indent) * 14)
+            .padding(.leading, 6 + CGFloat(indent) * 18)
         case .quote(let text):
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 1).fill(.tertiary).frame(width: 3)
@@ -67,8 +69,14 @@ struct MarkdownView: View {
         }
     }
 
+    /// List items sit closer together than paragraphs.
+    private static func spacing(after previous: Block, before block: Block) -> CGFloat {
+        if case .bullet = previous, case .bullet = block { return 6 }
+        return 12
+    }
+
     private func inline(_ s: String) -> Text {
-        if let a = try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+        if let a = cache.inline(for: s) {
             return Text(a)
         }
         return Text(s)
@@ -79,7 +87,7 @@ struct MarkdownView: View {
         var para: [String] = []
         var lines = text.components(separatedBy: "\n")[...]
         func flush() {
-            if !para.isEmpty { blocks.append(.paragraph(para.joined(separator: "\n"))) }
+            if !para.isEmpty { blocks.append(.paragraph(joinSoftBreaks(para))) }
             para.removeAll()
         }
         while let line = lines.popFirst() {
@@ -126,6 +134,21 @@ struct MarkdownView: View {
         return blocks
     }
 
+    /// A single newline inside a paragraph is a space, as in CommonMark; a line ending in two
+    /// spaces or a backslash keeps its break.
+    private static func joinSoftBreaks(_ lines: [String]) -> String {
+        var out = ""
+        for (i, line) in lines.enumerated() {
+            guard i < lines.count - 1 else { out += line; break }
+            if line.hasSuffix("  ") || line.hasSuffix("\\") {
+                out += line.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\\")) + "\n"
+            } else {
+                out += line.trimmingCharacters(in: .whitespaces) + " "
+            }
+        }
+        return out
+    }
+
     private static func cells(_ row: String) -> [String] {
         row.split(separator: "|", omittingEmptySubsequences: false)
             .dropFirst().dropLast()
@@ -142,6 +165,8 @@ final class MarkdownCache {
     private var blocks: [MarkdownView.Block] = []
     private var settledText = ""
     private var settledBlocks: [MarkdownView.Block] = []
+    /// Inline parses for the current blocks only, so streaming doesn't leave one per token.
+    private var inlineValues: [String: AttributedString] = [:]
 
     func blocks(for newText: String) -> [MarkdownView.Block] {
         if newText == text { return blocks }
@@ -153,8 +178,38 @@ final class MarkdownCache {
             settledBlocks = []
         }
         text = newText
+        let currentInlineText = Set(blocks.flatMap(\.inlineText))
+        inlineValues = inlineValues.filter { currentInlineText.contains($0.key) }
         updateSettledPrefix()
         return blocks
+    }
+
+    func inline(for text: String) -> AttributedString? {
+        if let value = inlineValues[text] { return value }
+        guard var value = try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) else { return nil }
+        Self.style(&value)
+        inlineValues[text] = value
+        return value
+    }
+
+    /// Inline code as a tinted monospaced run on a faint fill; bold a touch heavier than the
+    /// default so it reads as emphasis in body text.
+    private static func style(_ value: inout AttributedString) {
+        let ranges = value.runs.compactMap { run -> (Range<AttributedString.Index>, InlinePresentationIntent)? in
+            run.inlinePresentationIntent.map { (run.range, $0) }
+        }
+        for (range, intent) in ranges {
+            if intent.contains(.code) {
+                value[range].font = .system(.callout, design: .monospaced)
+                value[range].foregroundColor = Color.inlineCode
+                value[range].backgroundColor = Color.primary.opacity(0.07)
+            } else if intent.contains(.stronglyEmphasized) {
+                value[range].font = .body.weight(.semibold)
+            }
+        }
     }
 
     /// The prefix up to the last blank line that isn't inside an open code fence.
@@ -177,6 +232,28 @@ final class MarkdownCache {
         settledText = prefix
         settledBlocks = MarkdownView.parse(prefix)
     }
+}
+
+private extension MarkdownView.Block {
+    var inlineText: [String] {
+        switch self {
+        case .heading(_, let text), .paragraph(let text), .bullet(_, _, let text), .quote(let text):
+            [text]
+        case .table(let rows):
+            rows.flatMap { $0 }
+        case .code, .rule:
+            []
+        }
+    }
+}
+
+extension Color {
+    /// Inline code: a muted red that holds contrast in both appearances.
+    static let inlineCode = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.93, green: 0.49, blue: 0.47, alpha: 1)
+            : NSColor(srgbRed: 0.75, green: 0.22, blue: 0.20, alpha: 1)
+    })
 }
 
 /// Monospaced block that wraps and sizes itself; long output collapses to `lineLimit` lines.
@@ -250,6 +327,12 @@ private let sampleMarkdownPreviewText = """
 - Native **Liquid Glass** controls for the composer and prompt cards
 - `#Preview` support across every `TetherUI` view
 - Faster reconnect after the daemon restarts
+
+**Cause.** On attach, the app's only source of settings is the `thread` object returned by
+`thread/subscribe`, so the toolbar fell back to *your* defaults.
+
+1. Read the tail of the transcript
+2. Skip subagent turns
 
 Run the tests with:
 

@@ -18,3 +18,17 @@ Protocol types come from `TetherProtocol`, which is generated in `../tether-serv
 2. Open `Tether.xcodeproj` and run the **Tether** scheme. A build phase copies `../tether-server/dist/tether-*` into `Tether.app/Contents/Resources/servers/`.
 3. Live Swift tests against the real `claude` (Haiku): `TETHER_E2E=1 swift test --package-path TetherKit`.
 4. Debug builds accept `TETHER_OPEN_THREAD=<id>`, set in the scheme's environment variables, to open a chat on launch.
+
+## Tests
+
+`swift test --package-path TetherKit` runs the package tests without a live Claude session. The
+`TetherAppUITests` target in the shared **Tether** scheme launches the real app with
+`TETHER_UI_TEST_MODE=1`. That mode supplies an in-process JSON-RPC server and refuses to launch
+the local daemon or SSH for any host without a fixture transport. It exercises Settings, host
+management, chat streaming, and reconnection without inference calls. Run it locally with Xcode's
+**Test** action. `TETHER_E2E=1` is the separate, opt-in live suite and can incur cost.
+
+The PR workflow runs both suites on the `xcode-27` GitHub runner and uploads the `.xcresult`
+bundle. SwiftPM resolves the pinned `TetherProtocol` package from the public
+`AFRUITPIE/tether-server` repository. The workflow skips bundling server binaries, because fixture
+tests do not use them. No Claude credentials are supplied to CI.

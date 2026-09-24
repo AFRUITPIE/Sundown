@@ -29,37 +29,31 @@ public final class ThreadModel: Identifiable {
     public internal(set) var loadingOlder = false
     public private(set) var promptSuggestion: String?
     public private(set) var tasks: [String: TaskEventNotification] = [:]
+    /// IDs from the SDK's latest level-triggered background-task snapshot.
+    public private(set) var backgroundTaskIDs: Set<String> = []
     public private(set) var authStatus: ThreadAuthStatusNotification?
     public private(set) var apiRetry: ThreadApiRetryNotification?
     public private(set) var lastError: String?
+    /// Settings chosen while the daemon hasn't loaded the thread, applied when it resumes.
+    public private(set) var pendingSettings = PendingSettings()
     public var totalCostUsd: Double { turns.compactMap { $0.result?.totalCostUsd }.reduce(0, +) }
     private var index: [String: Int] = [:]
-    /// Bumped by every change to `items`. Derived collections below key their caches off it, so
-    /// they cost one pass per change instead of one per SwiftUI body evaluation — during
-    /// streaming the transcript is rendered far more often than it is mutated.
+    /// Bumped by every change to `items`; the derived collections below cache against it.
     public private(set) var itemsVersion = 0
     @ObservationIgnored private var cachedTopLevel: (version: Int, items: [Item])?
     @ObservationIgnored private var cachedRows: (version: Int, rows: [TranscriptRow])?
     @ObservationIgnored private var cachedChildren: (version: Int, byParent: [String: [Item]])?
 
+    /// Claude's name for the session once it has one, else the opening prompt. Stored rather than
+    /// computed: a title that reads `items` would make every streamed delta invalidate the sidebar
+    /// row and the window title.
+    public private(set) var title = "New Chat"
+
     public init(id: String, summary: ThreadSummary? = nil) {
         self.id = id
         self.summary = summary
         if let s = summary { status = s.status }
-    }
-
-    /// Claude's name for the session when it has one, then the first thing that was asked.
-    /// A session only gets named after it has run for a bit, and `thread/started` carries no
-    /// title at all, so the prompt fallback is what a brand-new chat shows.
-    public var title: String {
-        if let t = summary?.customTitle, !t.isEmpty { return t }
-        if let t = info?.title, !t.isEmpty { return t }
-        if let s = summary?.title, !s.isEmpty { return s }
-        if let p = summary?.firstPrompt, !p.isEmpty { return String(p.prefix(80)) }
-        for case .userMessage(let m) in items where m.synthetic != true {
-            for case .text(let t) in m.content { return String(t.text.prefix(80)) }
-        }
-        return "New Chat"
+        refreshTitle()
     }
 
     /// True while the title is only the opening prompt — Claude hasn't named this session yet.
@@ -68,14 +62,18 @@ public final class ThreadModel: Identifiable {
     }
 
     public var cwd: String? { info?.cwd ?? summary?.cwd }
+    public var model: String? { pendingSettings.model ?? info?.model }
+    public var effort: EffortLevel? { pendingSettings.effort ?? info?.effort }
+    public var permissionMode: PermissionMode? { pendingSettings.permissionMode ?? info?.permissionMode }
+    public var fastMode: Bool { pendingSettings.fastMode ?? (info?.fastModeState == "on") }
+
+    /// Watched from its transcript while another client runs it; the daemon hasn't loaded it.
+    public var isFollowed: Bool { info?.status == .notLoaded }
     public var isRunning: Bool { status == .running || status == .requiresAction }
     public var currentTurn: Turn? { turns.last.flatMap { $0.status == .inProgress ? $0 : nil } }
 
-    /// True while the model is working with nothing on screen to show for it. Reasoning items
-    /// aren't rendered, so without this the transcript sits empty through the thinking phase.
-    /// Keyed on the last item rather than the turn: items don't always carry a `turnId`, and what
-    /// matters is whether the newest thing in the transcript is already showing progress — a tool
-    /// call that is running has its own spinner, and a reply that has started speaks for itself.
+    /// True while the model is working with nothing on screen to show for it. Keyed on the last
+    /// item: a running tool call has its own spinner, and a reply that has started speaks for itself.
     public var isThinking: Bool {
         guard status == .running else { return false }
         switch items.last {
@@ -90,11 +88,29 @@ public final class ThreadModel: Identifiable {
     func setInfo(_ i: ThreadInfo) {
         info = i
         status = i.status
+        refreshTitle()
     }
 
     func setSummary(_ s: ThreadSummary) {
         summary = s
         if info == nil { status = s.status }
+        refreshTitle()
+    }
+
+    private func refreshTitle() {
+        let next = derivedTitle()
+        if next != title { title = next }
+    }
+
+    private func derivedTitle() -> String {
+        if let t = summary?.customTitle, !t.isEmpty { return t }
+        if let t = info?.title, !t.isEmpty { return t }
+        if let s = summary?.title, !s.isEmpty { return s }
+        if let p = summary?.firstPrompt, !p.isEmpty { return String(p.prefix(80)) }
+        for case .userMessage(let m) in items where m.synthetic != true {
+            for case .text(let t) in m.content { return String(t.text.prefix(80)) }
+        }
+        return "New Chat"
     }
 
     /// Replace transcript with server history (thread/read or thread/resume includeHistory).
@@ -107,13 +123,10 @@ public final class ThreadModel: Identifiable {
         historyLoaded = true
     }
 
-    /// Add an older page to the front. The transcript is read from its end, so everything before
-    /// what is already held arrives this way — a session run for days has far more history than
-    /// is worth holding, let alone laying out, before anyone asks for it.
+    /// Add an older page to the front.
     func prependHistory(items older: [Item], hasMore: Bool) {
         hasMoreHistory = hasMore
         guard !older.isEmpty else { return }
-        // Defensive: a page that overlaps what is held would otherwise duplicate rows.
         let known = Set(items.map(\.id))
         let fresh = older.filter { !known.contains($0.id) }
         guard !fresh.isEmpty else { return }
@@ -121,13 +134,25 @@ public final class ThreadModel: Identifiable {
         reindex()
     }
 
+    /// Every bulk replacement of `items` goes through here, so the fallback title is refreshed
+    /// once per history load rather than once per streamed delta.
     private func reindex() {
         index = Dictionary(uniqueKeysWithValues: items.enumerated().map { ($1.id, $0) })
         itemsVersion &+= 1
+        refreshTaskEntries()
+        refreshTitle()
     }
 
-    func setLastSeq(_ s: Int) {
-        lastSeq = max(lastSeq, s)
+    /// Drops the transcript so the next open reads it afresh.
+    func unload() {
+        items = []
+        turns = []
+        tasks = [:]
+        backgroundTaskIDs = []
+        reindex()
+        lastSeq = 0
+        hasMoreHistory = false
+        historyLoaded = false
     }
 
     // MARK: notifications
@@ -139,7 +164,9 @@ public final class ThreadModel: Identifiable {
         }
         switch n {
         case .threadStarted(let e): setInfo(e.thread)
-        case .threadUpdated(let e): info = e.thread
+        case .threadUpdated(let e):
+            info = e.thread
+            refreshTitle()
         case .threadStatusChanged(let e):
             status = e.status
             activity = e.activity?.rawValue
@@ -158,7 +185,12 @@ public final class ThreadModel: Identifiable {
             mutate(e.itemId) { if case .reasoning(var m) = $0 { m.text += e.delta; $0 = .reasoning(m) } }
         case .itemToolCallProgress(let e):
             mutate(e.itemId) { if case .toolCall(var t) = $0 { t.elapsedSeconds = e.elapsedSeconds; $0 = .toolCall(t) } }
-        case .taskEvent(let e): tasks[e.taskId] = e
+        case .taskEvent(let e):
+            tasks[e.taskId] = e
+            refreshTaskEntries()
+        case .taskBackgroundChanged(let e):
+            backgroundTaskIDs = Set((e.tasks.arrayValue ?? []).compactMap { $0["task_id"]?.stringValue })
+            refreshTaskEntries()
         case .threadPromptSuggestion(let e): promptSuggestion = e.suggestion
         case .threadAuthStatus(let e): authStatus = e
         case .threadApiRetry(let e): apiRetry = e
@@ -187,6 +219,15 @@ public final class ThreadModel: Identifiable {
         pending.removeAll()
     }
 
+    func editPendingSettings(_ edit: (inout PendingSettings) -> Void) {
+        edit(&pendingSettings)
+    }
+
+    func takePendingSettings() -> PendingSettings {
+        defer { pendingSettings = PendingSettings() }
+        return pendingSettings
+    }
+
     func setError(_ message: String?) {
         lastError = message
     }
@@ -208,12 +249,16 @@ public final class ThreadModel: Identifiable {
             items.append(item)
         }
         itemsVersion &+= 1
+        if item.isSubagentCall { refreshTaskEntries() }
+        // Only an opening user message can move the title, and only until Claude names the session.
+        if isUnnamed, case .userMessage(let m) = item, m.synthetic != true { refreshTitle() }
     }
 
     private func mutate(_ id: String, _ f: (inout Item) -> Void) {
         guard let i = index[id] else { return }
         f(&items[i])
         itemsVersion &+= 1
+        if items[i].isSubagentCall { refreshTaskEntries() }
     }
 
     /// Items belonging to a subagent (Task/Agent tool) — rendered nested in its card.
@@ -226,6 +271,21 @@ public final class ThreadModel: Identifiable {
         }
         cachedChildren = (itemsVersion, byParent)
         return byParent[toolUseId] ?? []
+    }
+
+    /// The newest lifecycle event for a subagent tool call (task IDs aren't tool-use IDs).
+    public func taskEvent(forToolUseId toolUseId: String) -> TaskEventNotification? {
+        tasks.values
+            .filter { $0.toolUseId == toolUseId }
+            .max { $0.seq < $1.seq }
+    }
+
+    /// Background state arrives either as a task event patch or as the SDK's full list.
+    public func isTaskBackgrounded(toolUseId: String) -> Bool {
+        guard let task = taskEvent(forToolUseId: toolUseId) else { return false }
+        return backgroundTaskIDs.contains(task.taskId)
+            || task.data["is_backgrounded"]?.boolValue == true
+            || task.data["patch"]?["is_backgrounded"]?.boolValue == true
     }
 
     public var topLevelItems: [Item] {
@@ -244,8 +304,69 @@ public final class ThreadModel: Identifiable {
         return rows
     }
 
+    /// Subagent and workflow runs, as the Tasks inspector lists them: every subagent tool call,
+    /// then the tasks the SDK reported that no call of ours matches.
+    ///
+    /// Stored, and rebuilt only when `tasks`, `backgroundTaskIDs` or a subagent call changes: computed
+    /// from `items` it would make every streamed delta invalidate the Tasks inspector.
+    public private(set) var taskEntries: [InspectorTaskEntry] = []
+
+    private func refreshTaskEntries() {
+        // Includes agents launched by other agents, which have no top-level row.
+        let calls = items.compactMap { item -> Item.ToolCall? in
+            guard case .toolCall(let call) = item, call.kind == .subagent else { return nil }
+            return call
+        }
+        var matchedTaskIDs = Set<String>()
+        var entries = calls.map { call in
+            let task = taskEvent(forToolUseId: call.id)
+            if let task { matchedTaskIDs.insert(task.taskId) }
+            return InspectorTaskEntry(
+                id: call.id,
+                call: call,
+                task: task,
+                isBackgrounded: isTaskBackgrounded(toolUseId: call.id)
+            )
+        }
+        entries += tasks.values
+            .filter { !matchedTaskIDs.contains($0.taskId) }
+            .sorted { $0.seq < $1.seq }
+            .map {
+                InspectorTaskEntry(
+                    id: "task:\($0.taskId)",
+                    call: nil,
+                    task: $0,
+                    isBackgrounded: backgroundTaskIDs.contains($0.taskId)
+                )
+            }
+        taskEntries = entries
+    }
+
     /// Position of an item in the transcript, for views that need to know what came after it.
     public func itemIndex(of id: String) -> Int? { index[id] }
+}
+
+private extension Item {
+    var isSubagentCall: Bool {
+        if case .toolCall(let call) = self { return call.kind == .subagent }
+        return false
+    }
+}
+
+/// One subagent or workflow run: the tool call that started it, its newest lifecycle event, or both.
+public struct InspectorTaskEntry: Identifiable {
+    public let id: String
+    public let call: Item.ToolCall?
+    public let task: TaskEventNotification?
+    public let isBackgrounded: Bool
+}
+
+/// Each field is nil when unchanged; `model` and `effort` can be changed to nil (automatic).
+public struct PendingSettings: Sendable, Equatable {
+    public var model: String??
+    public var effort: EffortLevel??
+    public var permissionMode: PermissionMode?
+    public var fastMode: Bool?
 }
 
 extension Item {

@@ -6,6 +6,12 @@
 # release is downloaded once and cached, which is what lets this repo be cloned on its own.
 set -euo pipefail
 
+# PR UI tests run entirely against an in-process fixture. No server binary is used there.
+if [[ "${TETHER_SKIP_SERVER_BINARIES:-}" == "1" ]]; then
+    echo "note: skipping server binaries for fixture UI tests"
+    exit 0
+fi
+
 VERSION="$(tr -d '[:space:]' < "$SRCROOT/.tether-server-version")"
 DEST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/servers"
 CACHE="${DERIVED_FILE_DIR:-$SRCROOT/.build}/tether-server/$VERSION"
@@ -25,7 +31,7 @@ fi
 
 if ! ls "$CACHE"/tether-"$VERSION"-* >/dev/null 2>&1; then
     if ! command -v gh >/dev/null 2>&1; then
-        echo "error: need the server binaries for $VERSION. Install the GitHub CLI (brew install gh; gh auth login), or clone tether-server beside this repo and run 'mise run compile'."
+        echo "error: need the server binaries for $VERSION. Install the GitHub CLI (brew install gh), or clone tether-server beside this repo and run 'mise run compile'."
         exit 1
     fi
     echo "note: downloading tether-server $VERSION"
@@ -33,7 +39,7 @@ if ! ls "$CACHE"/tether-"$VERSION"-* >/dev/null 2>&1; then
     if ! gh release download "v$VERSION" --repo AFRUITPIE/tether-server \
          --pattern "tether-$VERSION-*" --dir "$CACHE" --clobber; then
         rm -rf "$CACHE"
-        echo "error: could not download tether-server v$VERSION. Check 'gh auth status' — the repo is private."
+        echo "error: could not download tether-server v$VERSION. Check that the release and matching binaries exist."
         exit 1
     fi
     chmod +x "$CACHE"/tether-"$VERSION"-*

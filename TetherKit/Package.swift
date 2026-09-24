@@ -20,5 +20,8 @@ let package = Package(
         .target(name: "TetherKit", dependencies: [.product(name: "TetherProtocol", package: "tether-server")]),
         .target(name: "TetherUI", dependencies: ["TetherKit"]),
         .testTarget(name: "TetherKitTests", dependencies: ["TetherKit"]),
+        .testTarget(name: "TetherUITests", dependencies: [
+            "TetherUI", "TetherKit", .product(name: "TetherProtocol", package: "tether-server"),
+        ]),
     ]
 )

@@ -4,17 +4,25 @@ import TetherUI
 
 @main
 struct TetherApp: App {
-    @State private var app = AppModel()
+    @State private var app: AppModel = {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1" {
+            return AppModel.uiTestFixture()
+        }
+        #endif
+        return AppModel()
+    }()
 
     var body: some Scene {
         WindowGroup("Tether") {
             RootView(app: app)
-                .frame(minWidth: 900, minHeight: 600)
+                // The inspector adds a column; the window must grow with its minimum width.
+                .frame(minWidth: app.showInspector ? 1160 : 900, minHeight: 600)
                 .onAppear {
                     #if DEBUG
                     // Debug: launch with TETHER_OPEN_THREAD=<id> to open a chat directly.
                     if let id = ProcessInfo.processInfo.environment["TETHER_OPEN_THREAD"] {
-                        app.selection = .thread(host: HostConfig.local.id, id: id)
+                        app.open(threadID: id, on: HostConfig.local.id)
                     }
                     #endif
                 }
@@ -23,12 +31,15 @@ struct TetherApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("New Chat") { app.newChat() }.keyboardShortcut("n")
             }
-            // A view preference belongs in the View menu as well as Settings, so changing it
-            // doesn't mean leaving the window to do it.
+            // Also in the View menu, so changing it doesn't mean opening Settings.
             CommandGroup(after: .toolbar) {
                 TranscriptWidthCommands(app: app)
+                ShellViewCommands(app: app)
             }
+            // View ▸ Show Toolbar / Customize Toolbar…, for the identified toolbar in RootView.
+            ToolbarCommands()
         }
+        // The Settings view supplies the split window's minimum size.
         Settings { SettingsView(app: app) }
     }
 }

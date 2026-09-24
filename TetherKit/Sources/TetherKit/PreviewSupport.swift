@@ -196,7 +196,7 @@ extension PendingRequest {
 // MARK: - Model catalog
 
 extension ModelInfo {
-    /// A small, realistic model list — enough to exercise ModelPicker/EffortPicker.
+    /// A small, realistic model list — enough to exercise the session menus.
     /// Shaped like what `model/list` actually returns: short family display names, the version
     /// only in `resolvedModel`, and a leading "default" alias that resolves to one of the others.
     public static let sampleCatalog: [ModelInfo] = [
@@ -230,6 +230,8 @@ extension ThreadModel {
         model: String? = "opus",
         effort: EffortLevel? = .high,
         permissionMode: PermissionMode = .default,
+        fastModeState: ThreadInfo.FastModeState? = nil,
+        fastModeDisabledReason: String? = nil,
         items: [Item] = [],
         turns: [Turn] = [],
         pending: [PendingRequest] = [],
@@ -240,9 +242,31 @@ extension ThreadModel {
         let thread = ThreadModel(id: id)
         thread.loadHistory(items: items, turns: turns, seq: nil)
         thread.setInfo(.init(threadId: id, status: status, cwd: cwd, title: title, model: model, effort: effort,
-                              permissionMode: permissionMode, mcpServers: mcpServers, lastSeq: 0))
+                              permissionMode: permissionMode, fastModeState: fastModeState,
+                              fastModeDisabledReason: fastModeDisabledReason, mcpServers: mcpServers, lastSeq: 0))
         for p in pending { thread.addPending(p) }
         for t in tasks { thread.apply(.taskEvent(t)) }
+        if let lastError { thread.setError(lastError) }
+        return thread
+    }
+
+    /// A chat as `thread/list` first hands it over: a title, a folder and a timestamp, with no
+    /// transcript. Most of what the sidebar shows is this, so its grouping previews are built of it.
+    public static func sampleListed(
+        id: String = "listed-\(UUID().uuidString)",
+        title: String,
+        cwd: String?,
+        secondsAgo: Double,
+        status: ThreadStatus = .notLoaded
+    ) -> ThreadModel {
+        ThreadModel(id: id, summary: .init(threadId: id, title: title, cwd: cwd,
+                                           updatedAt: preview(secondsAgo: secondsAgo), status: status))
+    }
+
+    /// A chat whose transcript hasn't arrived — what the transcript stands in for. With a message
+    /// the read itself failed; without one the connection's own state has to explain it.
+    public static func sampleUnloaded(lastError: String? = nil) -> ThreadModel {
+        let thread = sampleListed(title: "Deploy to production", cwd: "/Users/hayden/Code/tether-app", secondsAgo: 300)
         if let lastError { thread.setError(lastError) }
         return thread
     }
@@ -259,6 +283,8 @@ extension ThreadModel {
                       description: "Check every pane for empty states", status: "running", data: [:]),
                 .init(threadId: "preview-thread", seq: 3, event: "task_completed", taskId: "task-3",
                       description: "Read the HIG pages on pop-up buttons", status: "completed", data: [:]),
+                .init(threadId: "preview-thread", seq: 4, event: "task_failed", taskId: "task-4",
+                      description: "Render every inspector pane", status: "failed", data: [:]),
             ],
             mcpServers: [
                 .init(name: "xcode", status: "connected"),
@@ -423,11 +449,19 @@ extension HostConnection {
     /// A connected "This Mac" host with a model catalog, a couple of projects, and a spread of
     /// chats for the sidebar. Never touches the network or spawns a process.
     public static func sample() -> HostConnection {
+        let day: Double = 86_400
         let chats = [
             ThreadModel.sampleRunningTurn(),
             ThreadModel.samplePendingPermission(),
             ThreadModel.sampleIdleChat(),
             ThreadModel.sampleErrorTurn(),
+            // Listed-only chats, spread across the date buckets and a few folders — including two
+            // folders that share a last path component, which must stay two sections.
+            .sampleListed(title: "Fold completed tool calls into a group", cwd: "/Users/hayden/Code/tether-app", secondsAgo: 3 * 3_600),
+            .sampleListed(title: "Why does reconnect replay from zero?", cwd: "/Users/hayden/Code/tether-server", secondsAgo: day + 4 * 3_600),
+            .sampleListed(title: "Bump the pinned server version", cwd: nil, secondsAgo: 3 * day),
+            .sampleListed(title: "Sidebar grouping spike", cwd: "/Users/hayden/Developer/archive/tether-app", secondsAgo: 12 * day),
+            .sampleListed(title: "First pass at the SSH bootstrapper", cwd: "/Users/hayden/Code/tether-server", secondsAgo: 45 * day),
         ]
         let connection = HostConnection(host: .local)
         connection.previewSeed(
@@ -448,6 +482,39 @@ extension HostConnection {
                 .init(cwd: "/Users/hayden/Code/tether-server", lastActivity: preview(secondsAgo: 3_600), threadCount: 2),
             ],
             chats: chats)
+        return connection
+    }
+
+    /// A connected host that has never been used: the sidebar's "No Chats" state.
+    public static func sampleEmpty() -> HostConnection {
+        let connection = HostConnection(host: .local)
+        connection.previewSeed(state: .connected, client: RPCClient(transport: PreviewTransport()),
+                               models: ModelInfo.sampleCatalog)
+        return connection
+    }
+
+    /// A host nobody has connected to yet this launch.
+    public static func sampleDisconnected() -> HostConnection {
+        let connection = HostConnection(host: .init(name: "build-box", kind: .ssh(destination: "build-box")))
+        connection.previewSeed(state: .disconnected)
+        return connection
+    }
+
+    /// A connected SSH box with environment overrides and a Bedrock account — the second shape
+    /// the Hosts settings have to show.
+    public static func sampleConnectedSSH() -> HostConnection {
+        let connection = HostConnection(host: .init(name: "build-box", kind: .ssh(destination: "build-box"),
+                                                    env: ["AWS_PROFILE": "tether", "AWS_REGION": "us-west-2"]))
+        connection.previewSeed(
+            state: .connected,
+            client: RPCClient(transport: PreviewTransport()),
+            serverInfo: .init(
+                serverInfo: .init(name: "tether-server", version: "0.4.0"),
+                protocolVersion: tetherProtocolVersion,
+                host: .init(hostname: "build-box.local", platform: "linux", arch: "x86_64", home: "/home/hayden", pid: 812, mode: .daemon),
+                claude: .init(path: "/usr/local/bin/claude", version: "2.1.4")),
+            account: .init(tokenSource: "env", apiProvider: "bedrock"),
+            models: ModelInfo.sampleCatalog)
         return connection
     }
 

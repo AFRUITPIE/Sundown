@@ -70,8 +70,7 @@ struct PermissionPrompt: View {
                     .onSubmit(deny)
             }
             HStack {
-                // Exactly one default button, always. `defaultToNo` used to clear Allow's default
-                // without giving it to anything else, which left Return doing nothing at all.
+                // Exactly one default button, so Return always does something.
                 if !showingDeny {
                     Button("Deny…") { showingDeny = true }
                         .keyboardShortcut(denyIsDefault ? .defaultAction : nil)
@@ -88,8 +87,7 @@ struct PermissionPrompt: View {
                     }
                     .fixedSize()
                 }
-                // Prominence follows the default key, so the button Return presses is the one
-                // that looks pressable (two branches because the styles are different types).
+                // Prominence follows the default key (two branches: the styles are different types).
                 if allowIsDefault {
                     Button("Allow") { respond(["decision": "allow", "scope": "once"]) }
                         .keyboardShortcut(.defaultAction)
@@ -102,8 +100,7 @@ struct PermissionPrompt: View {
         }
     }
 
-    /// The server can ask for the safe answer to be the default; once the deny field is open,
-    /// committing that message is what Return should do.
+    /// The server can make the safe answer the default; with the deny field open, Return commits it.
     private var denyIsDefault: Bool { params.defaultToNo == true || showingDeny }
     private var allowIsDefault: Bool { !denyIsDefault }
 
@@ -153,8 +150,7 @@ struct QuestionPrompt: View {
                             .toggleStyle(.checkbox)
                         }
                     } else {
-                        // Picking an option clears a typed answer: for a single-choice question
-                        // they're alternatives, and submitting used to quietly send both.
+                        // For a single choice, picking an option clears a typed answer.
                         Picker(q.header, selection: Binding(
                             get: { selections[q.question, default: []].first ?? "" },
                             set: {
@@ -200,8 +196,7 @@ struct QuestionPrompt: View {
         for q in params.questions {
             let custom = other[q.question, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
             let chosen = q.options.map(\.label).filter { selections[q.question, default: []].contains($0) }
-            // A typed answer replaces the choice for a single-choice question and joins it for a
-            // multi-select — the UI above enforces the same rule, so the two can't disagree.
+            // A typed answer replaces a single choice and joins a multi-select, matching the UI above.
             let parts = custom.isEmpty ? chosen : (q.multiSelect ? chosen + [custom] : [custom])
             answers[q.question] = .string(parts.joined(separator: ", "))
         }
@@ -275,8 +270,7 @@ struct ElicitationPrompt: View {
                 .disabled(!complete)
             }
         }
-        // Seeds every field so a toggle starts at a real value and `complete` can tell an
-        // untouched required field from one deliberately left off.
+        // Seeded so `complete` can tell an untouched required field from one left off.
         .onAppear {
             for f in fields where values[f.key] == nil {
                 values[f.key] = f.schema.string("type") == "boolean" ? "false" : (f.schema["default"]?.stringValue ?? "")
@@ -284,7 +278,7 @@ struct ElicitationPrompt: View {
         }
     }
 
-    /// Fields the schema marks required — Continue used to submit empty strings for them.
+    /// Fields the schema marks required.
     private var required: Set<String> {
         Set((params.requestedSchema?["required"]?.arrayValue ?? []).compactMap(\.stringValue))
     }
@@ -293,8 +287,7 @@ struct ElicitationPrompt: View {
         required.allSatisfy { !values[$0, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
-    /// The control that matches the declared type, rather than a text field for everything —
-    /// a checkbox is not something you should have to spell "true" into.
+    /// The control that matches the declared type.
     @ViewBuilder private func field(_ f: (key: String, schema: JSONValue)) -> some View {
         let title = f.schema.string("title") ?? f.key
         let text = Binding(get: { values[f.key, default: ""] }, set: { values[f.key] = $0 })
@@ -319,8 +312,7 @@ struct ElicitationPrompt: View {
 }
 
 #if DEBUG
-// #Preview bodies are result-builder closures (no `guard`/control flow), so these helpers pull
-// the typed params back out of the `PendingRequest` samples for them.
+// Pulls typed params out of the `PendingRequest` samples for the previews.
 private func params(_ request: ServerRequest) -> PermissionRequestParams {
     guard case .permissionRequest(let p) = request else { fatalError("not a permission request") }
     return p

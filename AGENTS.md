@@ -10,7 +10,7 @@ This repository builds on its own. Clone it, open `Tether.xcodeproj`, and build:
 - The app target's build phase (`Scripts/fetch-server-binaries.sh`) puts the standalone server binaries in the bundle. It prefers a sibling `../tether-server/dist` when that has binaries for the pinned version, and otherwise downloads that version's GitHub release once and caches it under `DERIVED_FILE_DIR`.
 - `.tether-server-version` is the pin. Bump it when the app needs a newer server, after that version has been released.
 
-Both repositories are private, so the download needs the GitHub CLI authenticated (`gh auth status`), and SwiftPM needs git credentials for the same account.
+`tether-server` is public, so SwiftPM can resolve the protocol package without credentials. The app repository remains private.
 
 Working on the protocol or the server at the same time still wants both checkouts side by side. Override the package with the local copy rather than editing the manifest:
 
@@ -33,10 +33,14 @@ or add `../tether-server` to the Xcode workspace, which takes precedence over th
   - `TranscriptRows.swift`: pure folding of transcript items, including compact tool-call groups.
   - `PreviewSupport.swift`: debug-only sample state used by Xcode previews.
 - `TetherKit/Sources/TetherUI`: views and app-level state.
-  - `AppModel.swift`: hosts, selection, defaults, and persisted preferences.
-  - `RootView.swift`: split view, sidebar, stable toolbar, inspector attachment, and new-chat flow.
-  - `ThreadView.swift`: transcript, bottom bar, session controls, and the tabbed inspector.
-  - `Composer.swift`: text/image/file input plus `/` commands and `@` file completion.
+  - `AppModel.swift`: hosts, the window's host and chat (`hostID`, `threadID`), new-chat drafts, and persisted preferences.
+  - `RootView.swift`: the shell only — split view, the one toolbar, the one inspector, View-menu commands.
+  - `Sidebar/`: one host's chats; `SidebarSections.swift` is the pure, tested grouping (date or directory).
+  - `Toolbar/SessionControls.swift`: model, effort and permissions menus over one `SessionSettings` (live chat or draft).
+  - `Inspector/`: the segmented shell and one view per pane (`TasksPane`, `SessionPane`, `MCPPane`).
+  - `Thread/`: `ThreadView` (transcript over bottom bar), `TranscriptView`, `BottomBar`, `Composer` (`/` commands, `@` files, images).
+  - `NewChat/`: the new-chat form and the remote folder picker.
+  - `Settings/`: General and Hosts panes, host detail, and the environment and log sheets.
   - `PromptViews.swift`: permission, question, plan, and elicitation requests.
   - `ItemViews.swift`, `ToolCallView.swift`, `Markdown.swift`: transcript rendering.
 - `TetherKit/Tests/TetherKitTests`: transcript folding and opt-in live-server coverage.
@@ -61,6 +65,9 @@ The daemon, not the app, owns live Claude queries. Closing or disconnecting the 
 - Server requests can be answered by more than one attached client. Preserve the once-only continuation guard and remove prompts on `serverRequest/resolved`.
 - Streaming deltas are intentionally coalesced. Do not reintroduce one full transcript invalidation per token.
 - Keep expensive derived work out of view bodies. Transcript rows, child lookup, Markdown parsing, and diffs have caches for a reason.
+- `ThreadModel.title` and `taskEntries` are stored, not derived from `items`: anything the sidebar, toolbar or inspector chrome reads must not change per streamed delta. Only `TranscriptView` and its rows read `rows`/`items`.
+- A view takes the narrowest model it needs, and each inspector pane is its own view, so a delta redraws at most the transcript and the open pane.
+- Persisted preferences are plain stored properties on `AppModel` saved through `Stored`. No `@AppStorage` inside an `@Observable`.
 
 ## UI and HIG decisions
 
@@ -69,11 +76,16 @@ The product should feel like a standard current macOS app. Prefer native SwiftUI
 - Target the current project baseline (Xcode 27, Swift 6, macOS 26.6+). Do not add compatibility shims for older systems unless requested.
 - Let system layout and intrinsic sizing work. Avoid hand-computed geometry, arbitrary fixed production sizes, and `.fixedSize()` as a general layout repair. Fixed frames in previews and small icon/status geometry are fine.
 - Liquid Glass belongs to controls: toolbar controls, composer, and prompt cards. Transcript content uses ordinary fills. Never stack glass on glass; controls inside a glass card use standard bordered styles.
-- The `NavigationSplitView` owns one stable window toolbar and the inspector. Toolbar items must not disappear, jump, or overflow while sidebars animate.
-- Model, effort, permission mode, and optional fast mode are session controls in the window toolbar. They are real pop-up buttons (`Picker` with `.menu` style): a flat mutually exclusive list that displays the current value. They are not action menus.
-- The inspector is full-height and attached to the split view. It uses a segmented control with `Tasks`, `Session`, and `MCP`; `Tasks` is first and default.
-- New Chat is an icon-only circular toolbar action beside the left-sidebar toggle and disappears with that sidebar. The File-menu `Command-N` action remains available while the sidebar is hidden.
-- The sidebar is flat per host, ordered most-recent-first, and uses Claude's generated session title when available rather than permanently showing the first prompt.
+- The shell is `NavigationSplitView` + one `.toolbar(id:)` on the detail container + one `.inspector` on the split view. No `GeometryReader`, preference keys, `columnVisibility` bindings, or `.id()` on containers other than `ThreadView(...).id(thread.id)`.
+- Every toolbar item is unconditional: never an `if`/`switch` around a `ToolbarItem`. Something unavailable is disabled, not removed, so nothing moves when the selection or a column changes. The toolbar is user-customizable (`ToolbarCommands`).
+- Toolbar, leading to trailing: sidebar toggle, New Chat (always visible; `Command-N` too), title and directory, then model, effort and permissions, then the inspector toggle.
+- Model, effort and permissions are three compact pull-down menus with inline pickers: the model by name, effort as a gauge that follows the level, permissions as the mode's symbol (red for bypass). Fast Mode is a toggle inside the model menu. Settings uses the same symbols and labels; the mappings live in `Helpers.swift`.
+- The inspector is full-height, attached to the split view, and present on every screen (`No Session` on New Chat). Its toggle is a plain button declared in the inspector's own toolbar, so it sits above the column and never tints. It uses a segmented control with `Tasks`, `Session`, and `MCP`; `Tasks` is first and default.
+- The sidebar shows one host — a pop-up under the search field when more than one is configured — grouped by date or by directory (View menu and the list's context menu), most recent first, using Claude's generated session title when available. Connection states are an overlay, not rows.
+- The composer stays mounted under a pending prompt (Send disabled) so a draft survives it.
+- Settings apply immediately; text fields commit on Return or focus loss. No Save/Revert.
+- Settings uses a General/Hosts sidebar; the Hosts pane selects a host above its detail form.
+- Copy is terse and title case. An empty state is a title; add a description only when it says something the title doesn't and the user can act on it. Never show raw enum or wire values.
 - Prompt suggestions are buttons above the composer, not text inside its glass field.
 - Transcript and composer share the selected reading width: Narrow (default), Medium, or Wide.
 - Do not show reasoning/“Thought” content. A quiet “Thinking…” line may mark the interval before visible output; it disappears once a message or tool call is present.
@@ -158,6 +170,11 @@ Package tests:
 ```sh
 swift test --package-path TetherKit
 ```
+
+The shared Xcode scheme also contains `TetherAppUITests`. Its launch sets
+`TETHER_UI_TEST_MODE=1`, which uses an in-process JSON-RPC fixture and fails closed before any
+daemon or SSH launch. The PR workflow runs it on `xcode-27` and resolves the public
+SwiftPM protocol package without a repository secret.
 
 Live tests use a real Claude CLI session and can incur cost:
 
