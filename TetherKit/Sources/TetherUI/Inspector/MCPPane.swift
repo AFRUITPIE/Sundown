@@ -46,7 +46,7 @@ struct MCPPane: View {
 #if DEBUG
 #Preview("MCP") {
     inspectorPreview {
-        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), pane: .mcp)
+        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), pane: .constant(.mcp))
     }
 }
 
@@ -54,7 +54,7 @@ struct MCPPane: View {
 /// reported yet, and the title says all there is to say about either.
 #Preview("MCP (none)") {
     inspectorPreview {
-        ThreadInspector(thread: .sampleIdleChat(), connection: .sample(), pane: .mcp)
+        ThreadInspector(thread: .sampleIdleChat(), connection: .sample(), pane: .constant(.mcp))
     }
 }
 #endif

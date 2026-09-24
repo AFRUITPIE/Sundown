@@ -20,10 +20,16 @@ final class TetherAppUITests: XCTestCase {
     func testExistingChatAndInspector() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
-        app.buttons["Inspector"].click()
-        XCTAssertTrue(app.radioButtons["Tasks"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.radioButtons["Session"].exists)
-        XCTAssertTrue(app.radioButtons["MCP"].exists)
+        app.typeKey("i", modifierFlags: [.command, .option])
+        XCTAssertTrue(app.staticTexts["No Tasks"].waitForExistence(timeout: 5))
+        let session = app.descendants(matching: .any)["inspector.session"]
+        XCTAssertTrue(session.exists)
+        session.click()
+        XCTAssertTrue(app.staticTexts["Context"].waitForExistence(timeout: 5))
+        session.click()
+        XCTAssertFalse(app.staticTexts["Context"].exists)
+        app.descendants(matching: .any)["inspector.mcp"].click()
+        XCTAssertTrue(app.staticTexts["No MCP Servers"].waitForExistence(timeout: 5))
     }
 
     @MainActor

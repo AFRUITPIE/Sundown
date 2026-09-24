@@ -14,6 +14,10 @@ public struct RootView: View {
         NavigationSplitView {
             SidebarView(app: app)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
+                .toolbar {
+                    ToolbarItem(placement: .automatic) { HostMenu(app: app) }
+                        .visibilityPriority(.high)
+                }
         } detail: {
             DetailView(app: app)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
@@ -23,7 +27,6 @@ public struct RootView: View {
                 // Identified, so View ▸ Customize Toolbar… can rearrange these and the window
                 // remembers the arrangement. Every item is still declared unconditionally.
                 .toolbar(id: "main") {
-                    ToolbarItem(id: "host", placement: .navigation) { HostMenu(app: app) }
                     ToolbarItem(id: "newChat", placement: .navigation) { NewChatButton(app: app) }
                     ToolbarItem(id: "model", placement: .principal) { ModelMenu(settings: .current(app)) }
                     ToolbarItem(id: "effort", placement: .principal) { EffortMenu(settings: .current(app)) }
@@ -34,16 +37,17 @@ public struct RootView: View {
         .inspector(isPresented: $app.showInspector) {
             InspectorView(app: app, selectedTaskID: $inspectedTaskID)
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
-                // Declared by the inspector so the toggle sits above its column.
+                // This group stays over the inspector, including while its column is closed.
                 .toolbar {
                     ToolbarSpacer(.flexible)
                     ToolbarItem(placement: .primaryAction) {
-                        InspectorToggle(isPresented: $app.showInspector)
+                        InspectorTabs(app: app)
                     }
                 }
         }
         .environment(\.inspectSubagent, InspectSubagentAction { toolUseId in
             inspectedTaskID = toolUseId
+            app.inspectorPane = .tasks
             app.showInspector = true
         })
         .environment(\.readingWidth, app.transcriptWidth.points)
@@ -109,19 +113,39 @@ struct NewChatButton: View {
     }
 }
 
-/// A plain button, not a `Toggle`: a toggle would tint itself on, unlike every other toolbar control.
-/// ⌥⌘I lives on the View menu instead, which works whether or not the inspector is open.
-struct InspectorToggle: View {
-    @Binding var isPresented: Bool
+/// The selected pane is also the inspector's visibility control. The native toolbar toggles
+/// remain visible when the inspector closes, and exactly one can be selected at a time.
+struct InspectorTabs: View {
+    @Bindable var app: AppModel
+
+    private func selection(_ pane: InspectorPane) -> Binding<Bool> {
+        Binding(
+            get: { app.showInspector && app.inspectorPane == pane },
+            set: { isSelected in
+                if isSelected {
+                    app.inspectorPane = pane
+                    app.showInspector = true
+                } else if app.inspectorPane == pane {
+                    app.showInspector = false
+                }
+            }
+        )
+    }
 
     var body: some View {
-        Button {
-            isPresented.toggle()
+        ControlGroup {
+            ForEach(InspectorPane.allCases) { pane in
+                Toggle(isOn: selection(pane)) {
+                    Label(pane.rawValue, systemImage: pane.symbol)
+                }
+                .accessibilityIdentifier("inspector.\(pane.rawValue.lowercased())")
+                .help("\(pane.rawValue) Inspector")
+            }
         } label: {
-            Image(systemName: "sidebar.trailing")
+            Label("Inspector", systemImage: "sidebar.trailing")
         }
-        .accessibilityLabel("Inspector")
-        .help(isPresented ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+        .controlGroupStyle(.navigation)
+        .labelStyle(.iconOnly)
     }
 }
 
@@ -157,6 +181,14 @@ public struct ShellViewCommands: View {
         // The one claim on ⌥⌘I: a menu command works with the inspector open or closed.
         Button(app.showInspector ? "Hide Inspector" : "Show Inspector") { app.showInspector.toggle() }
             .keyboardShortcut("i", modifiers: [.command, .option])
+        Menu("Inspector Pane") {
+            ForEach(InspectorPane.allCases) { pane in
+                Button(pane.rawValue) {
+                    app.inspectorPane = pane
+                    app.showInspector = true
+                }
+            }
+        }
     }
 }
 
@@ -177,6 +209,20 @@ private func rootPreviewApp() -> AppModel {
 #Preview("RootView (default new chat)") {
     RootView(app: .sample())
         .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (new chat, inspector open)") {
+    let app = AppModel.sample()
+    app.showInspector = true
+    return RootView(app: app)
+        .frame(width: 1500, height: 760)
+}
+
+#Preview("RootView (new chat, inspector narrow)") {
+    let app = AppModel.sample()
+    app.showInspector = true
+    return RootView(app: app)
+        .frame(width: 1160, height: 650)
 }
 
 #Preview("RootView (two hosts)") {

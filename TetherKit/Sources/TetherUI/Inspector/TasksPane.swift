@@ -136,19 +136,19 @@ struct InspectorTaskDetail: View {
 #if DEBUG
 #Preview("Tasks") {
     inspectorPreview {
-        ThreadInspector(thread: .sampleWithTasks(), connection: .sample())
+        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), pane: .constant(.tasks))
     }
 }
 
 #Preview("Tasks (empty)") {
     inspectorPreview {
-        ThreadInspector(thread: .sampleIdleChat(), connection: .sample())
+        ThreadInspector(thread: .sampleIdleChat(), connection: .sample(), pane: .constant(.tasks))
     }
 }
 
 #Preview("Tasks (subagent detail)") {
     inspectorPreview {
-        ThreadInspector(thread: .sampleToolCalls(), connection: .sample(),
+        ThreadInspector(thread: .sampleToolCalls(), connection: .sample(), pane: .constant(.tasks),
                         selectedTaskID: .constant("tool-subagent-explore"))
     }
 }
