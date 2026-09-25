@@ -27,9 +27,12 @@ final class TetherAppUITests: XCTestCase {
         toggle.click()
         let mcp = app.tabGroups["Inspector"].tabs["MCP"]
         XCTAssertTrue(mcp.waitForExistence(timeout: 5))
-        mcp.click()
+        // Chosen with its shortcut: with the inspector open the window's minimum width reaches past
+        // the CI runner's display, where the tab isn't hittable.
+        app.typeKey("3", modifierFlags: [.command, .option])
         let empty = app.staticTexts["No MCP Servers"]
         XCTAssertTrue(empty.waitForExistence(timeout: 5))
+        XCTAssertEqual((mcp.value as? NSNumber)?.intValue, 1)
         toggle.click()
         XCTAssertTrue(empty.waitForNonExistence(timeout: 5))
     }
