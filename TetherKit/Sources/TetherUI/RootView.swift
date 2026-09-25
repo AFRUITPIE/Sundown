@@ -54,12 +54,16 @@ struct DetailView: View {
     @Bindable var app: AppModel
 
     var body: some View {
-        if let thread = app.selectedThread, let connection = app.connection {
-            // The only `.id()` in the shell: a different chat gets its own composer draft and scroll position.
-            ThreadView(thread: thread, connection: connection)
-                .id(thread.id)
-        } else {
-            NewChatView(app: app)
+        // The column's root keeps one identity. When the root itself changed (the branch, or the
+        // chat's `.id`), the column's toolbar items were torn down and rebuilt, fading in on every switch.
+        ZStack {
+            if let thread = app.selectedThread, let connection = app.connection {
+                // The only `.id()` in the shell: a different chat gets its own composer draft and scroll position.
+                ThreadView(thread: thread, connection: connection)
+                    .id(thread.id)
+            } else {
+                NewChatView(app: app)
+            }
         }
     }
 }
