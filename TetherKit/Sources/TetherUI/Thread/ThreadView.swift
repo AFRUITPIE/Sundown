@@ -29,6 +29,14 @@ struct ThreadView: View {
     .frame(width: 900, height: 700)
 }
 
+/// Taller than the window: it opens at its latest message. A shorter one sits at the top.
+#Preview("Idle chat (opens at the end)") {
+    NavigationStack {
+        ThreadView(thread: .sampleIdleChat(), connection: .sample())
+    }
+    .frame(width: 900, height: 360)
+}
+
 #Preview("Running turn") {
     let connection = HostConnection.sample()
     NavigationStack {

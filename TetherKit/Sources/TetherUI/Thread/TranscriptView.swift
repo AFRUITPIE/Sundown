@@ -31,8 +31,12 @@ struct TranscriptView: View {
             .padding(.vertical, 16)
             .readingColumn()
         }
-        // Every role, so the framework also keeps the bottom pinned through content and size changes.
-        .defaultScrollAnchor(.bottom)
+        // Opens at the end and keeps it pinned through content and size changes. A transcript shorter
+        // than the window sits at the top: aligned to the bottom, it was pushed down by a scroll offset
+        // and the toolbar's edge effect followed its top edge down the window.
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(.bottom, for: .sizeChanges)
+        .defaultScrollAnchor(.top, for: .alignment)
         .scrollPosition($position)
         // A newly opened chat starts at its latest message.
         .onChange(of: thread.historyLoaded) {
