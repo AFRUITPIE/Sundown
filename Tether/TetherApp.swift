@@ -16,8 +16,7 @@ struct TetherApp: App {
     var body: some Scene {
         WindowGroup("Tether") {
             RootView(app: app)
-                // The inspector adds a column; the window must grow with its minimum width.
-                .frame(minWidth: app.showInspector ? 1160 : 900, minHeight: 600)
+                .frame(minHeight: 400)
                 .onAppear {
                     #if DEBUG
                     // Debug: launch with TETHER_OPEN_THREAD=<id> to open a chat directly.
@@ -27,6 +26,7 @@ struct TetherApp: App {
                     #endif
                 }
         }
+        .defaultSize(width: 1100, height: 760)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Chat") { app.newChat() }.keyboardShortcut("n")

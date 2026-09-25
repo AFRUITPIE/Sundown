@@ -16,6 +16,7 @@ public struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
             DetailView(app: app)
+                .navigationSplitViewColumnWidth(min: 520, ideal: 520)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(app.selectedThread?.title ?? "New Chat")

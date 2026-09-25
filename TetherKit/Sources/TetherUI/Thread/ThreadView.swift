@@ -55,6 +55,22 @@ struct ThreadView: View {
     .frame(width: 900, height: 700)
 }
 
+/// The smallest detail column, in the smallest window: a prompt card must still leave the
+/// transcript on screen.
+#Preview("Pending permission (smallest window)") {
+    NavigationStack {
+        ThreadView(thread: .samplePendingPermission(), connection: .sample())
+    }
+    .frame(width: 520, height: 348)
+}
+
+#Preview("Pending plan (smallest window)") {
+    NavigationStack {
+        ThreadView(thread: .samplePendingPlan(), connection: .sample())
+    }
+    .frame(width: 520, height: 348)
+}
+
 // The transcript alone; the inspector has its own previews in `Inspector/`.
 #Preview("Tool call gallery") {
     NavigationStack {
