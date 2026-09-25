@@ -11,6 +11,8 @@ final class TetherAppUITests: XCTestCase {
     private func launch(scenario: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["TETHER_UI_TEST_MODE"] = "1"
+        // The windows a debug run left open (or none, if it was stopped) are not restored.
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
         if let scenario { app.launchEnvironment["TETHER_UI_TEST_SCENARIO"] = scenario }
         app.launch()
         return app
@@ -27,10 +29,13 @@ final class TetherAppUITests: XCTestCase {
         toggle.click()
         let mcp = app.tabGroups["Inspector"].tabs["MCP"]
         XCTAssertTrue(mcp.waitForExistence(timeout: 5))
-        mcp.click()
+        // With the inspector open the window's minimum width reaches past the CI runner's display
+        // (#38), where the tab and the toggle aren't hittable, so both go by shortcut from here.
+        app.typeKey("3", modifierFlags: [.command, .option])
         let empty = app.staticTexts["No MCP Servers"]
         XCTAssertTrue(empty.waitForExistence(timeout: 5))
-        toggle.click()
+        XCTAssertEqual((mcp.value as? NSNumber)?.intValue, 1)
+        app.typeKey("i", modifierFlags: [.command, .option])
         XCTAssertTrue(empty.waitForNonExistence(timeout: 5))
     }
 

@@ -191,8 +191,11 @@ public final class HostConnection: Identifiable {
     private func apply(_ n: ServerNotification) {
         guard let tid = n.threadId else { return }
         let model = thread(tid)
-        model.apply(n)
+        guard model.apply(n) else { return }
         if case .threadStarted(let e) = n, let cwd = Optional(e.thread.cwd) { attach(model, toProject: cwd) }
+        // Its query is gone. The next send resumes it with history rather than streaming into a
+        // subscription to the process that ended.
+        if case .threadClosed = n { subscribed.remove(tid) }
         // Claude's name for a session only appears in thread/list; nothing announces it.
         if case .turnCompleted = n { scheduleChatsRefresh() }
     }
@@ -415,6 +418,23 @@ public final class HostConnection: Identifiable {
 
     public func interrupt(_ model: ThreadModel) async {
         _ = try? await client?.call(Methods.TurnInterrupt.self, .init(threadId: model.id))
+    }
+
+    /// Ends a background command or agent; the CLI reports it as stopped.
+    public func stopTask(_ model: ThreadModel, taskId: String) async {
+        await perform(model) { try await $0.call(Methods.TaskStop.self, .init(threadId: model.id, taskId: taskId)) }
+    }
+
+    /// Lets the turn go on without a command or agent that is holding it up, like Control-B in
+    /// the terminal. The CLI only knows a foreground command as a task a few seconds in.
+    public func moveToBackground(_ model: ThreadModel, toolUseId: String) async {
+        guard let client else { model.setError("Not connected"); return }
+        do {
+            let r = try await client.call(Methods.TaskBackground.self, .init(threadId: model.id, toolUseId: toolUseId))
+            model.setError(r.backgrounded ? nil : "Claude Code couldn’t move that task to the background.")
+        } catch {
+            model.setError(error.localizedDescription)
+        }
     }
 
     // Settings for a thread the daemon hasn't loaded are held until it resumes, rather than

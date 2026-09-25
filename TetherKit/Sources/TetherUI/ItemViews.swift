@@ -102,6 +102,7 @@ struct NoticeView: View {
         case "interrupted": "stop.circle"
         case "localCommandOutput": "terminal"
         case "modelFallback": "arrow.triangle.swap"
+        case "taskNotification": notice.level == .warning ? "exclamationmark.circle" : "checkmark.circle"
         default: "info.circle"
         }
         Label {
@@ -151,10 +152,12 @@ struct NoticeView: View {
             ItemView(item: .sampleNotice("Switched to Claude Sonnet 5 after a rate limit on Opus.", kind: "modelFallback", level: .warning, secondsAgo: 5), thread: .sampleIdleChat())
             ItemView(item: .sampleNotice("Interrupted by user.", kind: "interrupted", level: .info, secondsAgo: 5), thread: .sampleIdleChat())
             ItemView(item: .sampleNotice("$ swift build --target TetherKit", kind: "localCommandOutput", secondsAgo: 5), thread: .sampleIdleChat())
+            ItemView(item: .sampleNotice("Background command \"Sleep then echo\" completed (exit code 0)", kind: "taskNotification", secondsAgo: 5), thread: .sampleIdleChat())
+            ItemView(item: .sampleNotice("Background command \"Run the migration\" failed with exit code 1", kind: "taskNotification", level: .warning, secondsAgo: 5), thread: .sampleIdleChat())
         }
         .padding(28)
     }
-    .frame(width: 640, height: 220)
+    .frame(width: 640, height: 280)
 }
 
 #Preview("Error item") {

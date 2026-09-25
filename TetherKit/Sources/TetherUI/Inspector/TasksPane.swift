@@ -5,12 +5,13 @@ import TetherKit
 /// and rebuilt only on task events, so streamed message deltas never touch this pane.
 struct TasksPane: View {
     let thread: ThreadModel
+    let connection: HostConnection
     @Binding var selectedTaskID: String?
 
     var body: some View {
         let entries = thread.taskEntries
         if let selectedTaskID, let entry = entries.first(where: { $0.id == selectedTaskID }) {
-            InspectorTaskDetail(entry: entry, thread: thread) { self.selectedTaskID = nil }
+            InspectorTaskDetail(entry: entry, thread: thread, connection: connection) { self.selectedTaskID = nil }
         } else if entries.isEmpty {
             InspectorEmptyState("No Tasks", symbol: InspectorPane.tasks.symbol)
         } else {
@@ -71,6 +72,7 @@ struct TaskRow: View {
 struct InspectorTaskDetail: View {
     let entry: InspectorTaskEntry
     let thread: ThreadModel
+    let connection: HostConnection
     let close: () -> Void
 
     var body: some View {
@@ -109,6 +111,19 @@ struct InspectorTaskDetail: View {
                     }
                     if let summary = entry.task?.summary, !summary.isEmpty {
                         Text(summary).lineLimit(nil).textSelection(.enabled)
+                    }
+                    if entry.isTaskRunning, let task = entry.task {
+                        HStack {
+                            // Only the chat's own command or agent, while it still holds up its turn.
+                            if entry.canMoveToBackground, let toolUseId = task.toolUseId, thread.isTopLevelCall(toolUseId) {
+                                Button("Move to Background") {
+                                    Task { await connection.moveToBackground(thread, toolUseId: toolUseId) }
+                                }
+                            }
+                            Button("Stop Task", role: .destructive) {
+                                Task { await connection.stopTask(thread, taskId: task.taskId) }
+                            }
+                        }
                     }
                 }
                 if let prompt = entry.call?.input.string("prompt"), !prompt.isEmpty {
@@ -150,6 +165,13 @@ struct InspectorTaskDetail: View {
     inspectorPreview {
         ThreadInspector(thread: .sampleToolCalls(), connection: .sample(),
                         selectedTaskID: .constant("tool-subagent-explore"))
+    }
+}
+
+/// A task still running: it can be stopped from here.
+#Preview("Tasks (running task detail)") {
+    inspectorPreview {
+        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), selectedTaskID: .constant("task:task-1"))
     }
 }
 

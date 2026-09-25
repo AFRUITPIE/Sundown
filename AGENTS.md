@@ -93,6 +93,7 @@ The product should feel like a standard current macOS app. Prefer native SwiftUI
 - Transcript and composer share the selected reading width: Narrow (default), Medium, or Wide.
 - Do not show reasoning/“Thought” content. A quiet “Thinking…” line may mark the interval before visible output; it disappears once a message or tool call is present.
 - Completed adjacent tool calls fold into a compact group. Running, failed, and denied work remains individually visible. Subagents and workflows belong primarily in the Tasks inspector.
+- A running task's detail in the Tasks inspector offers Stop Task, and Move to Background while it still holds up its turn (the CLI registers a foreground command as a task a few seconds in). A background task settling is a notice in the transcript, never the CLI's raw `<task-notification>` message.
 - Progress indicators are transient. Every failed, unavailable, disconnected, or not-loaded path needs an explanatory state and a useful recovery action.
 - Previews are part of the product-development workflow. Add representative `#Preview` coverage when adding or materially changing a view; seed samples through the real reducers where practical.
 
@@ -184,6 +185,8 @@ Live tests use a real Claude CLI session and can incur cost:
 ```sh
 TETHER_E2E=1 swift test --package-path TetherKit
 ```
+
+They run the server named by `TETHER_SERVER_BIN` in an isolated `TETHER_HOME`; to test a server working copy, set it to `bun run ../tether-server/src/cli.ts` (with bun's full path). They use Sonnet at low effort.
 
 Do not run live/E2E tests unless their cost and external effects are warranted by the task. SSH end-to-end testing is currently deferred unless explicitly requested.
 

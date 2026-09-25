@@ -16,6 +16,66 @@ struct ThreadModelTests {
         .itemStarted(.init(threadId: threadID, seq: seq, item: item))
     }
 
+    /// Only `started` says what a task is, and a later `updated` patch can leave out its tool call.
+    @Test func laterTaskEventsKeepWhatEarlierOnesSaid() {
+        let thread = ThreadModel(id: threadID)
+        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1",
+                                      toolUseId: "toolu_1", description: "Sleep then echo", data: [:])))
+        thread.apply(.taskEvent(.init(threadId: threadID, seq: 2, event: "updated", taskId: "b1",
+                                      status: "completed", data: [:])))
+
+        let task = thread.tasks["b1"]
+        #expect(task?.event == "updated")
+        #expect(task?.status == "completed")
+        #expect(task?.toolUseId == "toolu_1")
+        #expect(task?.description == "Sleep then echo")
+    }
+
+    @Test func aTaskRunsUntilItsNotificationOrAFinalStatus() {
+        let thread = ThreadModel(id: threadID)
+        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1", data: [:])))
+        #expect(thread.taskEntries.first?.isTaskRunning == true)
+        thread.apply(.taskEvent(.init(threadId: threadID, seq: 2, event: "updated", taskId: "b1", status: "stopped", data: [:])))
+        #expect(thread.taskEntries.first?.isTaskRunning == false)
+        thread.apply(.taskEvent(.init(threadId: threadID, seq: 3, event: "started", taskId: "b2", data: [:])))
+        thread.apply(.taskEvent(.init(threadId: threadID, seq: 4, event: "notification", taskId: "b2", data: [:])))
+        #expect(thread.taskEntries.first { $0.task?.taskId == "b2" }?.isTaskRunning == false)
+    }
+
+    @Test func aFinalStatusSurvivesALaterUpdateWithoutOne() {
+        let thread = ThreadModel(id: threadID)
+        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1", toolUseId: "toolu_1",
+                                      data: ["task_type": "local_bash"])))
+        thread.apply(.taskEvent(.init(threadId: threadID, seq: 2, event: "updated", taskId: "b1", status: "completed", data: [:])))
+        thread.apply(.taskEvent(.init(threadId: threadID, seq: 3, event: "updated", taskId: "b1", data: ["patch": [:]])))
+        #expect(thread.taskEntries.first?.isTaskRunning == false)
+        #expect(thread.tasks["b1"]?.data["task_type"]?.stringValue == "local_bash")
+    }
+
+    /// The thread's process ended: nothing it ran is running any more, and nothing offers to stop it.
+    @Test func closingAThreadSettlesItsTasks() {
+        let thread = ThreadModel(id: threadID)
+        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1", toolUseId: "toolu_1",
+                                      data: ["task_type": "local_bash"])))
+        thread.apply(.taskBackgroundChanged(.init(threadId: threadID, seq: 2, tasks: [["task_id": "b1"]])))
+        #expect(thread.taskEntries.first?.isTaskRunning == true)
+
+        thread.apply(.threadClosed(.init(threadId: threadID, seq: 3)))
+
+        #expect(thread.taskEntries.first?.isTaskRunning == false)
+        #expect(thread.backgroundTaskIDs.isEmpty)
+    }
+
+    @Test func onlyACommandOrAgentCanMoveToTheBackground() {
+        let thread = ThreadModel(id: threadID)
+        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1", toolUseId: "toolu_1",
+                                      data: ["task_type": "local_bash"])))
+        thread.apply(.taskEvent(.init(threadId: threadID, seq: 2, event: "started", taskId: "w1", toolUseId: "toolu_2",
+                                      data: ["task_type": "local_workflow"])))
+        #expect(thread.taskEntries.first { $0.task?.taskId == "b1" }?.canMoveToBackground == true)
+        #expect(thread.taskEntries.first { $0.task?.taskId == "w1" }?.canMoveToBackground == false)
+    }
+
     @Test func theOpeningPromptNamesAnUnnamedThread() {
         let thread = ThreadModel(id: threadID)
         #expect(thread.title == "New Chat")
