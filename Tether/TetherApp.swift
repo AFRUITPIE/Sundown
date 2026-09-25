@@ -16,7 +16,6 @@ struct TetherApp: App {
     var body: some Scene {
         WindowGroup("Tether") {
             RootView(app: app)
-                .frame(minHeight: 400)
                 .onAppear {
                     #if DEBUG
                     // Debug: launch with TETHER_OPEN_THREAD=<id> to open a chat directly.

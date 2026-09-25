@@ -4,6 +4,8 @@ import TetherKit
 public struct RootView: View {
     @Bindable var app: AppModel
     @State private var inspectedTaskID: String?
+    /// Whether the inspector has finished opening; see `minWidth`.
+    @State private var inspectorSettled = true
 
     public init(app: AppModel) {
         self.app = app
@@ -16,7 +18,6 @@ public struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
             DetailView(app: app)
-                .navigationSplitViewColumnWidth(min: 520, ideal: 520)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(app.selectedThread?.title ?? "New Chat")
@@ -46,7 +47,25 @@ public struct RootView: View {
             app.openInspector(on: .tasks)
         })
         .environment(\.readingWidth, app.transcriptWidth.points)
+        .frame(minWidth: minWidth, minHeight: 400)
+        .onChange(of: app.showInspector) { _, shown in
+            inspectorSettled = false
+            guard shown else { return }
+            Task {
+                try? await Task.sleep(for: .milliseconds(400))
+                if app.showInspector { inspectorSettled = true }
+            }
+        }
         .task { app.connectAll() }
+    }
+
+    /// The columns' minimums (sidebar 220, detail 520, inspector 260). While the inspector opens
+    /// there is none: AppKit then grows a narrow window along with the inspector's animation,
+    /// where a minimum raised at the same moment jumps it wider first. Once open, the minimum
+    /// replaces the one AppKit leaves behind, which is the window's whole width at that point.
+    private var minWidth: CGFloat? {
+        guard app.showInspector else { return 740 }
+        return inspectorSettled ? 1000 : nil
     }
 }
 
