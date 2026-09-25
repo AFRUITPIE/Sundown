@@ -146,17 +146,18 @@ struct TranscriptPlaceholder<Actions: View>: View {
     }
 }
 
-/// The end of the transcript: the wait before a turn has anything to show, and the finished turn's
-/// summary. Its own view so `isThinking` and `turns` are read here rather than beside the rows. A
-/// `Group` rather than a stack, so that with neither of them the enclosing spacing collapses too.
+/// The end of the transcript: the wait before a turn has anything to show, and why the last turn
+/// stopped short. Its own view so `isThinking` and `turns` are read here rather than beside the rows.
+/// A `Group` rather than a stack, so that with neither of them the enclosing spacing collapses too.
 struct TranscriptTail: View {
     let thread: ThreadModel
 
     var body: some View {
         Group {
             if thread.isThinking { ThinkingLine() }
-            if let turn = thread.turns.last, turn.status != .inProgress, let result = turn.result {
-                TurnFooter(result: result, status: turn.status)
+            // A turn that finished normally says nothing; its cost and time are in the Session pane.
+            if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
+                TurnOutcome(status: turn.status, error: turn.result?.errors?.first)
             }
         }
     }
@@ -174,20 +175,19 @@ struct ThinkingLine: View {
     }
 }
 
-struct TurnFooter: View {
-    let result: TurnResult
+struct TurnOutcome: View {
     let status: TurnStatus
+    let error: String?
 
     var body: some View {
-        HStack(spacing: 10) {
-            if status == .interrupted { Label("Interrupted", systemImage: "stop.circle") }
-            else if status == .failed { Label(result.errors?.first ?? result.subtype, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
-            Text(Format.duration(result.durationMs / 1000))
-            Text(Format.cost(result.totalCostUsd))
-            Text("\(Format.tokens(result.usage.inputTokens + result.usage.cacheReadInputTokens + result.usage.cacheCreationInputTokens)) in · \(Format.tokens(result.usage.outputTokens)) out")
+        Group {
+            if status == .interrupted {
+                Label("Interrupted", systemImage: "stop.circle").foregroundStyle(.tertiary)
+            } else {
+                Label(error ?? "The turn failed", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+            }
         }
         .font(.caption)
-        .foregroundStyle(.tertiary)
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
@@ -211,11 +211,10 @@ struct TurnFooter: View {
         .frame(width: 900, height: 420)
 }
 
-#Preview("TurnFooter") {
+#Preview("TurnOutcome") {
     VStack(alignment: .trailing, spacing: 12) {
-        TurnFooter(result: .sample(), status: .completed)
-        TurnFooter(result: .sample(subtype: "error_during_execution", isError: true, errors: ["SSH connection to deploy-01 timed out"]), status: .failed)
-        TurnFooter(result: .sample(), status: .interrupted)
+        TurnOutcome(status: .failed, error: "SSH connection to deploy-01 timed out")
+        TurnOutcome(status: .interrupted, error: nil)
     }
     .padding(20)
     .frame(width: 500)

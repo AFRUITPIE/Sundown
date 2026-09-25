@@ -392,7 +392,7 @@ extension ThreadModel {
         ], pending: [.sampleElicitation()])
     }
 
-    /// A turn that failed, with `thread.lastError` also set — exercises TurnFooter and StatusStrip.
+    /// A turn that failed, with `thread.lastError` also set — exercises TurnOutcome and StatusStrip.
     public static func sampleErrorTurn() -> ThreadModel {
         sample(title: "Deploy to production", status: .error, items: [
             .sampleUserMessage("Deploy the server changes to production.", secondsAgo: 90),
