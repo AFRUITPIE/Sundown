@@ -8,7 +8,11 @@ struct TranscriptView: View {
     let thread: ThreadModel
     var connection: HostConnection?
     @State private var position = ScrollPosition(edge: .bottom)
+    /// Whether the end is on screen right now; drives the jump button.
     @State private var atBottom = true
+    /// Whether the reader left the transcript at its end. Only their own scrolling changes it, so a
+    /// resize that briefly pushes the end off screen doesn't count as scrolling away.
+    @State private var followsEnd = true
 
     var body: some View {
         ScrollView {
@@ -38,11 +42,22 @@ struct TranscriptView: View {
         .onChange(of: thread.historyLoaded) {
             guard thread.historyLoaded else { return }
             if !atBottom { atBottom = true }
+            followsEnd = true
             position.scrollTo(edge: .bottom)
+        }
+        // The anchor doesn't survive a width change: every row re-measures at the new width.
+        .onScrollGeometryChange(for: CGSize.self, of: \.containerSize) { _, _ in
+            if followsEnd { position.scrollTo(edge: .bottom) }
+        }
+        .onScrollPhaseChange { old, new, context in
+            guard new == .idle, old == .interacting || old == .decelerating else { return }
+            let g = context.geometry
+            followsEnd = g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 24
         }
         .overlay(alignment: .bottom) {
             if !atBottom {
                 Button("Jump to Latest", systemImage: "arrow.down") {
+                    followsEnd = true
                     withAnimation { position.scrollTo(edge: .bottom) }
                 }
                 .labelStyle(.iconOnly)

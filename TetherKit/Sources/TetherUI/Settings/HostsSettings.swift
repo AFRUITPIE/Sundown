@@ -56,22 +56,25 @@ struct HostsSettings: View {
             .pickerStyle(.menu)
             Spacer(minLength: 12)
 
-            Button {
-                addingHost = true
-            } label: {
-                Image(systemName: "plus")
-            }
-            .accessibilityLabel("Add SSH Host")
-            .help("Add SSH Host")
+            // The add/remove pair: one control, so the thinner minus glyph gets the plus's height.
+            ControlGroup {
+                Button {
+                    addingHost = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel("Add SSH Host")
+                .help("Add SSH Host")
 
-            Button {
-                hostToRemove = removableHost
-            } label: {
-                Image(systemName: "minus")
+                Button {
+                    hostToRemove = removableHost
+                } label: {
+                    Image(systemName: "minus")
+                }
+                .disabled(removableHost == nil)
+                .accessibilityLabel("Remove Host")
+                .help("Remove Host")
             }
-            .disabled(removableHost == nil)
-            .accessibilityLabel("Remove Host")
-            .help("Remove Host")
         }
         .padding()
         .background(Color(nsColor: .windowBackgroundColor))
