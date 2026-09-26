@@ -8,6 +8,8 @@ public struct RPCError: LocalizedError, Sendable {
 
     public static let threadNotLoaded = -32011
     public static let threadNotFound = -32010
+    /// The server no longer serves this app's protocol.
+    public static let incompatibleProtocol = -32004
 }
 
 /// JSON-RPC (Codex-style, no "jsonrpc" field) over a line transport.

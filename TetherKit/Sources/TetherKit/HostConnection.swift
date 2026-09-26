@@ -96,10 +96,14 @@ public final class HostConnection: Identifiable {
             state = .connecting("Handshaking…")
             let initResult = try await client.call(Methods.Initialize.self, .init(
                 clientInfo: .init(name: "tether-app", title: "Tether", version: Self.appVersion),
+                protocolVersion: tetherProtocolVersion,
                 // Reasoning isn't shown, so its per-token deltas are only cost.
                 capabilities: .init(experimentalApi: true, optOutNotificationMethods: ["item/reasoning/delta"]),
                 env: host.env.isEmpty ? nil : host.env))
             try await client.notify("initialized")
+            if initResult.protocolVersion < Self.minServerProtocol {
+                throw Incompatible(message: "\(host.name) runs Tether \(initResult.serverInfo.version), which is too old for this app. Update the server there.")
+            }
             serverInfo = initResult
             appendLog("Connected: \(initResult.host.hostname), claude \(initResult.claude.version) at \(initResult.claude.path)")
             state = .connected
@@ -108,11 +112,25 @@ public final class HostConnection: Identifiable {
             await openRequestedThreads()
             await refreshCatalog()
         } catch {
+            var error = error
+            if let e = error as? RPCError, e.code == RPCError.incompatibleProtocol {
+                error = Incompatible(message: "The Tether server on \(host.name) needs a newer version of this app.")
+            }
             appendLog("Connection failed: \(error.localizedDescription)")
             await tearDown()
             state = .failed(error.localizedDescription)
-            scheduleReconnect()
+            // Trying again can't fix a protocol mismatch; one side has to be updated first.
+            if !(error is Incompatible) { scheduleReconnect() }
         }
+    }
+
+    /// The oldest server protocol this app talks to.
+    static let minServerProtocol = 1
+
+    /// The app and the server can't talk to each other until one of them is updated.
+    struct Incompatible: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
     }
 
     public func disconnect() async {
