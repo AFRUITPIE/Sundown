@@ -7,18 +7,21 @@ Tether is a native macOS SwiftUI client for Claude Code. It is intentionally a t
 This repository builds on its own. Clone it, open `Tether.xcodeproj`, and build:
 
 - `TetherKit/Package.swift` depends on the `TetherProtocol` package published by `AFRUITPIE/tether-server`, pinned by version. The generated sources are committed there, so nothing has to be generated to consume them.
-- The app target's build phase (`Scripts/fetch-server-binaries.sh`) puts the standalone server binaries in the bundle. It prefers a sibling `../tether-server/dist` when that has binaries for the pinned version, and otherwise downloads that version's GitHub release once and caches it under `DERIVED_FILE_DIR`.
+- The app target's build phase (`Scripts/fetch-server-binaries.sh`) puts the standalone server binaries in the bundle, downloading the pinned version's GitHub release once and caching it under `DERIVED_FILE_DIR`.
 - `.tether-server-version` is the pin. Bump it when the app needs a newer server, after that version has been released.
 
 `tether-server` is public, so SwiftPM can resolve the protocol package without credentials. The app repository remains private.
 
-Working on the protocol or the server at the same time still wants both checkouts side by side. Override the package with the local copy rather than editing the manifest:
+### Local development (both repositories side by side)
 
-```sh
-swift package edit TetherProtocol --path ../../tether-server   # undo with: swift package unedit TetherProtocol
-```
+With a `tether-server` checkout beside this one, the app builds against it and no release is involved:
 
-or add `../tether-server` to the Xcode workspace, which takes precedence over the remote. Run `mise run compile` there and the build phase picks the binaries up from `dist/` automatically.
+- `TetherKit/Package.swift` takes the protocol package from `../tether-server` by path, so a protocol change is seen on the next build, in Xcode and in `swift test` alike.
+- The build phase compiles that checkout (`mise run compile -- --dev`) whenever its sources changed since the last dev build. Dev builds are versioned `<version>-dev.<time>`, so the running daemon replaces itself on the next connect, and `Bootstrap` deletes older dev builds from `~/.tether/bin` (and on SSH hosts).
+- A path dependency has no pin, so SwiftPM empties `Package.resolved`. Both copies are marked `git update-index --skip-worktree` in this clone so that churn stays out of commits; `--no-skip-worktree` before bumping the pin.
+- `TETHER_USE_RELEASE=1` (for SwiftPM and the build phase) uses the published package and the pinned release instead, which is what CI and a fresh clone get.
+
+Work on local branches and commit there; releases, pin bumps and PRs happen together when the owner asks to ship: release the server, bump `.tether-server-version` and the pin, then open the PRs.
 
 ## Repository map
 
@@ -155,7 +158,7 @@ Prepare the bundled server artifacts when server code or packaging changes:
 
 ```sh
 cd ../tether-server
-mise run compile          # into dist/, picked up by the app's build phase
+mise run compile -- --dev # into dist/ with a -dev stamp; the app's build phase runs this itself
 mise run release          # tag, publish the binaries, and record the Agent SDK version
 ```
 

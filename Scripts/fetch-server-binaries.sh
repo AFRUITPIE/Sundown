@@ -1,9 +1,13 @@
 #!/bin/bash
 # Puts the standalone tether server binaries into the app bundle.
 #
-# A sibling checkout wins when it has binaries for the pinned version, so changing the server and
-# running `mise run compile` next door is picked up with no extra step. Otherwise the pinned
-# release is downloaded once and cached, which is what lets this repo be cloned on its own.
+# Local development: with a tether-server checkout beside this repo, that checkout is what the app
+# runs. It is compiled here (`mise run compile -- --dev`) whenever its sources changed since the last
+# dev build; the dev build carries a `-dev.<time>` version, so the running daemon replaces itself
+# with it on the next connect. No release or pin bump is involved. TETHER_USE_RELEASE=1 opts out.
+#
+# Otherwise the release pinned in .tether-server-version is downloaded once and cached, which is
+# what lets this repo be cloned and built on its own (and what CI does).
 set -euo pipefail
 
 # PR UI tests run entirely against an in-process fixture. No server binary is used there.
@@ -23,9 +27,20 @@ LOCAL="$SRCROOT/../tether-server/dist"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 
-if ls "$LOCAL"/tether-"$VERSION"-* >/dev/null 2>&1; then
-    echo "note: using sibling checkout $LOCAL"
-    cp -f "$LOCAL"/tether-"$VERSION"-* "$DEST"/
+SIBLING="$SRCROOT/../tether-server"
+if [[ -f "$SIBLING/package.json" && "${TETHER_USE_RELEASE:-}" != "1" ]]; then
+    newest_dev="$(ls -t "$LOCAL"/tether-*-dev.*-darwin-arm64 2>/dev/null | head -1 || true)"
+    if [[ -z "$newest_dev" ]] || [[ -n "$(find "$SIBLING/src" "$SIBLING/package.json" "$SIBLING/bun.lock" -newer "$newest_dev" -print -quit 2>/dev/null)" ]]; then
+        MISE="$(command -v mise || ls /opt/homebrew/bin/mise /opt/homebrew/opt/mise/bin/mise "$HOME/.local/bin/mise" 2>/dev/null | head -1 || true)"
+        if [[ -z "$MISE" ]]; then
+            echo "error: the sibling tether-server changed and needs rebuilding, but mise isn't installed. Install it (brew install mise), or set TETHER_USE_RELEASE=1 to use the pinned release."
+            exit 1
+        fi
+        echo "note: compiling sibling tether-server (dev build)"
+        (cd "$SIBLING" && "$MISE" run compile -- --dev)
+    fi
+    echo "note: using sibling tether-server dev build"
+    cp -f "$LOCAL"/tether-*-dev.* "$DEST"/
     exit 0
 fi
 
