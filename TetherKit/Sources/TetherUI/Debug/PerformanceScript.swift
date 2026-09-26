@@ -8,7 +8,8 @@ import TetherKit
 /// and closing, inspector tabs, switching chats, New Chat, and window resizes. Run with
 /// TETHER_UI_TEST_MODE=1 TETHER_UI_TEST_SCENARIO=performance TETHER_PERF_SCRIPT=1 while recording
 /// the Animation Hitches template; every step is a Points of Interest signpost, so a hitch lines up
-/// with the step that caused it.
+/// with the step that caused it. Pass `-NSAppSleepDisabled YES` when the window may be hidden or the
+/// screen locked: App Nap otherwise throttles the app about 25 s in and every later step looks slower.
 @MainActor
 enum PerformanceScript {
     static var isEnabled: Bool { ProcessInfo.processInfo.environment["TETHER_PERF_SCRIPT"] == "1" }
@@ -38,7 +39,12 @@ enum PerformanceScript {
         NSLog("PERF done")
     }
 
+    /// TETHER_PERF_STEPS, comma-separated, limits the run to steps whose names start with one of them.
+    private static let only = ProcessInfo.processInfo.environment["TETHER_PERF_STEPS"]?
+        .split(separator: ",").map(String.init).nilIfEmpty
+
     private static func step(_ name: StaticString, _ action: () async -> Void) async {
+        if let only, !only.contains(where: { "\(name)".hasPrefix($0) }) { return }
         let state = signposter.beginInterval(name)
         NSLog("PERF %@", "\(name)")
         log.append(["step": "\(name)", "time": Date().timeIntervalSince1970])
@@ -73,14 +79,33 @@ enum PerformanceScript {
         guard let window else { return }
         let start = window.frame
         let clock = ContinuousClock(), began = clock.now
+        var durations: [Duration] = []
         while clock.now - began < .seconds(1.5) {
             let t = Double((clock.now - began).components.attoseconds) / 1e18 + Double((clock.now - began).components.seconds)
             var frame = start
             frame.size.width = start.width - 300 * sin(t / 1.5 * .pi)
+            let before = clock.now
             window.setFrame(frame, display: true)
+            durations.append(clock.now - before)
             try? await Task.sleep(for: .milliseconds(8))
         }
         window.setFrame(start, display: true)
+        record(durations, as: "resize live frames")
     }
+
+    /// How long each synchronous layout and display took: the frame time the step costs, which the
+    /// time profile alone can't give while the loop keeps the main thread busy.
+    private static func record(_ values: [Duration], as name: String) {
+        let ms = values.map { Double($0.components.attoseconds) / 1e15 + Double($0.components.seconds) * 1000 }.sorted()
+        guard !ms.isEmpty else { return }
+        func pct(_ p: Double) -> Double { ms[min(ms.count - 1, Int(Double(ms.count) * p))] }
+        NSLog("PERF %@: n %d p50 %.2f p95 %.2f max %.2f ms", name, ms.count, pct(0.5), pct(0.95), ms.last!)
+        log.append(["step": name, "time": Date().timeIntervalSince1970, "n": ms.count,
+                    "p50": pct(0.5), "p95": pct(0.95), "max": ms.last!])
+    }
+}
+
+private extension Array {
+    var nilIfEmpty: Self? { isEmpty ? nil : self }
 }
 #endif
