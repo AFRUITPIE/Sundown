@@ -9,7 +9,6 @@ import PackageDescription
 let siblingServer = Context.packageDirectory + "/../../tether-server"
 let useSiblingServer = Context.environment["TETHER_USE_RELEASE"] != "1"
     && FileManager.default.fileExists(atPath: siblingServer + "/Package.swift")
-let protocolPackage = useSiblingServer ? "TetherProtocol" : "tether-server"
 
 let package = Package(
     name: "TetherKit",
@@ -21,15 +20,15 @@ let package = Package(
     dependencies: [
         // Generated protocol types are published by the server repository as a Swift package.
         useSiblingServer
-            ? .package(name: "TetherProtocol", path: "../../tether-server")
+            ? .package(path: "../../tether-server")
             : .package(url: "https://github.com/AFRUITPIE/tether-server.git", from: "0.1.0"),
     ],
     targets: [
-        .target(name: "TetherKit", dependencies: [.product(name: "TetherProtocol", package: protocolPackage)]),
+        .target(name: "TetherKit", dependencies: [.product(name: "TetherProtocol", package: "tether-server")]),
         .target(name: "TetherUI", dependencies: ["TetherKit"]),
         .testTarget(name: "TetherKitTests", dependencies: ["TetherKit"]),
         .testTarget(name: "TetherUITests", dependencies: [
-            "TetherUI", "TetherKit", .product(name: "TetherProtocol", package: protocolPackage),
+            "TetherUI", "TetherKit", .product(name: "TetherProtocol", package: "tether-server"),
         ]),
     ]
 )
