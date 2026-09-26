@@ -8,7 +8,11 @@ struct TranscriptView: View {
     let thread: ThreadModel
     var connection: HostConnection?
     @State private var position = ScrollPosition(edge: .bottom)
+    /// Whether the end is on screen right now; drives the jump button.
     @State private var atBottom = true
+    /// Whether the reader left the transcript at its end. Only their own scrolling changes it, so a
+    /// resize that briefly pushes the end off screen doesn't count as scrolling away.
+    @State private var followsEnd = true
 
     var body: some View {
         ScrollView {
@@ -31,18 +35,33 @@ struct TranscriptView: View {
             .padding(.vertical, 16)
             .readingColumn()
         }
-        // Every role, so the framework also keeps the bottom pinned through content and size changes.
-        .defaultScrollAnchor(.bottom)
+        // Opens at the end and keeps it pinned through content and size changes. A transcript shorter
+        // than the window sits at the top: aligned to the bottom, it was pushed down by a scroll offset
+        // and the toolbar's edge effect followed its top edge down the window.
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(.bottom, for: .sizeChanges)
+        .defaultScrollAnchor(.top, for: .alignment)
         .scrollPosition($position)
         // A newly opened chat starts at its latest message.
         .onChange(of: thread.historyLoaded) {
             guard thread.historyLoaded else { return }
             if !atBottom { atBottom = true }
+            followsEnd = true
             position.scrollTo(edge: .bottom)
+        }
+        // The anchor doesn't survive a width change: every row re-measures at the new width.
+        .onScrollGeometryChange(for: CGSize.self, of: \.containerSize) { _, _ in
+            if followsEnd { position.scrollTo(edge: .bottom) }
+        }
+        .onScrollPhaseChange { old, new, context in
+            guard new == .idle, old == .interacting || old == .decelerating else { return }
+            let g = context.geometry
+            followsEnd = g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 24
         }
         .overlay(alignment: .bottom) {
             if !atBottom {
                 Button("Jump to Latest", systemImage: "arrow.down") {
+                    followsEnd = true
                     withAnimation { position.scrollTo(edge: .bottom) }
                 }
                 .labelStyle(.iconOnly)
@@ -146,17 +165,18 @@ struct TranscriptPlaceholder<Actions: View>: View {
     }
 }
 
-/// The end of the transcript: the wait before a turn has anything to show, and the finished turn's
-/// summary. Its own view so `isThinking` and `turns` are read here rather than beside the rows. A
-/// `Group` rather than a stack, so that with neither of them the enclosing spacing collapses too.
+/// The end of the transcript: the wait before a turn has anything to show, and why the last turn
+/// stopped short. Its own view so `isThinking` and `turns` are read here rather than beside the rows.
+/// A `Group` rather than a stack, so that with neither of them the enclosing spacing collapses too.
 struct TranscriptTail: View {
     let thread: ThreadModel
 
     var body: some View {
         Group {
             if thread.isThinking { ThinkingLine() }
-            if let turn = thread.turns.last, turn.status != .inProgress, let result = turn.result {
-                TurnFooter(result: result, status: turn.status)
+            // A turn that finished normally says nothing; its cost and time are in the Session pane.
+            if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
+                TurnOutcome(status: turn.status, error: turn.result?.errors?.first)
             }
         }
     }
@@ -174,20 +194,19 @@ struct ThinkingLine: View {
     }
 }
 
-struct TurnFooter: View {
-    let result: TurnResult
+struct TurnOutcome: View {
     let status: TurnStatus
+    let error: String?
 
     var body: some View {
-        HStack(spacing: 10) {
-            if status == .interrupted { Label("Interrupted", systemImage: "stop.circle") }
-            else if status == .failed { Label(result.errors?.first ?? result.subtype, systemImage: "exclamationmark.triangle").foregroundStyle(.red) }
-            Text(Format.duration(result.durationMs / 1000))
-            Text(Format.cost(result.totalCostUsd))
-            Text("\(Format.tokens(result.usage.inputTokens + result.usage.cacheReadInputTokens + result.usage.cacheCreationInputTokens)) in · \(Format.tokens(result.usage.outputTokens)) out")
+        Group {
+            if status == .interrupted {
+                Label("Interrupted", systemImage: "stop.circle").foregroundStyle(.tertiary)
+            } else {
+                Label(error ?? "The turn failed", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+            }
         }
         .font(.caption)
-        .foregroundStyle(.tertiary)
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
@@ -211,11 +230,10 @@ struct TurnFooter: View {
         .frame(width: 900, height: 420)
 }
 
-#Preview("TurnFooter") {
+#Preview("TurnOutcome") {
     VStack(alignment: .trailing, spacing: 12) {
-        TurnFooter(result: .sample(), status: .completed)
-        TurnFooter(result: .sample(subtype: "error_during_execution", isError: true, errors: ["SSH connection to deploy-01 timed out"]), status: .failed)
-        TurnFooter(result: .sample(), status: .interrupted)
+        TurnOutcome(status: .failed, error: "SSH connection to deploy-01 timed out")
+        TurnOutcome(status: .interrupted, error: nil)
     }
     .padding(20)
     .frame(width: 500)

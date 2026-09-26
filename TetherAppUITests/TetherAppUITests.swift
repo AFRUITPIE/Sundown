@@ -136,9 +136,13 @@ final class TetherAppUITests: XCTestCase {
     @MainActor
     func testSidebarSearch() {
         let app = launch()
+        XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
+        // AppKit keeps the sidebar's collapsed state in the app's own defaults, which a debug run
+        // shares. Checked by the list itself: the menu item's title can lag the sidebar's state.
+        if !app.outlines["Sidebar"].exists { app.menuBars.menuItems["toggleSidebar:"].click() }
         let row = app.outlines["Sidebar"].staticTexts["Fixture Chat"]
         XCTAssertTrue(row.waitForExistence(timeout: 15))
-        let search = app.searchFields.firstMatch
+        let search = app.windows.firstMatch.searchFields.firstMatch
         XCTAssertTrue(search.exists)
         search.click()
         search.typeText("no matching fixture")
