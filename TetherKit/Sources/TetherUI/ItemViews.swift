@@ -2,6 +2,17 @@ import SwiftUI
 import TetherKit
 import TetherProtocol
 
+/// A transcript row's item as it is now. Reads the item's box, so a streamed delta redraws this row
+/// alone: the row list it sits in holds the item's value from before the delta.
+struct LiveItemView: View {
+    let box: ItemBox
+    let thread: ThreadModel
+
+    var body: some View {
+        ItemView(item: box.item, thread: thread)
+    }
+}
+
 /// Renders one transcript item.
 struct ItemView: View {
     let item: Item

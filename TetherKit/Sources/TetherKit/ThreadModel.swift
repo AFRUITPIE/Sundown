@@ -9,6 +9,20 @@ public struct PendingRequest: Identifiable, Sendable {
     let respond: @Sendable (JSONValue?) -> Void
 }
 
+/// One item's current value, observed on its own. A streamed delta changes only its item's box, so
+/// only the row showing that item redraws; the transcript and every other row stay as they were.
+@MainActor
+@Observable
+public final class ItemBox: Identifiable {
+    public let id: String
+    public fileprivate(set) var item: Item
+
+    public init(_ item: Item) {
+        id = item.id
+        self.item = item
+    }
+}
+
 /// Client-side reducer for one thread: items in order, turns, status, pending prompts.
 @MainActor
 @Observable
@@ -16,7 +30,14 @@ public final class ThreadModel: Identifiable {
     public let id: String
     public private(set) var info: ThreadInfo?
     public private(set) var summary: ThreadSummary?
-    public private(set) var items: [Item] = []
+    /// The transcript. Reading it observes its structure (an item added, replaced or changing
+    /// status), not streamed text, which goes to each item's `box(for:)`.
+    public var items: [Item] {
+        _ = itemsVersion
+        return storage
+    }
+    @ObservationIgnored private var storage: [Item] = []
+    @ObservationIgnored private var boxes: [String: ItemBox] = [:]
     public private(set) var turns: [Turn] = []
     public private(set) var status: ThreadStatus = .notLoaded
     public private(set) var activity: String?
@@ -38,7 +59,9 @@ public final class ThreadModel: Identifiable {
     public private(set) var pendingSettings = PendingSettings()
     public var totalCostUsd: Double { turns.compactMap { $0.result?.totalCostUsd }.reduce(0, +) }
     private var index: [String: Int] = [:]
-    /// Bumped by every change to `items`; the derived collections below cache against it.
+    /// Bumped by every structural change to `items`; the derived collections below cache against it.
+    /// A streamed delta doesn't bump it (the rows hold the item's value from before the delta, and
+    /// render its box), except the first one, which ends `isThinking`.
     public private(set) var itemsVersion = 0
     @ObservationIgnored private var cachedTopLevel: (version: Int, items: [Item])?
     @ObservationIgnored private var cachedRows: (version: Int, rows: [TranscriptRow])?
@@ -116,7 +139,7 @@ public final class ThreadModel: Identifiable {
     /// Replace transcript with server history (thread/read or thread/resume includeHistory).
     func loadHistory(items newItems: [Item], turns newTurns: [Turn], seq: Int?, hasMore: Bool = false) {
         if let seq { lastSeq = seq }
-        items = newItems
+        storage = newItems
         turns = newTurns
         reindex()
         hasMoreHistory = hasMore
@@ -127,17 +150,30 @@ public final class ThreadModel: Identifiable {
     func prependHistory(items older: [Item], hasMore: Bool) {
         hasMoreHistory = hasMore
         guard !older.isEmpty else { return }
-        let known = Set(items.map(\.id))
+        let known = Set(storage.map(\.id))
         let fresh = older.filter { !known.contains($0.id) }
         guard !fresh.isEmpty else { return }
-        items.insert(contentsOf: fresh, at: 0)
+        storage.insert(contentsOf: fresh, at: 0)
         reindex()
     }
 
     /// Every bulk replacement of `items` goes through here, so the fallback title is refreshed
     /// once per history load rather than once per streamed delta.
     private func reindex() {
-        index = Dictionary(uniqueKeysWithValues: items.enumerated().map { ($1.id, $0) })
+        index = Dictionary(uniqueKeysWithValues: storage.enumerated().map { ($1.id, $0) })
+        // One box per item, made here rather than when a row first asks. Boxes outlive a reload: a
+        // row already showing an item keeps observing the same one.
+        var next: [String: ItemBox] = [:]
+        next.reserveCapacity(storage.count)
+        for item in storage {
+            if let box = boxes[item.id] {
+                if box.item != item { box.item = item }
+                next[item.id] = box
+            } else {
+                next[item.id] = ItemBox(item)
+            }
+        }
+        boxes = next
         itemsVersion &+= 1
         refreshTaskEntries()
         refreshTitle()
@@ -145,7 +181,7 @@ public final class ThreadModel: Identifiable {
 
     /// Drops the transcript so the next open reads it afresh.
     func unload() {
-        items = []
+        storage = []
         turns = []
         tasks = [:]
         backgroundTaskIDs = []
@@ -274,7 +310,7 @@ public final class ThreadModel: Identifiable {
     /// Whether a tool call is the chat's own rather than a subagent's.
     public func isTopLevelCall(_ toolUseId: String) -> Bool {
         guard let i = index[toolUseId] else { return false }
-        return items[i].parentToolUseId == nil
+        return storage[i].parentToolUseId == nil
     }
 
     private func upsertTurn(_ t: Turn) {
@@ -283,21 +319,31 @@ public final class ThreadModel: Identifiable {
 
     private func upsert(_ item: Item) {
         let id = item.id
-        if let i = index[id] { items[i] = item } else {
-            index[id] = items.count
-            items.append(item)
+        if let i = index[id] { storage[i] = item } else {
+            index[id] = storage.count
+            storage.append(item)
         }
+        if let box = boxes[id] { box.item = item } else { boxes[id] = ItemBox(item) }
         itemsVersion &+= 1
         if item.isSubagentCall { refreshTaskEntries() }
         // Only an opening user message can move the title, and only until Claude names the session.
         if isUnnamed, case .userMessage(let m) = item, m.synthetic != true { refreshTitle() }
     }
 
+    /// A streamed change to one item: its box, not the transcript's structure.
     private func mutate(_ id: String, _ f: (inout Item) -> Void) {
         guard let i = index[id] else { return }
-        f(&items[i])
-        itemsVersion &+= 1
-        if items[i].isSubagentCall { refreshTaskEntries() }
+        let wasEmpty = storage[i].isEmptyMessage
+        f(&storage[i])
+        boxes[id]?.item = storage[i]
+        if wasEmpty != storage[i].isEmptyMessage { itemsVersion &+= 1 }
+        if storage[i].isSubagentCall { refreshTaskEntries() }
+    }
+
+    /// The item's box, for a row that renders it. Every held item has one; an item from elsewhere
+    /// (a preview) gets a box of its own that the thread doesn't keep.
+    public func box(for item: Item) -> ItemBox {
+        boxes[item.id] ?? ItemBox(item)
     }
 
     /// Items belonging to a subagent (Task/Agent tool) — rendered nested in its card.
@@ -388,6 +434,12 @@ public final class ThreadModel: Identifiable {
 private extension Item {
     var isSubagentCall: Bool {
         if case .toolCall(let call) = self { return call.kind == .subagent }
+        return false
+    }
+
+    /// An agent message with no text yet; its first delta ends `isThinking`.
+    var isEmptyMessage: Bool {
+        if case .agentMessage(let m) = self { return m.text.isEmpty }
         return false
     }
 }

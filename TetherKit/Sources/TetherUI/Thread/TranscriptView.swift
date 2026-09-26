@@ -25,7 +25,7 @@ struct TranscriptView: View {
                 }
                 ForEach(thread.rows, id: \.id) { row in
                     switch row {
-                    case .item(let item): ItemView(item: item, thread: thread).id(item.id)
+                    case .item(let item): LiveItemView(box: thread.box(for: item), thread: thread).id(item.id)
                     case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread).id(row.id)
                     }
                 }
