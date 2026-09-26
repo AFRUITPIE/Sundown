@@ -23,11 +23,10 @@ struct TranscriptView: View {
                 if thread.historyLoaded, thread.hasMoreHistory {
                     olderHistoryTrigger
                 }
+                // One plain view per row, identified by the ForEach alone: a `switch` or `.id()` here
+                // adds a node to every row, and the lazy stack walks every row on each layout pass.
                 ForEach(thread.rows, id: \.id) { row in
-                    switch row {
-                    case .item(let item): LiveItemView(box: thread.box(for: item), thread: thread).id(item.id)
-                    case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread).id(row.id)
-                    }
+                    TranscriptRowView(row: row, thread: thread)
                 }
                 TranscriptTail(thread: thread)
                 bottomSentinel
@@ -104,6 +103,19 @@ struct TranscriptView: View {
                 guard atBottom != visible else { return }
                 atBottom = visible
             }
+    }
+}
+
+/// One transcript row: an item, read live from its box, or a group of finished tool calls.
+struct TranscriptRowView: View {
+    let row: TranscriptRow
+    let thread: ThreadModel
+
+    var body: some View {
+        switch row {
+        case .item(let item): LiveItemView(box: thread.box(for: item), thread: thread)
+        case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread)
+        }
     }
 }
 

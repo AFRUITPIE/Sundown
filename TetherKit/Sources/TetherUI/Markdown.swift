@@ -195,13 +195,29 @@ final class MarkdownCache {
     private var scannedLength = 0
     private var fenceOpen = false
     private var previousLineBlank = false
-    private var nextID = 0
+    /// App-wide, so a block reused from `recent` never shares an id with one parsed here.
+    private static var nextID = 0
+    /// Whole messages as a new view first saw them. A view is made again when its chat is reopened
+    /// or its row scrolls back into view; this spares it parsing the message on that frame.
+    private static var recent: [String: [MarkdownView.Rendered]] = [:]
+    private static var recentOrder: [String] = []
     /// The unsettled tail's blocks from the last call: a block whose text didn't change keeps its
     /// render, so it isn't parsed again and its view compares equal.
     private var tailBlocks: [MarkdownView.Rendered] = []
 
     func blocks(for newText: String) -> [MarkdownView.Rendered] {
         if newText.utf8.count == text.utf8.count, newText == text { return blocks }
+        if text.isEmpty, let known = Self.recent[newText] {
+            // A fresh view of a message parsed before; streaming, if any, continues from here.
+            text = newText
+            blocks = known
+            tailBlocks = known
+            settledLength = 0
+            settledBlocks = []
+            scannedLength = 0
+            return blocks
+        }
+        let isFirst = text.isEmpty
         let appended = newText.utf8.count >= scannedLength
             && newText.utf8.prefix(scannedLength).elementsEqual(text.utf8.prefix(scannedLength))
         if !appended { reset() }
@@ -213,6 +229,7 @@ final class MarkdownCache {
             i < previous.count && previous[i].block == block ? previous[i] : render(block)
         }
         blocks = settledBlocks + tailBlocks
+        if isFirst { Self.remember(newText, blocks) }
         return blocks
     }
 
@@ -226,8 +243,15 @@ final class MarkdownCache {
     }
 
     private func render(_ block: MarkdownView.Block) -> MarkdownView.Rendered {
-        nextID += 1
-        return MarkdownView.Rendered(id: nextID, block: block, inline: block.inlineText.map(Self.inline))
+        Self.nextID += 1
+        return MarkdownView.Rendered(id: Self.nextID, block: block, inline: block.inlineText.map(Self.inline))
+    }
+
+    private static func remember(_ text: String, _ blocks: [MarkdownView.Rendered]) {
+        guard recent[text] == nil else { return }
+        recent[text] = blocks
+        recentOrder.append(text)
+        if recentOrder.count > 400 { recent[recentOrder.removeFirst()] = nil }
     }
 
     /// Moves the settled boundary to the last blank line outside a code fence, scanning only the
@@ -261,8 +285,12 @@ final class MarkdownCache {
         scannedLength = lineStart
         guard let boundary, boundary > settledLength else { return }
         let newlySettled = String(decoding: utf8.dropFirst(settledLength).prefix(boundary - settledLength), as: UTF8.self)
-        settledBlocks += MarkdownView.parse(newlySettled).map(render)
-        tailBlocks = [] // the tail now starts after the new boundary
+        // Blocks that were the tail's until now keep their render as they settle.
+        let parsed = MarkdownView.parse(newlySettled)
+        settledBlocks += parsed.enumerated().map { i, block in
+            i < tailBlocks.count && tailBlocks[i].block == block ? tailBlocks[i] : render(block)
+        }
+        tailBlocks = Array(tailBlocks.dropFirst(parsed.count))
         settledLength = boundary
     }
 

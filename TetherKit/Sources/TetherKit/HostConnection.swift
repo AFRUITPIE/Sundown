@@ -370,8 +370,11 @@ public final class HostConnection: Identifiable {
     }
 
     /// Transcripts load from the end, a page at a time.
-    public static let initialHistoryLimit = 150
-    public static let olderHistoryPageSize = 100
+    /// Kept small: a chat opens at its end, and the lazy transcript measures every loaded row above
+    /// the end to get there, on every open and every resize. 150 items made switching to a long chat
+    /// cost about 0.5 s of main-thread work; older items load a page at a time on scrolling up.
+    public static let initialHistoryLimit = 50
+    public static let olderHistoryPageSize = 50
 
     private func loadHistory(_ model: ThreadModel, force: Bool) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }

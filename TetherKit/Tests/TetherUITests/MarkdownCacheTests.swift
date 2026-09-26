@@ -52,6 +52,18 @@ struct MarkdownCacheTests {
         #expect(first.last?.id != next.last?.id)
     }
 
+    /// A row made again (its chat reopened, or scrolled back into view) reuses the parse.
+    @Test func aNewViewOfAKnownMessageReusesItsParse() {
+        let text = "# Reused\n\nA paragraph with `code` in it.\n\n- one\n- two"
+        let first = MarkdownCache().blocks(for: text)
+        let again = MarkdownCache().blocks(for: text)
+        #expect(again.map(\.id) == first.map(\.id))
+        // And it can still grow from there, as a streaming message would.
+        let grown = MarkdownCache()
+        _ = grown.blocks(for: text)
+        #expect(grown.blocks(for: text + " three").map(\.block) == MarkdownView.parse(text + " three"))
+    }
+
     @Test func replacedTextIsParsedAfresh() {
         let cache = MarkdownCache()
         let long = (0..<4).map { PerformanceTranscript.markdown(section: $0) }.joined(separator: "\n\n")

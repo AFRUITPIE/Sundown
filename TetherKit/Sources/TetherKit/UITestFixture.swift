@@ -119,19 +119,27 @@ private actor FixtureScript {
             ]))))
         case "model/list": return .init(value: .result(json(ModelListResult(models: []))))
         case "thread/list":
-            return .init(value: .result(json(ThreadListResult(threads: additionalThreads + [originalSummary]))))
+            let perf = performance ? PerformanceTranscript.otherChats : []
+            return .init(value: .result(json(ThreadListResult(threads: additionalThreads + perf + [originalSummary]))))
         case "thread/read":
             let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
-            let summary = additionalThreads.first { $0.threadId == id } ?? originalSummary
-            let items: [Item] = id == UITestFixture.threadID && performance ? PerformanceTranscript.history : id == UITestFixture.threadID ? [
+            let summary = (additionalThreads + PerformanceTranscript.otherChats).first { $0.threadId == id } ?? originalSummary
+            let items: [Item] = performance && (id == UITestFixture.threadID || id.hasPrefix("perf-chat-")) ? PerformanceTranscript.history : id == UITestFixture.threadID ? [
                 .userMessage(.init(id: "fixture-user", createdAt: 1_700_000_000_000,
                                    content: [.text(.init(text: "Summarize this project"))])),
                 .agentMessage(.init(id: "fixture-answer", createdAt: 1_700_000_000_001,
                                     text: "Fixture answer from the local transport."))
             ] : []
+            // Paged from the end, as the server does.
+            var page = items[...]
+            if let before = params["before"]?.stringValue, let i = page.firstIndex(where: { $0.id == before }) {
+                page = page[..<i]
+            }
+            let limit = params["limit"]?.intValue ?? page.count
+            let shown = Array(page.suffix(limit))
             return .init(value: .result(json(ThreadReadResult(
-                items: items, turns: [], summary: summary, historySeq: id == UITestFixture.threadID ? 1 : 0,
-                hasMore: false
+                items: shown, turns: [], summary: summary, historySeq: id == UITestFixture.threadID || id.hasPrefix("perf-chat-") ? 1 : 0,
+                hasMore: shown.count < page.count
             ))))
         case "thread/subscribe":
             let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
@@ -198,7 +206,14 @@ private actor FixtureScript {
 /// Synthetic but shaped like real work: prompts, folded tool calls, and Markdown replies with
 /// headings, lists, inline code, code blocks and tables.
 enum PerformanceTranscript {
-    static let history: [Item] = (0..<30).flatMap { turn -> [Item] in
+    /// Two more long chats, for switching between chats.
+    static let otherChats: [ThreadSummary] = (1...2).map {
+        .init(threadId: "perf-chat-\($0)", title: "Performance chat \($0)", cwd: "/tmp/tether-fixture",
+              updatedAt: 1_700_000_000_000 - Double($0), status: .idle)
+    }
+
+    /// TETHER_PERF_TURNS sizes it (30 turns, 150 items, by default).
+    static let history: [Item] = (0..<(Int(ProcessInfo.processInfo.environment["TETHER_PERF_TURNS"] ?? "") ?? 30)).flatMap { turn -> [Item] in
         let t = 1_700_000_000_000.0 + Double(turn * 100)
         var items: [Item] = [.userMessage(.init(id: "perf-user-\(turn)", createdAt: t,
                                                 content: [.text(.init(text: "Step \(turn): look at the next part of the renderer and tighten it up."))]))]
