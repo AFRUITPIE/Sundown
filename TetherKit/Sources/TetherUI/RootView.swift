@@ -126,6 +126,10 @@ public struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
             DetailView(window: window)
+                // Declared, so the split view's minimum counts the detail column: AppKit then widens a
+                // narrow window as the inspector opens, where without it the inspector spilled past
+                // the window's edge.
+                .navigationSplitViewColumnWidth(min: 520, ideal: 720)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(window.selectedThread?.title ?? "New Chat")
@@ -190,10 +194,11 @@ private struct InspectorColumn: ViewModifier {
                 InspectorView(window: window, selectedTaskID: $window.inspectedTaskID, showsPicker: false)
                     .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
                     // The panes as a segmented control above the column, in its own toolbar, as Xcode
-                    // shows its inspectors'. Only for the column: the other placements have their own.
+                    // shows its inspectors': only while it's open (the item stays declared, empty while
+                    // it's closed), and only for the column, since the other placements have their own.
                     .toolbar {
                         ToolbarItem {
-                            if window.app.appearance.inspector == .column {
+                            if window.app.appearance.inspector == .column, window.showInspector {
                                 InspectorPanePicker(pane: $window.inspectorPane)
                             }
                         }

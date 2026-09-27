@@ -24,6 +24,8 @@ public struct SettingsView: View {
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 230)
+            // A settings window's sidebar is always shown, as System Settings' is.
+            .toolbar(removing: .sidebarToggle)
         } detail: {
             Group {
                 switch SettingsDestination(storedValue: storedSelection) {
