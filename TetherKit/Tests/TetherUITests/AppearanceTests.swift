@@ -37,17 +37,27 @@ struct AppearanceTests {
         #expect(appearance.sendShortcut == .commandReturn)
         #expect(appearance.offerBypass)
         #expect(appearance.wrapCode)
+        #expect(appearance.sidebar == .chats)
+    }
+
+    @Test func theSidebarLayoutIsKept() throws {
+        var appearance = Appearance()
+        appearance.sidebar = .activity
+        let decoded = try JSONDecoder().decode(Appearance.self, from: JSONEncoder().encode(appearance))
+        #expect(decoded.sidebar == .activity)
     }
 
     /// Restore Defaults in Advanced leaves General's choices alone.
     @Test func restoringAdvancedKeepsGeneral() {
         var appearance = Appearance()
         appearance.toolCalls = .everyCall
+        appearance.sidebar = .activity
         appearance.worktreeByDefault = true
         #expect(!appearance.advancedIsDefault)
         appearance.restoreAdvanced()
         #expect(appearance.advancedIsDefault)
         #expect(appearance.toolCalls == .summarized)
+        #expect(appearance.sidebar == .chats)
         #expect(appearance.worktreeByDefault)
     }
 

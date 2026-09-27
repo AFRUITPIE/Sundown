@@ -261,6 +261,8 @@ public struct ShellViewCommands: View {
         Picker("Group By", selection: $app.sidebarGrouping) {
             ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
         }
+        // Activity lists by day, whatever the grouping.
+        .disabled(app.appearance.sidebar == .activity)
         Picker("Show", selection: $app.sidebarFilter) {
             ForEach(SidebarFilter.allCases, id: \.self) { Text($0.label).tag($0) }
         }

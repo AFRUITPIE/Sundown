@@ -270,15 +270,17 @@ extension WindowModel {
         return (connection?.chats ?? []).filter { filter.includes($0) || $0 === selectedThread }
     }
 
-    /// The sidebar's sections for this window's host, with its pins and grouping. Reads only what
-    /// doesn't change while a turn streams: title, folder, timestamp and tag.
-    func sidebarList(_ threads: [ThreadModel], search: String = "") -> [SidebarSection] {
+    /// The sidebar's sections for this window's host, in its layout (Settings' unless given), pins
+    /// and grouping. Reads only what doesn't change while a turn streams: title, folder, timestamp,
+    /// tag, status and requests.
+    func sidebarList(_ threads: [ThreadModel], style: Appearance.SidebarStyle? = nil, search: String = "") -> [SidebarSection] {
         let pins = app.pinnedChats[hostID] ?? []
         let chats = threads.map {
             SidebarChat(id: $0.id, title: $0.title, cwd: $0.cwd, updatedAt: $0.summary?.updatedAt,
-                        isPinned: pins.contains($0.id), isArchived: $0.isArchived)
+                        isPinned: pins.contains($0.id), isArchived: $0.isArchived,
+                        needsYou: !$0.pending.isEmpty || $0.status == .requiresAction)
         }
-        return sidebarSections(chats: chats, grouping: app.sidebarGrouping, search: search)
+        return sidebarSections(chats: chats, grouping: app.sidebarGrouping, style: style ?? app.appearance.sidebar, search: search)
     }
 
     public func isPinned(_ thread: ThreadModel) -> Bool { app.isPinned(thread.id, on: hostID) }

@@ -18,8 +18,24 @@ public struct Appearance: Codable, Equatable, Sendable {
 
     // Advanced
     public var toolCalls: ToolCallDisplay = .summarized
+    public var sidebar: SidebarStyle = .chats
 
     public init() {}
+
+    /// What the sidebar lists, and how.
+    public enum SidebarStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+        /// Pinned chats, then the rest grouped by date or folder (View ▸ Group By).
+        case chats
+        /// What needs you, then every chat by day, each with its latest reply, as Mail lists mail.
+        case activity
+        public var id: Self { self }
+        var label: String {
+            switch self {
+            case .chats: "Chats"
+            case .activity: "Activity"
+            }
+        }
+    }
 
     /// How finished tool calls read in the transcript.
     public enum ToolCallDisplay: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -86,6 +102,7 @@ public struct Appearance: Codable, Equatable, Sendable {
         sessionTools = value(.sessionTools, d.sessionTools)
         offerBypass = value(.offerBypass, d.offerBypass)
         toolCalls = value(.toolCalls, d.toolCalls)
+        sidebar = value(.sidebar, d.sidebar)
     }
 }
 
