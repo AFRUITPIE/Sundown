@@ -35,6 +35,8 @@ struct Composer: View {
     @State private var fileMatches: [String] = []
     @State private var suggestions: [Suggestion] = []
     @State private var choosingFiles = false
+    /// The last text put here from outside the field (`ComposerDrafts.delivery`), so each is applied once.
+    @State private var appliedDelivery: UUID?
     @FocusState private var focused: Bool
 
     /// Something going with the message besides its text.
@@ -145,7 +147,11 @@ struct Composer: View {
         .onPasteCommand(of: [.png, .tiff, .jpeg], perform: { _ = drop($0) })
         .onAppear {
             focused = true
-            if text.isEmpty, let draftKey { text = drafts.text(for: draftKey) }
+            if let draftKey {
+                // The draft already holds any text delivered before the field appeared.
+                appliedDelivery = drafts.delivery(for: draftKey)?.id
+                if text.isEmpty { text = drafts.text(for: draftKey) }
+            }
             #if DEBUG
             // Previews only: the field's text is otherwise private state.
             if text.isEmpty, !composerDraft.isEmpty { text = composerDraft }
@@ -155,9 +161,12 @@ struct Composer: View {
             refreshSuggestions()
             if let draftKey { drafts.set(text, for: draftKey) }
         }
-        // A draft put there from outside the field — a Shortcut's prompt — shows up in it.
-        .onChange(of: draftKey.map { drafts.text(for: $0) } ?? "") { _, draft in
-            if !draft.isEmpty, draft != text { text = draft }
+        // Text put there from outside the field — a Shortcut's prompt — shows up in it, once. Not
+        // the draft itself: observing that redrew every composer in every window per keystroke.
+        .onChange(of: draftKey.flatMap { drafts.delivery(for: $0) }) { _, delivery in
+            guard let delivery, delivery.id != appliedDelivery else { return }
+            appliedDelivery = delivery.id
+            text = delivery.text
         }
         .task(id: cwd) {
             commands = await connection.commands(cwd: cwd, thread: thread)

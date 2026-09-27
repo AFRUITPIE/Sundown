@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 import TetherKit
 @testable import TetherUI
@@ -215,12 +216,45 @@ struct WindowModelTests {
         app.setDraft("half a thought", for: "a")
         app.setDraft("another", for: "b")
         app.setDraft("   ", for: "b")
+        app.saveDrafts()
 
         let restored = AppModel(defaults: defaults)
 
         #expect(restored.draft(for: "a") == "half a thought")
         // Whitespace alone isn't a draft.
         #expect(restored.draft(for: "b") == "")
+    }
+
+    /// Typing keeps the draft at once but writes the store only once it pauses (or the app quits),
+    /// and tells no view: composers read a draft when they appear.
+    @Test func draftsAreWrittenOnceTypingPausesAndObservedByNoOne() {
+        let defaults = isolatedDefaults()
+        let app = AppModel(defaults: defaults)
+        let observed = Flag()
+        withObservationTracking { _ = app.draft(for: "a"); _ = app.draftDeliveries } onChange: { observed.raised = true }
+
+        app.setDraft("half", for: "a")
+        #expect(app.draft(for: "a") == "half")
+        #expect(!observed.raised)
+        #expect(AppModel(defaults: defaults).draft(for: "a") == "")
+
+        app.saveDrafts()
+        #expect(AppModel(defaults: defaults).draft(for: "a") == "half")
+    }
+
+    /// A Shortcut's prompt reaches the composer as a delivery, each with a new token, and is the draft too.
+    @Test func aDeliveredDraftCarriesANewTokenEachTime() {
+        let app = AppModel(defaults: isolatedDefaults())
+        app.deliverDraft("Summarize the diff", for: "new-chat:x")
+        let first = app.draftDeliveries["new-chat:x"]
+        #expect(first?.text == "Summarize the diff")
+        #expect(app.draft(for: "new-chat:x") == "Summarize the diff")
+
+        let observed = Flag()
+        withObservationTracking { _ = app.draftDeliveries } onChange: { observed.raised = true }
+        app.deliverDraft("Summarize the diff", for: "new-chat:x")
+        #expect(observed.raised)
+        #expect(app.draftDeliveries["new-chat:x"]?.id != first?.id)
     }
 
     @Test func defaultsRoundTripWithoutUsingStandardDefaults() {
@@ -393,4 +427,9 @@ struct SettingsDestinationTests {
         #expect(SettingsDestination(storedValue: "hosts") == .hosts)
         #expect(SettingsDestination(storedValue: "host:\(UUID().uuidString)") == .hosts)
     }
+}
+
+/// Observation's `onChange` is `@Sendable`, so the flag it raises needs a reference to live in.
+private final class Flag: @unchecked Sendable {
+    var raised = false
 }
