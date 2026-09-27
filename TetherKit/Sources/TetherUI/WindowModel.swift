@@ -82,6 +82,9 @@ public final class WindowModel {
     /// The chat Rename… or Delete… is acting on, from the Chat menu or a sidebar row's context menu.
     public private(set) var renaming: ThreadModel?
     public var deleting: ThreadModel?
+    /// Chat ▸ Ask a Side Question… (⌘;) is showing its sheet.
+    var askingSideQuestion = false
+
     /// A worktree to offer removing, once the chat that worked in it is archived or deleted; and
     /// whether that offer is the second, for one with uncommitted changes.
     var worktreeToRemove: (path: String, dirty: Bool)?

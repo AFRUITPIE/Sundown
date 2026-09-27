@@ -83,6 +83,11 @@ struct ChatActionAlerts: ViewModifier {
                      ? "Removing \(name) discards the changes in it that weren’t committed."
                      : "The chat worked in \(name), a worktree of its own. Removing it deletes the folder and its branch.")
             }
+            .sheet(isPresented: $window.askingSideQuestion) {
+                if let thread = window.selectedThread, let connection = window.connection {
+                    SideQuestionSheet(thread: thread, connection: connection)
+                }
+            }
             .alert(restoreTitle, isPresented: Binding(get: { window.restoring != nil }, set: { if !$0 { window.restoring = nil } })) {
                 restoreActions()
             } message: {

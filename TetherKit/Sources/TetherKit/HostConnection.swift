@@ -436,6 +436,13 @@ public final class HostConnection: Identifiable {
         try await apply(pending, to: model, over: r.thread, client)
     }
 
+    /// A question about the chat, answered with its context but kept out of it (the CLI's /btw).
+    public func sideQuestion(_ model: ThreadModel, _ question: String) async throws -> String? {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        try await makeLive(model, client)
+        return try await client.call(Methods.ThreadSideQuestion.self, .init(threadId: model.id, question: question)).answer
+    }
+
     /// What restoring the files to before a prompt would change (`dryRun`), or did change. Claude
     /// Code keeps a checkpoint of each file an edit touched, per prompt.
     public func rewindFiles(_ model: ThreadModel, to userMessageID: String, dryRun: Bool) async throws -> RewindResult {

@@ -190,4 +190,19 @@ final class ComposerAndMessageUITests: XCTestCase {
         send.click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS 'Sources/App.swift:2' OR label CONTAINS 'Sources/App.swift:2'")).firstMatch.waitForExistence(timeout: 10))
     }
+
+    /// ⌘; asks a side question: answered in the sheet, not added to the chat.
+    @MainActor
+    func testASideQuestionStaysOutOfTheChat() {
+        let app = launch()
+        XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].firstMatch.waitForExistence(timeout: 15))
+        app.typeKey(";", modifierFlags: .command)
+        let field = app.descendants(matching: .any)["sideQuestion.field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.typeText("What did we decide?")
+        field.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS 'A side answer' OR label CONTAINS 'A side answer'")).firstMatch.waitForExistence(timeout: 5))
+        windowButton(app, "Done").click()
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "value CONTAINS 'What did we decide?' OR label CONTAINS 'What did we decide?'")).firstMatch.exists)
+    }
 }

@@ -319,6 +319,10 @@ public struct ChatCommands: View {
             .disabled(!settings.isEnabled)
             SessionCycleCommands(settings: settings)
             Divider()
+            Button("Ask a Side Question…") { window.askingSideQuestion = true }
+                .keyboardShortcut(";", modifiers: .command)
+                .disabled(window.selectedThread == nil)
+            Divider()
             Button("Next Chat") { window.showAdjacentChat(1) }
                 .keyboardShortcut(.tab, modifiers: .control)
                 .disabled(window.adjacentChat(1) == nil)
@@ -332,6 +336,8 @@ public struct ChatCommands: View {
                 ForEach(["Model", "Fast Mode", "Effort", "Permissions"], id: \.self) { Button($0) {} }
                 Divider()
                 ForEach(["Next Model", "Next Effort Level", "Next Permission Mode"], id: \.self) { Button($0) {} }
+                Divider()
+                Button("Ask a Side Question…") {}
                 Divider()
                 ForEach(["Next Chat", "Previous Chat"], id: \.self) { Button($0) {} }
                 Divider()

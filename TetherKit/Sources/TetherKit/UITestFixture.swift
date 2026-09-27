@@ -207,6 +207,9 @@ private actor FixtureScript {
             if performance { return performanceTurn(threadID: id, input: params["input"]) }
             return .init(value: .result(json(TurnStartResult(turnId: "fixture-turn", messageId: "fixture-message", queued: false))),
                          notifications: turnNotifications(threadID: id, input: params["input"]))
+        case "thread/sideQuestion":
+            let q = params["question"]?.stringValue ?? ""
+            return .init(value: .result(["answer": .string("A side answer to “\(q)”.")]))
         case "schedule/list":
             return .init(value: .result(json(ScheduleListResult(tasks: schedules))))
         case "schedule/save":
