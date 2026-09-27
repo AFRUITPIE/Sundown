@@ -8,7 +8,7 @@ struct AdvancedSettings: View {
     var body: some View {
         Form {
             Section("Window") {
-                Picker("Inspector", selection: $app.appearance.inspector) {
+                Picker("Show Panes In", selection: $app.appearance.inspector) {
                     ForEach(Appearance.InspectorPlacement.allCases) { Text($0.label).tag($0) }
                 }
                 Picker("Session Controls", selection: $app.appearance.sessionControls) {

@@ -20,15 +20,18 @@ public struct Appearance: Codable, Equatable, Sendable {
     // Advanced
     public var toolCalls: ToolCallDisplay = .summarized
     public var sidebar: SidebarStyle = .chats
-    public var inspector: InspectorPlacement = .panel
+    public var inspector: InspectorPlacement = .column
     public var sessionControls: SessionControlsPlacement = .toolbar
 
     public init() {}
 
     /// Where Tasks, Session, MCP and Changes are shown.
     public enum InspectorPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
-        /// A column beside the chat, attached to the split view.
+        /// SwiftUI's inspector: a column beside the chat, its panes a segmented control above it.
         case column
+        /// The whole window tabbed: the chat (with the sidebar) one tab, each pane another, the tabs
+        /// in the toolbar.
+        case tabs
         /// A floating panel above the windows, showing the front window's chat. The chat window never
         /// changes width.
         case panel
@@ -39,10 +42,11 @@ public struct Appearance: Codable, Equatable, Sendable {
         public var id: Self { self }
         var label: String {
             switch self {
-            case .column: "Beside the Chat"
+            case .column: "Inspector"
+            case .tabs: "Tabs"
             case .panel: "Floating Panel"
             case .drawer: "Drawer"
-            case .overlay: "Over the Chat"
+            case .overlay: "Card Over the Chat"
             }
         }
     }

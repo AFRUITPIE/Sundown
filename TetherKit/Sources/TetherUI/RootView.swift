@@ -55,6 +55,71 @@ public struct RootView: View {
     private var app: AppModel { window.app }
 
     public var body: some View {
+        shell
+        // Reaches the inspector too, whose task list shows subagents the same way.
+        .environment(\.inspectSubagent, InspectSubagentAction(owner: window) { toolUseId in
+            window.inspectedTaskID = toolUseId
+            window.openInspector(on: .tasks)
+        })
+        .environment(\.restoreCode, ForkChatAction(owner: window) { window.restoreCode(before: $0) })
+        .environment(\.startSuggestedTask, StartSuggestedTaskAction(owner: window) { window.startSuggestedTask($0, from: $1) })
+        .environment(\.openChat, OpenChatAction(owner: window, resolve: { id in
+            // A desktop session's id carries a prefix ("local_…"); Claude Code's own is the rest.
+            let bare = id.split(separator: "_", maxSplits: 1).last.map(String.init) ?? id
+            return window.connection?.chats.first { $0.id == id || $0.id == bare }?.id
+        }, open: { window.open(threadID: $0) }))
+        .environment(\.showInspectorPane, ShowInspectorPaneAction(owner: window) { window.openInspector(on: $0) })
+        .environment(\.forkChat, ForkChatAction(owner: window) { messageID in
+            guard let thread = window.selectedThread, let connection = window.connection else { return }
+            Task { if let fork = await connection.fork(thread, at: messageID) { window.open(threadID: fork.id) } }
+        })
+        .environment(\.readingWidth, app.transcriptWidth.points)
+        .environment(\.textScale, app.textScale)
+        .environment(\.appearance, app.appearance)
+        .environment(\.hostIsLocal, window.connection?.host.isLocal == true)
+        .environment(\.openFilesWith, app.appearance.openFilesWith)
+        .environment(\.transcriptFind, window.find)
+        .environment(\.promptNavigator, window.prompts)
+        .environment(\.composerDrafts, ComposerDrafts(app: app))
+        .frame(minWidth: minWidth, minHeight: 400)
+        .chatActionAlerts(window)
+        .task { app.connectAll() }
+    }
+
+    /// The window's content: the split view, or with Settings ▸ Advanced ▸ Inspector ▸ Tabs, SwiftUI's
+    /// own tabs at the window's root — the split view one of them, beside a tab per pane — which a
+    /// Mac window shows in its toolbar. The inspector's shown state and pane are the selection, so
+    /// its button, View ▸ Inspector and ⌥⌘1–4 keep working. Changing the setting rebuilds the window's
+    /// content, which is fine for a setting.
+    @ViewBuilder private var shell: some View {
+        if app.appearance.inspector == .tabs {
+            TabView(selection: tab) {
+                Tab("Chat", systemImage: "bubble.left.and.text.bubble.right", value: AppTab.chat) { splitView }
+                ForEach(InspectorPane.allCases) { pane in
+                    Tab(pane.label, systemImage: pane.symbol, value: AppTab.pane(pane)) { PaneTab(window: window, pane: pane) }
+                }
+            }
+        } else {
+            splitView
+        }
+    }
+
+    enum AppTab: Hashable {
+        case chat
+        case pane(InspectorPane)
+    }
+
+    private var tab: Binding<AppTab> {
+        Binding(get: { window.showInspector ? .pane(window.inspectorPane) : .chat },
+                set: { tab in
+                    switch tab {
+                    case .chat: window.showInspector = false
+                    case .pane(let pane): window.openInspector(on: pane)
+                    }
+                })
+    }
+
+    private var splitView: some View {
         // No columnVisibility binding: writing it on every sidebar toggle rebuilt the toolbar mid-animation.
         NavigationSplitView {
             SidebarView(window: window)
@@ -89,42 +154,7 @@ public struct RootView: View {
         // Attached to the split view, so it is full height and present on every screen. Presented only
         // when Settings ▸ Advanced ▸ Inspector puts it beside the chat; its toolbar button stays
         // either way, and shows the inspector wherever it is.
-        .inspector(isPresented: columnInspector) {
-            InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-                .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
-                .toolbar {
-                    ToolbarSpacer(.flexible)
-                    ToolbarItem { InspectorToggle(window: window) }
-                }
-        }
-        // Reaches the inspector too, whose task list shows subagents the same way.
-        .environment(\.inspectSubagent, InspectSubagentAction(owner: window) { toolUseId in
-            window.inspectedTaskID = toolUseId
-            window.openInspector(on: .tasks)
-        })
-        .environment(\.restoreCode, ForkChatAction(owner: window) { window.restoreCode(before: $0) })
-        .environment(\.startSuggestedTask, StartSuggestedTaskAction(owner: window) { window.startSuggestedTask($0, from: $1) })
-        .environment(\.openChat, OpenChatAction(owner: window, resolve: { id in
-            // A desktop session's id carries a prefix ("local_…"); Claude Code's own is the rest.
-            let bare = id.split(separator: "_", maxSplits: 1).last.map(String.init) ?? id
-            return window.connection?.chats.first { $0.id == id || $0.id == bare }?.id
-        }, open: { window.open(threadID: $0) }))
-        .environment(\.showInspectorPane, ShowInspectorPaneAction(owner: window) { window.openInspector(on: $0) })
-        .environment(\.forkChat, ForkChatAction(owner: window) { messageID in
-            guard let thread = window.selectedThread, let connection = window.connection else { return }
-            Task { if let fork = await connection.fork(thread, at: messageID) { window.open(threadID: fork.id) } }
-        })
-        .environment(\.readingWidth, app.transcriptWidth.points)
-        .environment(\.textScale, app.textScale)
-        .environment(\.appearance, app.appearance)
-        .environment(\.hostIsLocal, window.connection?.host.isLocal == true)
-        .environment(\.openFilesWith, app.appearance.openFilesWith)
-        .environment(\.transcriptFind, window.find)
-        .environment(\.promptNavigator, window.prompts)
-        .environment(\.composerDrafts, ComposerDrafts(app: app))
-        .frame(minWidth: minWidth, minHeight: 400)
-        .chatActionAlerts(window)
-        .task { app.connectAll() }
+        .modifier(InspectorColumn(window: window, isPresented: columnInspector))
     }
 
     private var sessionControls: Appearance.SessionControlsPlacement { app.appearance.sessionControls }
@@ -144,6 +174,37 @@ public struct RootView: View {
     }
 }
 
+/// SwiftUI's inspector on the split view, full height, presented when Settings ▸ Advanced ▸ Show
+/// Panes In says Inspector. In the other placements it stays unpresented only to hold the
+/// inspector's button, which then sits at the window's trailing edge and never tints; with Tabs
+/// there's none, since the tabs choose the panes.
+private struct InspectorColumn: ViewModifier {
+    @Bindable var window: WindowModel
+    let isPresented: Binding<Bool>
+
+    func body(content: Content) -> some View {
+        if window.app.appearance.inspector == .tabs {
+            content
+        } else {
+            content.inspector(isPresented: isPresented) {
+                InspectorView(window: window, selectedTaskID: $window.inspectedTaskID, showsPicker: false)
+                    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+                    // The panes as a segmented control above the column, in its own toolbar, as Xcode
+                    // shows its inspectors'. Only for the column: the other placements have their own.
+                    .toolbar {
+                        ToolbarItem {
+                            if window.app.appearance.inspector == .column {
+                                InspectorPanePicker(pane: $window.inspectorPane)
+                            }
+                        }
+                        ToolbarSpacer(.flexible)
+                        ToolbarItem { InspectorToggle(window: window) }
+                    }
+            }
+        }
+    }
+}
+
 /// The selected chat, or the New Chat screen. One container, so the detail column is never torn down.
 struct DetailView: View {
     @Bindable var window: WindowModel
@@ -155,14 +216,15 @@ struct DetailView: View {
         // it's open, so opening it doesn't change the column's root. Not always: a split view here
         // beside the inspector column sent AppKit into its Update Constraints loop at launch.
         // Changing the placement rebuilds the column, which is fine for a setting.
-        if placement == .drawer {
+        switch placement {
+        case .drawer:
             VSplitView {
                 chat.frame(minHeight: 240)
                 if window.showInspector {
                     InspectorDrawer(window: window)
                 }
             }
-        } else {
+        case .column, .panel, .overlay, .tabs:
             chat
         }
     }
@@ -359,6 +421,21 @@ private func rootPreviewWindow() -> WindowModel {
     let window = rootPreviewWindow()
     window.app.appearance.inspector = .drawer
     window.showInspector = true
+    return RootView(window: window)
+        .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (inspector tabs)") {
+    let window = rootPreviewWindow()
+    window.app.appearance.inspector = .tabs
+    return RootView(window: window)
+        .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (inspector tabs, Changes)") {
+    let window = rootPreviewWindow()
+    window.app.appearance.inspector = .tabs
+    window.openInspector(on: .changes)
     return RootView(window: window)
         .frame(width: 1100, height: 760)
 }

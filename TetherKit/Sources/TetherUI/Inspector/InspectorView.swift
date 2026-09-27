@@ -5,11 +5,13 @@ import TetherKit
 struct InspectorView: View {
     @Bindable var window: WindowModel
     @Binding var selectedTaskID: String?
+    /// The pane tabs over the pane; not in the inspector column, whose toolbar holds them.
+    var showsPicker = true
 
     var body: some View {
         if let thread = window.selectedThread, let connection = window.connection {
             ThreadInspector(thread: thread, connection: connection, pane: $window.inspectorPane,
-                            selectedTaskID: $selectedTaskID)
+                            selectedTaskID: $selectedTaskID, showsPicker: showsPicker)
         } else {
             ContentUnavailableView("No Session", systemImage: "sidebar.trailing")
         }
@@ -26,12 +28,16 @@ struct ThreadInspector: View {
     @Binding var pane: InspectorPane
     @Binding var selectedTaskID: String?
 
+    /// The pane tabs over the pane; not when the toolbar's tabs already choose it.
+    var showsPicker = true
+
     init(thread: ThreadModel, connection: HostConnection, pane: Binding<InspectorPane> = .constant(.tasks),
-         selectedTaskID: Binding<String?> = .constant(nil)) {
+         selectedTaskID: Binding<String?> = .constant(nil), showsPicker: Bool = true) {
         self.thread = thread
         self.connection = connection
         self._pane = pane
         self._selectedTaskID = selectedTaskID
+        self.showsPicker = showsPicker
     }
 
     var body: some View {
@@ -47,6 +53,12 @@ struct ThreadInspector: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // A bar, so a pane's form scrolls under it with the standard edge effect.
         .safeAreaBar(edge: .top) {
+            if showsPicker { panePicker }
+        }
+    }
+
+    private var panePicker: some View {
+        Group {
             // `.tabs` rather than `.segmented`: it switches views rather than choosing a value,
             // and VoiceOver announces the options as tabs.
             Picker("Inspector", selection: $pane) {
@@ -57,6 +69,43 @@ struct ThreadInspector: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
         }
+    }
+}
+
+/// The inspector's panes as a segmented control of their symbols, in the inspector column's own
+/// toolbar, as Xcode shows its inspectors'. Each segment is named for VoiceOver and its help tag.
+struct InspectorPanePicker: View {
+    @Binding var pane: InspectorPane
+
+    var body: some View {
+        Picker("Inspector", selection: $pane) {
+            ForEach(InspectorPane.allCases) { pane in
+                Label(pane.label, systemImage: pane.symbol).tag(pane).help(pane.label)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelStyle(.iconOnly)
+        .labelsHidden()
+    }
+}
+
+/// One pane as a whole tab of the window (Settings ▸ Advanced ▸ Inspector ▸ Tabs): the chat's, or
+/// a placeholder on New Chat. The chat's title stays the window's.
+struct PaneTab: View {
+    @Bindable var window: WindowModel
+    let pane: InspectorPane
+
+    var body: some View {
+        Group {
+            if let thread = window.selectedThread, let connection = window.connection {
+                ThreadInspector(thread: thread, connection: connection, pane: .constant(pane),
+                                selectedTaskID: $window.inspectedTaskID, showsPicker: false)
+            } else {
+                ContentUnavailableView("No Session", systemImage: pane.symbol)
+            }
+        }
+        .navigationTitle(window.selectedThread?.title ?? "New Chat")
+        .navigationSubtitle(window.subtitle)
     }
 }
 
@@ -82,6 +131,7 @@ extension Appearance.InspectorPlacement {
         case .panel: "macwindow.on.rectangle"
         case .drawer: "rectangle.bottomthird.inset.filled"
         case .overlay: "rectangle.inset.topright.filled"
+        case .tabs: "rectangle.split.3x1"
         }
     }
 }
