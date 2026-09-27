@@ -56,9 +56,11 @@ struct AttentionTests {
         let app = AppModel(defaults: store)
         app.alerts.dockBadge = .working
         app.alerts.sound = false
+        app.alerts.menuBarExtra = true
         let restored = AppModel(defaults: store).alerts
         #expect(restored.dockBadge == .working)
         #expect(!restored.sound)
+        #expect(restored.menuBarExtra)
         #expect(restored.needsInput)
     }
 }

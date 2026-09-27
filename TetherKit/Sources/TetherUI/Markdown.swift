@@ -177,6 +177,9 @@ struct MarkdownBlockView: View, Equatable {
         case .heading(let level, _):
             line.scaledFont(level == 1 ? .title2 : level == 2 ? .title3 : .headline, weight: .bold)
                 .padding(.top, 6)
+                // So VoiceOver's headings rotor steps through a long reply.
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityHeading(level == 1 ? .h1 : level == 2 ? .h2 : level == 3 ? .h3 : .h4)
         case .paragraph:
             line
         case .bullet(let indent, let marker, _):

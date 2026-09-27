@@ -33,10 +33,11 @@ struct NotificationSettings: View {
             } footer: {
                 Text("A permission request’s notification has Allow and Deny, so it can be answered without switching.")
             }
-            Section("Dock") {
+            Section("Dock and Menu Bar") {
                 Picker("Badge Shows", selection: $app.alerts.dockBadge) {
                     ForEach(AlertPreferences.DockBadge.allCases) { Text($0.label).tag($0) }
                 }
+                Toggle("Show Chats in the Menu Bar", isOn: $app.alerts.menuBarExtra)
             }
         }
         .formStyle(.grouped)

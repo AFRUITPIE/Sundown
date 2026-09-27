@@ -58,5 +58,12 @@ struct TetherApp: App {
         }
         // The Settings view supplies the split window's minimum size.
         Settings { SettingsView(app: app) }
+        // Off unless Settings ▸ Notifications turns it on.
+        MenuBarExtra(isInserted: Binding(get: { app.alerts.menuBarExtra }, set: { app.alerts.menuBarExtra = $0 })) {
+            MenuBarChats(app: app)
+        } label: {
+            MenuBarLabel(app: app)
+        }
+        .menuBarExtraStyle(.menu)
     }
 }

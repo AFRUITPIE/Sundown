@@ -130,6 +130,22 @@ public final class AppModel {
     /// The Dock icon's menu.
     public func dockMenu() -> NSMenu? { attention?.dockMenu() }
 
+    /// Brings a chat to the front, in the key window or a new one.
+    public func showChat(host: UUID, threadID: String) {
+        startAttention()
+        attention?.open(host: host, threadID: threadID)
+    }
+
+    /// New Chat in the front window, or a new window if none is open.
+    public func showNewChat() {
+        NSApp.activate()
+        if let window = openWindows.first(where: \.isKey) ?? openWindows.first {
+            window.newChat()
+        } else {
+            openWindow?(WindowTarget(hostID: lastHostID))
+        }
+    }
+
     /// Defaults for new threads, per app (persisted).
     public var defaultModel: String? { didSet { save() } }
     public var defaultEffort: String? { didSet { save() } }

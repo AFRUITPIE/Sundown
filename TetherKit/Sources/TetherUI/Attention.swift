@@ -10,6 +10,7 @@ public struct AlertPreferences: Codable, Equatable, Sendable {
     public var needsInput = true
     public var sound = true
     public var dockBadge: DockBadge = .waiting
+    public var menuBarExtra = false
 
     public init() {}
 
@@ -44,6 +45,7 @@ public struct AlertPreferences: Codable, Equatable, Sendable {
         needsInput = (try? c.decodeIfPresent(Bool.self, forKey: .needsInput)) ?? d.needsInput
         sound = (try? c.decodeIfPresent(Bool.self, forKey: .sound)) ?? d.sound
         dockBadge = (try? c.decodeIfPresent(DockBadge.self, forKey: .dockBadge)) ?? d.dockBadge
+        menuBarExtra = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarExtra)) ?? d.menuBarExtra
     }
 }
 
@@ -129,7 +131,11 @@ final class AttentionCenter: NSObject {
         let failed = info.status == TurnStatus.failed.rawValue
         // A turn you stopped isn't news.
         guard info.status != TurnStatus.interrupted.rawValue else { return }
-        guard Self.shouldNotify(.replyFinished(failed: failed), prefs: app.alerts, appIsActive: NSApp.isActive, chatIsShown: isShown(thread)) else { return }
+        guard Self.shouldNotify(.replyFinished(failed: failed), prefs: app.alerts, appIsActive: NSApp.isActive, chatIsShown: isShown(thread)) else {
+            // In front of you: no notification, but VoiceOver hears that the reply is done.
+            if isShown(thread) { announce(failed ? "Claude couldn’t finish." : "Claude finished.") }
+            return
+        }
         post(id: "turn-\(id)", title: thread.title, body: failed ? "Claude couldn’t finish." : Self.lastReplyLine(thread),
              host: connection.id, threadID: id)
     }
@@ -137,8 +143,11 @@ final class AttentionCenter: NSObject {
     private func needsInput(_ info: Info) {
         guard let connection = info.connection, let id = info.threadID else { return }
         let thread = connection.thread(id)
-        guard Self.shouldNotify(.needsInput, prefs: app.alerts, appIsActive: NSApp.isActive, chatIsShown: isShown(thread)) else { return }
         let request = thread.pending.first { $0.id == info.requestID }?.request
+        guard Self.shouldNotify(.needsInput, prefs: app.alerts, appIsActive: NSApp.isActive, chatIsShown: isShown(thread)) else {
+            if isShown(thread) { announce(Self.describe(request)) }
+            return
+        }
         post(id: "request-\(info.requestID ?? id)", title: thread.title, body: Self.describe(request),
              host: connection.id, threadID: id, requestID: info.requestID,
              category: request.map { if case .permissionRequest = $0 { true } else { false } } == true ? Self.permissionCategory.identifier : nil)
@@ -164,6 +173,13 @@ final class AttentionCenter: NSObject {
         case .elicitationRequest: "An MCP server needs your input."
         default: "Claude needs your input."
         }
+    }
+
+    /// Spoken by VoiceOver, for what happens in the chat on screen while the reader is elsewhere
+    /// in it.
+    private func announce(_ text: String) {
+        guard NSWorkspace.shared.isVoiceOverEnabled else { return }
+        AccessibilityNotification.Announcement(text).post()
     }
 
     // MARK: delivering
@@ -284,14 +300,7 @@ final class AttentionCenter: NSObject {
         open(host: host, threadID: ids[1])
     }
 
-    @objc private func newChatFromDock() {
-        NSApp.activate()
-        if let window = app.openWindows.first(where: \.isKey) ?? app.openWindows.first {
-            window.newChat()
-        } else {
-            app.openWindow?(WindowTarget(hostID: app.lastHostID))
-        }
-    }
+    @objc private func newChatFromDock() { app.showNewChat() }
 }
 
 extension AttentionCenter: UNUserNotificationCenterDelegate {

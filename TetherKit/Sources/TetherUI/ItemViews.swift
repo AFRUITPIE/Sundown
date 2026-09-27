@@ -249,6 +249,9 @@ struct UserMessageView: View {
             }
         }
         .foregroundStyle(message.synthetic == true ? .secondary : .primary)
+        // A group VoiceOver names as it enters: whose message this is.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(message.synthetic == true ? Self.originLabel(message.origin) : "You")
     }
 }
 
