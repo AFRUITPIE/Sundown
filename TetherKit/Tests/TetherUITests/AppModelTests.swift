@@ -439,3 +439,17 @@ struct SettingsDestinationTests {
 private final class Flag: @unchecked Sendable {
     var raised = false
 }
+
+@MainActor
+@Suite
+struct WorktreeRemovalTests {
+    /// Only Tether's own worktrees are offered for removal, from the chat's folder or a subfolder of
+    /// it; Claude Desktop's, beside them, are left alone.
+    @Test func onlyTethersOwnWorktreesAreOffered() {
+        #expect(WindowModel.tetherWorktree("/r/app/.claude/worktrees/tether-0a1b2c3d") == "/r/app/.claude/worktrees/tether-0a1b2c3d")
+        #expect(WindowModel.tetherWorktree("/r/app/.claude/worktrees/tether-0a1b2c3d/TetherKit") == "/r/app/.claude/worktrees/tether-0a1b2c3d")
+        #expect(WindowModel.tetherWorktree("/r/app/.claude/worktrees/brave-otter") == nil)
+        #expect(WindowModel.tetherWorktree("/r/app/.claude/worktrees/tether-XYZ") == nil)
+        #expect(WindowModel.tetherWorktree("/r/app") == nil)
+    }
+}

@@ -107,14 +107,33 @@ public final class WindowModel {
     /// Chat ▸ Ask a Side Question… (⌥⌘;) is showing its sheet.
     var askingSideQuestion = false
 
-    /// A worktree to offer removing, once the chat that worked in it is archived or deleted; and
-    /// whether that offer is the second, for one with uncommitted changes.
-    var worktreeToRemove: (path: String, dirty: Bool)?
+    /// A worktree to offer removing, once the chat that worked in it is archived or deleted, and
+    /// what removing it would lose that the host asked about.
+    var worktreeToRemove: WorktreeRemoval?
+    /// Why removing a worktree failed, for its alert.
+    var worktreeError: String?
+
+    struct WorktreeRemoval: Equatable {
+        let path: String
+        /// Discard uncommitted changes: the host said there are some, and the second ask was answered.
+        var force = false
+        /// Delete the branch's commits that are merged nowhere else, likewise.
+        var discardCommits = false
+    }
 
     /// After archiving or deleting `thread`: if it worked in a worktree Tether made, offer to remove it.
     func offerWorktreeRemoval(for thread: ThreadModel) {
-        guard let cwd = thread.cwd, cwd.contains("/.claude/worktrees/") else { return }
-        worktreeToRemove = (cwd, false)
+        guard let root = thread.cwd.flatMap(Self.tetherWorktree) else { return }
+        worktreeToRemove = WorktreeRemoval(path: root)
+    }
+
+    /// The worktree `cwd` is in, when Tether made it: `<repo>/.claude/worktrees/tether-<8 hex>`. The
+    /// chat may work in a subfolder of it; Claude Desktop's worktrees, beside Tether's, aren't ours.
+    static func tetherWorktree(_ cwd: String) -> String? {
+        guard let marker = cwd.range(of: "/.claude/worktrees/") else { return nil }
+        let name = cwd[marker.upperBound...].split(separator: "/", maxSplits: 1).first.map(String.init) ?? ""
+        guard name.wholeMatch(of: /tether-[0-9a-f]{8}/) != nil else { return nil }
+        return String(cwd[..<marker.upperBound]) + name
     }
 
     /// Restore Code to Here…: the prompt whose files are being put back, and what that changes.

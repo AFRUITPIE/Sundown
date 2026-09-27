@@ -628,11 +628,12 @@ public final class HostConnection: Identifiable {
         try? await client?.call(Methods.GitStatus.self, .init(cwd: cwd))
     }
 
-    /// Removes a worktree a chat started in, and its branch. Throws when it has uncommitted changes,
-    /// unless `force`.
-    public func removeWorktree(_ path: String, force: Bool) async throws {
+    /// Removes a worktree Tether made for a chat, and its branch. Throws `RPCError.worktreeDirty`
+    /// when it has uncommitted changes, unless `force`, and `RPCError.worktreeUnmerged` when its
+    /// branch has commits merged nowhere else, unless `discardCommits`.
+    public func removeWorktree(_ path: String, force: Bool, discardCommits: Bool) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
-        _ = try await client.call(Methods.GitRemoveWorktree.self, .init(path: path, force: force))
+        _ = try await client.call(Methods.GitRemoveWorktree.self, .init(path: path, force: force, discardCommits: discardCommits))
     }
 
     // MARK: plugins

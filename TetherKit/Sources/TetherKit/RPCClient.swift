@@ -10,6 +10,10 @@ public struct RPCError: LocalizedError, Sendable {
     public static let threadNotFound = -32010
     /// The server no longer serves this app's protocol.
     public static let incompatibleProtocol = -32004
+    /// `git/removeWorktree`: the worktree has uncommitted changes; retry with `force`.
+    public static let worktreeDirty = -32030
+    /// `git/removeWorktree`: its branch has commits merged nowhere else; retry with `discardCommits`.
+    public static let worktreeUnmerged = -32031
 }
 
 /// JSON-RPC (Codex-style, no "jsonrpc" field) over a line transport.

@@ -74,15 +74,20 @@ struct ChatActionAlerts: ViewModifier {
             } message: {
                 Text("Its transcript is removed from \(window.host?.name ?? "the host"). This can’t be undone.")
             }
-            .alert(window.worktreeToRemove?.dirty == true ? "The Worktree Has Uncommitted Changes" : "Remove Its Worktree?",
+            .alert(worktreeTitle,
                    isPresented: Binding(get: { window.worktreeToRemove != nil }, set: { if !$0 { window.worktreeToRemove = nil } })) {
-                Button(window.worktreeToRemove?.dirty == true ? "Remove Anyway" : "Remove Worktree") { removeWorktree() }
+                Button(worktreeAction, role: window.worktreeToRemove.map { $0.force || $0.discardCommits } == true ? .destructive : nil) {
+                    removeWorktree()
+                }
                 Button("Keep", role: .cancel) { window.worktreeToRemove = nil }
             } message: {
-                let name = ((window.worktreeToRemove?.path ?? "") as NSString).lastPathComponent
-                Text(window.worktreeToRemove?.dirty == true
-                     ? "Removing \(name) discards the changes in it that weren’t committed."
-                     : "The chat worked in \(name), a worktree of its own. Removing it deletes the folder and its branch.")
+                Text(worktreeMessage)
+            }
+            .alert("Couldn’t Remove the Worktree",
+                   isPresented: Binding(get: { window.worktreeError != nil }, set: { if !$0 { window.worktreeError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(window.worktreeError ?? "")
             }
             .sheet(isPresented: $window.askingSideQuestion) {
                 if let thread = window.selectedThread, let connection = window.connection {
@@ -149,12 +154,42 @@ struct ChatActionAlerts: ViewModifier {
         window.worktreeToRemove = nil
         Task {
             do {
-                try await connection.removeWorktree(target.path, force: target.dirty)
-            } catch let error where !target.dirty && "\(error)".contains("uncommitted") {
-                // Uncommitted changes: asked again, plainly, before they're discarded.
-                window.worktreeToRemove = (target.path, true)
-            } catch {}
+                try await connection.removeWorktree(target.path, force: target.force, discardCommits: target.discardCommits)
+            } catch let error as RPCError where error.code == RPCError.worktreeDirty && !target.force {
+                // Uncommitted changes, or commits merged nowhere else: asked again, plainly, before
+                // they're lost. The second ask keeps what the first answered.
+                var next = target
+                next.force = true
+                window.worktreeToRemove = next
+            } catch let error as RPCError where error.code == RPCError.worktreeUnmerged && !target.discardCommits {
+                var next = target
+                next.discardCommits = true
+                window.worktreeToRemove = next
+            } catch {
+                window.worktreeError = error.localizedDescription
+            }
         }
+    }
+
+    private var worktreeName: String { ((window.worktreeToRemove?.path ?? "") as NSString).lastPathComponent }
+
+    private var worktreeTitle: String {
+        guard let target = window.worktreeToRemove else { return "Remove Its Worktree?" }
+        if target.discardCommits { return "Its Branch Has Commits Nowhere Else" }
+        if target.force { return "The Worktree Has Uncommitted Changes" }
+        return "Remove Its Worktree?"
+    }
+
+    private var worktreeAction: String {
+        guard let target = window.worktreeToRemove else { return "Remove Worktree" }
+        return target.force || target.discardCommits ? "Remove Anyway" : "Remove Worktree"
+    }
+
+    private var worktreeMessage: String {
+        guard let target = window.worktreeToRemove else { return "" }
+        if target.discardCommits { return "Removing \(worktreeName) deletes its branch and the commits on it that aren’t merged anywhere else." }
+        if target.force { return "Removing \(worktreeName) discards the changes in it that weren’t committed." }
+        return "The chat worked in \(worktreeName), a worktree of its own. Removing it deletes the folder and its branch."
     }
 
     private var deleteTitle: String {
