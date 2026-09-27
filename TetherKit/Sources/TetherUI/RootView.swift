@@ -47,8 +47,6 @@ public struct WindowRoot: View {
 
 public struct RootView: View {
     @Bindable var window: WindowModel
-    /// Whether the inspector has finished opening; see `minWidth`.
-    @State private var inspectorSettled = true
 
     public init(window: WindowModel) {
         self.window = window
@@ -63,9 +61,6 @@ public struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
             DetailView(window: window)
-                // Declared, like the other columns': measured from the content instead, a window at its
-                // minimum width went into an endless layout pass when the inspector opened.
-                .navigationSplitViewColumnWidth(min: 520, ideal: 720)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(window.selectedThread?.title ?? "New Chat")
@@ -129,27 +124,18 @@ public struct RootView: View {
         .environment(\.promptNavigator, window.prompts)
         .environment(\.composerDrafts, ComposerDrafts(app: app))
         .frame(minWidth: minWidth, minHeight: 400)
-        .onChange(of: window.showInspector) { _, shown in
-            inspectorSettled = false
-            guard shown else { return }
-            Task {
-                try? await Task.sleep(for: .milliseconds(400))
-                if window.showInspector { inspectorSettled = true }
-            }
-        }
         .chatActionAlerts(window)
         .task { app.connectAll() }
     }
 
     private var sessionControls: Appearance.SessionControlsPlacement { app.appearance.sessionControls }
 
-    /// The columns' minimums (sidebar 220, detail 520, inspector 260). While the inspector opens
-    /// there is none: AppKit then grows a narrow window along with the inspector's animation,
-    /// where a minimum raised at the same moment jumps it wider first. Once open, the minimum
-    /// replaces the one AppKit leaves behind, which is the window's whole width at that point.
+    /// The sidebar's and detail's minimums (220 + 520) while the inspector column is closed. While
+    /// it's open there is none: SwiftUI then keeps the window at least as wide as its columns, and an
+    /// explicit minimum below that let the window shrink under them, clipping the sidebar and the
+    /// inspector at both edges.
     private var minWidth: CGFloat? {
-        guard app.appearance.inspector == .column, window.showInspector else { return 740 }
-        return inspectorSettled ? 1000 : nil
+        app.appearance.inspector == .column && window.showInspector ? nil : 740
     }
 
     /// The inspector column, open only in its placement.
