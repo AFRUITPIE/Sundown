@@ -96,6 +96,8 @@ private actor FixtureScript {
     private var deleted: Set<String> = []
     /// A fork's id, and the chat whose items it reads.
     private var forks: [String: String] = [:]
+    /// How many times Restore Code has run.
+    private var rewound = 0
 
     init(pendingPermission: Bool, performance: Bool) {
         self.pendingPermission = pendingPermission
@@ -199,6 +201,12 @@ private actor FixtureScript {
             if performance { return performanceTurn(threadID: id, input: params["input"]) }
             return .init(value: .result(json(TurnStartResult(turnId: "fixture-turn", messageId: "fixture-message", queued: false))),
                          notifications: turnNotifications(threadID: id, input: params["input"]))
+        case "thread/rewindFiles":
+            let dryRun = params["dryRun"]?.boolValue ?? false
+            rewound += dryRun ? 0 : 1
+            // Once put back, there's nothing left to restore.
+            let changed: JSONValue = rewound > 0 && dryRun ? [] : ["/tmp/tether-fixture/Sources/App.swift", "/tmp/tether-fixture/README.md"]
+            return .init(value: .result(["result": ["canRewind": true, "filesChanged": changed, "insertions": 12, "deletions": 3]]))
         case "command/list": return .init(value: .result(["commands": []]))
         case "fs/search": return .init(value: .result(["paths": []]))
         default: return .init(value: .error("Unexpected fixture method: \(method)"))

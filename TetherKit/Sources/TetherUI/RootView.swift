@@ -78,6 +78,7 @@ public struct RootView: View {
             inspectedTaskID = toolUseId
             window.openInspector(on: .tasks)
         })
+        .environment(\.restoreCode, ForkChatAction(owner: window) { window.restoreCode(before: $0) })
         .environment(\.showInspectorPane, ShowInspectorPaneAction(owner: window) { window.openInspector(on: $0) })
         .environment(\.forkChat, ForkChatAction(owner: window) { messageID in
             guard let thread = window.selectedThread, let connection = window.connection else { return }

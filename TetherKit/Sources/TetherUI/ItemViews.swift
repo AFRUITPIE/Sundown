@@ -67,6 +67,7 @@ private struct MessageMenu: ViewModifier {
     /// Milliseconds since 1970.
     let sentAt: Double
     @Environment(\.forkChat) private var forkChat
+    @Environment(\.restoreCode) private var restoreCode
     @Environment(\.appearance) private var appearance
     @State private var hovering = false
 
@@ -89,6 +90,8 @@ private struct MessageMenu: ViewModifier {
             if isMarkdown { Button("Copy as Markdown") { copy(text) } }
             Divider()
             Button("Fork from Here") { forkChat(id) }
+            // Files go back to a prompt's checkpoint; a reply has none of its own.
+            if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
         }
         .overlay(alignment: trailing ? .topLeading : .topTrailing) {
             if hovering, barShowsActions || barShowsTime { bar.offset(y: -14) }
@@ -164,6 +167,8 @@ struct ForkChatAction: Equatable {
 
 extension EnvironmentValues {
     @Entry var forkChat = ForkChatAction(owner: nil) { _ in }
+    /// Restore Code to Here…, for a prompt. The same shape as Fork from Here's.
+    @Entry var restoreCode = ForkChatAction(owner: nil) { _ in }
 }
 
 struct UserMessageView: View {

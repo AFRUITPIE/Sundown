@@ -140,4 +140,25 @@ final class ComposerAndMessageUITests: XCTestCase {
         XCTAssertTrue(running.waitForExistence(timeout: 10))
         XCTAssertTrue(running.waitForNonExistence(timeout: 10))
     }
+
+    /// Restore Code to Here… says which files go back before doing it, and then can't again.
+    @MainActor
+    func testRestoreCodeConfirmsFirst() {
+        let app = launch()
+        let prompt = app.staticTexts["Summarize this project"].firstMatch
+        XCTAssertTrue(prompt.waitForExistence(timeout: 15))
+
+        prompt.rightClick()
+        visibleMenuItem(app, "Restore Code to Here…").click()
+        XCTAssertTrue(app.staticTexts["Restore Files to Before This Message?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS 'App.swift, README.md'")).firstMatch.exists
+                      || app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'App.swift, README.md'")).firstMatch.exists)
+        windowButton(app, "Restore").click()
+        XCTAssertTrue(app.staticTexts["Restore Files to Before This Message?"].waitForNonExistence(timeout: 5))
+
+        prompt.rightClick()
+        visibleMenuItem(app, "Restore Code to Here…").click()
+        XCTAssertTrue(app.staticTexts["No Files to Restore"].waitForExistence(timeout: 5))
+        windowButton(app, "OK").click()
+    }
 }

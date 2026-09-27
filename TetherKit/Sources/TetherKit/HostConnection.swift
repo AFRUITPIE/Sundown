@@ -414,27 +414,39 @@ public final class HostConnection: Identifiable {
         return model
     }
 
+    /// Not loaded in the daemon, or only followed: resume it there. A follower numbers its events
+    /// separately, so the history is reloaded to take up the live thread's seqs.
+    private func makeLive(_ model: ThreadModel, _ client: RPCClient) async throws {
+        guard !subscribed.contains(model.id) || model.isFollowed else { return }
+        // Resumed with what the controls show: the session's own settings, or the ones picked
+        // while it wasn't loaded.
+        let pending = model.takePendingSettings()
+        let r = try await client.call(Methods.ThreadResume.self, .init(
+            threadId: model.id, cwd: model.cwd,
+            model: pending.model ?? model.info?.model,
+            effort: pending.effort ?? model.info?.effort,
+            permissionMode: pending.permissionMode ?? model.info?.permissionMode,
+            includeHistory: true, limit: Self.initialHistoryLimit))
+        model.loadHistory(items: r.items ?? model.items, turns: r.turns ?? model.turns,
+                          seq: r.historySeq, hasMore: r.hasMore ?? false)
+        model.setInfo(r.thread)
+        subscribed.insert(model.id)
+        try await apply(pending, to: model, over: r.thread, client)
+    }
+
+    /// What restoring the files to before a prompt would change (`dryRun`), or did change. Claude
+    /// Code keeps a checkpoint of each file an edit touched, per prompt.
+    public func rewindFiles(_ model: ThreadModel, to userMessageID: String, dryRun: Bool) async throws -> RewindResult {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        try await makeLive(model, client)
+        let r = try await client.call(Methods.ThreadRewindFiles.self, .init(threadId: model.id, userMessageId: userMessageID, dryRun: dryRun))
+        return RewindResult(r.result)
+    }
+
     public func send(_ model: ThreadModel, input: [UserInput]) async {
         guard let client else { model.setError("Not connected"); return }
         do {
-            // Not loaded in the daemon, or only followed: resume it there. A follower numbers its
-            // events separately, so the history is reloaded to take up the live thread's seqs.
-            if !subscribed.contains(model.id) || model.isFollowed {
-                // Resumed with what the controls show: the session's own settings, or the ones
-                // picked while it wasn't loaded.
-                let pending = model.takePendingSettings()
-                let r = try await client.call(Methods.ThreadResume.self, .init(
-                    threadId: model.id, cwd: model.cwd,
-                    model: pending.model ?? model.info?.model,
-                    effort: pending.effort ?? model.info?.effort,
-                    permissionMode: pending.permissionMode ?? model.info?.permissionMode,
-                    includeHistory: true, limit: Self.initialHistoryLimit))
-                model.loadHistory(items: r.items ?? model.items, turns: r.turns ?? model.turns,
-                                  seq: r.historySeq, hasMore: r.hasMore ?? false)
-                model.setInfo(r.thread)
-                subscribed.insert(model.id)
-                try await apply(pending, to: model, over: r.thread, client)
-            }
+            try await makeLive(model, client)
             _ = try await client.call(Methods.TurnStart.self, .init(threadId: model.id, input: input))
             model.setError(nil)
         } catch {
@@ -606,6 +618,23 @@ public struct NewThreadOptions: Sendable {
         self.effort = effort
         self.permissionMode = permissionMode
         self.fastMode = fastMode
+    }
+}
+
+/// The SDK's answer to a file rewind: whether it can, which files it changes, and how much.
+public struct RewindResult: Sendable, Equatable {
+    public let canRewind: Bool
+    public let error: String?
+    public let files: [String]
+    public let insertions: Int
+    public let deletions: Int
+
+    public init(_ value: JSONValue) {
+        canRewind = value["canRewind"]?.boolValue ?? false
+        error = value["error"]?.stringValue
+        files = value["filesChanged"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        insertions = value["insertions"]?.intValue ?? 0
+        deletions = value["deletions"]?.intValue ?? 0
     }
 }
 

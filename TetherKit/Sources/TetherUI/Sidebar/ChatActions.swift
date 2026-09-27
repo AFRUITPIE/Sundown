@@ -65,6 +65,59 @@ struct ChatActionAlerts: ViewModifier {
             } message: {
                 Text("Its transcript is removed from \(window.host?.name ?? "the host"). This can’t be undone.")
             }
+            .alert(restoreTitle, isPresented: Binding(get: { window.restoring != nil }, set: { if !$0 { window.restoring = nil } })) {
+                restoreActions()
+            } message: {
+                Text(restoreMessage)
+            }
+    }
+
+    @ViewBuilder private func restoreActions() -> some View {
+        if case .success(let preview) = window.restoring?.result, preview.canRewind, !preview.files.isEmpty {
+            Button("Restore") {
+                guard let restore = window.restoring, let connection = window.connection else { return }
+                window.restoring = nil
+                Task {
+                    do {
+                        let done = try await connection.rewindFiles(restore.thread, to: restore.messageID, dryRun: false)
+                        // Said so only when it didn't work; the files changing is the confirmation.
+                        if !done.canRewind {
+                            window.restoring = .init(thread: restore.thread, messageID: restore.messageID, result: .success(done))
+                        }
+                    } catch {
+                        window.restoring = .init(thread: restore.thread, messageID: restore.messageID, result: .failure(error))
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) { window.restoring = nil }
+        } else {
+            Button("OK", role: .cancel) { window.restoring = nil }
+        }
+    }
+
+    private var restoreTitle: String {
+        switch window.restoring?.result {
+        case .success(let p) where p.canRewind && !p.files.isEmpty: "Restore Files to Before This Message?"
+        case .success(let p) where p.canRewind: "No Files to Restore"
+        default: "Can’t Restore Files"
+        }
+    }
+
+    private var restoreMessage: String {
+        switch window.restoring?.result {
+        case .success(let p) where p.canRewind && !p.files.isEmpty:
+            let names = p.files.prefix(5).map { ($0 as NSString).lastPathComponent }
+            let more = p.files.count > 5 ? " and \(p.files.count - 5) more" : ""
+            return "\(names.joined(separator: ", "))\(more) will go back to how they were before this message (\(p.insertions) lines added and \(p.deletions) removed since). The conversation stays as it is."
+        case .success(let p) where p.canRewind:
+            return "Claude hasn’t changed any files since this message."
+        case .success(let p):
+            return p.error ?? "Claude Code has no checkpoint for this message."
+        case .failure(let e):
+            return e.localizedDescription
+        case nil:
+            return ""
+        }
     }
 
     private var deleteTitle: String {

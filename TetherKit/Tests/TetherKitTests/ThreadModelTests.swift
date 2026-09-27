@@ -201,4 +201,13 @@ struct ThreadModelTests {
 /// Observation's `onChange` is `@Sendable`, so the flag it sets needs a reference to live in.
 private final class Invalidation: @unchecked Sendable {
     var happened = false
+
+    @Test func aRewindResultReadsTheSDKsAnswer() {
+        let r = RewindResult(["canRewind": true, "filesChanged": ["/a.swift", "/b.swift"], "insertions": 4, "deletions": 1])
+        #expect(r.canRewind)
+        #expect(r.files == ["/a.swift", "/b.swift"])
+        #expect(r.insertions == 4 && r.deletions == 1)
+        let no = RewindResult(["canRewind": false, "error": "No checkpoint"])
+        #expect(!no.canRewind && no.error == "No checkpoint" && no.files.isEmpty)
+    }
 }

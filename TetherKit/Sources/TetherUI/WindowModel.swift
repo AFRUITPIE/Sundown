@@ -80,6 +80,28 @@ public final class WindowModel {
     /// The chat Rename… or Delete… is acting on, from the Chat menu or a sidebar row's context menu.
     public private(set) var renaming: ThreadModel?
     public var deleting: ThreadModel?
+    /// Restore Code to Here…: the prompt whose files are being put back, and what that changes.
+    var restoring: Restore?
+
+    struct Restore {
+        let thread: ThreadModel
+        let messageID: String
+        let result: Result<RewindResult, Error>
+    }
+
+    /// Asks Claude Code what putting the files back to before `messageID` would change, then
+    /// shows that for confirmation.
+    func restoreCode(before messageID: String) {
+        guard let thread = selectedThread, let connection else { return }
+        Task {
+            do {
+                let preview = try await connection.rewindFiles(thread, to: messageID, dryRun: true)
+                restoring = Restore(thread: thread, messageID: messageID, result: .success(preview))
+            } catch {
+                restoring = Restore(thread: thread, messageID: messageID, result: .failure(error))
+            }
+        }
+    }
     /// The Rename field's text, filled in before the alert appears so it never opens empty.
     public var renameTitle = ""
 
