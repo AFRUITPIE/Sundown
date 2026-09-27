@@ -38,6 +38,9 @@ public struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
             DetailView(window: window)
+                // Declared, like the other columns': measured from the content instead, a window at its
+                // minimum width went into an endless layout pass when the inspector opened.
+                .navigationSplitViewColumnWidth(min: 520, ideal: 720)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(window.selectedThread?.title ?? "New Chat")

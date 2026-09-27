@@ -242,4 +242,28 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertTrue(jump.waitForNonExistence(timeout: 5))
         XCTAssertTrue(latest.isHittable)
     }
+
+    /// Opening and closing the inspector in a window as narrow as it goes. The detail column's
+    /// minimum used to come from whatever its content measured, and with the composer's + button
+    /// that made AppKit lay the window out again and again until it gave up and crashed.
+    @MainActor
+    func testInspectorInANarrowWindow() {
+        let app = launch(scenario: "performance")
+        XCTAssertTrue(app.staticTexts["Section 29: tightening the renderer"].firstMatch.waitForExistence(timeout: 20))
+        let window = app.windows.firstMatch
+        // As narrow as the window allows: the drag goes further than the minimum.
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -3, dy: -3))
+        corner.click(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: -600, dy: 0)),
+                     withVelocity: XCUIGestureVelocity(600), thenHoldForDuration: 0.1)
+
+        for _ in 0..<3 {
+            app.typeKey("i", modifierFlags: [.command, .option])
+            Thread.sleep(forTimeInterval: 1)
+            app.typeKey("i", modifierFlags: [.command, .option])
+            Thread.sleep(forTimeInterval: 1)
+        }
+
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertTrue(window.exists)
+    }
 }
