@@ -5,6 +5,8 @@ import TetherKit
 /// go when the window closes, and hands it to the menu bar while the window is frontmost.
 public struct WindowRoot: View {
     @State private var window: WindowModel
+    @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.openWindow) private var openWindow
 
     public init(app: AppModel, target: WindowTarget? = nil) {
         // Side-effect free until `start()`, so a discarded instance leaves nothing behind.
@@ -14,8 +16,14 @@ public struct WindowRoot: View {
     public var body: some View {
         RootView(window: window)
             .focusedSceneValue(\.window, window)
-            .onAppear { window.start() }
+            .onAppear {
+                window.start()
+                // So a notification or the Dock menu can open a window when none is left.
+                let open = openWindow
+                window.app.openWindow = { open(value: $0) }
+            }
             .onDisappear { window.close() }
+            .onChange(of: appearsActive, initial: true) { window.isKey = appearsActive }
     }
 }
 

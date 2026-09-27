@@ -217,6 +217,32 @@ final class AppearanceUITests: XCTestCase {
         XCTAssertFalse(isOn(compact))
         XCTAssertFalse(restore.isEnabled)
     }
+
+    /// Settings ▸ Notifications has its choices, and they're kept.
+    @MainActor
+    func testNotificationChoicesAreKept() {
+        let suite = "tether.uitest.alerts.\(UUID().uuidString)"
+        var app = launch(defaults: suite)
+        waitForLongChat(app)
+        app.typeKey(",", modifierFlags: .command)
+        var settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        settings.outlines["Sidebar"].staticTexts["Notifications"].click()
+        choose(settings, "Badge Shows", "Chats Claude Is Working In")
+        let sound = toggle(settings, "Play a Sound")
+        XCTAssertTrue(isOn(sound))
+        sound.click()
+        app.terminate()
+
+        app = launch(defaults: suite)
+        waitForLongChat(app)
+        app.typeKey(",", modifierFlags: .command)
+        settings = app.windows["com_apple_SwiftUI_Settings_window"]
+        settings.outlines["Sidebar"].staticTexts["Notifications"].click()
+        let badge = settings.popUpButtons.matching(NSPredicate(format: "label == 'Badge Shows'")).firstMatch
+        XCTAssertTrue(badge.waitForExistence(timeout: 5))
+        XCTAssertEqual(badge.value as? String, "Chats Claude Is Working In")
+        XCTAssertFalse(isOn(toggle(settings, "Play a Sound")))
+    }
 }
 
 private extension XCUIElement {

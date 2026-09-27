@@ -51,6 +51,9 @@ public final class WindowModel {
         }
     }
     public private(set) var selectedThread: ThreadModel?
+    /// Whether this is the key window, for deciding whether a chat is in front of you. Unobserved:
+    /// nothing on screen depends on it.
+    @ObservationIgnored var isKey = false
     /// Which host `selectedThread` came from, so it is let go on the right connection.
     private var selectedThreadHost: UUID?
 

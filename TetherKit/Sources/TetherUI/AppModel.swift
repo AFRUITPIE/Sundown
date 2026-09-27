@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import SwiftUI
@@ -75,6 +76,30 @@ public final class AppModel {
         }
     }
 
+    /// Settings ▸ Notifications (persisted under a key of its own).
+    public var alerts = AlertPreferences() {
+        didSet {
+            guard !isLoading, alerts != oldValue, let data = try? JSONEncoder().encode(alerts) else { return }
+            defaults.set(data, forKey: Self.alertsKey)
+        }
+    }
+
+    /// Notifications, the Dock badge and the Dock menu, once the app starts them.
+    @ObservationIgnored private(set) var attention: AttentionCenter?
+    /// Opens a window on a target, for when none is left to show a chat in.
+    @ObservationIgnored var openWindow: ((WindowTarget) -> Void)?
+
+    /// Starts notifications and the Dock badge. The app calls this; tests and previews don't, so
+    /// nothing there reaches Notification Center.
+    public func startAttention() {
+        guard attention == nil else { return }
+        let uiTest = ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1"
+        attention = AttentionCenter(app: self, deliversToSystem: !uiTest)
+    }
+
+    /// The Dock icon's menu.
+    public func dockMenu() -> NSMenu? { attention?.dockMenu() }
+
     /// Defaults for new threads, per app (persisted).
     public var defaultModel: String? { didSet { save() } }
     public var defaultEffort: String? { didSet { save() } }
@@ -88,6 +113,7 @@ public final class AppModel {
     private static let hostsKey = "tether.hosts.v1"
     private static let draftsKey = "tether.drafts.v1"
     private static let appearanceKey = "tether.appearance.v1"
+    private static let alertsKey = "tether.alerts.v1"
     /// `didSet` runs while `load()` restores values; saving then would write half-restored state.
     private var isLoading = false
     private var connectedAll = false
@@ -216,6 +242,7 @@ public final class AppModel {
         if !hosts.contains(where: { $0.id == HostConfig.local.id }) { hosts.insert(.local, at: 0) }
         drafts = defaults.data(forKey: Self.draftsKey).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
         appearance = defaults.data(forKey: Self.appearanceKey).flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
+        alerts = defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode(AlertPreferences.self, from: $0) } ?? AlertPreferences()
         guard let s = stored else { return }
         defaultModel = s.defaultModel
         defaultEffort = s.defaultEffort

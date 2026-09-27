@@ -215,7 +215,11 @@ public final class HostConnection: Identifiable {
         // subscription to the process that ended.
         if case .threadClosed = n { subscribed.remove(tid) }
         // Claude's name for a session only appears in thread/list; nothing announces it.
-        if case .turnCompleted = n { scheduleChatsRefresh() }
+        if case .turnCompleted(let e) = n {
+            scheduleChatsRefresh()
+            NotificationCenter.default.post(name: .tetherTurnFinished, object: self,
+                                            userInfo: ["threadId": tid, "status": e.turn.status.rawValue])
+        }
     }
 
     private func scheduleChatsRefresh() {
@@ -289,7 +293,8 @@ public final class HostConnection: Identifiable {
             model.addPending(PendingRequest(id: rid, request: req, respond: { value in
                 if once.claim() { cont.resume(returning: value) }
             }))
-            NotificationCenter.default.post(name: .tetherNeedsAttention, object: nil, userInfo: ["threadId": tid])
+            NotificationCenter.default.post(name: .tetherNeedsAttention, object: self,
+                                            userInfo: ["threadId": tid, "requestId": rid])
         }
     }
 
@@ -589,8 +594,12 @@ public struct NewThreadOptions: Sendable {
 }
 
 extension Notification.Name {
-    /// Posted when a thread needs user input (approval, question, plan).
+    /// Posted when a thread needs user input (approval, question, plan). The object is the
+    /// `HostConnection`; `threadId` and `requestId` are in the user info.
     public static let tetherNeedsAttention = Notification.Name("TetherNeedsAttention")
+    /// Posted when a turn ends, as it arrives live (not replayed). The object is the
+    /// `HostConnection`; `threadId` and the turn's `status` are in the user info.
+    public static let tetherTurnFinished = Notification.Name("TetherTurnFinished")
 }
 
 final class OnceFlag: @unchecked Sendable {

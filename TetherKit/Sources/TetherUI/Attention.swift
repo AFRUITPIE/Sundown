@@ -1,0 +1,333 @@
+import AppKit
+import SwiftUI
+import TetherKit
+import TetherProtocol
+import UserNotifications
+
+/// Settings ▸ Notifications (persisted by `AppModel`).
+public struct AlertPreferences: Codable, Equatable, Sendable {
+    public var replyFinished: When = .inBackground
+    public var needsInput = true
+    public var sound = true
+    public var dockBadge: DockBadge = .waiting
+
+    public init() {}
+
+    public enum When: String, Codable, CaseIterable, Identifiable, Sendable {
+        case never, inBackground, always
+        public var id: Self { self }
+        var label: String {
+            switch self {
+            case .never: "Never"
+            case .inBackground: "When I’m Not Looking at It"
+            case .always: "Always"
+            }
+        }
+    }
+
+    public enum DockBadge: String, Codable, CaseIterable, Identifiable, Sendable {
+        case off, waiting, working
+        public var id: Self { self }
+        var label: String {
+            switch self {
+            case .off: "Nothing"
+            case .waiting: "Chats Waiting on You"
+            case .working: "Chats Claude Is Working In"
+            }
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AlertPreferences()
+        replyFinished = (try? c.decodeIfPresent(When.self, forKey: .replyFinished)) ?? d.replyFinished
+        needsInput = (try? c.decodeIfPresent(Bool.self, forKey: .needsInput)) ?? d.needsInput
+        sound = (try? c.decodeIfPresent(Bool.self, forKey: .sound)) ?? d.sound
+        dockBadge = (try? c.decodeIfPresent(DockBadge.self, forKey: .dockBadge)) ?? d.dockBadge
+    }
+}
+
+/// What happened in a chat that might be worth telling someone who isn't looking at it.
+enum AttentionEvent: Equatable {
+    case replyFinished(failed: Bool)
+    case needsInput
+}
+
+/// Tells people what their chats need while they're elsewhere: a notification when a reply
+/// finishes or Claude asks for something, the Dock badge, and the Dock menu. Clicking a
+/// notification opens its chat; a permission request's notification can be answered from it.
+@MainActor
+final class AttentionCenter: NSObject {
+    private unowned let app: AppModel
+    /// In UI tests nothing reaches Notification Center; what would have is kept here instead.
+    private let deliversToSystem: Bool
+    private(set) var delivered: [(title: String, body: String)] = []
+    private var authorization: UNAuthorizationStatus?
+
+    init(app: AppModel, deliversToSystem: Bool) {
+        self.app = app
+        self.deliversToSystem = deliversToSystem
+        super.init()
+        let center = NotificationCenter.default
+        center.addObserver(forName: .tetherTurnFinished, object: nil, queue: .main) { [weak self] note in
+            let info = Info(note)
+            MainActor.assumeIsolated { self?.turnFinished(info) }
+        }
+        center.addObserver(forName: .tetherNeedsAttention, object: nil, queue: .main) { [weak self] note in
+            let info = Info(note)
+            MainActor.assumeIsolated { self?.needsInput(info) }
+        }
+        if deliversToSystem {
+            let notifications = UNUserNotificationCenter.current()
+            notifications.delegate = self
+            notifications.setNotificationCategories([Self.permissionCategory])
+        }
+        trackBadge()
+    }
+
+    /// What the notification carried, copied out of it on the posting thread.
+    private struct Info: @unchecked Sendable {
+        let connection: HostConnection?
+        let threadID: String?
+        let requestID: String?
+        let status: String?
+
+        init(_ note: Notification) {
+            connection = note.object as? HostConnection
+            threadID = note.userInfo?["threadId"] as? String
+            requestID = note.userInfo?["requestId"] as? String
+            status = note.userInfo?["status"] as? String
+        }
+    }
+
+    // MARK: deciding
+
+    /// Whether `event` in a chat is worth a notification: never for a chat on screen in the app
+    /// you're using, and otherwise as Settings ▸ Notifications says.
+    nonisolated static func shouldNotify(_ event: AttentionEvent, prefs: AlertPreferences, appIsActive: Bool, chatIsShown: Bool) -> Bool {
+        let looking = appIsActive && chatIsShown
+        switch event {
+        case .needsInput:
+            return prefs.needsInput && !looking
+        case .replyFinished:
+            switch prefs.replyFinished {
+            case .never: return false
+            case .inBackground: return !looking
+            case .always: return true
+            }
+        }
+    }
+
+    /// Whether a window in front shows the chat.
+    private func isShown(_ thread: ThreadModel) -> Bool {
+        app.openWindows.contains { $0.selectedThread === thread && ($0.isKey || app.openWindows.count == 1) }
+    }
+
+    private func turnFinished(_ info: Info) {
+        guard let connection = info.connection, let id = info.threadID else { return }
+        let thread = connection.thread(id)
+        let failed = info.status == TurnStatus.failed.rawValue
+        // A turn you stopped isn't news.
+        guard info.status != TurnStatus.interrupted.rawValue else { return }
+        guard Self.shouldNotify(.replyFinished(failed: failed), prefs: app.alerts, appIsActive: NSApp.isActive, chatIsShown: isShown(thread)) else { return }
+        post(id: "turn-\(id)", title: thread.title, body: failed ? "Claude couldn’t finish." : Self.lastReplyLine(thread),
+             host: connection.id, threadID: id)
+    }
+
+    private func needsInput(_ info: Info) {
+        guard let connection = info.connection, let id = info.threadID else { return }
+        let thread = connection.thread(id)
+        guard Self.shouldNotify(.needsInput, prefs: app.alerts, appIsActive: NSApp.isActive, chatIsShown: isShown(thread)) else { return }
+        let request = thread.pending.first { $0.id == info.requestID }?.request
+        post(id: "request-\(info.requestID ?? id)", title: thread.title, body: Self.describe(request),
+             host: connection.id, threadID: id, requestID: info.requestID,
+             category: request.map { if case .permissionRequest = $0 { true } else { false } } == true ? Self.permissionCategory.identifier : nil)
+    }
+
+    /// The reply's last line, as a notification's body shows it.
+    static func lastReplyLine(_ thread: ThreadModel) -> String {
+        for item in thread.items.reversed() {
+            if case .agentMessage(let m) = item, !m.text.isEmpty {
+                let plain = MarkdownView.plainText(m.text).trimmingCharacters(in: .whitespacesAndNewlines)
+                let line = plain.split(separator: "\n").last.map(String.init) ?? plain
+                return line.count > 160 ? String(line.prefix(157)) + "…" : line
+            }
+        }
+        return "Claude finished."
+    }
+
+    static func describe(_ request: ServerRequest?) -> String {
+        switch request {
+        case .permissionRequest(let p): p.title ?? "Allow \(p.displayName ?? p.toolName)?"
+        case .questionRequest: "Claude has a question for you."
+        case .planApprove: "Claude has a plan ready for you to review."
+        case .elicitationRequest: "An MCP server needs your input."
+        default: "Claude needs your input."
+        }
+    }
+
+    // MARK: delivering
+
+    private static let permissionCategory = UNNotificationCategory(
+        identifier: "permission",
+        actions: [
+            UNNotificationAction(identifier: "allow", title: "Allow"),
+            UNNotificationAction(identifier: "deny", title: "Deny", options: [.destructive]),
+        ],
+        intentIdentifiers: [])
+
+    private func post(id: String, title: String, body: String, host: UUID, threadID: String,
+                      requestID: String? = nil, category: String? = nil) {
+        guard deliversToSystem else {
+            delivered.append((title, body))
+            return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        if app.alerts.sound { content.sound = .default }
+        content.threadIdentifier = threadID
+        if let category { content.categoryIdentifier = category }
+        var info: [String: String] = ["host": host.uuidString, "thread": threadID]
+        if let requestID { info["request"] = requestID }
+        content.userInfo = info
+        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        Task {
+            guard await authorize() else { return }
+            try? await UNUserNotificationCenter.current().add(request)
+        }
+    }
+
+    /// Asked the first time there's something to say, not at launch.
+    private func authorize() async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        let status = await center.notificationSettings().authorizationStatus
+        authorization = status
+        if status == .notDetermined {
+            let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+            authorization = granted ? .authorized : .denied
+            return granted
+        }
+        return status == .authorized || status == .provisional
+    }
+
+    /// Whether notifications are turned off for Tether in System Settings.
+    func systemDenied() async -> Bool {
+        guard deliversToSystem else { return false }
+        return await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .denied
+    }
+
+    /// Opens the chat a notification is about.
+    func open(host: UUID, threadID: String) {
+        NSApp.activate()
+        if let window = app.openWindows.first(where: \.isKey) ?? app.openWindows.first {
+            window.hostID = host
+            window.open(threadID: threadID)
+        } else {
+            app.openOnLaunch(threadID: threadID, on: host)
+            app.openWindow?(WindowTarget(hostID: host, threadID: threadID))
+        }
+    }
+
+    // MARK: Dock
+
+    /// The chats the Dock badge counts, as Settings ▸ Notifications ▸ Dock Badge chooses.
+    nonisolated static func badgeCount(_ threads: [(isRunning: Bool, waiting: Bool)], badge: AlertPreferences.DockBadge) -> Int {
+        switch badge {
+        case .off: 0
+        case .waiting: threads.filter(\.waiting).count
+        case .working: threads.filter(\.isRunning).count
+        }
+    }
+
+    private var allChats: [ThreadModel] {
+        app.connections.values.flatMap(\.chats)
+    }
+
+    private func trackBadge() {
+        let count = withObservationTracking {
+            Self.badgeCount(allChats.map { ($0.isRunning, !$0.pending.isEmpty || $0.status == .requiresAction) },
+                            badge: app.alerts.dockBadge)
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.trackBadge() }
+        }
+        NSApp?.dockTile.badgeLabel = count > 0 ? String(count) : nil
+    }
+
+    /// The Dock icon's menu: chats waiting on you, then chats Claude is working in, then New Chat.
+    func dockMenu() -> NSMenu {
+        let menu = NSMenu()
+        func add(_ threads: [(HostConnection, ThreadModel)], heading: String) {
+            guard !threads.isEmpty else { return }
+            let header = NSMenuItem(title: heading, action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            for (connection, thread) in threads.prefix(8) {
+                let item = NSMenuItem(title: thread.title, action: #selector(openFromDock(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = [connection.id.uuidString, thread.id]
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+        }
+        let chats = app.connections.values.flatMap { c in c.chats.map { (c, $0) } }
+        add(chats.filter { !$0.1.pending.isEmpty || $0.1.status == .requiresAction }, heading: "Waiting on You")
+        add(chats.filter { $0.1.isRunning && $0.1.pending.isEmpty && $0.1.status != .requiresAction }, heading: "Working")
+        let new = NSMenuItem(title: "New Chat", action: #selector(newChatFromDock), keyEquivalent: "")
+        new.target = self
+        menu.addItem(new)
+        return menu
+    }
+
+    @objc private func openFromDock(_ item: NSMenuItem) {
+        guard let ids = item.representedObject as? [String], ids.count == 2, let host = UUID(uuidString: ids[0]) else { return }
+        open(host: host, threadID: ids[1])
+    }
+
+    @objc private func newChatFromDock() {
+        NSApp.activate()
+        if let window = app.openWindows.first(where: \.isKey) ?? app.openWindows.first {
+            window.newChat()
+        } else {
+            app.openWindow?(WindowTarget(hostID: app.lastHostID))
+        }
+    }
+}
+
+extension AttentionCenter: UNUserNotificationCenterDelegate {
+    /// A notification the app decided to post shows even while it's frontmost: it was only posted
+    /// because the chat isn't the one on screen.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        [.banner, .sound, .list]
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        let info = response.notification.request.content.userInfo
+        guard let hostString = info["host"] as? String, let host = UUID(uuidString: hostString),
+              let threadID = info["thread"] as? String else { return }
+        let requestID = info["request"] as? String
+        let action = response.actionIdentifier
+        await MainActor.run {
+            switch action {
+            case "allow", "deny":
+                guard let thread = app.connection(host)?.thread(threadID),
+                      let pending = thread.pending.first(where: { $0.id == requestID }) else { return }
+                thread.answer(pending, with: action == "allow"
+                    ? ["decision": "allow", "scope": "once"]
+                    : ["decision": "deny", "message": "The user denied this action."])
+            default:
+                open(host: host, threadID: threadID)
+            }
+        }
+    }
+}
+
+/// The app's delegate, for what SwiftUI has no scene API for: the Dock icon's menu.
+@MainActor
+public final class TetherAppDelegate: NSObject, NSApplicationDelegate {
+    public weak var app: AppModel?
+
+    public func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        app?.dockMenu()
+    }
+}

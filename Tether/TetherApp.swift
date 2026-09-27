@@ -4,6 +4,7 @@ import TetherUI
 
 @main
 struct TetherApp: App {
+    @NSApplicationDelegateAdaptor(TetherAppDelegate.self) private var delegate
     @State private var app: AppModel = {
         #if DEBUG
         if ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1" {
@@ -25,6 +26,10 @@ struct TetherApp: App {
         // Window carries its target; the system restores it with the window.
         WindowGroup("Tether", for: WindowTarget.self) { $target in
             WindowRoot(app: app, target: target)
+                .onAppear {
+                    delegate.app = app
+                    app.startAttention()
+                }
         }
         .defaultSize(width: 1100, height: 760)
         // A window at every launch, including after a crash or force quit, which otherwise restored
