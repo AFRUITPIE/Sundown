@@ -338,6 +338,15 @@ public struct ChatCommands: View {
                 .keyboardShortcut(";", modifiers: .command)
                 .disabled(window.selectedThread == nil)
             Divider()
+            // ⌥⌘, not ⌘ or ⌃⌘: a text field keeps ⌘↑ and ⌘↓ (start and end of the text) and ⌃⌘↓
+            // (writing direction); it has nothing on ⌥⌘↑ or ⌥⌘↓, so these work from the composer.
+            Button("Previous Prompt") { window.prompts.go(.previous) }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                .disabled(window.selectedThread == nil)
+            Button("Next Prompt") { window.prompts.go(.next) }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                .disabled(window.selectedThread == nil)
+            Divider()
             Button("Next Chat") { window.showAdjacentChat(1) }
                 .keyboardShortcut(.tab, modifiers: .control)
                 .disabled(window.adjacentChat(1) == nil)
@@ -351,6 +360,8 @@ public struct ChatCommands: View {
                 ForEach(["Model", "Fast Mode", "Effort", "Permissions"], id: \.self) { Button($0) {} }
                 Divider()
                 Button("Ask a Side Question…") {}
+                Divider()
+                ForEach(["Previous Prompt", "Next Prompt"], id: \.self) { Button($0) {} }
                 Divider()
                 ForEach(["Next Chat", "Previous Chat"], id: \.self) { Button($0) {} }
                 Divider()

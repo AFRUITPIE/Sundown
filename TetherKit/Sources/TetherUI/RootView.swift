@@ -126,6 +126,7 @@ public struct RootView: View {
         .environment(\.hostIsLocal, window.connection?.host.isLocal == true)
         .environment(\.openFilesWith, app.appearance.openFilesWith)
         .environment(\.transcriptFind, window.find)
+        .environment(\.promptNavigator, window.prompts)
         .environment(\.composerDrafts, ComposerDrafts(app: app))
         .frame(minWidth: minWidth, minHeight: 400)
         .onChange(of: window.showInspector) { _, shown in

@@ -186,6 +186,48 @@ public enum DateSeparators {
     }
 }
 
+/// Chat ▸ Previous Prompt and Next Prompt: which row to bring to the top of the transcript.
+public enum PromptNavigation {
+    public enum Direction: Sendable { case previous, next }
+
+    /// The rows the reader's own prompts are reached by: each prompt, or the date above it when it
+    /// has one, so the date comes into view too. In transcript order.
+    public static func targets(in rows: [TranscriptRow]) -> [(index: Int, id: String)] {
+        var out: [(index: Int, id: String)] = []
+        for (i, row) in rows.enumerated() {
+            guard case .item(.userMessage(let m)) = row, m.parentToolUseId == nil, m.synthetic != true else { continue }
+            if i > 0, case .dateSeparator(let promptID, _) = rows[i - 1], promptID == m.id {
+                out.append((i - 1, rows[i - 1].id))
+            } else {
+                out.append((i, row.id))
+            }
+        }
+        return out
+    }
+
+    /// The prompt before or after where the reader is: the prompt last gone to while it's still on
+    /// screen, otherwise the topmost row on screen. With nothing on screen, Previous goes to the last
+    /// prompt. Nil when there's none that way.
+    public static func target(_ direction: Direction, rows: [TranscriptRow], visible: Set<String>,
+                              lastTarget: String? = nil) -> String? {
+        let targets = targets(in: rows)
+        let anchor: Int? = if let lastTarget, visible.contains(lastTarget),
+                              let i = rows.firstIndex(where: { $0.id == lastTarget }) {
+            i
+        } else {
+            rows.firstIndex { visible.contains($0.id) }
+        }
+        switch direction {
+        case .previous:
+            guard let anchor else { return targets.last?.id }
+            return targets.last { $0.index < anchor }?.id
+        case .next:
+            guard let anchor else { return nil }
+            return targets.first { $0.index > anchor }?.id
+        }
+    }
+}
+
 // MARK: find
 
 extension TranscriptRow {

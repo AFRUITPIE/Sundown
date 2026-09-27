@@ -14,7 +14,12 @@ struct TranscriptView: View {
     @State private var followsEnd = true
     /// The last line or two the end grew by, eased away: see `follow`.
     @State private var glide = Glide()
+    /// The rows on screen, for Chat ▸ Previous and Next Prompt. Not observed: it changes as rows
+    /// scroll in and out, and nothing is drawn from it.
+    @State private var onScreen = OnScreenRows()
     @Environment(\.transcriptFind) private var find
+    @Environment(\.promptNavigator) private var promptNavigator
+    @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -58,6 +63,9 @@ struct TranscriptView: View {
             followsEnd = false
             withAnimation { position.scrollTo(id: id, anchor: .center) }
         }
+        // Chat ▸ Previous and Next Prompt, from where the reader is.
+        .onChange(of: promptNavigator?.step) { goToPrompt() }
+        .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { onScreen.ids = Set($0) }
         .onScrollGeometryChange(for: Extent.self, of: { Extent(content: $0.contentSize.height, container: $0.containerSize) }) {
             follow(from: $0, to: $1)
         }
@@ -95,6 +103,29 @@ extension TranscriptView {
     struct Extent: Equatable {
         let content: CGFloat
         let container: CGSize
+    }
+
+    /// Which rows are on screen, and the prompt Previous or Next Prompt last went to, which the next
+    /// press goes on from while it's still in view.
+    final class OnScreenRows {
+        var ids: Set<String> = []
+        var lastPrompt: String?
+    }
+
+    /// Brings the prompt before or after the reader's place to the top; past the last one, Next goes
+    /// to the end. The reader has left the end to read it, as with Find.
+    private func goToPrompt() {
+        guard let navigator = promptNavigator else { return }
+        let rows = thread.rows(appearance.toolCalls.folding)
+        if let id = PromptNavigation.target(navigator.direction, rows: rows, visible: onScreen.ids, lastTarget: onScreen.lastPrompt) {
+            onScreen.lastPrompt = id
+            followsEnd = false
+            withAnimation { position.scrollTo(id: id, anchor: .top) }
+        } else if navigator.direction == .next {
+            onScreen.lastPrompt = nil
+            followsEnd = true
+            withAnimation { position.scrollTo(edge: .bottom) }
+        }
     }
 
     /// A distance the content is drawn below where it is, easing back to nothing.

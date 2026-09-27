@@ -35,7 +35,7 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
   - `RPCClient.swift`: actor that correlates JSON-RPC calls, streams notifications, and answers server-to-client requests.
   - `HostConnection.swift`: one host connection, reconnect/replay behavior, catalogs, thread operations, and server-request routing.
   - `ThreadModel.swift`: `@MainActor @Observable` reducer for one thread.
-  - `TranscriptRows.swift`: pure folding of transcript items, including compact tool-call groups, and what goes between turns (dates above prompts, a turn's edited files).
+  - `TranscriptRows.swift`: pure folding of transcript items, including compact tool-call groups, what goes between turns (dates above prompts, a turn's edited files), and Previous/Next Prompt's targets.
   - `TurnEdits.swift`: a finished turn's file edits, counted from its Edit/MultiEdit/Write/NotebookEdit inputs (`LineDiff`, which `DiffView` draws with too).
   - `PreviewSupport.swift`: debug-only sample state used by Xcode previews.
 - `TetherKit/Sources/TetherUI`: views and app-level state.
@@ -49,7 +49,7 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
   - `Sidebar/`: one host's chats, and `HostCommands` (the Host menu); `SidebarSections.swift` is the pure, tested grouping (Pinned, then date or directory; or Activity's Needs You, then days).
   - `Toolbar/`: `SessionControls` (the model, effort and permissions menus over one `SessionSettings`, live chat or draft, and the Chat menu) and `ReservedWidthLabel`.
   - `Inspector/`: the tabbed shell, its toolbar toggle, and one view per pane (`TasksPane`, `SessionPane`, `MCPPane`, `ChangesPane`).
-  - `Thread/`: `ThreadView` (transcript over bottom bar), `TranscriptView`, `BottomBar`, `Composer` (`/` commands, `@` files, images), `ConnectionStatusCard` (in the field's place while the host isn't connected), `ContextRing`, `ArrivingText` (streamed text fading in), `TranscriptFind`, `TurnEditsView`, `DateSeparatorView`.
+  - `Thread/`: `ThreadView` (transcript over bottom bar), `TranscriptView`, `BottomBar`, `Composer` (`/` commands, `@` files, images), `ConnectionStatusCard` (in the field's place while the host isn't connected), `ContextRing`, `ArrivingText` (streamed text fading in), `TranscriptFind`, `PromptNavigator` (Chat ▸ Previous/Next Prompt), `TurnEditsView`, `DateSeparatorView`.
   - `NewChat/`: the new-chat screen (folder, branch and Work In above the composer) and the remote folder picker.
   - `Scheduled/`: a host's Scheduled Tasks window (Host ▸ Scheduled Tasks…), over the daemon's `schedule/*` methods.
   - `Plugins/`: a host's Plugins window (Host ▸ Plugins…), over the daemon's `plugin/*` methods (the host's `claude plugin`). A grouped Form, not a List: an inset List trapped in SwiftUI's outline code on its rows.
@@ -113,6 +113,7 @@ The product should feel like a standard current macOS app. Prefer native SwiftUI
 - The composer is laid out like Messages: a round + (a menu: attach, mention, commands) beside a capsule field with a round Send or Stop inside it. Return sends and Shift-Return starts a line (or ⌘Return sends, per Settings); Esc stops a running turn, as ⌘. does.
 - A finished turn that edited files ends with one quiet row after its last reply: "Edited 3 files" and "+42 −7" (the diff colors), counted from the turn's own Edit/MultiEdit/Write/NotebookEdit inputs — a subagent's included, failed calls not — never the working tree (`TurnEdits`). Open, one line per file (name, folder, counts), each opening to its edits in `DiffView`, and Restore Files…, which is Restore Code to Here… for the turn's prompt. No Undo. Summarized in `ThreadModel.rows(_:)`, cached with the rows (each finished call's changes memoized), in every Tool Calls mode; never for the running turn.
 - The date goes above a prompt, centered and quiet, as Messages does: the first prompt shown, a prompt on a new day, or one more than an hour after the last item (`DateSeparators`, a row of its own). "Today 2:14 PM", "Yesterday …", the weekday within the week, then the date, in the reader's locale (`TranscriptDate`).
+- Chat ▸ Previous Prompt and Next Prompt (⌥⌘↑ and ⌥⌘↓) bring the reader's own prompts (the date above one, when it has one) to the top of the transcript, from the prompt last gone to while it's on screen, else the topmost row on screen; Next past the last goes to the end. Not ⌘↑/↓ or ⌃⌘↓: text fields use those, and the composer usually has focus. The rows on screen come from `onScrollTargetVisibilityChange`, kept in an unobserved box so scrolling redraws nothing.
 - A context menu is never the only way to a command. A message's actions (Copy, Fork from Here, Restore Code to Here…) are also on a bar that appears on hover, with the time it was sent, and are VoiceOver actions; right-clicking the words themselves gives the text's own menu.
 - Settings apply immediately; text fields commit on Return or focus loss. No Save/Revert.
 - Settings uses a General/Notifications/Hosts/Advanced sidebar; the Hosts pane selects a host above its detail form.
