@@ -44,6 +44,19 @@ struct MarkdownView: View {
         return 12
     }
 
+    /// The text without Markdown's syntax, as Copy puts it on the pasteboard: emphasis, links and
+    /// inline code resolved, heading markers and code fences dropped, line structure kept.
+    static func plainText(_ markdown: String) -> String {
+        markdown.components(separatedBy: "\n").compactMap { line -> String? in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") { return nil }
+            var content = line
+            if let heading = trimmed.firstMatch(of: /^#{1,6}\s+(.*)$/) { content = String(heading.1) }
+            let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+            return (try? AttributedString(markdown: content, options: options)).map { String($0.characters) } ?? content
+        }.joined(separator: "\n")
+    }
+
     static func parse(_ text: String) -> [Block] {
         var blocks: [Block] = []
         var para: [String] = []

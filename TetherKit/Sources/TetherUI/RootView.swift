@@ -67,6 +67,10 @@ public struct RootView: View {
             inspectedTaskID = toolUseId
             window.openInspector(on: .tasks)
         })
+        .environment(\.forkChat, ForkChatAction(owner: window) { messageID in
+            guard let thread = window.selectedThread, let connection = window.connection else { return }
+            Task { if let fork = await connection.fork(thread, at: messageID) { window.open(threadID: fork.id) } }
+        })
         .environment(\.readingWidth, app.transcriptWidth.points)
         .environment(\.textScale, app.textScale)
         .environment(\.transcriptFind, window.find)

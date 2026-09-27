@@ -20,10 +20,13 @@ struct ItemView: View {
 
     var body: some View {
         switch item {
-        case .userMessage(let m): UserMessageView(message: m)
+        case .userMessage(let m):
+            UserMessageView(message: m)
+                .messageMenu(id: m.id, text: m.plainText, isMarkdown: false)
         case .agentMessage(let m):
             MarkdownView(text: m.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .messageMenu(id: m.id, text: m.text, isMarkdown: true)
         // Reasoning never renders; subagent items come through here too.
         case .reasoning: EmptyView()
         case .toolCall(let t): ToolCallView(call: t, thread: thread)
@@ -49,6 +52,64 @@ struct ItemView: View {
             .scaledFont(.caption)
         }
     }
+}
+
+/// A message's context menu: copy it, or branch the chat from it. Also how a person keeps what a
+/// reply said, or goes back to a point and tries something else (Fork from Here).
+private struct MessageMenu: ViewModifier {
+    let id: String
+    /// The message as it arrived: plain for a prompt, Markdown for a reply.
+    let text: String
+    let isMarkdown: Bool
+    @Environment(\.forkChat) private var forkChat
+
+    func body(content: Content) -> some View {
+        content.contextMenu {
+            // Converted when chosen, not per update: a streaming reply's body runs every frame.
+            Button("Copy") { copy(isMarkdown ? MarkdownView.plainText(text) : text) }
+            if isMarkdown { Button("Copy as Markdown") { copy(text) } }
+            Divider()
+            Button("Fork from Here") { forkChat(id) }
+        }
+    }
+
+    private func copy(_ string: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
+    }
+}
+
+extension View {
+    func messageMenu(id: String, text: String, isMarkdown: Bool) -> some View {
+        modifier(MessageMenu(id: id, text: text, isMarkdown: isMarkdown))
+    }
+}
+
+extension Item.UserMessage {
+    /// The message's text parts, as it would be pasted.
+    var plainText: String {
+        content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n\n")
+    }
+}
+
+/// Branches the window's chat after a message, keeping everything up to it, and opens the branch.
+/// Compared by owner, like `InspectSubagentAction`, so a new closure doesn't redraw every message.
+struct ForkChatAction: Equatable {
+    private let owner: ObjectIdentifier?
+    private let fork: @MainActor (String) -> Void
+
+    init(owner: AnyObject?, fork: @escaping @MainActor (String) -> Void) {
+        self.owner = owner.map(ObjectIdentifier.init)
+        self.fork = fork
+    }
+
+    @MainActor func callAsFunction(_ messageID: String) { fork(messageID) }
+
+    static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
+}
+
+extension EnvironmentValues {
+    @Entry var forkChat = ForkChatAction(owner: nil) { _ in }
 }
 
 struct UserMessageView: View {
