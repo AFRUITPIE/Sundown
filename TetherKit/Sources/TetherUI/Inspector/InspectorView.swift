@@ -37,7 +37,7 @@ struct ThreadInspector: View {
             switch pane {
             case .tasks: TasksPane(thread: thread, connection: connection, selectedTaskID: $selectedTaskID)
             case .session: SessionPane(thread: thread, connection: connection)
-            case .mcp: MCPPane(thread: thread)
+            case .mcp: MCPPane(thread: thread, connection: connection)
             }
         }
         .inspectorPaneStyle()

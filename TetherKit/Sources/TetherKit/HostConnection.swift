@@ -568,6 +568,22 @@ public final class HostConnection: Identifiable {
         try? await client?.call(Methods.GitDiff.self, .init(cwd: cwd)).diff
     }
 
+    // MARK: MCP
+
+    /// The chat's MCP servers as Claude Code reports them now; nil if it can't be asked.
+    public func mcpServers(_ model: ThreadModel) async -> [McpServerStatus]? {
+        guard isLoaded(model), let client else { return nil }
+        return try? await client.call(Methods.McpStatus.self, .init(threadId: model.id)).servers
+    }
+
+    public func reconnectMCP(_ model: ThreadModel, _ name: String) async {
+        await perform(model) { try await $0.call(Methods.McpReconnect.self, .init(threadId: model.id, name: name)) }
+    }
+
+    public func setMCP(_ model: ThreadModel, _ name: String, enabled: Bool) async {
+        await perform(model) { try await $0.call(Methods.McpToggle.self, .init(threadId: model.id, name: name, enabled: enabled)) }
+    }
+
     private func perform(_ model: ThreadModel, _ f: (RPCClient) async throws -> some Any) async {
         guard let client else { model.setError("Not connected"); return }
         do { _ = try await f(client); model.setError(nil) } catch { model.setError(error.localizedDescription) }

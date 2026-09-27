@@ -287,9 +287,10 @@ extension ThreadModel {
                       description: "Render every inspector pane", status: "failed", data: [:]),
             ],
             mcpServers: [
-                .init(name: "xcode", status: "connected"),
-                .init(name: "computer-use", status: "connected"),
-                .init(name: "reminders", status: "failed"),
+                .init(name: "xcode", status: "connected", toolCount: 24),
+                .init(name: "computer-use", status: "connected", toolCount: 1),
+                .init(name: "linear", status: "needs-auth"),
+                .init(name: "reminders", status: "failed", error: "spawn RemindersServer ENOENT"),
             ])
     }
 
