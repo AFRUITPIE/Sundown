@@ -297,6 +297,7 @@ struct ToolCallGroupView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("transcript.toolGroup")
             if expanded {
                 ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
             }

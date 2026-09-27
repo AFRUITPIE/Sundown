@@ -6,7 +6,6 @@ import TetherProtocol
 struct BottomBar: View {
     let thread: ThreadModel
     let connection: HostConnection
-    @Environment(\.appearance) private var appearance
 
     var body: some View {
         // One read of `pending`: it decides both the card and whether the composer can send.

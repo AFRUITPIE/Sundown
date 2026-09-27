@@ -1,6 +1,7 @@
 import XCTest
 
-/// Settings ▸ Appearance: each choice changes the chat beside it at once, and is kept.
+/// Settings ▸ General, Advanced and Notifications: each choice changes the chat beside it at once,
+/// and is kept.
 final class AppearanceUITests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -29,15 +30,14 @@ final class AppearanceUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Section 29: tightening the renderer"].firstMatch.waitForExistence(timeout: 20))
     }
 
-    /// Settings, on its Appearance pane.
+    /// Settings, on `pane` (General, Notifications, Hosts or Advanced).
     @MainActor
-    private func openAppearance(_ app: XCUIApplication) -> XCUIElement {
+    private func openSettings(_ app: XCUIApplication, _ pane: String) -> XCUIElement {
         app.typeKey(",", modifierFlags: .command)
         let settings = app.windows["com_apple_SwiftUI_Settings_window"]
         let sidebar = settings.outlines["Sidebar"]
-        XCTAssertTrue(sidebar.staticTexts["Appearance"].waitForExistence(timeout: 10))
-        sidebar.staticTexts["Appearance"].click()
-        XCTAssertTrue(settings.staticTexts["Tool Calls"].waitForExistence(timeout: 5))
+        XCTAssertTrue(sidebar.staticTexts[pane].waitForExistence(timeout: 10))
+        sidebar.staticTexts[pane].click()
         return settings
     }
 
@@ -57,28 +57,20 @@ final class AppearanceUITests: XCTestCase {
         (element.value as? NSNumber)?.boolValue ?? ((element.value as? String) == "1")
     }
 
+    /// The pop-up labelled `label`.
+    @MainActor
+    private func popUp(_ settings: XCUIElement, _ label: String) -> XCUIElement {
+        settings.popUpButtons.matching(NSPredicate(format: "label == %@ OR title == %@", label, label)).firstMatch
+    }
+
     /// Chooses `option` from the pop-up labelled `label`.
     @MainActor
     private func choose(_ settings: XCUIElement, _ label: String, _ option: String) {
-        let popUp = settings.popUpButtons.matching(NSPredicate(format: "label == %@ OR title == %@", label, label)).firstMatch
+        let popUp = popUp(settings, label)
         XCTAssertTrue(popUp.waitForExistence(timeout: 5), "no \(label) pop-up")
         popUp.scrollToVisible()
         popUp.click()
         settings.menuItems[option].click()
-    }
-
-    /// Clicks the segment labelled `option`.
-    @MainActor
-    private func segment(_ settings: XCUIElement, _ option: String, in group: String? = nil) {
-        let button: XCUIElement
-        if let group {
-            button = settings.radioGroups.matching(NSPredicate(format: "label == %@", group)).firstMatch.radioButtons[option]
-        } else {
-            button = settings.radioButtons[option].firstMatch
-        }
-        XCTAssertTrue(button.waitForExistence(timeout: 5), "no \(option) segment")
-        button.scrollToVisible()
-        button.click()
     }
 
     @MainActor
@@ -86,56 +78,21 @@ final class AppearanceUITests: XCTestCase {
         app.windows.matching(NSPredicate(format: "identifier != 'com_apple_SwiftUI_Settings_window'")).firstMatch
     }
 
-    /// Turning grouping off puts every finished call on a row of its own.
+    /// Advanced ▸ Tool Calls ▸ Every Call puts each finished call on a row of its own; Summarized
+    /// folds runs of them again.
     @MainActor
-    func testFinishedCallsCanBeUngrouped() {
+    func testEveryCallUnfoldsFinishedCalls() {
         let app = launch()
         waitForLongChat(app)
-        let groups = mainWindow(app).buttons.matching(NSPredicate(format: "label BEGINSWITH 'Used '"))
+        let groups = mainWindow(app).buttons.matching(identifier: "transcript.toolGroup")
         XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 5))
 
-        let settings = openAppearance(app)
-        let grouping = toggle(settings, "Group Finished Calls")
-        XCTAssertTrue(isOn(grouping))
-        grouping.scrollToVisible()
-        grouping.click()
-
+        let settings = openSettings(app, "Advanced")
+        choose(settings, "Tool Calls", "Every Call")
         XCTAssertTrue(groups.firstMatch.waitForNonExistence(timeout: 5))
-        grouping.click()
+
+        choose(settings, "Tool Calls", "Summarized")
         XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 5))
-    }
-
-    /// Timestamps: none by default, under every message with Always.
-    @MainActor
-    func testTimestampsCanShowUnderEveryMessage() {
-        let app = launch()
-        waitForLongChat(app)
-        let times = mainWindow(app).descendants(matching: .any).matching(identifier: "message.time")
-        XCTAssertEqual(times.count, 0)
-
-        choose(openAppearance(app), "Timestamps", "Always")
-
-        XCTAssertTrue(times.firstMatch.waitForExistence(timeout: 5))
-    }
-
-    /// Minimal has no + button; Inline puts it back, inside the field.
-    @MainActor
-    func testComposerLayouts() {
-        let app = launch()
-        waitForLongChat(app)
-        let add = mainWindow(app).descendants(matching: .any)["composer.add"].firstMatch
-        let input = mainWindow(app).descendants(matching: .any)["composer.input"]
-        XCTAssertTrue(add.exists)
-        let outside = input.frame.minX - add.frame.maxX
-
-        let settings = openAppearance(app)
-        segment(settings, "Minimal", in: "Layout")
-        XCTAssertTrue(add.waitForNonExistence(timeout: 5))
-
-        segment(settings, "Inline", in: "Layout")
-        XCTAssertTrue(add.waitForExistence(timeout: 5))
-        // Inside the field: nearer the text than the round button beside the field was.
-        XCTAssertLessThan(input.frame.minX - add.frame.maxX, outside)
     }
 
     /// With Send With set to Command-Return, Return starts a new line and Command-Return sends.
@@ -143,7 +100,7 @@ final class AppearanceUITests: XCTestCase {
     func testCommandReturnSends() {
         let app = launch(scenario: nil)
         XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].firstMatch.waitForExistence(timeout: 15))
-        choose(openAppearance(app), "Send With", "Command-Return")
+        choose(openSettings(app, "General"), "Send With", "Command-Return")
         app.windows["com_apple_SwiftUI_Settings_window"].buttons[XCUIIdentifierCloseWindow].click()
 
         let input = mainWindow(app).descendants(matching: .any)["composer.input"]
@@ -174,28 +131,27 @@ final class AppearanceUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Scripted response."].waitForExistence(timeout: 10))
     }
 
-    /// Choices are kept across launches, and Restore Defaults puts them all back.
+    /// Advanced choices are kept across launches, and Restore Defaults puts them all back.
     @MainActor
     func testChoicesAreKeptAndCanBeRestored() {
         let suite = "tether.uitest.appearance.\(UUID().uuidString)"
         var app = launch(defaults: suite)
         waitForLongChat(app)
-        var settings = openAppearance(app)
-        segment(settings, "Compact", in: "Density")
+        choose(openSettings(app, "Advanced"), "Tool Calls", "Every Call")
         app.terminate()
 
         app = launch(defaults: suite)
         waitForLongChat(app)
-        settings = openAppearance(app)
-        let compact = settings.radioGroups.matching(NSPredicate(format: "label == 'Density'")).firstMatch.radioButtons["Compact"]
-        XCTAssertTrue(compact.waitForExistence(timeout: 5))
-        XCTAssertTrue(isOn(compact))
+        let settings = openSettings(app, "Advanced")
+        let toolCalls = popUp(settings, "Tool Calls")
+        XCTAssertTrue(toolCalls.waitForExistence(timeout: 5))
+        XCTAssertEqual(toolCalls.value as? String, "Every Call")
 
         let restore = settings.buttons["Restore Defaults"]
         restore.scrollToVisible()
         XCTAssertTrue(restore.isEnabled)
         restore.click()
-        XCTAssertFalse(isOn(compact))
+        XCTAssertEqual(toolCalls.value as? String, "Summarized")
         XCTAssertFalse(restore.isEnabled)
     }
 
@@ -205,9 +161,7 @@ final class AppearanceUITests: XCTestCase {
         let suite = "tether.uitest.alerts.\(UUID().uuidString)"
         var app = launch(defaults: suite)
         waitForLongChat(app)
-        app.typeKey(",", modifierFlags: .command)
-        var settings = app.windows["com_apple_SwiftUI_Settings_window"]
-        settings.outlines["Sidebar"].staticTexts["Notifications"].click()
+        var settings = openSettings(app, "Notifications")
         choose(settings, "Badge Shows", "Chats Claude Is Working In")
         let sound = toggle(settings, "Play a Sound")
         XCTAssertTrue(isOn(sound))
@@ -216,27 +170,11 @@ final class AppearanceUITests: XCTestCase {
 
         app = launch(defaults: suite)
         waitForLongChat(app)
-        app.typeKey(",", modifierFlags: .command)
-        settings = app.windows["com_apple_SwiftUI_Settings_window"]
-        settings.outlines["Sidebar"].staticTexts["Notifications"].click()
-        let badge = settings.popUpButtons.matching(NSPredicate(format: "label == 'Badge Shows'")).firstMatch
+        settings = openSettings(app, "Notifications")
+        let badge = popUp(settings, "Badge Shows")
         XCTAssertTrue(badge.waitForExistence(timeout: 5))
         XCTAssertEqual(badge.value as? String, "Chats Claude Is Working In")
         XCTAssertFalse(isOn(toggle(settings, "Play a Sound")))
-    }
-
-    /// Show Tool Calls ▸ None leaves just the conversation.
-    @MainActor
-    func testToolCallsCanBeLeftOut() {
-        let app = launch()
-        waitForLongChat(app)
-        let groups = mainWindow(app).buttons.matching(NSPredicate(format: "label BEGINSWITH 'Used '"))
-        XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 5))
-
-        choose(openAppearance(app), "Show", "None")
-
-        XCTAssertTrue(groups.firstMatch.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Section 29: tightening the renderer"].firstMatch.exists)
     }
 }
 
