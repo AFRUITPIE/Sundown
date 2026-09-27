@@ -97,11 +97,13 @@ public final class WindowModel {
     public private(set) var renaming: ThreadModel?
     public var deleting: ThreadModel?
     /// Starts a task Claude suggested in `thread` as a new chat, where it said, or in `thread`'s folder.
+    /// Opens a task Claude suggested as New Chat, in the folder it named (or `thread`'s), with its
+    /// prompt as a draft to read and edit before sending: Claude wrote it, so it isn't sent unseen.
     func startSuggestedTask(_ task: SuggestedTask, from thread: ThreadModel) {
         thread.dismissSuggestedTask(task.id)
         newChat()
         draftDirectory = task.cwd ?? thread.cwd
-        Task { await startDraftChat([.text(.init(text: task.prompt))]) }
+        app.deliverDraft(task.prompt, for: "new-chat:\(hostID)")
     }
 
     /// Chat ▸ Ask a Side Question… (⌥⌘;) is showing its sheet.

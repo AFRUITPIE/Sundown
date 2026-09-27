@@ -44,7 +44,7 @@ struct BottomBar: View {
 }
 
 /// Tasks Claude suggested starting separately, as buttons above the composer, like prompt
-/// suggestions: each starts a new chat with its prompt.
+/// suggestions: each opens New Chat with its prompt as a draft, to read before sending.
 struct SuggestedTasksBar: View {
     let thread: ThreadModel
     @Environment(\.startSuggestedTask) private var start
@@ -54,10 +54,10 @@ struct SuggestedTasksBar: View {
             ForEach(thread.suggestedTasks) { task in
                 HStack(spacing: 4) {
                     Button { start(task, thread) } label: {
-                        Label("Start “\(task.title)”", systemImage: "arrow.up.forward.app").lineLimit(1)
+                        Label(task.title, systemImage: "square.and.pencil").lineLimit(1)
                     }
                     .buttonStyle(.glass)
-                    .help(task.prompt)
+                    .help("Open in New Chat")
                     Button("Dismiss", systemImage: "xmark") { thread.dismissSuggestedTask(task.id) }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)

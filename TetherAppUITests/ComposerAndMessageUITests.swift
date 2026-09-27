@@ -216,10 +216,13 @@ final class ComposerAndMessageUITests: XCTestCase {
         input.typeText("Please suggest a task")
         input.typeKey(.return, modifierFlags: [])
 
-        let chip = windowButton(app, "Start “Write the release notes”")
+        let chip = windowButton(app, "Write the release notes")
         XCTAssertTrue(chip.waitForExistence(timeout: 10))
         chip.click()
         XCTAssertTrue(chip.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS 'Draft release notes' OR label CONTAINS 'Draft release notes'")).firstMatch.waitForExistence(timeout: 10))
+        // New Chat, with Claude's prompt as a draft to read before sending.
+        let draft = app.descendants(matching: .any)["composer.input"]
+        XCTAssertTrue(draft.waitForExistence(timeout: 10))
+        XCTAssertTrue(NSPredicate(format: "value CONTAINS 'release notes'").evaluate(with: draft))
     }
 }
