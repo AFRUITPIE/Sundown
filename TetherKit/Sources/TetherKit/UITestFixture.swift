@@ -59,10 +59,10 @@ private final class FixtureTransport: Transport, @unchecked Sendable {
             continuation.yield(try JSONEncoder().encode(request))
         }
         if !reply.stream.isEmpty {
-            // Paced like a real reply: a few characters per frame, after the transcript has settled.
+            // Paced like a real reply: a few characters per frame, after a moment's thought.
             let continuation = continuation
             Task {
-                try? await Task.sleep(for: .seconds(2))
+                try? await Task.sleep(for: .milliseconds(300))
                 for (name, params) in reply.stream {
                     let notification: JSONValue = ["method": .string(name), "params": params]
                     if let line = try? JSONEncoder().encode(notification) { continuation.yield(line) }
@@ -87,7 +87,6 @@ private actor FixtureScript {
 
     private let pendingPermission: Bool
     private let performance: Bool
-    private var streamed = false
     private var sentPermission = false
     private var nextSequence = 1
     private var nextMessage = 0
@@ -156,11 +155,6 @@ private actor FixtureScript {
                 )
                 reply.requests = [(.number(900), "permission/request", json(prompt))]
             }
-            if id == UITestFixture.threadID, performance, !streamed {
-                streamed = true
-                reply.stream = PerformanceTranscript.reply(threadID: id, firstSeq: nextSequence + 1)
-                nextSequence += reply.stream.count
-            }
             return reply
         case "thread/unsubscribe": return .init(value: .result([:]))
         case "thread/start":
@@ -172,12 +166,33 @@ private actor FixtureScript {
                          notifications: turnNotifications(threadID: id, input: params["input"]))
         case "turn/start":
             let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
+            if performance { return performanceTurn(threadID: id, input: params["input"]) }
             return .init(value: .result(json(TurnStartResult(turnId: "fixture-turn", messageId: "fixture-message", queued: false))),
                          notifications: turnNotifications(threadID: id, input: params["input"]))
         case "command/list": return .init(value: .result(["commands": []]))
         case "fs/search": return .init(value: .result(["paths": []]))
         default: return .init(value: .error("Unexpected fixture method: \(method)"))
         }
+    }
+
+    /// A prompt in the performance scenario gets a long working reply: the prompt and "running" at
+    /// once, then tool calls and Markdown streamed a few characters a frame, then "idle".
+    private func performanceTurn(threadID: String, input: JSONValue?) -> Reply {
+        nextMessage += 1
+        let turn = nextMessage
+        let text = input?.arrayValue?.first?["text"]?.stringValue ?? "Fixture input"
+        let user = Item.userMessage(.init(id: "perf-sent-\(turn)", createdAt: 1_900_000_000_000 + Double(turn * 1000),
+                                          content: [.text(.init(text: text))]))
+        var reply = Reply(value: .result(json(TurnStartResult(turnId: "perf-turn-\(turn)", messageId: "perf-message-\(turn)", queued: false))))
+        reply.notifications = [
+            ("item/started", json(ItemStartedNotification(threadId: threadID, seq: nextSequence + 1, item: user))),
+            ("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(nextSequence + 2)), "status": "running"]),
+        ]
+        reply.stream = PerformanceTranscript.reply(threadID: threadID, firstSeq: nextSequence + 3, turn: turn)
+        let last = nextSequence + 3 + reply.stream.count
+        reply.stream.append(("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(last)), "status": "idle"]))
+        nextSequence = last
+        return reply
     }
 
     private func turnNotifications(threadID: String, input: JSONValue?) -> [(String, JSONValue)] {
@@ -212,36 +227,95 @@ enum PerformanceTranscript {
               updatedAt: 1_700_000_000_000 - Double($0), status: .idle)
     }
 
-    /// TETHER_PERF_TURNS sizes it (30 turns, 150 items, by default).
+    /// TETHER_PERF_TURNS sizes it (30 turns by default). Each turn works the way a real one does:
+    /// bursts of tool calls with a line of text between them, now and then a failed call, which stays
+    /// on its own row, and a Markdown answer at the end.
     static let history: [Item] = (0..<(Int(ProcessInfo.processInfo.environment["TETHER_PERF_TURNS"] ?? "") ?? 30)).flatMap { turn -> [Item] in
-        let t = 1_700_000_000_000.0 + Double(turn * 100)
+        let t = 1_700_000_000_000.0 + Double(turn * 1000)
         var items: [Item] = [.userMessage(.init(id: "perf-user-\(turn)", createdAt: t,
                                                 content: [.text(.init(text: "Step \(turn): look at the next part of the renderer and tighten it up."))]))]
-        for call in 0..<3 {
-            items.append(.toolCall(.init(id: "perf-tool-\(turn)-\(call)", createdAt: t + Double(call + 1), name: "Bash", kind: .bash,
-                                         input: ["command": .string("rg -n 'MarkdownView' TetherKit/Sources | head -\(call + 5)")],
-                                         status: .completed, outputText: "TetherKit/Sources/TetherUI/Markdown.swift:\(call + 5): struct MarkdownView: View {")))
+        var n = 0
+        for burst in 0..<3 {
+            for _ in 0..<(2 + (turn + burst * 3) % 7) {
+                let status: ToolStatus = turn % 4 == 1 && burst == 1 && n % 5 == 2 ? .failed : .completed
+                items.append(toolCall(id: "perf-tool-\(turn)-\(n)", at: t + Double(n + 1), index: turn + n, status: status))
+                n += 1
+            }
+            if burst < 2 {
+                items.append(.agentMessage(.init(id: "perf-note-\(turn)-\(burst)", createdAt: t + Double(n + 1),
+                                                 text: "Found it in `\(files[(turn + burst) % files.count])`. Checking the callers next.")))
+            }
         }
-        items.append(.agentMessage(.init(id: "perf-answer-\(turn)", createdAt: t + 10, text: markdown(section: turn))))
+        items.append(.agentMessage(.init(id: "perf-answer-\(turn)", createdAt: t + 500, text: markdown(section: turn))))
         return items
     }
 
-    /// About 10 KB of Markdown, streamed six characters at a time.
-    static func reply(threadID: String, firstSeq: Int) -> [(String, JSONValue)] {
-        let answerID = "perf-streaming-answer"
+    private static let files = ["Markdown.swift", "TranscriptView.swift", "ThreadModel.swift", "ItemViews.swift", "ToolCallView.swift"]
+
+    /// One of the tools a turn uses most, with the input and output each is shown with.
+    static func toolCall(id: String, at time: Double, index i: Int, status: ToolStatus) -> Item {
+        let file = "TetherKit/Sources/TetherUI/\(files[i % files.count])"
+        let failed = status == .failed
+        switch i % 5 {
+        case 0:
+            return .toolCall(.init(id: id, createdAt: time, name: "Bash", kind: .bash,
+                                   input: ["command": .string("rg -n 'MarkdownView' TetherKit/Sources | head -\(i % 9 + 3)")],
+                                   status: status, outputText: failed ? "rg: TetherKit/Sources/Missing: No such file or directory" : "\(file):\(i % 90 + 5): struct MarkdownView: View {",
+                                   isError: failed ? true : nil))
+        case 1:
+            return .toolCall(.init(id: id, createdAt: time, name: "Read", kind: .fileRead, input: ["file_path": .string(file)],
+                                   status: status, outputText: (0..<12).map { "\($0 + 1)\timport SwiftUI // line \($0)" }.joined(separator: "\n")))
+        case 2:
+            return .toolCall(.init(id: id, createdAt: time, name: "Grep", kind: .grep,
+                                   input: ["pattern": .string("readingColumn"), "path": .string("TetherKit/Sources")],
+                                   status: status, outputText: files.map { "TetherKit/Sources/TetherUI/\($0)" }.joined(separator: "\n")))
+        case 3:
+            return .toolCall(.init(id: id, createdAt: time, name: "Edit", kind: .fileEdit,
+                                   input: ["file_path": .string(file), "old_string": .string("let blocks = parse(text)"),
+                                           "new_string": .string("let blocks = cache.blocks(for: text)")],
+                                   status: status, outputText: failed ? "String to replace not found in file." : "The file \(file) has been updated.",
+                                   isError: failed ? true : nil))
+        default:
+            return .toolCall(.init(id: id, createdAt: time, name: "Glob", kind: .glob, input: ["pattern": .string("**/*View.swift")],
+                                   status: status, outputText: files.map { "TetherKit/Sources/TetherUI/\($0)" }.joined(separator: "\n")))
+        }
+    }
+
+    /// TETHER_PERF_REPLY_SECTIONS sections (3 by default, about 3 KB and 10 s) of Markdown streamed
+    /// six characters a frame, each after a burst of tool calls that start running and complete a
+    /// few frames later, as a real turn's do. `turn` keeps each reply's items distinct.
+    static let replySections = Int(ProcessInfo.processInfo.environment["TETHER_PERF_REPLY_SECTIONS"] ?? "") ?? 3
+
+    static func reply(threadID: String, firstSeq: Int, turn: Int) -> [(String, JSONValue)] {
         var seq = firstSeq
-        var out: [(String, JSONValue)] = [
-            ("item/started", json(ItemStartedNotification(threadId: threadID, seq: seq, item:
-                .agentMessage(.init(id: answerID, createdAt: 1_800_000_000_000, text: ""))))),
-        ]
-        let text = (0..<6).map { markdown(section: 100 + $0) }.joined(separator: "\n\n")
-        var rest = Substring(text)
-        while !rest.isEmpty {
-            seq += 1
-            let chunk = rest.prefix(6)
-            rest = rest.dropFirst(6)
-            out.append(("item/agentMessage/delta", json(ItemAgentMessageDeltaNotification(
-                threadId: threadID, seq: seq, itemId: answerID, delta: String(chunk)))))
+        var out: [(String, JSONValue)] = []
+        func next() -> Int { seq += 1; return seq - 1 }
+        for section in 0..<replySections {
+            for call in 0..<(3 + section % 4) {
+                let id = "perf-\(turn)-tool-\(section)-\(call)", time = 1_800_000_000_000.0 + Double(section * 100 + call)
+                let done = toolCall(id: id, at: time, index: section * 7 + call, status: .completed)
+                guard case .toolCall(var running) = done else { continue }
+                running.status = .running
+                running.outputText = nil
+                out.append(("item/started", json(ItemStartedNotification(threadId: threadID, seq: next(), item: .toolCall(running)))))
+                // Blank frames: the call runs for a moment before it completes.
+                for _ in 0..<4 { out.append(("item/toolCall/progress", json(ItemToolCallProgressNotification(
+                    threadId: threadID, seq: next(), itemId: id, elapsedSeconds: 0.1)))) }
+                out.append(("item/completed", json(ItemCompletedNotification(threadId: threadID, seq: next(), item: done))))
+            }
+            let answerID = "perf-\(turn)-answer-\(section)"
+            out.append(("item/started", json(ItemStartedNotification(threadId: threadID, seq: next(), item:
+                .agentMessage(.init(id: answerID, createdAt: 1_800_000_000_000 + Double(section * 100 + 50), text: ""))))))
+            var rest = Substring(markdown(section: 100 + section))
+            while !rest.isEmpty {
+                let chunk = rest.prefix(6)
+                rest = rest.dropFirst(6)
+                out.append(("item/agentMessage/delta", json(ItemAgentMessageDeltaNotification(
+                    threadId: threadID, seq: next(), itemId: answerID, delta: String(chunk)))))
+            }
+            out.append(("item/completed", json(ItemCompletedNotification(threadId: threadID, seq: next(), item:
+                .agentMessage(.init(id: answerID, createdAt: 1_800_000_000_000 + Double(section * 100 + 50),
+                                    text: markdown(section: 100 + section)))))))
         }
         return out
     }

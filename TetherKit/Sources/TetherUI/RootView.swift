@@ -42,7 +42,8 @@ public struct RootView: View {
                     ToolbarItem { InspectorToggle(app: app) }
                 }
         }
-        .environment(\.inspectSubagent, InspectSubagentAction { toolUseId in
+        // Reaches the inspector too, whose task list shows subagents the same way.
+        .environment(\.inspectSubagent, InspectSubagentAction(owner: app) { toolUseId in
             inspectedTaskID = toolUseId
             app.openInspector(on: .tasks)
         })
@@ -57,9 +58,6 @@ public struct RootView: View {
             }
         }
         .task { app.connectAll() }
-        #if DEBUG
-        .task { if PerformanceScript.isEnabled { await PerformanceScript.run(app) } }
-        #endif
     }
 
     /// The columns' minimums (sidebar 220, detail 520, inspector 260). While the inspector opens

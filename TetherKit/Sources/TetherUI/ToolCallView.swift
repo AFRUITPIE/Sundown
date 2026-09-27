@@ -179,13 +179,24 @@ struct ToolCallView: View {
     }
 }
 
-struct InspectSubagentAction: Sendable {
-    var open: @MainActor @Sendable (String) -> Void
+/// Equal when the same owner made it, whatever the closure: the shell makes a new one each time its
+/// body runs, and a changed environment value redraws every tool call in the transcript.
+struct InspectSubagentAction: Sendable, Equatable {
+    private let owner: ObjectIdentifier?
+    private let open: @MainActor @Sendable (String) -> Void
+
+    init(owner: AnyObject?, open: @escaping @MainActor @Sendable (String) -> Void) {
+        self.owner = owner.map(ObjectIdentifier.init)
+        self.open = open
+    }
+
     @MainActor func callAsFunction(_ toolUseId: String) { open(toolUseId) }
+
+    static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
 }
 
 private struct InspectSubagentKey: EnvironmentKey {
-    static let defaultValue = InspectSubagentAction(open: { _ in })
+    static let defaultValue = InspectSubagentAction(owner: nil, open: { _ in })
 }
 
 extension EnvironmentValues {

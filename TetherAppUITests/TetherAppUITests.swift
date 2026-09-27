@@ -210,4 +210,19 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Allow fixture command?"].exists)
         XCTAssertTrue(String(describing: input.value ?? "").contains("Draft survives permission"))
     }
+
+    /// The jump button is offered once the reader scrolls away from the end, and takes them back.
+    @MainActor
+    func testJumpToLatestAfterScrollingUp() {
+        let app = launch(scenario: "performance")
+        let latest = app.staticTexts["Section 29: tightening the renderer"].firstMatch
+        XCTAssertTrue(latest.waitForExistence(timeout: 20))
+        let jump = app.buttons["Jump to Latest"]
+        XCTAssertFalse(jump.exists)
+        latest.scroll(byDeltaX: 0, deltaY: 3000)
+        XCTAssertTrue(jump.waitForExistence(timeout: 5))
+        jump.click()
+        XCTAssertTrue(jump.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(latest.isHittable)
+    }
 }

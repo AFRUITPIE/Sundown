@@ -71,6 +71,7 @@ The daemon, not the app, owns live Claude queries. Closing or disconnecting the 
 - Keep expensive derived work out of view bodies. Transcript rows, child lookup, Markdown parsing, and diffs have caches for a reason.
 - `ThreadModel.title` and `taskEntries` are stored, not derived from `items`: anything the sidebar, toolbar or inspector chrome reads must not change per streamed delta. Only `TranscriptView` and its rows read `rows`/`items`.
 - A view takes the narrowest model it needs, and each inspector pane is its own view, so a delta redraws at most the transcript and the open pane.
+- State that changes every frame of a resize or an animation (the transcript's scroll position) lives in a view whose body holds no rows: `TranscriptView` owns the scroll state and `TranscriptContent` the rows. Environment values are compared by value, so one that holds a closure is `Equatable` by its owner (`InspectSubagentAction`); a new closure on every shell update redrew every tool call.
 - Persisted preferences are plain stored properties on `AppModel` saved through `Stored`. No `@AppStorage` inside an `@Observable`.
 
 ## UI and HIG decisions
@@ -185,6 +186,23 @@ The shared Xcode scheme also contains `TetherAppUITests`. Its launch sets
 `TETHER_UI_TEST_MODE=1`, which uses an in-process JSON-RPC fixture and fails closed before any
 daemon or SSH launch. The PR workflow runs it on `xcode-27` and resolves the public
 SwiftPM protocol package without a repository secret.
+
+`TetherPerformanceUITests` (in the same target, skipped on CI) measures hitches with
+`XCTHitchMetric` while it drives the inspector, its tabs, the sidebar, chat switching, a window
+resize and a streamed reply, against the fixture's `performance` scenario: a 30-turn chat shaped
+like real work, and a long working reply for each prompt. Run it from the test navigator and read
+the hitch time ratio in the report; Apple counts 10 ms/s or less as good. Keep in mind when reading
+the numbers:
+
+- The harness adds to them: every query or key press takes an accessibility snapshot of the whole
+  app on its main thread, and accessibility stays on for the run. An interaction the app drives
+  itself hitches about half as much.
+- A live resize of an empty SwiftUI `NavigationSplitView` window already measures about 230 ms/s
+  this way, so compare a resize with that, not with zero.
+- The window is set to 1000×740 first; how much of the transcript wraps again depends on its width.
+- `Self._logChanges()` in the view bodies, with `log stream --predicate 'category == "Changed Body
+  Properties"'`, shows which views a test updates and why, where the SwiftUI instrument can't be
+  used from the command line.
 
 Live tests use a real Claude CLI session and can incur cost:
 

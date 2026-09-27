@@ -16,7 +16,7 @@ struct StreamingBenchmark {
     @Test func streamingALongReplyIntoALongTranscript() throws {
         let thread = ThreadModel(id: "perf")
         thread.loadHistory(items: PerformanceTranscript.history, turns: [], seq: 1)
-        let notifications = try PerformanceTranscript.reply(threadID: "perf", firstSeq: 2).map { name, params in
+        let notifications = try PerformanceTranscript.reply(threadID: "perf", firstSeq: 2, turn: 1).map { name, params in
             try ServerNotification(method: name, params: JSONEncoder().encode(params))
         }
         let markdown = MarkdownCache()
