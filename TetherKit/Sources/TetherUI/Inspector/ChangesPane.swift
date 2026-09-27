@@ -4,7 +4,7 @@ import TetherProtocol
 
 /// What differs from the last commit in the chat's folder, file by file, as the desktop app's diff
 /// view shows it. Click a line to leave a comment on it; the comments go to Claude together as one
-/// message (⌘Return). Refreshed after each turn, since that's when Claude changes files.
+/// message. Refreshed after each turn, since that's when Claude changes files.
 struct ChangesPane: View {
     let thread: ThreadModel
     let connection: HostConnection
@@ -122,7 +122,8 @@ struct ChangesPane: View {
                 send("Please address these review comments on the working tree:\n\n" + lines.joined(separator: "\n"))
                 comments = []
             }
-            .keyboardShortcut(.return, modifiers: .command)
+            // No ⌘Return: as a key equivalent it took ⌘Return from the message field, where Send
+            // With ▸ Command-Return sends, whenever comments were waiting.
             .buttonStyle(.borderedProminent)
             .disabled(comments.isEmpty)
         }

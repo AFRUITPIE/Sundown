@@ -1,7 +1,7 @@
 import SwiftUI
 import TetherKit
 
-/// Chat ▸ Ask a Side Question… (⌘;): a question about the chat, answered with everything it knows
+/// Chat ▸ Ask a Side Question… (⌥⌘;): a question about the chat, answered with everything it knows
 /// but kept out of it, as the CLI's /btw is. Nothing here is saved.
 struct SideQuestionSheet: View {
     let thread: ThreadModel

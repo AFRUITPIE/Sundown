@@ -102,7 +102,7 @@ public final class WindowModel {
         Task { await startDraftChat([.text(.init(text: task.prompt))]) }
     }
 
-    /// Chat ▸ Ask a Side Question… (⌘;) is showing its sheet.
+    /// Chat ▸ Ask a Side Question… (⌥⌘;) is showing its sheet.
     var askingSideQuestion = false
 
     /// A worktree to offer removing, once the chat that worked in it is archived or deleted; and
