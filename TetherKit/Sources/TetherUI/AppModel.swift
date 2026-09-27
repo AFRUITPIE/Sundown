@@ -235,12 +235,14 @@ extension AppModel {
         let pendingPermission = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "permission"
         let performance = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "performance"
         let ssh = HostConfig(name: "Fixture SSH", kind: .ssh(destination: "fixture.invalid"))
+        // A fresh store each launch, unless a test that relaunches names one to keep.
+        let suite = ProcessInfo.processInfo.environment["TETHER_UI_TEST_DEFAULTS"]
         let app = sample(connections: [
             UITestFixture.connection(failFirstConnect: failFirst, pendingPermission: pendingPermission, performance: performance),
             UITestFixture.connection(host: ssh)
-        ])
-        // The first window opens on the fixture's chat.
-        app.lastThreadID = UITestFixture.threadID
+        ], defaults: suite.flatMap(UserDefaults.init(suiteName:)))
+        // The first window opens on the fixture's chat, or where the kept store says it was.
+        if app.lastThreadID == nil { app.lastThreadID = UITestFixture.threadID }
         return app
     }
 
@@ -255,8 +257,12 @@ extension AppModel {
         let app = AppModel(defaults: defaults ?? UserDefaults(suiteName: "tether.preview.\(UUID().uuidString)") ?? .standard)
         app.hosts = connections.map(\.host)
         app.connections = Dictionary(uniqueKeysWithValues: connections.map { ($0.id, $0) })
-        app.lastHostID = connections.first?.id ?? HostConfig.local.id
-        app.lastThreadID = nil
+        // A kept store (a relaunching UI test) says where the last window was; otherwise the
+        // first connection, on New Chat.
+        if defaults == nil || !connections.contains(where: { $0.id == app.lastHostID }) {
+            app.lastHostID = connections.first?.id ?? HostConfig.local.id
+            app.lastThreadID = nil
+        }
         return app
     }
 }

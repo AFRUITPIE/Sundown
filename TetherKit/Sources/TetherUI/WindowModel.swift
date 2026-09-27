@@ -70,8 +70,16 @@ public final class WindowModel {
     var draftError: String?
 
     /// The chat Rename… or Delete… is acting on, from the Chat menu or a sidebar row's context menu.
-    public var renaming: ThreadModel?
+    public private(set) var renaming: ThreadModel?
     public var deleting: ThreadModel?
+    /// The Rename field's text, filled in before the alert appears so it never opens empty.
+    public var renameTitle = ""
+
+    /// Asks for a new title for `thread`.
+    public func rename(_ thread: ThreadModel?) {
+        renameTitle = thread?.title ?? ""
+        renaming = thread
+    }
 
     /// Whether `start()` has run: until then nothing is resolved, so making a model in a view's
     /// initializer has no side effects.

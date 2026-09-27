@@ -20,7 +20,7 @@ struct ChatActionItems: View {
             if let thread { openWindow(value: WindowTarget(hostID: window.hostID, threadID: thread.id)) }
         }
         Divider()
-        item("Rename…", enabled: thread != nil) { window.renaming = thread }
+        item("Rename…", enabled: thread != nil) { window.rename(thread) }
         item("Duplicate", enabled: thread != nil && connection != nil) {
             guard let thread, let connection else { return }
             Task { if let fork = await connection.fork(thread) { window.open(threadID: fork.id) } }
@@ -43,21 +43,20 @@ struct ChatActionItems: View {
 /// On the window rather than the sidebar, so the Chat menu can ask for them with the sidebar hidden.
 struct ChatActionAlerts: ViewModifier {
     @Bindable var window: WindowModel
-    @State private var title = ""
 
     func body(content: Content) -> some View {
         content
-            .alert("Rename Chat", isPresented: presented(\.renaming)) {
-                TextField("Title", text: $title)
+            .alert("Rename Chat", isPresented: Binding(get: { window.renaming != nil }, set: { if !$0 { window.rename(nil) } })) {
+                TextField("Title", text: $window.renameTitle)
                 Button("Rename") {
+                    let title = window.renameTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                     if let thread = window.renaming, let connection = window.connection, !title.isEmpty {
                         Task { await connection.rename(thread, title) }
                     }
-                    window.renaming = nil
+                    window.rename(nil)
                 }
-                Button("Cancel", role: .cancel) { window.renaming = nil }
+                Button("Cancel", role: .cancel) { window.rename(nil) }
             }
-            .onChange(of: window.renaming?.id) { title = window.renaming?.title ?? "" }
             // Deleting a chat removes its transcript from the host for good, so it's confirmed. The
             // button isn't styled destructive: deleting is what the person just chose.
             .alert(deleteTitle, isPresented: presented(\.deleting)) {
@@ -75,6 +74,7 @@ struct ChatActionAlerts: ViewModifier {
     private func presented(_ key: ReferenceWritableKeyPath<WindowModel, ThreadModel?>) -> Binding<Bool> {
         Binding(get: { window[keyPath: key] != nil }, set: { if !$0 { window[keyPath: key] = nil } })
     }
+
 
     private func delete() {
         guard let thread = window.deleting, let connection = window.connection else { return }

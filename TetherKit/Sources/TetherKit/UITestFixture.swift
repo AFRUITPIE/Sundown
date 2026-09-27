@@ -91,6 +91,11 @@ private actor FixtureScript {
     private var nextSequence = 1
     private var nextMessage = 0
     private var additionalThreads: [ThreadSummary] = []
+    /// Rename, Duplicate and Delete, as the list and reads then show them.
+    private var titles: [String: String] = [:]
+    private var deleted: Set<String> = []
+    /// A fork's id, and the chat whose items it reads.
+    private var forks: [String: String] = [:]
 
     init(pendingPermission: Bool, performance: Bool) {
         self.pendingPermission = pendingPermission
@@ -119,10 +124,35 @@ private actor FixtureScript {
         case "model/list": return .init(value: .result(json(ModelListResult(models: []))))
         case "thread/list":
             let perf = performance ? PerformanceTranscript.otherChats : []
-            return .init(value: .result(json(ThreadListResult(threads: additionalThreads + perf + [originalSummary]))))
+            let threads = (additionalThreads + perf + [originalSummary])
+                .filter { !deleted.contains($0.threadId) }
+                .map { summary in
+                    var summary = summary
+                    if let title = titles[summary.threadId] { summary.customTitle = title }
+                    return summary
+                }
+            return .init(value: .result(json(ThreadListResult(threads: threads))))
+        case "thread/rename":
+            if let id = params["threadId"]?.stringValue, let title = params["title"]?.stringValue { titles[id] = title }
+            return .init(value: .result([:]))
+        case "thread/delete":
+            if let id = params["threadId"]?.stringValue { deleted.insert(id) }
+            return .init(value: .result([:]))
+        case "thread/fork":
+            let source = params["threadId"]?.stringValue ?? UITestFixture.threadID
+            let id = "fixture-fork-\(forks.count + 1)"
+            forks[id] = forks[source] ?? source
+            let title = (additionalThreads + PerformanceTranscript.otherChats + [originalSummary])
+                .first { $0.threadId == source }.map { titles[source] ?? $0.title } ?? "Chat"
+            additionalThreads.insert(.init(threadId: id, title: title, cwd: "/tmp/tether-fixture",
+                                           updatedAt: 1_700_000_000_003, status: .idle), at: 0)
+            return .init(value: .result(json(ThreadForkResult(threadId: id))))
         case "thread/read":
-            let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
-            let summary = (additionalThreads + PerformanceTranscript.otherChats).first { $0.threadId == id } ?? originalSummary
+            let requested = params["threadId"]?.stringValue ?? UITestFixture.threadID
+            // A fork reads as the chat it was made from.
+            let id = forks[requested] ?? requested
+            var summary = (additionalThreads + PerformanceTranscript.otherChats).first { $0.threadId == requested } ?? originalSummary
+            if let title = titles[requested] { summary.customTitle = title }
             let items: [Item] = performance && (id == UITestFixture.threadID || id.hasPrefix("perf-chat-")) ? PerformanceTranscript.history : id == UITestFixture.threadID ? [
                 .userMessage(.init(id: "fixture-user", createdAt: 1_700_000_000_000,
                                    content: [.text(.init(text: "Summarize this project"))])),
