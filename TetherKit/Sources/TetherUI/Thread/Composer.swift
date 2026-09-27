@@ -82,7 +82,7 @@ struct Composer: View {
                 }
                 .buttonStyle(.glass)
                 .controlSize(.small)
-                .font(.callout)
+                .scaledFont(.callout)
                 .help("Put this suggestion in the message field")
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }

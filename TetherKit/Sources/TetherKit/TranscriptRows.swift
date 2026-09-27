@@ -57,3 +57,47 @@ public func foldTranscriptRows(_ items: [Item]) -> [TranscriptRow] {
 private func isGroupable(_ call: Item.ToolCall) -> Bool {
     call.status == .completed && call.kind != .todoWrite && call.kind != .subagent
 }
+
+// MARK: find
+
+extension TranscriptRow {
+    /// What Find in Chat matches against: what the row shows or holds — a message's text, a tool
+    /// call's input values and output — as one string.
+    public var searchText: String {
+        switch self {
+        case .item(let item): return item.searchText
+        case .toolGroup(let calls): return calls.map { Item.toolCall($0).searchText }.joined(separator: "\n")
+        }
+    }
+
+    /// Whether the row matches `query`, case- and diacritic-insensitively.
+    public func matches(_ query: String) -> Bool {
+        !query.isEmpty && searchText.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    }
+}
+
+extension Item {
+    var searchText: String {
+        switch self {
+        case .userMessage(let m):
+            return m.content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n")
+        case .agentMessage(let m): return m.text
+        case .toolCall(let t): return ([t.name] + t.input.strings + [t.outputText ?? ""]).joined(separator: "\n")
+        case .error(let e): return e.message
+        case .notice(let n): return n.text
+        default: return ""
+        }
+    }
+}
+
+private extension JSONValue {
+    /// Every string in the value, depth first.
+    var strings: [String] {
+        switch self {
+        case .string(let s): return [s]
+        case .array(let a): return a.flatMap(\.strings)
+        case .object(let o): return o.keys.sorted().flatMap { o[$0]!.strings }
+        default: return []
+        }
+    }
+}

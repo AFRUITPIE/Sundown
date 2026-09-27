@@ -43,6 +43,8 @@ public final class WindowModel {
     /// Resolved here rather than in a view body: resolving can create the thread's model.
     public var threadID: String? {
         didSet {
+            // A search belongs to the chat it was typed in.
+            if threadID != oldValue { find.dismiss() }
             guard started else { return }
             resolveSelection()
             app.remember(self)
@@ -68,6 +70,9 @@ public final class WindowModel {
     public var draftDirectory: String?
     /// Why the New Chat draft couldn't start, cleared with the draft.
     var draftError: String?
+
+    /// Find in Chat for this window's transcript.
+    public let find = TranscriptFind()
 
     /// The chat Rename… or Delete… is acting on, from the Chat menu or a sidebar row's context menu.
     public private(set) var renaming: ThreadModel?

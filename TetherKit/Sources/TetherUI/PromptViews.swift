@@ -16,8 +16,8 @@ struct PendingRequestView: View {
             case .elicitationRequest(let e): ElicitationPrompt(params: e) { thread.answer(pending, with: $0) }
             case .dialogRequest(let d):
                 PromptCard(title: "Claude needs a decision", symbol: "questionmark.circle") {
-                    Text(d.dialogKind).font(.callout.monospaced())
-                    Text(d.payload.pretty).font(.caption.monospaced()).lineLimit(10)
+                    Text(d.dialogKind).scaledFont(.callout, design: .monospaced)
+                    Text(d.payload.pretty).scaledFont(.caption, design: .monospaced).lineLimit(10)
                     HStack {
                         Spacer()
                         Button("Dismiss") { thread.answer(pending, with: ["behavior": "cancelled"]) }
@@ -25,7 +25,7 @@ struct PendingRequestView: View {
                 }
             case .unknown(let method, _):
                 PromptCard(title: "Unsupported request", symbol: "questionmark.circle") {
-                    Text(method).font(.callout.monospaced())
+                    Text(method).scaledFont(.callout, design: .monospaced)
                 }
             }
         }
@@ -40,7 +40,7 @@ struct PromptCard<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(title, systemImage: symbol).font(.headline).foregroundStyle(tint)
+            Label(title, systemImage: symbol).scaledFont(.headline).foregroundStyle(tint)
             content
         }
         .padding(18)
@@ -61,9 +61,9 @@ struct PermissionPrompt: View {
 
     var body: some View {
         PromptCard(title: headline, symbol: "hand.raised") {
-            if let d = params.description { Text(d).font(.callout).foregroundStyle(.secondary) }
+            if let d = params.description { Text(d).scaledFont(.callout).foregroundStyle(.secondary) }
             detail
-            if let r = params.decisionReason { Text(r).font(.caption).foregroundStyle(.secondary) }
+            if let r = params.decisionReason { Text(r).scaledFont(.caption).foregroundStyle(.secondary) }
             if showingDeny {
                 TextField("Tell Claude what to do instead (optional)", text: $denyMessage, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
@@ -109,10 +109,10 @@ struct PermissionPrompt: View {
         if let cmd = input.string("command") {
             CodeBlock(code: "$ " + cmd, language: "bash")
         } else if let old = input.string("old_string"), let new = input.string("new_string") {
-            Text((input.string("file_path") ?? "").abbreviatingHome).font(.caption.monospaced())
+            Text((input.string("file_path") ?? "").abbreviatingHome).scaledFont(.caption, design: .monospaced)
             DiffView(old: old, new: new, lineLimit: 10)
         } else if let content = input.string("content"), let path = input.string("file_path") {
-            Text(path.abbreviatingHome).font(.caption.monospaced())
+            Text(path.abbreviatingHome).scaledFont(.caption, design: .monospaced)
             CodeBlock(code: content, language: path.lastPathComponent, lineLimit: 10)
         } else if input.objectValue?.isEmpty == false {
             CodeBlock(code: input.pretty, language: params.toolName, lineLimit: 10)
@@ -134,7 +134,7 @@ struct QuestionPrompt: View {
         PromptCard(title: "Claude has a question", symbol: "questionmark.bubble", tint: .blue) {
             ForEach(params.questions, id: \.question) { q in
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(q.question).font(.body.weight(.medium))
+                    Text(q.question).scaledFont(.body, weight: .medium)
                     if q.multiSelect {
                         ForEach(q.options, id: \.label) { o in
                             Toggle(isOn: Binding(
@@ -164,7 +164,7 @@ struct QuestionPrompt: View {
                         .pickerStyle(.radioGroup)
                         .labelsHidden() // the question is already the heading above
                         let chosen = q.options.first { selections[q.question, default: []].contains($0.label) }
-                        if let chosen { Text(chosen.description).font(.caption).foregroundStyle(.secondary) }
+                        if let chosen { Text(chosen.description).scaledFont(.caption).foregroundStyle(.secondary) }
                     }
                     TextField(q.multiSelect ? "Something else (adds to the choices above)" : "Something else",
                               text: Binding(get: { other[q.question, default: ""] },
@@ -240,14 +240,14 @@ struct ElicitationPrompt: View {
 
     var body: some View {
         PromptCard(title: "\(params.serverName) needs input", symbol: "puzzlepiece.extension", tint: .teal) {
-            Text(params.message).font(.callout)
+            Text(params.message).scaledFont(.callout)
             if let urlString = params.url, let url = URL(string: urlString) {
-                Link(urlString, destination: url).font(.callout)
+                Link(urlString, destination: url).scaledFont(.callout)
             }
             ForEach(fields, id: \.key) { f in
                 field(f)
                 if let d = f.schema.string("description") {
-                    Text(d).font(.caption).foregroundStyle(.secondary)
+                    Text(d).scaledFont(.caption).foregroundStyle(.secondary)
                 }
             }
             HStack {

@@ -274,3 +274,68 @@ extension ThreadStatus {
     /// Title case, never the wire value: the inspector shows "Not Loaded", not `notLoaded`.
     var label: String { rawValue.humanized }
 }
+
+// MARK: text size
+
+extension EnvironmentValues {
+    /// How much larger than the system's sizes the transcript and composer draw their text
+    /// (View ▸ Bigger / Smaller). macOS has no Dynamic Type, so the app offers its own.
+    @Entry var textScale: CGFloat = 1
+}
+
+/// The sizes View ▸ Bigger and Smaller step through, up to the 200% the HIG asks apps to allow.
+enum TextScale {
+    static let steps: [CGFloat] = [0.85, 1, 1.15, 1.3, 1.5, 1.75, 2]
+
+    static func bigger(than scale: CGFloat) -> CGFloat? { steps.first { $0 > scale + 0.001 } }
+    static func smaller(than scale: CGFloat) -> CGFloat? { steps.last { $0 < scale - 0.001 } }
+}
+
+extension Font.TextStyle {
+    /// The macOS point size of each text style (Typography ▸ macOS built-in text styles).
+    var macPointSize: CGFloat {
+        switch self {
+        case .largeTitle: 26
+        case .title: 22
+        case .title2: 17
+        case .title3: 15
+        case .callout: 12
+        case .subheadline: 11
+        case .footnote, .caption, .caption2: 10
+        default: 13
+        }
+    }
+
+    var macWeight: Font.Weight {
+        switch self {
+        case .headline: .bold
+        case .caption2: .medium
+        default: .regular
+        }
+    }
+}
+
+/// A text style at the reader's chosen size: the system style itself at 100%, and the same size,
+/// weight and design scaled otherwise.
+private struct ScaledFont: ViewModifier {
+    let style: Font.TextStyle
+    let weight: Font.Weight?
+    let design: Font.Design
+    @Environment(\.textScale) private var scale
+
+    func body(content: Content) -> some View {
+        if abs(scale - 1) < 0.001 {
+            content.font(.system(style, design: design, weight: weight))
+        } else {
+            content.font(.system(size: (style.macPointSize * scale).rounded(), weight: weight ?? style.macWeight, design: design))
+        }
+    }
+}
+
+extension View {
+    /// For content the reader resizes with View ▸ Bigger and Smaller — the transcript, prompts and
+    /// the composer — not for controls and chrome.
+    func scaledFont(_ style: Font.TextStyle, weight: Font.Weight? = nil, design: Font.Design = .default) -> some View {
+        modifier(ScaledFont(style: style, weight: weight, design: design))
+    }
+}

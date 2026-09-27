@@ -35,6 +35,7 @@ struct NewChatView: View {
                         }
                     }
                     .padding(.bottom, 14)
+                    .scaledFont(.body)
                     // The same column the transcript and its bottom bar use, so the composer doesn't
                     // move sideways when the first message turns this into a chat.
                     .readingColumn()

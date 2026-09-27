@@ -64,6 +64,9 @@ public final class AppModel {
     /// How wide the transcript may get (persisted).
     public var transcriptWidth: TranscriptWidth = .narrow { didSet { save() } }
 
+    /// The transcript and composer's text size, 1 being the system's (persisted).
+    public var textScale: CGFloat = 1 { didSet { save() } }
+
     /// Defaults for new threads, per app (persisted).
     public var defaultModel: String? { didSet { save() } }
     public var defaultEffort: String? { didSet { save() } }
@@ -193,6 +196,7 @@ public final class AppModel {
         var hostID: UUID?
         var sidebarGrouping: String?
         var threadID: String?
+        var textScale: Double?
     }
 
     private func load() {
@@ -210,6 +214,7 @@ public final class AppModel {
         lastShowInspector = s.showInspector ?? false
         lastInspectorPane = s.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
         sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
+        textScale = s.textScale.map { CGFloat($0) } ?? 1
         // A remembered host can disappear between launches; this Mac is always configured.
         if let id = s.hostID, hosts.contains(where: { $0.id == id }) {
             lastHostID = id
@@ -222,7 +227,7 @@ public final class AppModel {
         let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
                        showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue, hostID: lastHostID,
-                       sidebarGrouping: sidebarGrouping.rawValue, threadID: lastThreadID)
+                       sidebarGrouping: sidebarGrouping.rawValue, threadID: lastThreadID, textScale: Double(textScale))
         if let data = try? JSONEncoder().encode(s) { defaults.set(data, forKey: Self.hostsKey) }
     }
 }

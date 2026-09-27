@@ -31,7 +31,7 @@ struct ItemView: View {
             HStack {
                 VStack { Divider() }
                 Label("Conversation compacted" + (c.preTokens.map { " · \(Format.tokens($0)) tokens" } ?? ""), systemImage: "arrow.down.right.and.arrow.up.left")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize()
+                    .scaledFont(.caption).foregroundStyle(.secondary).fixedSize()
                 VStack { Divider() }
             }
         case .error(let e):
@@ -44,9 +44,9 @@ struct ItemView: View {
         case .notice(let n): NoticeView(notice: n)
         case .unknown(let v):
             DisclosureGroup("Unknown item: \(v["type"]?.stringValue ?? "?")") {
-                Text(v.pretty).font(.caption.monospaced()).textSelection(.enabled)
+                Text(v.pretty).scaledFont(.caption, design: .monospaced).textSelection(.enabled)
             }
-            .font(.caption)
+            .scaledFont(.caption)
         }
     }
 }
@@ -61,7 +61,7 @@ struct UserMessageView: View {
             VStack(alignment: .trailing, spacing: 6) {
                 if message.synthetic == true {
                     Label(message.origin ?? "system", systemImage: "gearshape")
-                        .font(.caption2).foregroundStyle(.secondary)
+                        .scaledFont(.caption2).foregroundStyle(.secondary)
                 }
                 ForEach(Array(message.content.enumerated()), id: \.offset) { _, part in
                     switch part {
@@ -75,13 +75,13 @@ struct UserMessageView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
                     case .fileRef(let f):
-                        Label(f.path, systemImage: "doc").font(.callout)
+                        Label(f.path, systemImage: "doc").scaledFont(.callout)
                     case .unknown:
                         EmptyView()
                     }
                 }
                 if message.queued == true {
-                    Text("Sent while running").font(.caption2).foregroundStyle(.secondary)
+                    Text("Sent while running").scaledFont(.caption2).foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 12)
@@ -121,7 +121,7 @@ struct NoticeView: View {
         } icon: {
             Image(systemName: symbol)
         }
-        .font(.caption)
+        .scaledFont(.caption)
         .foregroundStyle(notice.level == .warning ? AnyShapeStyle(.orange) : notice.level == .error ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
     }
 }

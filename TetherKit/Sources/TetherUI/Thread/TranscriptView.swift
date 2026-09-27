@@ -12,6 +12,7 @@ struct TranscriptView: View {
     /// Whether the reader left the transcript at its end. Only their own scrolling changes it, so a
     /// resize that briefly pushes the end off screen doesn't count as scrolling away.
     @State private var followsEnd = true
+    @Environment(\.transcriptFind) private var find
 
     var body: some View {
         ScrollView {
@@ -37,6 +38,12 @@ struct TranscriptView: View {
             guard let old, new != old else { return }
             // Once the page's rows exist, on the next turn of the run loop.
             Task { position.scrollTo(id: old, anchor: .top) }
+        }
+        // Find Next and Previous bring the match into view; the reader has left the end to read it.
+        .onChange(of: find?.step) {
+            guard let id = find?.current else { return }
+            followsEnd = false
+            withAnimation { position.scrollTo(id: id, anchor: .center) }
         }
         // The anchor doesn't survive a width change: every row re-measures at the new width.
         .onScrollGeometryChange(for: CGSize.self, of: \.containerSize) { _, _ in
@@ -94,6 +101,8 @@ private struct TranscriptContent: View {
         }
         // Rows are scroll targets by their ids, so an older page can keep the reader where they were.
         .scrollTargetLayout()
+        // The size every row's text starts from; View ▸ Bigger and Smaller change it.
+        .scaledFont(.body)
         .padding(.vertical, 16)
         .readingColumn()
     }
@@ -141,10 +150,33 @@ struct TranscriptRowView: View, Equatable {
     }
 
     var body: some View {
-        switch row {
-        case .item(let item): LiveItemView(box: thread.box(for: item), thread: thread)
-        case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread)
+        Group {
+            switch row {
+            case .item(let item): LiveItemView(box: thread.box(for: item), thread: thread)
+            case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread)
+            }
         }
+        .modifier(FindHighlight(id: row.id))
+    }
+}
+
+/// A row Find in Chat matched: tinted with the system's find color, strongest on the current match.
+private struct FindHighlight: ViewModifier {
+    let id: String
+    @Environment(\.transcriptFind) private var find
+
+    func body(content: Content) -> some View {
+        let isCurrent = find?.current == id
+        let isMatch = isCurrent || find?.matches.contains(id) == true
+        content
+            .background {
+                if isMatch {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(nsColor: .findHighlightColor).opacity(isCurrent ? 0.4 : 0.15))
+                        .padding(-6)
+                }
+            }
+            .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 }
 
@@ -171,7 +203,7 @@ struct TranscriptUnavailable: View {
             VStack(spacing: 8) {
                 ProgressView()
                 if case .connecting(let message) = connection?.state {
-                    Text(message).font(.callout).foregroundStyle(.secondary)
+                    Text(message).scaledFont(.callout).foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -229,7 +261,7 @@ struct ThinkingLine: View {
     var body: some View {
         Label("Thinking…", systemImage: "ellipsis")
             .symbolEffect(.variableColor.iterative, options: .repeating)
-            .font(.callout)
+            .scaledFont(.callout)
             .foregroundStyle(.secondary)
             .transition(.opacity)
     }
@@ -248,7 +280,7 @@ struct TurnOutcome: View {
                     .textSelection(.enabled)
             }
         }
-        .font(.caption)
+        .scaledFont(.caption)
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }

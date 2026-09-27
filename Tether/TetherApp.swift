@@ -32,8 +32,15 @@ struct TetherApp: App {
         .defaultLaunchBehavior(.presented)
         .commands {
             CommandGroup(replacing: .newItem) { FileCommands(app: app) }
+            CommandGroup(replacing: .help) { HelpCommands() }
+            CommandGroup(after: .pasteboard) {
+                Divider()
+                FindCommands()
+            }
             // Also in the View menu, so changing it doesn't mean opening Settings.
             CommandGroup(after: .toolbar) {
+                TextSizeCommands(app: app)
+                Divider()
                 TranscriptWidthCommands(app: app)
                 ShellViewCommands(app: app)
             }

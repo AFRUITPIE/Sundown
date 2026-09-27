@@ -68,6 +68,8 @@ public struct RootView: View {
             window.openInspector(on: .tasks)
         })
         .environment(\.readingWidth, app.transcriptWidth.points)
+        .environment(\.textScale, app.textScale)
+        .environment(\.transcriptFind, window.find)
         .environment(\.composerDrafts, ComposerDrafts(app: app))
         .frame(minWidth: minWidth, minHeight: 400)
         .onChange(of: window.showInspector) { _, shown in
@@ -148,6 +150,61 @@ public struct FileCommands: View {
     }
 }
 
+/// Edit ▸ Find, for the frontmost window's chat: Find… opens the bar over the transcript, and Find
+/// Next and Previous step through what it matched. Dimmed on New Chat, where there's nothing to find.
+public struct FindCommands: View {
+    @FocusedValue(\.window) private var window
+
+    public init() {}
+
+    public var body: some View {
+        let find = window?.selectedThread == nil ? nil : window?.find
+        Menu("Find") {
+            Button("Find…") { find?.show() }
+                .keyboardShortcut("f")
+            Button("Find Next") { if find?.isPresented == true { find?.next() } else { find?.show() } }
+                .keyboardShortcut("g")
+            Button("Find Previous") { if find?.isPresented == true { find?.previous() } else { find?.show() } }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+        }
+        .disabled(find == nil)
+    }
+}
+
+/// The Help menu: Tether's own documentation, then Claude Code's, which covers what the chats run.
+public struct HelpCommands: View {
+    @Environment(\.openURL) private var openURL
+
+    public init() {}
+
+    public var body: some View {
+        Button("Tether Help") { openURL(URL(string: "https://github.com/AFRUITPIE/tether-app#readme")!) }
+            .keyboardShortcut("?")
+        Button("Claude Code Documentation") { openURL(URL(string: "https://code.claude.com/docs/en/overview")!) }
+    }
+}
+
+/// View ▸ Bigger, Smaller and Actual Size, for the transcript and composer's text.
+public struct TextSizeCommands: View {
+    @Bindable var app: AppModel
+
+    public init(app: AppModel) {
+        self.app = app
+    }
+
+    public var body: some View {
+        Button("Bigger") { if let next = TextScale.bigger(than: app.textScale) { app.textScale = next } }
+            .keyboardShortcut("+")
+            .disabled(TextScale.bigger(than: app.textScale) == nil)
+        Button("Smaller") { if let next = TextScale.smaller(than: app.textScale) { app.textScale = next } }
+            .keyboardShortcut("-")
+            .disabled(TextScale.smaller(than: app.textScale) == nil)
+        Button("Actual Size") { app.textScale = 1 }
+            .keyboardShortcut("0")
+            .disabled(app.textScale == 1)
+    }
+}
+
 /// The transcript width as a View submenu with the current value checked. Also in Settings ▸
 /// General, so changing it doesn't mean opening Settings.
 public struct TranscriptWidthCommands: View {
@@ -224,6 +281,13 @@ private func rootPreviewWindow() -> WindowModel {
     window.app.transcriptWidth = .wide
     return RootView(window: window)
         .frame(width: 1400, height: 760)
+}
+
+#Preview("RootView (bigger text)") {
+    let window = rootPreviewWindow()
+    window.app.textScale = 1.5
+    return RootView(window: window)
+        .frame(width: 1100, height: 760)
 }
 
 // The narrowest window without the inspector: every toolbar item must still fit.

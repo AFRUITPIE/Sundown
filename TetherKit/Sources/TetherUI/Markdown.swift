@@ -142,7 +142,7 @@ struct MarkdownBlockView: View, Equatable {
         case .code(let lang, let body):
             CodeBlock(code: body, language: lang)
         case .heading(let level, _):
-            inline(0).font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline)
+            inline(0).scaledFont(level == 1 ? .title2 : level == 2 ? .title3 : .headline, weight: .bold)
                 .padding(.top, 6)
         case .paragraph:
             inline(0)
@@ -166,7 +166,7 @@ struct MarkdownBlockView: View, Equatable {
                 ForEach(rows.indices, id: \.self) { r in
                     GridRow {
                         ForEach(0..<rows[r].count, id: \.self) { c in
-                            inline(r * columns + c).font(r == 0 ? .body.bold() : .body)
+                            inline(r * columns + c).scaledFont(.body, weight: r == 0 ? .bold : nil)
                         }
                     }
                     if r == 0 { Divider() }
@@ -304,19 +304,16 @@ final class MarkdownCache {
         return value
     }
 
-    /// Inline code as a monospaced run on a faint fill, in the text's own color: red already means
-    /// a failure or a risky permission elsewhere. Bold a touch heavier than the default so it reads
-    /// as emphasis in body text.
+    /// Inline code on a faint fill, in the text's own color: red already means a failure or a risky
+    /// permission elsewhere. Text draws the code and strong runs monospaced and bold itself, so they
+    /// take the surrounding size, whatever View ▸ Bigger or Smaller has made it.
     private static func style(_ value: inout AttributedString) {
         let ranges = value.runs.compactMap { run -> (Range<AttributedString.Index>, InlinePresentationIntent)? in
             run.inlinePresentationIntent.map { (run.range, $0) }
         }
         for (range, intent) in ranges {
             if intent.contains(.code) {
-                value[range].font = .system(.callout, design: .monospaced)
                 value[range].backgroundColor = Color.primary.opacity(0.08)
-            } else if intent.contains(.stronglyEmphasized) {
-                value[range].font = .body.weight(.semibold)
             }
         }
     }
@@ -361,10 +358,10 @@ struct CodeBlock: View {
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
             }
-            .font(.caption)
+            .scaledFont(.caption)
             .foregroundStyle(.secondary)
             Text(verbatim: code)
-                .font(.system(.callout, design: .monospaced))
+                .scaledFont(.callout, design: .monospaced)
                 .lineLimit(expanded ? nil : lineLimit)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)

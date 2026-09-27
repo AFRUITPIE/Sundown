@@ -13,6 +13,8 @@ struct ThreadView: View {
             .safeAreaBar(edge: .bottom) {
                 BottomBar(thread: thread, connection: connection)
             }
+            // Find in Chat's bar, over the transcript while it's open.
+            .safeAreaBar(edge: .top) { FindBarHost(thread: thread) }
             .task(id: thread.id) { await connection.open(thread) }
     }
 }

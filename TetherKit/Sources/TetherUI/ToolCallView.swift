@@ -60,23 +60,23 @@ struct ToolCallView: View {
             }
             Spacer(minLength: 8)
             if let s = call.elapsedSeconds, call.status == .running {
-                Text(Format.duration(s)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
             statusGlyph
             if call.kind == .subagent {
-                Image(systemName: "sidebar.trailing").font(.caption2).foregroundStyle(.tertiary)
+                Image(systemName: "sidebar.trailing").scaledFont(.caption2).foregroundStyle(.tertiary)
             }
         }
-        .font(.callout)
+        .scaledFont(.callout)
     }
 
     /// A glyph only when there's something to notice.
     @ViewBuilder private var statusGlyph: some View {
         switch call.status {
         case .pending, .running: ProgressView().controlSize(.small)
-        case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).font(.caption)
-        case .denied: Image(systemName: "hand.raised.fill").foregroundStyle(.orange).font(.caption)
-        case .interrupted: Image(systemName: "stop.fill").foregroundStyle(.tertiary).font(.caption2)
+        case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).scaledFont(.caption)
+        case .denied: Image(systemName: "hand.raised.fill").foregroundStyle(.orange).scaledFont(.caption)
+        case .interrupted: Image(systemName: "stop.fill").foregroundStyle(.tertiary).scaledFont(.caption2)
         default: EmptyView()
         }
     }
@@ -236,7 +236,7 @@ struct DisclosureIndicator: View {
 
     var body: some View {
         Image(systemName: "chevron.right")
-            .font(.caption2.weight(.bold))
+            .scaledFont(.caption2, weight: .bold)
             .foregroundStyle(.secondary)
             .rotationEffect(.degrees(expanded ? 90 : 0))
             .frame(width: 10)
@@ -266,7 +266,7 @@ struct ToolCallGroupView: View {
                     Text("Used \(calls.count) tools").foregroundStyle(.secondary)
                     Spacer(minLength: 8)
                 }
-                .font(.callout)
+                .scaledFont(.callout)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -294,7 +294,7 @@ struct TodoListView: View {
                         .strikethrough(status == "completed")
                         .foregroundStyle(status == "completed" ? .secondary : .primary)
                 }
-                .font(.callout)
+                .scaledFont(.callout)
             }
         }
     }
@@ -339,7 +339,7 @@ struct DiffView: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array((expanded ? all : Array(all.prefix(lineLimit))).enumerated()), id: \.offset) { _, l in
                 Text(verbatim: "\(l.sign) \(l.text)")
-                    .font(.system(.callout, design: .monospaced))
+                    .scaledFont(.callout, design: .monospaced)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 8)
                     .background(l.sign == "-" ? Color.red.opacity(0.14) : l.sign == "+" ? Color.green.opacity(0.14) : .clear)
@@ -347,7 +347,7 @@ struct DiffView: View {
             if all.count > lineLimit {
                 Button(expanded ? "Show Less" : "Show All \(all.count) Lines") { expanded.toggle() }
                     .buttonStyle(.link)
-                    .font(.caption)
+                    .scaledFont(.caption)
                     .padding(8)
             }
         }

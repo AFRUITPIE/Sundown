@@ -34,6 +34,7 @@ struct BottomBar: View {
         }
         .padding(.bottom, 14)
         .readingColumn()
+        .scaledFont(.body)
     }
 }
 
