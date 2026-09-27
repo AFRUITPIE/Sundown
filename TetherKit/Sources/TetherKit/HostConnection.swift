@@ -611,25 +611,15 @@ public final class HostConnection: Identifiable {
         guard status.isRepo else { return nil }
         async let unstaged = client.call(Methods.GitDiff.self, .init(cwd: cwd))
         async let staged = client.call(Methods.GitDiff.self, .init(cwd: cwd, staged: true))
-        var files = UnifiedDiff.parse(try await staged.diff)
-        for file in UnifiedDiff.parse(try await unstaged.diff) {
-            // A file with staged and unstaged edits shows both, one after the other.
-            if let i = files.firstIndex(where: { $0.path == file.path }) {
-                files[i] = FileDiff(path: file.path, oldPath: files[i].oldPath, hunks: files[i].hunks + file.hunks)
-            } else {
-                files.append(file)
-            }
-        }
+        var untracked: [(path: String, content: String?)] = []
         for file in status.files where file.status == "??" && !file.path.hasSuffix("/") {
             let full = (cwd as NSString).appendingPathComponent(file.path)
             let read = try? await client.call(Methods.FsRead.self, .init(path: full, maxBytes: 64 * 1024))
-            if let read, read.encoding == .utf8 {
-                files.append(.added(path: file.path, content: read.content))
-            } else {
-                files.append(FileDiff(path: file.path, hunks: [], isBinary: true))
-            }
+            untracked.append((file.path, read.flatMap { $0.encoding == .utf8 ? $0.content : nil }))
         }
-        return WorkingChanges(branch: status.branchName, files: files.sorted { $0.path < $1.path })
+        let stagedDiff = try await staged.diff, unstagedDiff = try await unstaged.diff
+        let files = await UnifiedDiff.workingTree(staged: stagedDiff, unstaged: unstagedDiff, untracked: untracked)
+        return WorkingChanges(branch: status.branchName, files: files)
     }
 
     /// Whether `cwd` is in a git repository and what is checked out there (`branchName`), for New
@@ -803,12 +793,15 @@ extension GitStatusResult {
 public struct WorkingChanges: Sendable, Equatable {
     public let branch: String?
     public let files: [FileDiff]
-    public var added: Int { files.reduce(0) { $0 + $1.added } }
-    public var removed: Int { files.reduce(0) { $0 + $1.removed } }
+    /// Summed once, not per draw.
+    public let added: Int
+    public let removed: Int
 
     public init(branch: String?, files: [FileDiff]) {
         self.branch = branch
         self.files = files
+        added = files.reduce(0) { $0 + $1.added }
+        removed = files.reduce(0) { $0 + $1.removed }
     }
 }
 

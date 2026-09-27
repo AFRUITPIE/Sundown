@@ -164,37 +164,69 @@ private struct FileSection: View {
     let comment: (Int) -> Void
     let remove: (ChangesPane.ReviewComment) -> Void
     @State private var expanded = true
+    @State private var showsAll = false
     @State private var hovering = false
     @Environment(\.openFilesWith) private var editor
+
+    /// Lines shown until Show All: enough to read a change, few enough that a large diff opens
+    /// at once.
+    static let lineLimit = 300
+
+    /// Each hunk with the lines of it that are shown, up to the limit unless Show All.
+    private var shown: [(hunk: FileDiff.Hunk, lines: ArraySlice<FileDiff.Line>)] {
+        var budget = showsAll ? Int.max : Self.lineLimit
+        var parts: [(hunk: FileDiff.Hunk, lines: ArraySlice<FileDiff.Line>)] = []
+        for hunk in file.hunks where budget > 0 {
+            let lines = hunk.lines.prefix(budget)
+            budget -= lines.count
+            parts.append((hunk, lines))
+        }
+        return parts
+    }
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
             if file.isBinary {
                 Text("Binary File").font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
             } else {
-                // Code keeps its shape: a long line scrolls sideways rather than wrapping.
-                ScrollView(.horizontal) {
-                VStack(alignment: .leading, spacing: 0) {
-                    // At least as wide as the pane, so a short file's lines are highlighted across it.
-                    Color.clear.frame(height: 0).containerRelativeFrame(.horizontal)
-                    ForEach(file.hunks) { hunk in
-                        Text(hunk.header)
-                            .font(.caption2.monospaced())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .padding(.vertical, 3)
-                        ForEach(hunk.lines) { line in
-                            LineRow(line: line, comment: comment)
-                            ForEach(comments.filter { $0.line == line.newNumber ?? line.oldNumber }) { c in
-                                CommentRow(comment: c) { remove(c) }
+                let byLine = Dictionary(grouping: comments, by: \.line)
+                VStack(alignment: .leading, spacing: 6) {
+                    // Code keeps its shape: a long line scrolls sideways rather than wrapping. A
+                    // plain stack, bounded by `lineLimit`: a lazy one in here sized itself to the
+                    // pane, so long lines were cut off instead of scrolling.
+                    ScrollView(.horizontal) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            // At least as wide as the pane, so a short file's lines are highlighted across it.
+                            Color.clear.frame(height: 0).containerRelativeFrame(.horizontal)
+                            ForEach(shown, id: \.hunk.id) { part in
+                                Text(part.hunk.header)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .padding(.vertical, 3)
+                                ForEach(part.lines) { line in
+                                    LineRow(line: line, comment: comment)
+                                    ForEach(byLine[line.newNumber ?? line.oldNumber ?? -1] ?? []) { c in
+                                        CommentRow(comment: c) { remove(c) }
+                                    }
+                                }
                             }
                         }
                     }
+                    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                    .background(.fill.quinary, in: .rect(cornerRadius: 6))
+                    .clipShape(.rect(cornerRadius: 6))
+                    if file.lineCount > Self.lineLimit {
+                        Button(showsAll ? "Show Less" : "Show All \(file.lineCount.formatted()) Lines") { showsAll.toggle() }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                    }
+                    if file.omittedLines > 0 {
+                        Text("\(file.omittedLines.formatted()) more lines aren’t shown.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                }
-                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-                .background(.fill.quinary, in: .rect(cornerRadius: 6))
-                .clipShape(.rect(cornerRadius: 6))
             }
         } label: {
             HStack(spacing: 6) {
@@ -324,6 +356,25 @@ extension WorkingChanges {
     inspectorPreview {
         ThreadInspector(thread: .sampleIdleChat(), connection: .sample(), pane: .constant(.changes))
             .environment(\.previewChanges, .sample)
+    }
+}
+
+extension WorkingChanges {
+    /// A generated file past the kept limit, and a long edit past the shown one.
+    static let large = WorkingChanges(branch: "dev", files: [
+        .added(path: "Generated/Schema.swift",
+               content: (1...(UnifiedDiff.maxLinesPerFile + 1_200)).map { "    case field\($0) = \"field_\($0)\"" }.joined(separator: "\n")),
+    ] + UnifiedDiff.parse(
+        "diff --git a/Sources/App.swift b/Sources/App.swift\n--- a/Sources/App.swift\n+++ b/Sources/App.swift\n@@ -1,0 +1,800 @@\n"
+            + (1...800).map { "+let value\($0) = \($0)" }.joined(separator: "\n")))
+}
+
+/// A diff too big to show whole: each file shows its first lines with Show All, and a file past
+/// what's kept says how much was left out.
+#Preview("Changes (large diff)") {
+    inspectorPreview {
+        ThreadInspector(thread: .sampleIdleChat(), connection: .sample(), pane: .constant(.changes))
+            .environment(\.previewChanges, .large)
     }
 }
 #endif
