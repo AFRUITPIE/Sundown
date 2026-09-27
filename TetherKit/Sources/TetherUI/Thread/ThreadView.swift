@@ -122,6 +122,18 @@ struct ThreadView: View {
     .frame(width: 520, height: 348)
 }
 
+/// Settings ▸ Advanced ▸ Session Controls ▸ Message Field makes the composer a row taller; the
+/// prompt card must still leave the transcript on screen.
+#Preview("Pending permission (smallest window, session controls in message field)") {
+    var appearance = Appearance()
+    appearance.sessionControls = .messageField
+    return NavigationStack {
+        ThreadView(thread: .samplePendingPermission(), connection: .sample())
+    }
+    .environment(\.appearance, appearance)
+    .frame(width: 520, height: 348)
+}
+
 #Preview("Pending plan (smallest window)") {
     NavigationStack {
         ThreadView(thread: .samplePendingPlan(), connection: .sample())

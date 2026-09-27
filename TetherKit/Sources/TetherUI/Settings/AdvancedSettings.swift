@@ -11,6 +11,9 @@ struct AdvancedSettings: View {
                 Picker("Inspector", selection: $app.appearance.inspector) {
                     ForEach(Appearance.InspectorPlacement.allCases) { Text($0.label).tag($0) }
                 }
+                Picker("Session Controls", selection: $app.appearance.sessionControls) {
+                    ForEach(Appearance.SessionControlsPlacement.allCases) { Text($0.label).tag($0) }
+                }
             }
             Section("Sidebar") {
                 Picker("Layout", selection: $app.appearance.sidebar) {
@@ -38,6 +41,7 @@ extension Appearance {
         toolCalls = d.toolCalls
         sidebar = d.sidebar
         inspector = d.inspector
+        sessionControls = d.sessionControls
     }
 
     var advancedIsDefault: Bool {

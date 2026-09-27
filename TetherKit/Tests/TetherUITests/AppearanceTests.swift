@@ -18,10 +18,12 @@ struct AppearanceTests {
         app.appearance.offerBypass = true
         app.appearance.sendShortcut = .commandReturn
         app.appearance.openFilesWith = .zed
+        app.appearance.sessionControls = .split
 
         let restored = AppModel(defaults: defaults).appearance
 
         #expect(restored.toolCalls == .everyCall)
+        #expect(restored.sessionControls == .split)
         #expect(restored.offerBypass)
         #expect(restored.sendShortcut == .commandReturn)
         #expect(restored.openFilesWith == .zed)
@@ -37,6 +39,7 @@ struct AppearanceTests {
 
         #expect(appearance.toolCalls == .summarized)
         #expect(appearance.openFilesWith == .defaultApp)
+        #expect(appearance.sessionControls == .toolbar)
         #expect(appearance.sendShortcut == .commandReturn)
         #expect(appearance.offerBypass)
         #expect(appearance.wrapCode)
@@ -55,13 +58,23 @@ struct AppearanceTests {
         var appearance = Appearance()
         appearance.toolCalls = .everyCall
         appearance.sidebar = .activity
+        appearance.sessionControls = .messageField
         appearance.worktreeByDefault = true
         #expect(!appearance.advancedIsDefault)
         appearance.restoreAdvanced()
         #expect(appearance.advancedIsDefault)
         #expect(appearance.toolCalls == .summarized)
         #expect(appearance.sidebar == .chats)
+        #expect(appearance.sessionControls == .toolbar)
         #expect(appearance.worktreeByDefault)
+    }
+
+    /// Each placement puts every control somewhere: the toolbar, the field, or (Split) both.
+    @Test func eachPlacementShowsEveryControlOnce() {
+        typealias P = Appearance.SessionControlsPlacement
+        #expect(!P.toolbar.modelInField && !P.toolbar.permissionsInField)
+        #expect(P.split.modelInField && !P.split.permissionsInField)
+        #expect(P.messageField.modelInField && P.messageField.permissionsInField)
     }
 
     @Test func textSizeStepsReadAsPercentages() {

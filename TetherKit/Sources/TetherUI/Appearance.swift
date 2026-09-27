@@ -21,6 +21,7 @@ public struct Appearance: Codable, Equatable, Sendable {
     public var toolCalls: ToolCallDisplay = .summarized
     public var sidebar: SidebarStyle = .chats
     public var inspector: InspectorPlacement = .panel
+    public var sessionControls: SessionControlsPlacement = .toolbar
 
     public init() {}
 
@@ -87,6 +88,29 @@ public struct Appearance: Codable, Equatable, Sendable {
         }
     }
 
+    /// Where the model, effort and permissions menus sit. The Chat menu has all three either way.
+    public enum SessionControlsPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
+        /// All three in the toolbar, sharing one glass capsule.
+        case toolbar
+        /// All three in the message field, under the text.
+        case messageField
+        /// Model and effort in the message field; permissions, the one with consequences, in the toolbar.
+        case split
+        public var id: Self { self }
+        var label: String {
+            switch self {
+            case .toolbar: "Toolbar"
+            case .messageField: "Message Field"
+            case .split: "Split"
+            }
+        }
+
+        /// Model and effort are in the message field, and the field has a row for them.
+        var modelInField: Bool { self != .toolbar }
+        /// Permissions is in the message field, which leaves the toolbar nothing to show.
+        var permissionsInField: Bool { self == .messageField }
+    }
+
     public enum SendShortcut: String, Codable, CaseIterable, Identifiable, Sendable {
         /// Return sends; Shift-Return (or Option-Return) starts a new line.
         case returnKey
@@ -148,6 +172,7 @@ public struct Appearance: Codable, Equatable, Sendable {
         toolCalls = value(.toolCalls, d.toolCalls)
         sidebar = value(.sidebar, d.sidebar)
         inspector = value(.inspector, d.inspector)
+        sessionControls = value(.sessionControls, d.sessionControls)
     }
 }
 

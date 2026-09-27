@@ -28,6 +28,7 @@ struct BottomBar: View {
                          awaitingAnswer: pending != nil, onStop: {
                     Task { await connection.interrupt(thread) }
                 }, accessory: AnyView(ContextRing(thread: thread, connection: connection)),
+                sessionSettings: { SessionSettings(thread: thread, connection: connection) },
                 submit: { input in
                     await connection.send(thread, input: input)
                 })

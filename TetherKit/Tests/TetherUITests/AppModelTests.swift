@@ -190,7 +190,23 @@ struct WindowModelTests {
 
         #expect(restored.hostID == other)
         #expect(restored.threadID == "thread-9")
-        #expect(restored.isInspecting(.mcp))
+        // A window's own inspector state; the floating panel's is the app's and starts closed.
+        #expect(restored.showInspector && restored.inspectorPane == .mcp)
+    }
+
+    /// The floating panel is one for the app: showing it from one window shows it for every window,
+    /// and the other placements are each window's own.
+    @Test func thePanelIsTheAppsAndTheOtherPlacementsAreTheWindows() {
+        let app = AppModel.sample()
+        let a = window(app), b = window(app)
+        app.appearance.inspector = .panel
+        a.inspectorShown = true
+        #expect(app.inspectorPanelShown && b.inspectorShown && !a.showInspector)
+
+        app.appearance.inspector = .drawer
+        #expect(!a.inspectorShown)
+        a.openInspector(on: .changes)
+        #expect(a.isInspecting(.changes) && !b.inspectorShown)
     }
 
     @Test func draftsArePerChatAndSurviveRelaunch() {

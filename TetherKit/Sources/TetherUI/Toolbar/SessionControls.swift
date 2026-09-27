@@ -47,17 +47,22 @@ struct SessionSettings {
 
     /// The one place that decides which of the two the toolbar is driving.
     static func current(_ window: WindowModel) -> SessionSettings {
-        var settings = if let thread = window.selectedThread, let connection = window.connection {
+        let settings = if let thread = window.selectedThread, let connection = window.connection {
             SessionSettings(thread: thread, connection: connection)
         } else {
             SessionSettings(draft: window, connection: window.connection)
         }
-        settings.offersBypass = window.app.appearance.offerBypass
-        return settings
+        return settings.offering(bypass: window.app.appearance.offerBypass)
     }
 
     /// Settings ▸ General ▸ Offer Bypass Permissions.
     var offersBypass = false
+
+    func offering(bypass: Bool) -> SessionSettings {
+        var settings = self
+        settings.offersBypass = bypass
+        return settings
+    }
 
     var offeredModes: [PermissionMode] {
         PermissionMode.offered(bypass: offersBypass, current: permissionMode.wrappedValue)
@@ -105,6 +110,66 @@ struct SessionMenus: View {
             ModelMenu(settings: settings)
             EffortMenu(settings: settings)
             PermissionsMenu(settings: settings)
+        }
+    }
+}
+
+/// The session menus Settings ▸ Advanced ▸ Session Controls puts in the message field, on the row
+/// under the text. The settings are resolved in this body, not the composer's, so a change of model
+/// or mode redraws these menus and nothing else in the field.
+struct FieldSessionMenus: View {
+    let resolve: @MainActor () -> SessionSettings
+    @Environment(\.appearance) private var appearance
+
+    var body: some View {
+        let settings = resolve().offering(bypass: appearance.offerBypass)
+        HStack(spacing: 2) {
+            ModelMenu(settings: settings)
+            EffortMenu(settings: settings)
+            if appearance.sessionControls.permissionsInField {
+                PermissionsMenu(settings: settings)
+            }
+        }
+        .menuStyle(.button)
+        .buttonStyle(FieldMenuButtonStyle())
+        // Controls, not the message: the system size at every View ▸ Bigger step, like the + and
+        // Send beside them, so the row stays as tall as Send and level with the +.
+        .font(.body)
+    }
+}
+
+/// A session menu inside the message field: its label and a chevron, with a quiet fill under the
+/// pointer. No bezel and no glass, since the field around it is glass already. Not `.borderless`:
+/// its AppKit button draws only the label's visible title, which loses the width
+/// `ReservedWidthLabel` reserves, so choosing a model moved the menus beside it.
+struct FieldMenuButtonStyle: ButtonStyle {
+    /// The label's inset from the fill, which the field matches so the label lines up with its text.
+    static let inset: CGFloat = 6
+
+    func makeBody(configuration: Configuration) -> some View {
+        FieldMenuButton(configuration: configuration)
+    }
+
+    private struct FieldMenuButton: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var hovering = false
+
+        var body: some View {
+            HStack(spacing: 3) {
+                configuration.label
+                Image(systemName: "chevron.down")
+                    .imageScale(.small)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, FieldMenuButtonStyle.inset)
+            .padding(.vertical, 4)
+            .background(.fill.tertiary.opacity(isEnabled && (hovering || configuration.isPressed) ? 1 : 0), in: .capsule)
+            // A custom style doesn't dim itself; this dims bypass's red along with the rest.
+            .opacity(isEnabled ? 1 : 0.4)
+            .contentShape(.capsule)
+            .onHover { hovering = $0 }
         }
     }
 }
@@ -350,6 +415,27 @@ private struct SessionControlsPreview: View {
 #Preview("SessionControls (no fast mode)") {
     // Opus has no fast mode, so the toggle in the model menu is disabled with a reason.
     SessionControlsPreview(settings: previewSettings(thread: .sample(model: "opus", effort: nil)))
+}
+
+/// Settings ▸ Advanced ▸ Session Controls ▸ Message Field: the same menus as the field draws them,
+/// with no glass of their own. A chat, bypass (still red), and no connection (dimmed, not removed).
+#Preview("SessionControls (in the message field)") {
+    var appearance = Appearance()
+    appearance.sessionControls = .messageField
+    appearance.offerBypass = true
+    let chat = previewSettings(thread: .sample(model: "sonnet", effort: .medium, fastModeState: .on))
+    let bypass = previewSettings(thread: .sample(model: "opus", effort: .max, permissionMode: .bypassPermissions))
+    let disconnected = previewDraftSettings(connected: false)
+    return VStack(alignment: .leading, spacing: 12) {
+        FieldSessionMenus(resolve: { chat })
+        FieldSessionMenus(resolve: { bypass })
+        FieldSessionMenus(resolve: { disconnected })
+    }
+    .padding(10)
+    .frame(width: 360, alignment: .leading)
+    .glassEffect(in: .rect(cornerRadius: 22))
+    .environment(\.appearance, appearance)
+    .padding(20)
 }
 
 /// A preview can't open a menu, so the same pickers are laid out here to check the rows'
