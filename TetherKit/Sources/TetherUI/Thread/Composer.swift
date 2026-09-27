@@ -33,10 +33,30 @@ struct Composer: View {
     @State private var choosingFiles = false
     @FocusState private var focused: Bool
 
+    /// Something going with the message besides its text.
     struct Attachment: Identifiable {
         let id = UUID()
-        let data: Data
-        let mediaType: String
+        let kind: Kind
+
+        enum Kind {
+            /// PNG data.
+            case image(Data)
+            /// A PDF, sent as a document Claude reads.
+            case pdf(Data, name: String)
+            /// A text file's contents, for a host that can't read the file where it is.
+            case text(String, name: String)
+        }
+
+        var input: UserInput {
+            switch kind {
+            case .image(let data):
+                .image(.init(mediaType: .init(rawValue: "image/png"), data: data.base64EncodedString()))
+            case .pdf(let data, let name):
+                .document(.init(mediaType: .applicationPdf, data: data.base64EncodedString(), name: name))
+            case .text(let content, let name):
+                .text(.init(text: "Contents of \(name):\n```\n\(content)\n```"))
+            }
+        }
     }
 
     struct Suggestion: Identifiable, Equatable {
@@ -233,21 +253,38 @@ struct Composer: View {
     private var attachments: some View {
         ScrollView(.horizontal) {
             HStack {
-                ForEach(images) { img in
-                    if let ns = NSImage(data: img.data) {
-                        Image(nsImage: ns)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 56, height: 56)
-                            .clipShape(.rect(cornerRadius: 8))
-                            .overlay(alignment: .topTrailing) {
-                                Button("Remove", systemImage: "xmark.circle.fill") { images.removeAll { $0.id == img.id } }
-                                    .labelStyle(.iconOnly)
-                                    .buttonStyle(.borderless)
-                            }
-                    }
+                ForEach(images) { attachment in
+                    chip(attachment)
+                        .overlay(alignment: .topTrailing) {
+                            Button("Remove", systemImage: "xmark.circle.fill") { images.removeAll { $0.id == attachment.id } }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                        }
                 }
             }
+        }
+    }
+
+    @ViewBuilder private func chip(_ attachment: Attachment) -> some View {
+        switch attachment.kind {
+        case .image(let data):
+            if let ns = NSImage(data: data) {
+                Image(nsImage: ns)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 56, height: 56)
+                    .clipShape(.rect(cornerRadius: 8))
+            }
+        case .pdf(_, let name), .text(_, let name):
+            VStack(spacing: 4) {
+                Image(systemName: { if case .pdf = attachment.kind { "doc.richtext" } else { "doc.text" } }())
+                    .font(.title2)
+                Text(name).font(.caption2).lineLimit(1).truncationMode(.middle)
+            }
+            .foregroundStyle(.secondary)
+            .frame(width: 72, height: 56)
+            .background(.fill.tertiary, in: .rect(cornerRadius: 8))
+            .help(name)
         }
     }
 
@@ -325,7 +362,7 @@ struct Composer: View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var input: [UserInput] = []
         if !trimmed.isEmpty { input.append(.text(.init(text: trimmed))) }
-        for img in images { input.append(.image(.init(mediaType: .init(rawValue: img.mediaType), data: img.data.base64EncodedString()))) }
+        for attachment in images { input.append(attachment.input) }
         text = ""
         images = []
         Task { await submit(input) }
@@ -352,8 +389,17 @@ struct Composer: View {
     private func add(file url: URL) {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
-        if let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image), let data = try? Data(contentsOf: url) {
+        let type = UTType(filenameExtension: url.pathExtension)
+        if let type, type.conforms(to: .image), let data = try? Data(contentsOf: url) {
             add(image: data)
+        } else if type?.conforms(to: .pdf) == true, let data = try? Data(contentsOf: url) {
+            images.append(Attachment(kind: .pdf(data, name: url.lastPathComponent)))
+        } else if connection.host.isLocal {
+            // This Mac's Claude reads the file where it is.
+            text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + "@" + url.path + " "
+        } else if let content = try? String(contentsOf: url, encoding: .utf8), content.utf8.count <= 256 * 1024 {
+            // Another host can't see this Mac's paths, so the text goes with the message.
+            images.append(Attachment(kind: .text(content, name: url.lastPathComponent)))
         } else {
             text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + "@" + url.path + " "
         }
@@ -361,7 +407,7 @@ struct Composer: View {
 
     private func add(image data: Data) {
         guard let rep = NSBitmapImageRep(data: data), let png = rep.representation(using: .png, properties: [:]) else { return }
-        images.append(Attachment(data: png, mediaType: "image/png"))
+        images.append(Attachment(kind: .image(png)))
     }
 }
 

@@ -79,6 +79,12 @@ public struct RootView: View {
             window.openInspector(on: .tasks)
         })
         .environment(\.restoreCode, ForkChatAction(owner: window) { window.restoreCode(before: $0) })
+        .environment(\.openChat, ForkChatAction(owner: window) { id in
+            // A desktop session's id carries a prefix ("local_…"); Claude Code's own is the rest.
+            let bare = id.split(separator: "_", maxSplits: 1).last.map(String.init) ?? id
+            let known = window.connection?.chats.first { $0.id == id || $0.id == bare }
+            if let known { window.open(threadID: known.id) }
+        })
         .environment(\.showInspectorPane, ShowInspectorPaneAction(owner: window) { window.openInspector(on: $0) })
         .environment(\.forkChat, ForkChatAction(owner: window) { messageID in
             guard let thread = window.selectedThread, let connection = window.connection else { return }

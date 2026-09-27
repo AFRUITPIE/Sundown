@@ -108,6 +108,7 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Fixture Chat"].waitForExistence(timeout: 15))
         app.buttons["New Chat"].click()
         let folder = app.popUpButtons["newChat.folder"]
+        XCTAssertTrue(app.checkBoxes["newChat.worktree"].exists, "New Worktree sits beside the folder")
         let input = app.descendants(matching: .any)["composer.input"]
         XCTAssertTrue(folder.waitForExistence(timeout: 5))
         XCTAssertTrue(input.waitForExistence(timeout: 5))

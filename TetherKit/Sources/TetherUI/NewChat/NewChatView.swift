@@ -22,7 +22,15 @@ struct NewChatView: View {
             .safeAreaBar(edge: .bottom) {
                 if let connection {
                     VStack(alignment: .leading, spacing: 10) {
-                        folderPicker
+                        HStack(spacing: 12) {
+                            folderPicker
+                            // Parallel chats in one repository each get a checkout of their own.
+                            Toggle("New Worktree", isOn: $window.draftWorktree)
+                                .toggleStyle(.checkbox)
+                                .layoutPriority(1)
+                                .help("Work in a new git worktree of this folder’s repository, on a branch of its own")
+                                .accessibilityIdentifier("newChat.worktree")
+                        }
                         if let error = window.draftError {
                             Label(error, systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(.red)

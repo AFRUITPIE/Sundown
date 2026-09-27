@@ -44,6 +44,7 @@ public struct Appearance: Codable, Equatable, Sendable {
     public var runningIndicator = true
     public var toolbarModelName = true
     public var newChatFolder: NewChatFolder = .recent
+    public var worktreeByDefault = false
     public var toolCallVisibility: ToolCallVisibility = .all
     public var doubleClickOpensWindow = true
     public var showTips = true
@@ -258,6 +259,7 @@ public struct Appearance: Codable, Equatable, Sendable {
         runningIndicator = value(.runningIndicator, d.runningIndicator)
         toolbarModelName = value(.toolbarModelName, d.toolbarModelName)
         newChatFolder = value(.newChatFolder, d.newChatFolder)
+        worktreeByDefault = value(.worktreeByDefault, d.worktreeByDefault)
         toolCallVisibility = value(.toolCallVisibility, d.toolCallVisibility)
         doubleClickOpensWindow = value(.doubleClickOpensWindow, d.doubleClickOpensWindow)
         showTips = value(.showTips, d.showTips)

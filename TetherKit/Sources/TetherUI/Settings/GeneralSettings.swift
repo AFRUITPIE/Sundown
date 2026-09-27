@@ -13,6 +13,8 @@ struct GeneralSettings: View {
                 modelRow
                 effortRow
                 permissionsRow
+                Toggle("Start in a New Worktree", isOn: $app.appearance.worktreeByDefault)
+                    .help("Each new chat in a git repository works in a worktree of its own, under .claude/worktrees")
             }
             Section {
                 Toggle("Show Tips", isOn: $app.appearance.showTips)

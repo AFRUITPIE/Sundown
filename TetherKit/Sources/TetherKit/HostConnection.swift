@@ -405,12 +405,14 @@ public final class HostConnection: Identifiable {
             permissionMode: options.permissionMode,
             fastMode: options.fastMode,
             additionalDirectories: options.additionalDirectories.isEmpty ? nil : options.additionalDirectories,
-            input: input.isEmpty ? nil : input))
+            input: input.isEmpty ? nil : input,
+            worktree: options.worktree ? true : nil))
         let model = thread(r.thread.threadId)
         model.setInfo(r.thread)
         model.loadHistory(items: model.items, turns: model.turns, seq: nil)
         subscribed.insert(model.id)
-        attach(model, toProject: cwd)
+        // In a worktree the chat's folder is the worktree's, not the one chosen.
+        attach(model, toProject: r.thread.cwd)
         return model
     }
 
@@ -648,11 +650,15 @@ public struct NewThreadOptions: Sendable {
     public var permissionMode: PermissionMode?
     public var fastMode: Bool?
     public var additionalDirectories: [String] = []
-    public init(model: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastMode: Bool? = nil) {
+    /// Start in a new git worktree of the folder's repository.
+    public var worktree = false
+    public init(model: String? = nil, effort: EffortLevel? = nil, permissionMode: PermissionMode? = nil, fastMode: Bool? = nil,
+                worktree: Bool = false) {
         self.model = model
         self.effort = effort
         self.permissionMode = permissionMode
         self.fastMode = fastMode
+        self.worktree = worktree
     }
 }
 

@@ -68,6 +68,8 @@ public final class WindowModel {
     public var draftPermissionMode: PermissionMode = .default
     /// Carried into `startThread`; off unless the user asks for it on this chat.
     public var draftFastMode = false
+    /// Start the chat in a new git worktree, so it doesn't share a checkout with other chats.
+    public var draftWorktree = false
     /// The New Chat folder: the host's most recent project until one is chosen, nil before the
     /// projects arrive.
     public var draftDirectory: String?
@@ -196,6 +198,7 @@ public final class WindowModel {
         draftEffort = app.defaultEffort.map(EffortLevel.init(rawValue:))
         draftPermissionMode = PermissionMode(rawValue: app.defaultPermissionMode)
         draftFastMode = false
+        draftWorktree = app.appearance.worktreeByDefault
         draftDirectory = app.appearance.newChatFolder == .recent ? app.connections[hostID]?.projects.first?.cwd : nil
         draftError = nil
     }
@@ -230,7 +233,8 @@ extension WindowModel {
         do {
             let t = try await connection.startThread(cwd: cwd, input: input,
                                                      options: .init(model: draftModel, effort: draftEffort,
-                                                                    permissionMode: draftPermissionMode, fastMode: draftFastMode))
+                                                                    permissionMode: draftPermissionMode, fastMode: draftFastMode,
+                                                                    worktree: draftWorktree))
             open(threadID: t.id, on: connection.id)
         } catch {
             draftError = error.localizedDescription

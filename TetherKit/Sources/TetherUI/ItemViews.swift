@@ -169,6 +169,8 @@ extension EnvironmentValues {
     @Entry var forkChat = ForkChatAction(owner: nil) { _ in }
     /// Restore Code to Here…, for a prompt. The same shape as Fork from Here's.
     @Entry var restoreCode = ForkChatAction(owner: nil) { _ in }
+    /// Shows a chat by id in the window, for a message that links to the chat it came from.
+    @Entry var openChat = ForkChatAction(owner: nil) { _ in }
 }
 
 struct UserMessageView: View {
@@ -224,8 +226,14 @@ struct UserMessageView: View {
     private func parts(alignment: HorizontalAlignment) -> some View {
         VStack(alignment: alignment, spacing: 6) {
             if message.synthetic == true {
-                Label(Self.originLabel(message.origin), systemImage: Self.originSymbol(message.origin))
-                    .scaledFont(.caption2).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Label(message.originName.map { "From “\($0)”" } ?? Self.originLabel(message.origin),
+                          systemImage: Self.originSymbol(message.origin))
+                    if let session = message.originSession {
+                        PeerSessionLink(sessionID: session)
+                    }
+                }
+                .scaledFont(.caption2).foregroundStyle(.secondary)
             }
             ForEach(Array(message.content.enumerated()), id: \.offset) { _, part in
                 switch part {
@@ -240,6 +248,8 @@ struct UserMessageView: View {
                     }
                 case .fileRef(let f):
                     Label(f.path, systemImage: "doc").scaledFont(.callout)
+                case .document(let d):
+                    Label(d.name ?? "PDF Document", systemImage: "doc.richtext").scaledFont(.callout)
                 case .unknown:
                     EmptyView()
                 }
@@ -252,6 +262,18 @@ struct UserMessageView: View {
         // A group VoiceOver names as it enters: whose message this is.
         .accessibilityElement(children: .contain)
         .accessibilityLabel(message.synthetic == true ? Self.originLabel(message.origin) : "You")
+    }
+}
+
+/// Opens the session a message came from, when it's one of this host's chats.
+private struct PeerSessionLink: View {
+    let sessionID: String
+    @Environment(\.openChat) private var openChat
+
+    var body: some View {
+        Button("Open Sender’s Chat") { openChat(sessionID) }
+            .buttonStyle(.link)
+            .help("Show the chat this message came from")
     }
 }
 

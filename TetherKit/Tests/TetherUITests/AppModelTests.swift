@@ -286,6 +286,23 @@ struct WindowModelTests {
         #expect(settings.offeredModes.contains(.bypassPermissions))
     }
 
+    @Test func newChatsStartInAWorktreeWhenSettingsSaySo() {
+        let app = AppModel.sample()
+        let w = window(app)
+        #expect(!w.draftWorktree)
+        app.appearance.worktreeByDefault = true
+        w.newChat()
+        #expect(w.draftWorktree)
+    }
+
+    @Test func newChatCanStartWithNoFolder() {
+        let app = AppModel.sample()
+        app.appearance.newChatFolder = .ask
+        let w = window(app)
+        w.newChat()
+        #expect(w.draftDirectory == nil)
+    }
+
     @Test func newChatUsesTheConfiguredDefaults() {
         let app = AppModel(defaults: isolatedDefaults())
         let w = window(app)
