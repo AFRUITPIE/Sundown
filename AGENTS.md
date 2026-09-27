@@ -51,6 +51,7 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
   - `Thread/`: `ThreadView` (transcript over bottom bar), `TranscriptView`, `BottomBar`, `Composer` (`/` commands, `@` files, images), `ContextRing`, `ArrivingText` (streamed text fading in), `TranscriptFind`.
   - `NewChat/`: the new-chat screen (folder pop-up and New Worktree above the composer) and the remote folder picker.
   - `Scheduled/`: a host's Scheduled Tasks window (Host ▸ Scheduled Tasks…), over the daemon's `schedule/*` methods.
+  - `Plugins/`: a host's Plugins window (Host ▸ Plugins…), over the daemon's `plugin/*` methods (the host's `claude plugin`). A grouped Form, not a List: an inset List trapped in SwiftUI's outline code on its rows.
   - `Settings/`: General, Appearance, Notifications and Hosts panes, host detail, the environment sheet, and the connection log window.
   - `PromptViews.swift`: permission, question, plan, and elicitation requests.
   - `ItemViews.swift`, `ToolCallView.swift`, `Markdown.swift`: transcript rendering.
