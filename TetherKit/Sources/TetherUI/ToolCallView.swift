@@ -30,8 +30,8 @@ struct ToolCallView: View {
                     .padding(10)
                     .background(.fill.quinary, in: .rect(cornerRadius: 8))
                     .padding(.top, 6)
-                    // Under the title: past the triangle, the symbol and the spacing after each.
-                    .padding(.leading, 42)
+                    // Under the title: past the triangle and the spacing after it.
+                    .padding(.leading, 18)
             }
         }
     }
@@ -40,20 +40,12 @@ struct ToolCallView: View {
         call.kind == .todoWrite
     }
 
-    private var accentColor: Color {
-        switch call.status {
-        case .failed: return .red
-        case .denied: return .orange
-        case .running, .pending: return .blue
-        default: return .secondary
-        }
-    }
-
     private var header: some View {
         HStack(spacing: 8) {
             // A subagent opens in the inspector instead of expanding here.
             DisclosureIndicator(expanded: expanded).opacity(call.kind == .subagent ? 0 : 1)
-            Image(systemName: symbol).foregroundStyle(accentColor).frame(width: 16)
+            // Status leads the row, where the eye starts; a finished call has none, just its words.
+            statusGlyph
             Text(title).foregroundStyle(.secondary)
             if !subtitle.isEmpty {
                 Text(subtitle).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
@@ -62,7 +54,6 @@ struct ToolCallView: View {
             if let s = call.elapsedSeconds, call.status == .running {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
-            statusGlyph
             if call.kind == .subagent {
                 Image(systemName: "sidebar.trailing").scaledFont(.caption2).foregroundStyle(.tertiary)
             }
@@ -78,28 +69,6 @@ struct ToolCallView: View {
         case .denied: Image(systemName: "hand.raised.fill").foregroundStyle(.orange).scaledFont(.caption)
         case .interrupted: Image(systemName: "stop.fill").foregroundStyle(.tertiary).scaledFont(.caption2)
         default: EmptyView()
-        }
-    }
-
-    private var symbol: String {
-        switch call.kind {
-        case .bash: return "terminal"
-        case .fileRead: return "doc.text"
-        case .fileWrite: return "doc.badge.plus"
-        case .fileEdit, .notebookEdit: return "pencil"
-        case .grep, .glob: return "magnifyingglass"
-        case .webFetch: return "globe"
-        case .webSearch: return "safari"
-        case .mcp: return "puzzlepiece.extension"
-        case .subagent: return "person.2"
-        case .todoWrite, .task: return "checklist"
-        case .askUserQuestion: return "questionmark.bubble"
-        case .exitPlanMode, .enterPlanMode: return "list.bullet.clipboard"
-        case .skill: return "sparkles"
-        case .monitor: return "waveform.path.ecg"
-        case .schedule: return "clock"
-        case .worktree: return "arrow.triangle.branch"
-        default: return "wrench.and.screwdriver"
         }
     }
 
@@ -262,7 +231,6 @@ struct ToolCallGroupView: View {
             } label: {
                 HStack(spacing: 8) {
                     DisclosureIndicator(expanded: expanded)
-                    Image(systemName: "square.stack").foregroundStyle(.secondary).frame(width: 16)
                     Text("Used \(calls.count) tools").foregroundStyle(.secondary)
                     Spacer(minLength: 8)
                 }
@@ -274,7 +242,7 @@ struct ToolCallGroupView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
                 }
-                // Each call's triangle under the group's symbol.
+                // Each call's triangle under the group's title.
                 .padding(.leading, 18)
             }
         }
