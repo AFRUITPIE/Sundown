@@ -43,6 +43,7 @@ public struct Appearance: Codable, Equatable, Sendable {
     public var rowDetail: RowDetail = .folder
     public var runningIndicator = true
     public var doubleClickOpensWindow = true
+    public var showTips = true
 
     public init() {}
 
@@ -225,6 +226,7 @@ public struct Appearance: Codable, Equatable, Sendable {
         rowDetail = value(.rowDetail, d.rowDetail)
         runningIndicator = value(.runningIndicator, d.runningIndicator)
         doubleClickOpensWindow = value(.doubleClickOpensWindow, d.doubleClickOpensWindow)
+        showTips = value(.showTips, d.showTips)
     }
 }
 

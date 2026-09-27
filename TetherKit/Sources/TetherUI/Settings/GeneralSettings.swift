@@ -15,6 +15,15 @@ struct GeneralSettings: View {
                 permissionsRow
             }
             Section {
+                Toggle("Show Tips", isOn: $app.appearance.showTips)
+                Button("Show Tips Again") { TetherTips.reset() }
+                    .disabled(!app.appearance.showTips)
+            } header: {
+                Text("Tips")
+            } footer: {
+                Text("Tips point out what’s easy to miss, like / and @ in the message field. Turning them off takes effect the next time Tether opens.")
+            }
+            Section {
                 Toggle("Offer Bypass Permissions", isOn: $app.appearance.offerBypass)
                 Toggle("Offer Don’t Ask", isOn: $app.appearance.offerDontAsk)
             } header: {

@@ -282,6 +282,7 @@ struct Composer: View {
         .buttonBorderShape(.circle)
         .help("Attach files, mention one, or use a command")
         .accessibilityIdentifier("composer.add")
+        .popoverTip(ComposerTip(), arrowEdge: .bottom)
     }
 
     /// Puts `token` where typing it would, and the cursor after it.

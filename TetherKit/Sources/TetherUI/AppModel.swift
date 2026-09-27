@@ -124,6 +124,7 @@ public final class AppModel {
     public func startAttention() {
         Self.current = self
         guard attention == nil else { return }
+        TetherTips.configure(showing: appearance.showTips)
         let uiTest = ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1"
         attention = AttentionCenter(app: self, deliversToSystem: !uiTest)
     }
