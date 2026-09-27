@@ -165,26 +165,35 @@ struct DetailView: View {
     var body: some View {
         // The column's root keeps one identity. When the root itself changed (the branch, or the
         // chat's `.id`), the column's toolbar items were torn down and rebuilt, fading in on every switch.
-        // Always a split view, holding the drawer only while it's open, so opening it doesn't change
-        // the column's root.
-        VSplitView {
-            ZStack {
-                if let thread = window.selectedThread, let connection = window.connection {
-                    // The only `.id()` in the shell: a different chat gets its own composer draft and scroll position.
-                    ThreadView(thread: thread, connection: connection)
-                        .id(thread.id)
-                } else {
-                    NewChatView(window: window)
+        // A split view only for Settings ▸ Advanced ▸ Inspector ▸ Drawer, holding the drawer while
+        // it's open, so opening it doesn't change the column's root. Not always: a split view here
+        // beside the inspector column sent AppKit into its Update Constraints loop at launch.
+        // Changing the placement rebuilds the column, which is fine for a setting.
+        if placement == .drawer {
+            VSplitView {
+                chat.frame(minHeight: 240)
+                if window.showInspector {
+                    InspectorDrawer(window: window)
                 }
             }
-            .frame(minHeight: 240)
-            // Settings ▸ Advanced ▸ Inspector ▸ Over the Chat: the chat and New Chat place the card
-            // themselves, above their bottom bars.
-            .environment(\.inspectorCardWindow, window)
-            if placement == .drawer, window.showInspector {
-                InspectorDrawer(window: window)
+        } else {
+            chat
+        }
+    }
+
+    /// The chat or New Chat. The chat and New Chat place Settings ▸ Advanced ▸ Inspector ▸ Over the
+    /// Chat's card themselves, above their bottom bars.
+    private var chat: some View {
+        ZStack {
+            if let thread = window.selectedThread, let connection = window.connection {
+                // The only `.id()` in the shell: a different chat gets its own composer draft and scroll position.
+                ThreadView(thread: thread, connection: connection)
+                    .id(thread.id)
+            } else {
+                NewChatView(window: window)
             }
         }
+        .environment(\.inspectorCardWindow, window)
     }
 
     private var placement: Appearance.InspectorPlacement { window.app.appearance.inspector }

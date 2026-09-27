@@ -656,12 +656,12 @@ public final class HostConnection: Identifiable {
 
     public func uninstallPlugin(_ plugin: InstalledPlugin, cwd: String?) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
-        _ = try await client.call(Methods.PluginUninstall.self, .init(pluginId: plugin.id, scope: plugin.scope, cwd: cwd))
+        _ = try await client.call(Methods.PluginUninstall.self, .init(pluginId: plugin.id, scope: plugin.scope.map { .init(rawValue: $0) }, cwd: cwd))
     }
 
     public func setPlugin(_ plugin: InstalledPlugin, enabled: Bool, cwd: String?) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
-        _ = try await client.call(Methods.PluginSetEnabled.self, .init(pluginId: plugin.id, enabled: enabled, scope: plugin.scope, cwd: cwd))
+        _ = try await client.call(Methods.PluginSetEnabled.self, .init(pluginId: plugin.id, enabled: enabled, scope: plugin.scope.map { .init(rawValue: $0) }, cwd: cwd))
     }
 
     // MARK: scheduled tasks
