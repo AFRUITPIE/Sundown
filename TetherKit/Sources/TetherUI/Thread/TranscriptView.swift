@@ -30,6 +30,14 @@ struct TranscriptView: View {
             followsEnd = true
             position.scrollTo(edge: .bottom)
         }
+        // An older page goes in above the reader, who stays on the row they were reading: the scroll
+        // view kept the same offset from the top, which showed the page's first rows and left the
+        // spinner that asks for the next one on screen, so it never asked again.
+        .onChange(of: thread.rows.first?.id) { old, new in
+            guard let old, new != old else { return }
+            // Once the page's rows exist, on the next turn of the run loop.
+            Task { position.scrollTo(id: old, anchor: .top) }
+        }
         // The anchor doesn't survive a width change: every row re-measures at the new width.
         .onScrollGeometryChange(for: CGSize.self, of: \.containerSize) { _, _ in
             if followsEnd { position.scrollTo(edge: .bottom) }
@@ -75,7 +83,7 @@ private struct TranscriptContent: View {
                 TranscriptUnavailable(thread: thread, connection: connection)
             }
             if thread.historyLoaded, thread.hasMoreHistory {
-                olderHistoryTrigger
+                OlderHistoryTrigger(thread: thread, connection: connection)
             }
             // One plain view per row, identified by the ForEach alone: a `switch` or `.id()` here
             // adds a node to every row, and the lazy stack walks every row on each layout pass.
@@ -84,21 +92,33 @@ private struct TranscriptContent: View {
             }
             TranscriptTail(thread: thread)
         }
+        // Rows are scroll targets by their ids, so an older page can keep the reader where they were.
+        .scrollTargetLayout()
         .padding(.vertical, 16)
         .readingColumn()
     }
+}
 
-    /// Asks for the previous page when the top comes into view; one page is fetched at a time.
-    private var olderHistoryTrigger: some View {
+/// Asks for the previous page while the top of the transcript is on screen, one page at a time.
+private struct OlderHistoryTrigger: View {
+    let thread: ThreadModel
+    let connection: HostConnection?
+    @State private var visible = false
+
+    var body: some View {
         ProgressView()
             .controlSize(.small)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
-            .onScrollVisibilityChange(threshold: 0.01) { visible in
-                // `loadingOlder` is checked here as well as inside the call: the spinner stays on
-                // screen while its page loads, and every visibility report would queue another task.
-                guard visible, !thread.loadingOlder else { return }
-                Task { await connection?.loadOlderHistory(thread) }
+            .onScrollVisibilityChange(threshold: 0.01) { visible = $0 }
+            // A page goes in above the reader and normally takes the spinner off screen, which ends
+            // this. One short enough to leave it showing changes no visibility, so after a moment for
+            // the scroll to settle the next page is asked for here.
+            .task(id: visible) {
+                while visible, thread.hasMoreHistory, !Task.isCancelled {
+                    await connection?.loadOlderHistory(thread)
+                    try? await Task.sleep(for: .milliseconds(300))
+                }
             }
     }
 }
