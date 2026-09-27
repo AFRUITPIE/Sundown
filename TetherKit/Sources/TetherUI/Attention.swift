@@ -47,6 +47,23 @@ public struct AlertPreferences: Codable, Equatable, Sendable {
     }
 }
 
+/// The requests already told about. The daemon re-sends a request that's still waiting on every
+/// reconnect, and each would otherwise post its notification, with its sound, again.
+struct RequestSightings {
+    private var seen: Set<String> = []
+    private var order: [String] = []
+    /// How many are remembered; a request waits minutes, not hundreds of reconnects.
+    static let limit = 500
+
+    /// True the first time `id` is seen.
+    mutating func firstSighting(of id: String) -> Bool {
+        guard seen.insert(id).inserted else { return false }
+        order.append(id)
+        if order.count > Self.limit { seen.remove(order.removeFirst()) }
+        return true
+    }
+}
+
 /// What happened in a chat that might be worth telling someone who isn't looking at it.
 enum AttentionEvent: Equatable {
     case replyFinished(failed: Bool)
@@ -63,6 +80,7 @@ final class AttentionCenter: NSObject {
     private let deliversToSystem: Bool
     private(set) var delivered: [(title: String, body: String)] = []
     private var authorization: UNAuthorizationStatus?
+    private var sightings = RequestSightings()
 
     init(app: AppModel, deliversToSystem: Bool) {
         self.app = app
@@ -76,6 +94,10 @@ final class AttentionCenter: NSObject {
         center.addObserver(forName: .tetherNeedsAttention, object: nil, queue: .main) { [weak self] note in
             let info = Info(note)
             MainActor.assumeIsolated { self?.needsInput(info) }
+        }
+        center.addObserver(forName: .tetherRequestResolved, object: nil, queue: .main) { [weak self] note in
+            let info = Info(note)
+            MainActor.assumeIsolated { self?.requestResolved(info) }
         }
         if deliversToSystem {
             let notifications = UNUserNotificationCenter.current()
@@ -140,6 +162,8 @@ final class AttentionCenter: NSObject {
 
     private func needsInput(_ info: Info) {
         guard let connection = info.connection, let id = info.threadID else { return }
+        // Once per request, not again each time a reconnect re-sends it.
+        if let requestID = info.requestID, !sightings.firstSighting(of: "\(connection.id)/\(requestID)") { return }
         let thread = connection.thread(id)
         let request = thread.pending.first { $0.id == info.requestID }?.request
         guard Self.shouldNotify(.needsInput, prefs: app.alerts, appIsActive: NSApp.isActive, chatIsShown: isShown(thread)) else {
@@ -149,6 +173,19 @@ final class AttentionCenter: NSObject {
         post(id: "request-\(info.requestID ?? id)", title: thread.title, body: Self.describe(request),
              host: connection.id, threadID: id, requestID: info.requestID,
              category: request.map { if case .permissionRequest = $0 { true } else { false } } == true ? Self.permissionCategory.identifier : nil)
+    }
+
+    /// A request was answered, here or elsewhere, or cancelled: its notification goes.
+    private func requestResolved(_ info: Info) {
+        guard deliversToSystem, let requestID = info.requestID else { return }
+        let center = UNUserNotificationCenter.current()
+        center.removeDeliveredNotifications(withIdentifiers: ["request-\(requestID)"])
+        center.removePendingNotificationRequests(withIdentifiers: ["request-\(requestID)"])
+    }
+
+    /// Whether the request is still waiting for an answer.
+    private func isWaiting(host: UUID, threadID: String, requestID: String) -> Bool {
+        app.connection(host)?.thread(threadID).pending.contains { $0.id == requestID } == true
     }
 
     /// The reply's last line, as a notification's body shows it.
@@ -208,9 +245,30 @@ final class AttentionCenter: NSObject {
         let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
         Task {
             guard await authorize() else { return }
+            // Answered while permission was being asked for: nothing to say any more.
+            if let requestID, !isWaiting(host: host, threadID: threadID, requestID: requestID) { return }
             try? await UNUserNotificationCenter.current().add(request)
         }
     }
+
+    /// Allow or Deny on a request that was answered elsewhere, or cancelled, since its notification
+    /// went up: says so in its place, quietly, rather than doing nothing.
+    private func sayAlreadyAnswered(id: String, title: String, threadID: String, host: UUID) {
+        guard deliversToSystem else {
+            delivered.append((title, Self.alreadyAnswered))
+            return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = Self.alreadyAnswered
+        content.threadIdentifier = threadID
+        content.interruptionLevel = .passive
+        content.userInfo = ["host": host.uuidString, "thread": threadID]
+        Task { try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) }
+    }
+
+    static let alreadyAnswered = "Already answered."
+
 
     /// Asked the first time there's something to say, not at launch.
     private func authorize() async -> Bool {
@@ -314,11 +372,16 @@ extension AttentionCenter: UNUserNotificationCenterDelegate {
               let threadID = info["thread"] as? String else { return }
         let requestID = info["request"] as? String
         let action = response.actionIdentifier
+        let identifier = response.notification.request.identifier
+        let title = response.notification.request.content.title
         await MainActor.run {
             switch action {
             case "allow", "deny":
-                guard let thread = app.connection(host)?.thread(threadID),
-                      let pending = thread.pending.first(where: { $0.id == requestID }) else { return }
+                let thread = app.connection(host)?.thread(threadID)
+                guard let thread, let pending = thread.pending.first(where: { $0.id == requestID }) else {
+                    sayAlreadyAnswered(id: identifier, title: thread?.title ?? title, threadID: threadID, host: host)
+                    return
+                }
                 thread.answer(pending, with: action == "allow"
                     ? ["decision": "allow", "scope": "once"]
                     : ["decision": "deny", "message": "The user denied this action."])

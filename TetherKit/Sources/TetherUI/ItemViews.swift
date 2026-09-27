@@ -24,7 +24,8 @@ struct ItemView: View {
             UserMessageView(message: m)
                 .messageMenu(id: m.id, text: m.plainText, isMarkdown: false, sentAt: m.createdAt)
         case .agentMessage(let m):
-            MarkdownView(text: m.text)
+            // Only the reply being streamed into fades its new text in; every other reply is settled.
+            MarkdownView(text: m.text, streams: thread.streamingReplyID == m.id)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .messageMenu(id: m.id, text: m.text, isMarkdown: true, sentAt: m.createdAt)
         // Reasoning never renders; subagent items come through here too.
@@ -164,7 +165,30 @@ extension EnvironmentValues {
     /// Restore Code to Here…, for a prompt. The same shape as Fork from Here's.
     @Entry var restoreCode = ForkChatAction(owner: nil) { _ in }
     /// Shows a chat by id in the window, for a message that links to the chat it came from.
-    @Entry var openChat = ForkChatAction(owner: nil) { _ in }
+    @Entry var openChat = OpenChatAction(owner: nil, resolve: { _ in nil }, open: { _ in })
+}
+
+/// Shows a chat in the window by an id a message carries, when it's one of this host's listed chats.
+/// Compared by owner, like `ForkChatAction`.
+struct OpenChatAction: Equatable {
+    private let owner: ObjectIdentifier?
+    private let resolveID: @MainActor (String) -> String?
+    private let open: @MainActor (String) -> Void
+
+    init(owner: AnyObject?, resolve: @escaping @MainActor (String) -> String?, open: @escaping @MainActor (String) -> Void) {
+        self.owner = owner.map(ObjectIdentifier.init)
+        self.resolveID = resolve
+        self.open = open
+    }
+
+    /// The listed chat `id` names, or nil when this host's list doesn't have it.
+    @MainActor func resolve(_ id: String) -> String? { resolveID(id) }
+
+    @MainActor func callAsFunction(_ id: String) {
+        if let listed = resolveID(id) { open(listed) }
+    }
+
+    static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
 }
 
 struct UserMessageView: View {
@@ -243,15 +267,20 @@ struct UserMessageView: View {
     }
 }
 
-/// Opens the session a message came from, when it's one of this host's chats.
+/// Opens the session a message came from. Dimmed, and saying why, when it isn't one of this host's
+/// listed chats, rather than a link that does nothing.
 private struct PeerSessionLink: View {
     let sessionID: String
     @Environment(\.openChat) private var openChat
 
     var body: some View {
+        let listed = openChat.resolve(sessionID) != nil
         Button("Open Sender’s Chat") { openChat(sessionID) }
             .buttonStyle(.link)
-            .help("Show the chat this message came from")
+            // The message around it is secondary; a link still reads as one, and dims when it can't go.
+            .foregroundStyle(listed ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+            .disabled(!listed)
+            .help(listed ? "Show the chat this message came from" : "The chat this message came from isn’t in this host’s list")
     }
 }
 
@@ -307,6 +336,22 @@ struct NoticeView: View {
             .frame(maxWidth: 920)
     }
     .frame(width: 640, height: 160)
+}
+
+/// A message from another session: its link opens the sender's chat when this host lists it, and
+/// is dimmed, saying why, when it doesn't.
+#Preview("User message (from another session)") {
+    let listed = Item.userMessage(.init(id: "peer-1", createdAt: 0, content: [.text(.init(text: "The API tests pass on main now."))],
+                                        synthetic: true, origin: "peer", originName: "CI babysitter", originSession: "listed"))
+    let unlisted = Item.userMessage(.init(id: "peer-2", createdAt: 0, content: [.text(.init(text: "Deploy finished."))],
+                                          synthetic: true, origin: "peer", originSession: "elsewhere"))
+    return VStack(spacing: 16) {
+        ItemView(item: listed, thread: .sampleIdleChat())
+        ItemView(item: unlisted, thread: .sampleIdleChat())
+    }
+    .environment(\.openChat, OpenChatAction(owner: nil, resolve: { $0 == "listed" ? $0 : nil }, open: { _ in }))
+    .padding(28)
+    .frame(width: 640)
 }
 
 #Preview("Agent message") {

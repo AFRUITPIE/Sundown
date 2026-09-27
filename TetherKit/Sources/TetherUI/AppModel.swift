@@ -145,7 +145,6 @@ public final class AppModel {
     /// Starts notifications and the Dock badge. The app calls this; tests and previews don't, so
     /// nothing there reaches Notification Center.
     public func startAttention() {
-        Self.current = self
         guard attention == nil else { return }
         let uiTest = ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1"
         attention = AttentionCenter(app: self, deliversToSystem: !uiTest)
@@ -178,7 +177,7 @@ public final class AppModel {
         if send, window.draftDirectory != nil {
             await window.startDraftChat([.text(.init(text: text))])
         } else {
-            setDraft(text, for: "new-chat:\(window.hostID)")
+            deliverDraft(text, for: "new-chat:\(window.hostID)")
         }
     }
 
@@ -198,8 +197,24 @@ public final class AppModel {
     public var defaultPermissionMode: String = "default" { didSet { save() } }
 
     /// Each chat's unsent composer text, by thread id (persisted), so switching chats, closing a
-    /// window or quitting doesn't lose it.
-    public private(set) var drafts: [String: String] = [:]
+    /// window or quitting doesn't lose it. Not observed: it changes on every keystroke, and a
+    /// composer reads it only when it appears. Text put in a field from outside goes through
+    /// `draftDeliveries` instead.
+    @ObservationIgnored public private(set) var drafts: [String: String] = [:]
+
+    /// A draft put in a composer from outside it (Shortcuts' Start a Chat), by draft key. Each
+    /// composer showing that key applies a new one once, by its id; observed, and changed only by a
+    /// delivery, so typing doesn't redraw every composer.
+    public private(set) var draftDeliveries: [String: DraftDelivery] = [:]
+
+    public struct DraftDelivery: Equatable, Sendable {
+        public let id = UUID()
+        public let text: String
+    }
+
+    /// The pending write of `drafts`: made once typing pauses, not per keystroke.
+    @ObservationIgnored private var draftsSave: Task<Void, Never>?
+    @ObservationIgnored private var terminationObserver: (any NSObjectProtocol)?
 
     private let defaults: UserDefaults
     private static let hostsKey = "tether.hosts.v1"
@@ -219,12 +234,24 @@ public final class AppModel {
     /// for every change of selection.
     private var writtenEnv: [UUID: [String: String]] = [:]
 
-    public init(defaults: UserDefaults = .standard) {
+    public convenience init(defaults: UserDefaults = .standard) {
+        self.init(defaults: defaults, secrets: defaults === UserDefaults.standard ? KeychainSecrets() : DefaultsSecrets(defaults))
+    }
+
+    init(defaults: UserDefaults, secrets: SecretStore) {
         self.defaults = defaults
-        self.secrets = defaults === UserDefaults.standard ? KeychainSecrets() : DefaultsSecrets(defaults)
+        self.secrets = secrets
         load()
         for h in hosts { connections[h.id] = HostConnection(host: h) }
         for c in connections.values { c.offersSessionTools = appearance.sessionTools }
+        // Here, not when the first window appears: a Shortcut can launch the app and ask for a
+        // chat before any window has.
+        Self.current = self
+        // A draft typed just before quitting is written then.
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.saveDrafts() }
+        }
     }
 
     public func connection(_ id: UUID) -> HostConnection? { connections[id] }
@@ -325,9 +352,31 @@ public final class AppModel {
 
     public func draft(for threadID: String) -> String { drafts[threadID] ?? "" }
 
+    /// Kept at once, written once typing pauses: encoding every draft into the defaults file on each
+    /// keystroke was most of what typing cost.
     public func setDraft(_ text: String, for threadID: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { drafts[threadID] = nil } else { drafts[threadID] = text }
+        let next = trimmed.isEmpty ? nil : text
+        guard drafts[threadID] != next else { return }
+        drafts[threadID] = next
+        draftsSave?.cancel()
+        draftsSave = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            self?.saveDrafts()
+        }
+    }
+
+    /// Puts `text` in the composer for `key`, whichever window shows it, and keeps it as its draft.
+    public func deliverDraft(_ text: String, for key: String) {
+        setDraft(text, for: key)
+        draftDeliveries[key] = DraftDelivery(text: text)
+    }
+
+    /// Writes the drafts now rather than when typing pauses.
+    public func saveDrafts() {
+        draftsSave?.cancel()
+        draftsSave = nil
         if let data = try? JSONEncoder().encode(drafts) { defaults.set(data, forKey: Self.draftsKey) }
     }
 
@@ -392,11 +441,17 @@ public final class AppModel {
     private func save() {
         guard !isLoading else { return }
         for host in hosts where writtenEnv[host.id] ?? [:] != host.env {
-            secrets.write(host.env.isEmpty ? nil : try? JSONEncoder().encode(host.env), for: host.id.uuidString)
-            writtenEnv[host.id] = host.env
+            if secrets.write(host.env.isEmpty ? nil : try? JSONEncoder().encode(host.env), for: host.id.uuidString) {
+                writtenEnv[host.id] = host.env
+            }
         }
-        // The defaults file keeps everything but the values.
-        let hosts = hosts.map { host in var h = host; h.env = [:]; return h }
+        // The defaults file keeps everything but the values, unless the Keychain refused them: then
+        // they stay inline, as a store from before the Keychain has them, until a save gets them there.
+        let hosts = hosts.map { host in
+            var h = host
+            if writtenEnv[host.id] ?? [:] == host.env { h.env = [:] }
+            return h
+        }
         let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
                        showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue, hostID: lastHostID,

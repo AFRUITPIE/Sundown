@@ -259,6 +259,62 @@ struct ThreadModelTests {
 
         #expect(thread.itemsVersion == itemsVersion)
     }
+
+    /// Only the reply being streamed into fades its text in: from its start until it completes or
+    /// its turn ends, and never a subagent's words. Its deltas don't change which reply it is.
+    @Test func theStreamingReplyIsTheOneBeingStreamedInto() {
+        let thread = ThreadModel(id: threadID)
+        thread.apply(started(userMessage("Go"), seq: 1))
+        thread.apply(.turnStarted(.init(threadId: threadID, seq: 2, turn: .init(id: "t1", status: .inProgress, startedAt: 0))))
+        thread.apply(started(reply("", id: "s1", parent: "toolu_1"), seq: 3))
+        #expect(thread.streamingReplyID == nil)
+        thread.apply(started(reply(""), seq: 4))
+        #expect(thread.streamingReplyID == "a1")
+
+        let observed = Invalidation()
+        withObservationTracking { _ = thread.streamingReplyID } onChange: { observed.happened = true }
+        for (offset, delta) in ["It ", "works."].enumerated() {
+            thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 5 + offset, itemId: "a1", delta: delta)))
+        }
+        #expect(!observed.happened)
+
+        thread.apply(.itemCompleted(.init(threadId: threadID, seq: 7, item: reply("It works."))))
+        #expect(thread.streamingReplyID == nil)
+
+        thread.apply(started(reply("", id: "a2"), seq: 8))
+        #expect(thread.streamingReplyID == "a2")
+        thread.apply(.turnCompleted(.init(threadId: threadID, seq: 9, turn: .init(id: "t1", status: .interrupted, startedAt: 0))))
+        #expect(thread.streamingReplyID == nil)
+    }
+
+    /// What refreshes after a turn (the Changes pane, the context ring) does so when it ends, not
+    /// when the next one starts.
+    @Test func theLastFinishedTurnChangesWhenATurnEnds() {
+        let thread = ThreadModel(id: threadID)
+        #expect(thread.lastFinishedTurn == nil)
+        thread.apply(.turnStarted(.init(threadId: threadID, seq: 1, turn: .init(id: "t1", status: .inProgress, startedAt: 0))))
+        #expect(thread.lastFinishedTurn == nil)
+        thread.apply(.turnCompleted(.init(threadId: threadID, seq: 2, turn: .init(id: "t1", status: .completed, startedAt: 0))))
+        let first = thread.lastFinishedTurn
+        #expect(first != nil)
+
+        thread.apply(.turnStarted(.init(threadId: threadID, seq: 3, turn: .init(id: "t2", status: .inProgress, startedAt: 0))))
+        #expect(thread.lastFinishedTurn == first)
+        thread.apply(.turnCompleted(.init(threadId: threadID, seq: 4, turn: .init(id: "t2", status: .failed, startedAt: 0))))
+        #expect(thread.lastFinishedTurn != first)
+        #expect(thread.lastFinishedTurn != nil)
+    }
+
+    /// A chat opened partway through a reply: it came with history, and streams from its next delta.
+    @Test func aReplyFromHistoryStreamsFromItsNextDelta() {
+        let thread = ThreadModel(id: threadID)
+        thread.loadHistory(items: [userMessage("Go"), reply("Half")], turns: [], seq: 2)
+        #expect(thread.streamingReplyID == nil)
+        thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 3, itemId: "a1", delta: " done")))
+        #expect(thread.streamingReplyID == "a1")
+        thread.unload()
+        #expect(thread.streamingReplyID == nil)
+    }
 }
 
 /// Observation's `onChange` is `@Sendable`, so the flag it sets needs a reference to live in.
@@ -286,6 +342,67 @@ private final class Invalidation: @unchecked Sendable {
     #expect(rejected.status == .rejected && rejected.utilization == 1)
     #expect(rejected.resetsAt == Date(timeIntervalSince1970: 1_790_500_000))
     #expect(rejected.name == "weekly limit")
+}
+
+/// Up to 2 is a fraction: 1 is the whole limit, and a little over it is past the limit, not 1%.
+@Test func aRateLimitsUtilizationIsAFractionUpToTwo() {
+    #expect(RateLimit(["utilization": 1]).utilization == 1)
+    #expect(RateLimit(["utilization": 0.01]).utilization == 0.01)
+    #expect(RateLimit(["utilization": 1.05]).utilization == 1.05)
+    #expect(RateLimit(["utilization": 85]).utilization == 0.85)
+}
+
+@Suite
+struct RateLimitWarningTests {
+    private var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        return c
+    }
+    private let locale = Locale(identifier: "en_US")
+    /// 09:00 UTC on some day.
+    private let now = Date(timeIntervalSince1970: TimeInterval(1_790_500_000 / 86_400 * 86_400 + 9 * 3600))
+
+    private func limit(_ status: String, resetsIn: TimeInterval, utilization: Double? = nil, kind: String = "five_hour") -> RateLimit {
+        var info: [String: JSONValue] = ["status": .string(status), "rateLimitType": .string(kind),
+                                         "resetsAt": .number(now.addingTimeInterval(resetsIn).timeIntervalSince1970)]
+        if let utilization { info["utilization"] = .number(utilization) }
+        return RateLimit(.object(info))
+    }
+
+    private func clock(_ date: Date) -> String {
+        date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, calendar: calendar, timeZone: calendar.timeZone))
+    }
+
+    @Test func aLimitSaysNothingOnceItHasReset() {
+        let reached = limit("rejected", resetsIn: 3600)
+        #expect(reached.warning(now: now, calendar: calendar, locale: locale) != nil)
+        #expect(reached.warning(now: now.addingTimeInterval(3601), calendar: calendar, locale: locale) == nil)
+        #expect(limit("allowed", resetsIn: 3600).warning(now: now, calendar: calendar, locale: locale) == nil)
+    }
+
+    @Test func aResetTodaySaysTheTime() {
+        let reset = now.addingTimeInterval(2 * 3600)
+        let text = limit("rejected", resetsIn: 2 * 3600).warning(now: now, calendar: calendar, locale: locale)
+        #expect(text == "You’ve reached your 5-hour limit. It resets at \(clock(reset)).")
+    }
+
+    @Test func aLaterResetSaysTheDay() {
+        let tomorrow = limit("allowed_warning", resetsIn: 20 * 3600, utilization: 0.9).warning(now: now, calendar: calendar, locale: locale)
+        #expect(tomorrow == "You’ve used 90% of your 5-hour limit. It resets tomorrow at \(clock(now.addingTimeInterval(20 * 3600))).")
+
+        let weekly = limit("rejected", resetsIn: 3 * 86_400, kind: "seven_day").warning(now: now, calendar: calendar, locale: locale)
+        let weekday = now.addingTimeInterval(3 * 86_400).formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).weekday(.wide))
+        #expect(weekly == "You’ve reached your weekly limit. It resets on \(weekday) at \(clock(now.addingTimeInterval(3 * 86_400))).")
+
+        let far = limit("rejected", resetsIn: 10 * 86_400, kind: "seven_day").warning(now: now, calendar: calendar, locale: locale)
+        #expect(far?.contains(" on ") == true && far?.contains(weekday) == false)
+    }
+
+    @Test func pastTheLimitReadsAsAllOfIt() {
+        let text = limit("allowed_warning", resetsIn: 3600, utilization: 1.05).warning(now: now, calendar: calendar, locale: locale)
+        #expect(text?.hasPrefix("You’ve used 100% of your 5-hour limit.") == true)
+    }
 }
 
 @MainActor

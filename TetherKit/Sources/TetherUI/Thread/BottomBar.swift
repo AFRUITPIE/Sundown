@@ -6,7 +6,6 @@ import TetherProtocol
 struct BottomBar: View {
     let thread: ThreadModel
     let connection: HostConnection
-    @Environment(\.appearance) private var appearance
 
     var body: some View {
         // One read of `pending`: it decides both the card and whether the composer can send.
@@ -93,6 +92,8 @@ extension EnvironmentValues {
 
 struct StatusStrip: View {
     let thread: ThreadModel
+    /// Moved on when the plan's limit resets, so what the strip says about it goes away then.
+    @State private var now = Date.now
 
     var body: some View {
         let parts = messages
@@ -109,6 +110,12 @@ struct StatusStrip: View {
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .glassEffect(in: .rect(cornerRadius: 18))
+            .task(id: thread.rateLimit?.resetsAt) {
+                now = .now
+                guard let reset = thread.rateLimit?.resetsAt, reset > now else { return }
+                try? await Task.sleep(for: .seconds(reset.timeIntervalSince(now) + 1))
+                if !Task.isCancelled { now = .now }
+            }
         }
     }
 
@@ -117,16 +124,7 @@ struct StatusStrip: View {
         if let e = thread.lastError { out.append(e) }
         if let r = thread.apiRetry { out.append("Retrying API request (attempt \(r.attempt)/\(r.maxRetries))\(r.error.map { ": \($0)" } ?? "")") }
         if thread.activity == "compacting" { out.append("Compacting conversation…") }
-        if let limit = thread.rateLimit, limit.status != .allowed {
-            let reset = limit.resetsAt.map { " It resets \($0.formatted(date: .omitted, time: .shortened))." } ?? ""
-            switch limit.status {
-            case .rejected:
-                out.append("You’ve reached your \(limit.name).\(reset)")
-            default:
-                let used = limit.utilization.map { "\(Int(($0 * 100).rounded()))% of " } ?? "most of "
-                out.append("You’ve used \(used)your \(limit.name).\(reset)")
-            }
-        }
+        if let warning = thread.rateLimit?.warning(now: now) { out.append(warning) }
         return out
     }
 }
@@ -207,6 +205,16 @@ struct AuthStatusView: View {
     VStack(alignment: .leading, spacing: 16) {
         StatusStrip(thread: .sampleErrorTurn())
         StatusStrip(thread: .sampleApiRetry())
+    }
+    .padding(20)
+    .frame(width: 560)
+}
+
+/// A plan's limit nearing today, and a weekly one reached, which says the day it resets.
+#Preview("StatusStrip (plan limits)") {
+    VStack(alignment: .leading, spacing: 16) {
+        StatusStrip(thread: .sampleRateLimited("allowed_warning", kind: "five_hour", utilization: 0.85, resetsIn: 2 * 3600))
+        StatusStrip(thread: .sampleRateLimited("rejected", kind: "seven_day", utilization: 1.02, resetsIn: 3 * 86_400))
     }
     .padding(20)
     .frame(width: 560)

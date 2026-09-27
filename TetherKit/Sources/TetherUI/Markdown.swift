@@ -4,6 +4,9 @@ import SwiftUI
 /// inline syntax via AttributedString.
 struct MarkdownView: View {
     let text: String
+    /// Whether this is the reply being streamed into: only then does its last block fade new text
+    /// in (`ArrivingText`). Every settled reply, and every other use, draws plain text.
+    var streams = false
     /// Parses once per text change rather than once per layout pass.
     @State private var cache = MarkdownCache()
 
@@ -26,7 +29,7 @@ struct MarkdownView: View {
             ForEach(blocks.indices, id: \.self) { i in
                 MarkdownBlockView(rendered: blocks[i],
                                   topPadding: i == 0 ? 0 : Self.spacing(after: blocks[i - 1].block, before: blocks[i].block),
-                                  isEnd: i == blocks.count - 1, arrives: arriving)
+                                  isEnd: streams && i == blocks.count - 1, arrives: streams && arriving)
                     .equatable()
             }
         }
@@ -141,7 +144,8 @@ struct MarkdownView: View {
 struct MarkdownBlockView: View, Equatable {
     let rendered: MarkdownView.Rendered
     let topPadding: CGFloat
-    /// The last block, the only one streamed text is added to: its new text fades in.
+    /// The last block of the reply being streamed, the only one text is added to: its new text
+    /// fades in. False for every block of a settled reply.
     var isEnd = false
     /// Whether the block appeared while its reply streamed, so its first text fades in too.
     var arrives = false
@@ -158,7 +162,8 @@ struct MarkdownBlockView: View, Equatable {
         i < rendered.inline.count ? Text(rendered.inline[i]) : Text(verbatim: "")
     }
 
-    /// A block's text, fading in as it arrives when it's the block being streamed into.
+    /// A block's text, fading in as it arrives when it's the block being streamed into. A code
+    /// block doesn't fade: it's monospaced output, read once it's there.
     @ViewBuilder private var line: some View {
         if isEnd, let text = rendered.inline.first {
             ArrivingText(text: text, arrives: arrives)
@@ -171,7 +176,7 @@ struct MarkdownBlockView: View, Equatable {
     private var content: some View {
         switch rendered.block {
         case .code(let lang, let body):
-            CodeBlock(code: body, language: lang, streams: isEnd, arrives: arrives)
+            CodeBlock(code: body, language: lang)
         case .heading(let level, _):
             line.scaledFont(level == 1 ? .title2 : level == 2 ? .title3 : .headline, weight: .bold)
                 .padding(.top, 6)
@@ -373,19 +378,10 @@ struct CodeBlock: View {
     let code: String
     var language: String = ""
     var lineLimit: Int? = nil
-    /// Whether it's being streamed into, and appeared while it was: as `MarkdownBlockView`'s.
-    var streams = false
-    var arrives = false
     @State private var expanded = false
     @Environment(\.appearance) private var appearance
 
-    @ViewBuilder private var codeText: some View {
-        if streams {
-            ArrivingText(text: AttributedString(code), arrives: arrives)
-        } else {
-            Text(verbatim: code)
-        }
-    }
+    private var codeText: Text { Text(verbatim: code) }
 
     private func styled(_ text: some View) -> some View {
         text

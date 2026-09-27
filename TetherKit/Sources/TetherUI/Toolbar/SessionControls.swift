@@ -334,8 +334,9 @@ public struct ChatCommands: View {
             }
             .disabled(!settings.isEnabled)
             Divider()
+            // Not ⌘;, which is Edit ▸ Spelling and Grammar ▸ Check Document Now.
             Button("Ask a Side Question…") { window.askingSideQuestion = true }
-                .keyboardShortcut(";", modifiers: .command)
+                .keyboardShortcut(";", modifiers: [.command, .option])
                 .disabled(window.selectedThread == nil)
             Divider()
             // ⌥⌘, not ⌘ or ⌃⌘: a text field keeps ⌘↑ and ⌘↓ (start and end of the text) and ⌃⌘↓

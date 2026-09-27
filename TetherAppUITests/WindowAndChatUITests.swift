@@ -199,21 +199,20 @@ final class WindowAndChatUITests: XCTestCase {
     @MainActor
     func testToolGroupsOpenToShowTheirCalls() {
         let app = launch()
-        let groups = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Used '"))
+        let groups = app.buttons.matching(identifier: "transcript.toolGroup")
         XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 10))
         // One on screen: the chat opens at its end, and the first groups are far above.
         guard let group = groups.allElementsBoundByIndex.last(where: { $0.isHittable }) else {
             return XCTFail("no tool group on screen")
         }
-        let count = Int(group.label.split(separator: " ")[1]) ?? 0
         let buttons = app.buttons.count
 
         group.click()
 
-        // Each call in the group is a row of its own now.
+        // Each call in the group is a row of its own now, and a group holds two at least.
         let deadline = Date().addingTimeInterval(5)
-        while app.buttons.count < buttons + count && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
-        XCTAssertGreaterThanOrEqual(app.buttons.count, buttons + count)
+        while app.buttons.count < buttons + 2 && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+        XCTAssertGreaterThanOrEqual(app.buttons.count, buttons + 2)
     }
 
     /// ⌃⇥ and ⌃⇧⇥ step through the sidebar's chats.

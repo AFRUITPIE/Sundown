@@ -37,6 +37,10 @@ struct Composer: View {
     @State private var fileMatches: [String] = []
     @State private var suggestions: [Suggestion] = []
     @State private var choosingFiles = false
+    /// The last text put here from outside the field (`ComposerDrafts.delivery`), so each is applied once.
+    @State private var appliedDelivery: UUID?
+    /// The text Esc closed the suggestion list on: it stays closed until the text changes.
+    @State private var suggestionsClosedFor: String?
     @FocusState private var focused: Bool
 
     /// Something going with the message besides its text.
@@ -91,6 +95,15 @@ struct Composer: View {
             }
         }
         return []
+    }
+
+    /// What Esc does in the field: close the `/` or `@` list first, then stop a running turn, and
+    /// otherwise whatever the field does with it.
+    enum EscapeAction: Equatable { case closeSuggestions, stop, ignore }
+
+    nonisolated static func escapeAction(suggestionsShowing: Bool, canStop: Bool) -> EscapeAction {
+        if suggestionsShowing { return .closeSuggestions }
+        return canStop ? .stop : .ignore
     }
 
     private var mentionQuery: String? {
@@ -154,19 +167,27 @@ struct Composer: View {
         .onPasteCommand(of: [.png, .tiff, .jpeg], perform: { _ = drop($0) })
         .onAppear {
             focused = true
-            if text.isEmpty, let draftKey { text = drafts.text(for: draftKey) }
+            if let draftKey {
+                // The draft already holds any text delivered before the field appeared.
+                appliedDelivery = drafts.delivery(for: draftKey)?.id
+                if text.isEmpty { text = drafts.text(for: draftKey) }
+            }
             #if DEBUG
             // Previews only: the field's text is otherwise private state.
             if text.isEmpty, !composerDraft.isEmpty { text = composerDraft }
             #endif
         }
         .onChange(of: text) {
+            suggestionsClosedFor = nil
             refreshSuggestions()
             if let draftKey { drafts.set(text, for: draftKey) }
         }
-        // A draft put there from outside the field — a Shortcut's prompt — shows up in it.
-        .onChange(of: draftKey.map { drafts.text(for: $0) } ?? "") { _, draft in
-            if !draft.isEmpty, draft != text { text = draft }
+        // Text put there from outside the field — a Shortcut's prompt — shows up in it, once. Not
+        // the draft itself: observing that redrew every composer in every window per keystroke.
+        .onChange(of: draftKey.flatMap { drafts.delivery(for: $0) }) { _, delivery in
+            guard let delivery, delivery.id != appliedDelivery else { return }
+            appliedDelivery = delivery.id
+            text = delivery.text
         }
         .task(id: cwd) {
             commands = await connection.commands(cwd: cwd, thread: thread)
@@ -235,11 +256,21 @@ struct Composer: View {
             .focused($focused)
             .onSubmit { if appearance.sendShortcut == .returnKey { send() } }
             .onKeyPress(.return, phases: .down, action: returnPressed)
-            // Esc stops Claude, as in the CLI; with nothing running it's the field's own.
+            // Esc closes the suggestion list if it's open, and otherwise stops Claude, as in the
+            // CLI; with nothing running it's the field's own.
             .onKeyPress(.escape) {
-                guard thread?.isRunning == true, let onStop else { return .ignored }
-                onStop()
-                return .handled
+                switch Self.escapeAction(suggestionsShowing: !suggestions.isEmpty,
+                                         canStop: thread?.isRunning == true && onStop != nil) {
+                case .closeSuggestions:
+                    suggestionsClosedFor = text
+                    suggestions = []
+                    return .handled
+                case .stop:
+                    onStop?()
+                    return .handled
+                case .ignore:
+                    return .ignored
+                }
             }
             .textInputSuggestions(suggestions) { s in
                 Label {
@@ -328,7 +359,8 @@ struct Composer: View {
     }
 
     private func refreshSuggestions() {
-        suggestions = Self.matchingSuggestions(for: text, commands: commands, fileMatches: fileMatches)
+        suggestions = text == suggestionsClosedFor ? []
+            : Self.matchingSuggestions(for: text, commands: commands, fileMatches: fileMatches)
     }
 
     /// The + menu, as the desktop app has it: attach, mention a file, or browse the commands

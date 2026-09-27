@@ -17,6 +17,14 @@ struct ComposerSuggestionsTests {
         Composer.matchingSuggestions(for: text, commands: commands, fileMatches: files)
     }
 
+    /// Esc closes an open `/` or `@` list before it stops a running turn.
+    @Test func escapeClosesTheListBeforeStopping() {
+        #expect(Composer.escapeAction(suggestionsShowing: true, canStop: true) == .closeSuggestions)
+        #expect(Composer.escapeAction(suggestionsShowing: true, canStop: false) == .closeSuggestions)
+        #expect(Composer.escapeAction(suggestionsShowing: false, canStop: true) == .stop)
+        #expect(Composer.escapeAction(suggestionsShowing: false, canStop: false) == .ignore)
+    }
+
     @Test func plainTextOffersNothing() {
         #expect(suggestions("").isEmpty)
         #expect(suggestions("explain the reducer").isEmpty)

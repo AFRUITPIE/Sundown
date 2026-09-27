@@ -216,6 +216,11 @@ public final class HostConnection: Identifiable {
         // Its query is gone. The next send resumes it with history rather than streaming into a
         // subscription to the process that ended.
         if case .threadClosed = n { subscribed.remove(tid) }
+        // Answered here, by another client, or cancelled: a notification about it is out of date.
+        if case .serverRequestResolved(let e) = n {
+            NotificationCenter.default.post(name: .tetherRequestResolved, object: self,
+                                            userInfo: ["threadId": tid, "requestId": e.requestId])
+        }
         // Claude's name for a session only appears in thread/list; nothing announces it.
         if case .turnCompleted(let e) = n {
             scheduleChatsRefresh()
@@ -606,25 +611,15 @@ public final class HostConnection: Identifiable {
         guard status.isRepo else { return nil }
         async let unstaged = client.call(Methods.GitDiff.self, .init(cwd: cwd))
         async let staged = client.call(Methods.GitDiff.self, .init(cwd: cwd, staged: true))
-        var files = UnifiedDiff.parse(try await staged.diff)
-        for file in UnifiedDiff.parse(try await unstaged.diff) {
-            // A file with staged and unstaged edits shows both, one after the other.
-            if let i = files.firstIndex(where: { $0.path == file.path }) {
-                files[i] = FileDiff(path: file.path, oldPath: files[i].oldPath, hunks: files[i].hunks + file.hunks)
-            } else {
-                files.append(file)
-            }
-        }
+        var untracked: [(path: String, content: String?)] = []
         for file in status.files where file.status == "??" && !file.path.hasSuffix("/") {
             let full = (cwd as NSString).appendingPathComponent(file.path)
             let read = try? await client.call(Methods.FsRead.self, .init(path: full, maxBytes: 64 * 1024))
-            if let read, read.encoding == .utf8 {
-                files.append(.added(path: file.path, content: read.content))
-            } else {
-                files.append(FileDiff(path: file.path, hunks: [], isBinary: true))
-            }
+            untracked.append((file.path, read.flatMap { $0.encoding == .utf8 ? $0.content : nil }))
         }
-        return WorkingChanges(branch: status.branchName, files: files.sorted { $0.path < $1.path })
+        let stagedDiff = try await staged.diff, unstagedDiff = try await unstaged.diff
+        let files = await UnifiedDiff.workingTree(staged: stagedDiff, unstaged: unstagedDiff, untracked: untracked)
+        return WorkingChanges(branch: status.branchName, files: files)
     }
 
     /// Whether `cwd` is in a git repository and what is checked out there (`branchName`), for New
@@ -798,12 +793,15 @@ extension GitStatusResult {
 public struct WorkingChanges: Sendable, Equatable {
     public let branch: String?
     public let files: [FileDiff]
-    public var added: Int { files.reduce(0) { $0 + $1.added } }
-    public var removed: Int { files.reduce(0) { $0 + $1.removed } }
+    /// Summed once, not per draw.
+    public let added: Int
+    public let removed: Int
 
     public init(branch: String?, files: [FileDiff]) {
         self.branch = branch
         self.files = files
+        added = files.reduce(0) { $0 + $1.added }
+        removed = files.reduce(0) { $0 + $1.removed }
     }
 }
 
@@ -826,11 +824,15 @@ public struct RewindResult: Sendable, Equatable {
 
 extension Notification.Name {
     /// Posted when a thread needs user input (approval, question, plan). The object is the
-    /// `HostConnection`; `threadId` and `requestId` are in the user info.
+    /// `HostConnection`; `threadId` and `requestId` are in the user info. Posted again for the same
+    /// request each time the daemon re-sends it, as it does on every reconnect.
     public static let tetherNeedsAttention = Notification.Name("TetherNeedsAttention")
     /// Posted when a turn ends, as it arrives live (not replayed). The object is the
     /// `HostConnection`; `threadId` and the turn's `status` are in the user info.
     public static let tetherTurnFinished = Notification.Name("TetherTurnFinished")
+    /// Posted when a request no longer needs an answer: answered by any client, or cancelled. The
+    /// object is the `HostConnection`; `threadId` and `requestId` are in the user info.
+    public static let tetherRequestResolved = Notification.Name("TetherRequestResolved")
 }
 
 final class OnceFlag: @unchecked Sendable {

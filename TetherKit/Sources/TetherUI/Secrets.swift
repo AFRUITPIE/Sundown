@@ -5,7 +5,9 @@ import Security
 /// often credentials (API keys, AWS profiles).
 protocol SecretStore: AnyObject {
     func read(_ account: String) -> Data?
-    func write(_ data: Data?, for account: String)
+    /// Stores `data`, or removes it when nil. False when the store refused, so the caller can keep
+    /// its own copy until a write succeeds.
+    @discardableResult func write(_ data: Data?, for account: String) -> Bool
 }
 
 final class KeychainSecrets: SecretStore {
@@ -26,18 +28,17 @@ final class KeychainSecrets: SecretStore {
         return result as? Data
     }
 
-    func write(_ data: Data?, for account: String) {
+    @discardableResult func write(_ data: Data?, for account: String) -> Bool {
         guard let data else {
-            SecItemDelete(query(account) as CFDictionary)
-            return
+            let status = SecItemDelete(query(account) as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
         }
         let status = SecItemUpdate(query(account) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var add = query(account)
-            add[kSecValueData as String] = data
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-            SecItemAdd(add as CFDictionary, nil)
-        }
+        guard status == errSecItemNotFound else { return status == errSecSuccess }
+        var add = query(account)
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 }
 
@@ -47,5 +48,8 @@ final class DefaultsSecrets: SecretStore {
     private let defaults: UserDefaults
     init(_ defaults: UserDefaults) { self.defaults = defaults }
     func read(_ account: String) -> Data? { defaults.data(forKey: "tether.secret.\(account)") }
-    func write(_ data: Data?, for account: String) { defaults.set(data, forKey: "tether.secret.\(account)") }
+    @discardableResult func write(_ data: Data?, for account: String) -> Bool {
+        defaults.set(data, forKey: "tether.secret.\(account)")
+        return true
+    }
 }

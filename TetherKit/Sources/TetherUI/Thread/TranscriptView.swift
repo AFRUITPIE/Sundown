@@ -238,8 +238,8 @@ struct TranscriptRowView: View, Equatable {
             case .item(let item):
                 LiveItemView(box: thread.box(for: item), thread: thread)
                     .modifier(FadesIn(isNew: thread.justStarted(item.id)))
-            case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread)
-            case .turnWork(_, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread)
+            case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread, rowID: row.id)
+            case .turnWork(let id, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread, rowID: id)
             case .turnEdits(let edits): TurnEditsView(edits: edits, cwd: thread.cwd)
             case .dateSeparator(_, let ms): DateSeparatorView(ms: ms)
             }

@@ -140,6 +140,42 @@ struct HostSecretsTests {
         #expect(!String(decoding: raw, as: UTF8.self).contains("AWS_PROFILE"))
         #expect(AppModel(defaults: store).hosts.first { $0.id == id }?.env == ["AWS_PROFILE": "dev"])
     }
+
+    /// A Keychain that refuses the values leaves them in the defaults file rather than nowhere; the
+    /// first save the Keychain takes them on moves them out.
+    @Test func valuesStayInlineUntilTheKeychainTakesThem() throws {
+        let store = defaults()
+        let id = UUID()
+        let old = #"{"hosts":[{"id":"\#(id.uuidString)","name":"box","kind":{"ssh":{"destination":"box"}},"env":{"AWS_PROFILE":"dev"}}]}"#
+        store.set(Data(old.utf8), forKey: "tether.hosts.v1")
+        let keychain = RefusingSecrets()
+        let app = AppModel(defaults: store, secrets: keychain)
+
+        app.transcriptWidth = .wide
+        var raw = try #require(store.data(forKey: "tether.hosts.v1"))
+        #expect(String(decoding: raw, as: UTF8.self).contains("AWS_PROFILE"))
+        #expect(AppModel(defaults: store, secrets: keychain).hosts.first { $0.id == id }?.env == ["AWS_PROFILE": "dev"])
+
+        keychain.refuses = false
+        app.transcriptWidth = .medium
+        raw = try #require(store.data(forKey: "tether.hosts.v1"))
+        #expect(!String(decoding: raw, as: UTF8.self).contains("AWS_PROFILE"))
+        #expect(AppModel(defaults: store, secrets: keychain).hosts.first { $0.id == id }?.env == ["AWS_PROFILE": "dev"])
+    }
+}
+
+/// A secret store that refuses writes until told not to.
+private final class RefusingSecrets: SecretStore {
+    var refuses = true
+    private var values: [String: Data] = [:]
+
+    func read(_ account: String) -> Data? { values[account] }
+
+    func write(_ data: Data?, for account: String) -> Bool {
+        guard !refuses else { return false }
+        values[account] = data
+        return true
+    }
 }
 
 @Suite

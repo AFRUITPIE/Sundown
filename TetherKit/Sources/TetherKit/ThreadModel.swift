@@ -97,6 +97,12 @@ public final class ThreadModel: Identifiable {
     /// The item `replyPreview` came from, so an older reply arriving later doesn't replace it.
     @ObservationIgnored private var replyPreviewItemID: String?
 
+    /// The top-level reply being streamed into right now, if any: from its first live text until it
+    /// completes, or its turn ends. Only this reply's text fades in as it arrives. Stored, and
+    /// changed at most a couple of times per reply, so the rows that compare against it redraw
+    /// then and not per delta.
+    public private(set) var streamingReplyID: String?
+
     public init(id: String, summary: ThreadSummary? = nil) {
         self.id = id
         self.summary = summary
@@ -123,6 +129,13 @@ public final class ThreadModel: Identifiable {
     public var isArchived: Bool { summary?.tag == Self.archivedTag }
     public var isRunning: Bool { status == .running || status == .requiresAction }
     public var currentTurn: Turn? { turns.last.flatMap { $0.status == .inProgress ? $0 : nil } }
+
+    /// The latest turn that has ended, as its id and outcome. Changes when a turn ends (or history
+    /// brings one), not when the next one starts: what is asked again after a turn, such as the
+    /// working tree or the context window, is keyed on it.
+    public var lastFinishedTurn: String? {
+        turns.last { $0.status != .inProgress }.map { "\($0.id):\($0.status.rawValue)" }
+    }
 
     /// True while the model is working with nothing on screen to show for it. Keyed on the last
     /// item: a running tool call has its own spinner, and a reply that has started speaks for itself.
@@ -204,6 +217,7 @@ public final class ThreadModel: Identifiable {
         }
         boxes = next
         itemsVersion &+= 1
+        if let id = streamingReplyID, index[id] == nil { setStreamingReply(nil) }
         refreshTaskEntries()
         refreshTitle()
         // Unloading leaves the preview as it was: the reply hasn't changed, only been let go.
@@ -244,16 +258,27 @@ public final class ThreadModel: Identifiable {
         case .threadClosed:
             status = .closed
             settleTasks()
+            setStreamingReply(nil)
         case .turnStarted(let e):
             upsertTurn(e.turn)
             promptSuggestion = nil
-        case .turnCompleted(let e): upsertTurn(e.turn)
+        case .turnCompleted(let e):
+            upsertTurn(e.turn)
+            setStreamingReply(nil)
         case .itemStarted(let e):
             if index[e.item.id] == nil { noteStarted(e.item.id) }
             upsert(e.item)
+            if case .agentMessage(let m) = e.item, m.parentToolUseId == nil { setStreamingReply(m.id) }
         case .itemUpdated(let e): upsert(e.item)
-        case .itemCompleted(let e): upsert(e.item)
+        case .itemCompleted(let e):
+            upsert(e.item)
+            if e.item.id == streamingReplyID { setStreamingReply(nil) }
         case .itemAgentMessageDelta(let e):
+            // A reply that started before this client was watching streams too.
+            if e.itemId != streamingReplyID, let i = index[e.itemId],
+               case .agentMessage(let m) = storage[i], m.parentToolUseId == nil {
+                setStreamingReply(e.itemId)
+            }
             mutate(e.itemId) { if case .agentMessage(var m) = $0 { m.text += e.delta; $0 = .agentMessage(m) } }
         case .itemReasoningDelta(let e):
             mutate(e.itemId) { if case .reasoning(var m) = $0 { m.text += e.delta; $0 = .reasoning(m) } }
@@ -432,6 +457,10 @@ public final class ThreadModel: Identifiable {
         boxes[id]?.item = storage[i]
         if wasEmpty != storage[i].isEmptyMessage { itemsVersion &+= 1 }
         if storage[i].isSubagentCall { refreshTaskEntries() }
+    }
+
+    private func setStreamingReply(_ id: String?) {
+        if streamingReplyID != id { streamingReplyID = id }
     }
 
     /// The item's box, for a row that renders it. Every held item has one; an item from elsewhere
@@ -668,8 +697,10 @@ public struct RateLimit: Sendable, Equatable {
     public init(_ info: JSONValue) {
         status = info["status"]?.stringValue.flatMap(Status.init(rawValue:)) ?? .allowed
         let used = info["utilization"]?.doubleValue
-        // Reported as a fraction or a percentage depending on the CLI's version.
-        utilization = used.map { $0 > 1 ? $0 / 100 : $0 }
+        // A fraction, from the API's rate-limit headers, and a little over 1 past the limit. Only a
+        // CLI that reported a percentage gives more than 2; anything up to that is a fraction, or
+        // 1% read as a percentage would be a full limit, and 105% as a fraction would be 1%.
+        utilization = used.map { $0 > 2 ? $0 / 100 : $0 }
         resetsAt = info["resetsAt"]?.doubleValue.map { Date(timeIntervalSince1970: $0 > 1e11 ? $0 / 1000 : $0) }
         kind = info["rateLimitType"]?.stringValue
     }
@@ -683,6 +714,42 @@ public struct RateLimit: Sendable, Equatable {
         case "seven_day_sonnet": "weekly Sonnet limit"
         case "overage", "seven_day_overage_included": "extra usage limit"
         default: "usage limit"
+        }
+    }
+
+    /// Whether what it says still holds at `now`: a limit that has reset says nothing any more.
+    public func isCurrent(at now: Date) -> Bool {
+        resetsAt.map { $0 > now } ?? true
+    }
+
+    /// What the status strip says about the limit at `now`: nothing while requests go through as
+    /// usual or once it has reset; otherwise how much is used, or that it's reached, and when it
+    /// resets.
+    public func warning(now: Date, calendar: Calendar = .current, locale: Locale = .current) -> String? {
+        guard status != .allowed, isCurrent(at: now) else { return nil }
+        let reset = resetsAt.map { " It resets \(Self.describeReset($0, now: now, calendar: calendar, locale: locale))." } ?? ""
+        switch status {
+        case .rejected:
+            return "You’ve reached your \(name).\(reset)"
+        default:
+            let used = utilization.map { "\(Int((min(max($0, 0), 1) * 100).rounded()))% of " } ?? "most of "
+            return "You’ve used \(used)your \(name).\(reset)"
+        }
+    }
+
+    /// When a limit resets, as the rest of a sentence: "at 3:00 PM" today, "tomorrow at 3:00 PM",
+    /// "on Tuesday at 3:00 PM" within the week, and "on Oct 5 at 3:00 PM" after that. A weekly
+    /// limit's time of day alone didn't say which day.
+    static func describeReset(_ date: Date, now: Date, calendar: Calendar, locale: Locale) -> String {
+        let clock = date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale,
+                                                    calendar: calendar, timeZone: calendar.timeZone))
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)).day ?? 0
+        let day = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+        switch days {
+        case ...0: return "at \(clock)"
+        case 1: return "tomorrow at \(clock)"
+        case 2..<7: return "on \(date.formatted(day.weekday(.wide))) at \(clock)"
+        default: return "on \(date.formatted(day.month(.abbreviated).day())) at \(clock)"
         }
     }
 }

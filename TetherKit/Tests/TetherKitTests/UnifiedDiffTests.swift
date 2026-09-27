@@ -57,4 +57,48 @@ struct UnifiedDiffTests {
     @Test func nothingChangedIsNoFiles() {
         #expect(UnifiedDiff.parse("").isEmpty)
     }
+
+    private func added(_ count: Int, path: String = "big.txt", header: String? = nil, line: (Int) -> String = { "line \($0)" }) -> String {
+        let body = (1...count).map { "+" + line($0) }.joined(separator: "\n")
+        return """
+        diff --git a/\(path) b/\(path)
+        --- a/\(path)
+        +++ b/\(path)
+        \(header ?? "@@ -0,0 +1,\(count) @@")
+        \(body)
+        """
+    }
+
+    /// A huge file keeps only so many lines, and says how many it left out, but counts them all.
+    @Test func aHugeFileKeepsItsFirstLinesAndCountsTheRest() {
+        let file = UnifiedDiff.parse(added(UnifiedDiff.maxLinesPerFile + 10))[0]
+        #expect(file.lineCount == UnifiedDiff.maxLinesPerFile)
+        #expect(file.omittedLines == 10)
+        #expect(file.added == UnifiedDiff.maxLinesPerFile + 10)
+
+        let untracked = FileDiff.added(path: "gen.txt", content: String(repeating: "x\n", count: UnifiedDiff.maxLinesPerFile + 3))
+        #expect(untracked.lineCount == UnifiedDiff.maxLinesPerFile && untracked.omittedLines == 3)
+        #expect(untracked.added == UnifiedDiff.maxLinesPerFile + 3)
+    }
+
+    /// A minified file's one enormous line is cut short.
+    @Test func aVeryLongLineIsClipped() {
+        let line = UnifiedDiff.parse(added(1) { _ in String(repeating: "a", count: 50_000) })[0].hunks[0].lines[0]
+        #expect(line.text.count == UnifiedDiff.maxLineLength + 1)
+        #expect(line.text.hasSuffix("…"))
+    }
+
+    /// Staged and unstaged edits to one file are one file, and two hunks with the same header are
+    /// still two, each with its own id.
+    @Test func stagedAndUnstagedHunksAreOneFileWithDistinctHunks() async {
+        let hunk = "@@ -1,0 +1,2 @@"
+        let files = await UnifiedDiff.workingTree(staged: added(2, path: "a.swift", header: hunk),
+                                                  unstaged: added(2, path: "a.swift", header: hunk) + "\n" + added(1, path: "b.swift"),
+                                                  untracked: [("c.png", nil), ("d.md", "one\n")])
+        #expect(files.map(\.path) == ["a.swift", "b.swift", "c.png", "d.md"])
+        #expect(files[0].hunks.map(\.id) == [0, 1])
+        #expect(files[0].added == 4)
+        #expect(files[2].isBinary)
+        #expect(WorkingChanges(branch: nil, files: files).added == 6)
+    }
 }

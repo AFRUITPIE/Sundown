@@ -74,8 +74,11 @@ extension EnvironmentValues {
 struct ComposerDrafts: Equatable {
     weak var app: AppModel?
 
+    /// Read when a composer appears; not observed.
     @MainActor func text(for key: String) -> String { app?.draft(for: key) ?? "" }
     @MainActor func set(_ text: String, for key: String) { app?.setDraft(text, for: key) }
+    /// Text put in the composer from outside it; observed, and changed only by a delivery.
+    @MainActor func delivery(for key: String) -> AppModel.DraftDelivery? { app?.draftDeliveries[key] }
 
     static func == (a: Self, b: Self) -> Bool { a.app === b.app }
 }
