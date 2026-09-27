@@ -31,6 +31,7 @@ public struct Appearance: Codable, Equatable, Sendable {
     public var composerLayout: ComposerLayout = .messages
     public var sendShortcut: SendShortcut = .returnKey
     public var promptSuggestions = true
+    public var contextRing = true
 
     // Permissions
     public var offerBypass = true
@@ -213,6 +214,7 @@ public struct Appearance: Codable, Equatable, Sendable {
         composerLayout = value(.composerLayout, d.composerLayout)
         sendShortcut = value(.sendShortcut, d.sendShortcut)
         promptSuggestions = value(.promptSuggestions, d.promptSuggestions)
+        contextRing = value(.contextRing, d.contextRing)
         offerBypass = value(.offerBypass, d.offerBypass)
         offerDontAsk = value(.offerDontAsk, d.offerDontAsk)
         rowDetail = value(.rowDetail, d.rowDetail)

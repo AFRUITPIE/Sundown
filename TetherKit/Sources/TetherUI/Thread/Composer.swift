@@ -18,6 +18,8 @@ struct Composer: View {
     /// A server request is waiting: the draft stays, but it has to be answered before sending.
     var awaitingAnswer = false
     var onStop: (() -> Void)?
+    /// Beside Send inside the field: the chat's context ring.
+    var accessory: AnyView?
     let submit: ([UserInput]) async -> Void
 
     @Environment(\.composerDraft) private var composerDraft
@@ -140,6 +142,7 @@ struct Composer: View {
                         // the + beside it and Send sits evenly inside.
                         .padding(.vertical, 4)
                 }
+                if let accessory { accessory }
                 sendOrStop
             }
             .padding(.leading, appearance.composerLayout == .inline ? 8 : 16)

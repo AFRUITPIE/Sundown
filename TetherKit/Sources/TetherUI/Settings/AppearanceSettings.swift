@@ -76,6 +76,7 @@ struct AppearanceSettings: View {
                     ForEach(Appearance.SendShortcut.allCases) { Text($0.label).tag($0) }
                 }
                 Toggle("Offer Prompt Suggestions", isOn: $app.appearance.promptSuggestions)
+                Toggle("Show How Full the Context Is", isOn: $app.appearance.contextRing)
             }
 
             Section("Sidebar") {
