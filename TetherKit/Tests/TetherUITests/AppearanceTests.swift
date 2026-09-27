@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import TetherKit
+import TetherProtocol
 @testable import TetherUI
 
 @MainActor
@@ -99,5 +100,26 @@ struct HostSecretsTests {
         let raw = try #require(store.data(forKey: "tether.hosts.v1"))
         #expect(!String(decoding: raw, as: UTF8.self).contains("AWS_PROFILE"))
         #expect(AppModel(defaults: store).hosts.first { $0.id == id }?.env == ["AWS_PROFILE": "dev"])
+    }
+}
+
+@Suite
+struct ToolCallVisibilityTests {
+    private func call(_ id: String, _ status: ToolStatus, kind: ToolKind = .bash) -> TranscriptRow {
+        .item(.toolCall(.sample(id: id, name: "Bash", kind: kind, input: [:], status: status, secondsAgo: 1)))
+    }
+
+    @Test func quietCallsAreFinishedOnes() {
+        #expect(call("a", .completed).isQuietToolCall)
+        #expect(!call("b", .running).isQuietToolCall)
+        #expect(!call("c", .failed).isQuietToolCall)
+        #expect(!call("d", .completed, kind: .todoWrite).isQuietToolCall)
+        #expect(TranscriptRow.toolGroup([]).isQuietToolCall)
+    }
+
+    @Test func messagesAreNeverToolCalls() {
+        let message = TranscriptRow.item(.agentMessage(.init(id: "m", createdAt: 0, text: "hi")))
+        #expect(!message.isToolCall && !message.isQuietToolCall)
+        #expect(call("a", .running).isToolCall)
     }
 }

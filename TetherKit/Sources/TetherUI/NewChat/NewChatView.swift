@@ -92,7 +92,7 @@ struct NewChatView: View {
     }
 
     private func useFirstProjectIfUnset() {
-        guard window.draftDirectory == nil else { return }
+        guard window.draftDirectory == nil, window.app.appearance.newChatFolder == .recent else { return }
         window.draftDirectory = connection?.projects.first?.cwd
     }
 

@@ -243,6 +243,20 @@ final class AppearanceUITests: XCTestCase {
         XCTAssertEqual(badge.value as? String, "Chats Claude Is Working In")
         XCTAssertFalse(isOn(toggle(settings, "Play a Sound")))
     }
+
+    /// Show Tool Calls ▸ None leaves just the conversation.
+    @MainActor
+    func testToolCallsCanBeLeftOut() {
+        let app = launch()
+        waitForLongChat(app)
+        let groups = mainWindow(app).buttons.matching(NSPredicate(format: "label BEGINSWITH 'Used '"))
+        XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 5))
+
+        choose(openAppearance(app), "Show", "None")
+
+        XCTAssertTrue(groups.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Section 29: tightening the renderer"].firstMatch.exists)
+    }
 }
 
 private extension XCUIElement {

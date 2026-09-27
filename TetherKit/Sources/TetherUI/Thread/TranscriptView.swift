@@ -132,6 +132,17 @@ private struct TranscriptContent: View {
     let connection: HostConnection?
     @Environment(\.appearance) private var appearance
 
+    /// The rows, less the tool calls Settings ▸ Appearance ▸ Show leaves out. Read only when the
+    /// transcript's structure changes, not per streamed delta.
+    private var visibleRows: [TranscriptRow] {
+        let rows = thread.rows(grouped: appearance.groupToolCalls && appearance.toolCallVisibility == .all)
+        switch appearance.toolCallVisibility {
+        case .all: return rows
+        case .attention: return rows.filter { !$0.isQuietToolCall }
+        case .none: return rows.filter { !$0.isToolCall }
+        }
+    }
+
     var body: some View {
         LazyVStack(alignment: .leading, spacing: appearance.density.rowSpacing) {
             if !thread.historyLoaded {
@@ -142,7 +153,7 @@ private struct TranscriptContent: View {
             }
             // One plain view per row, identified by the ForEach alone: a `switch` or `.id()` here
             // adds a node to every row, and the lazy stack walks every row on each layout pass.
-            ForEach(thread.rows(grouped: appearance.groupToolCalls), id: \.id) { row in
+            ForEach(visibleRows, id: \.id) { row in
                 TranscriptRowView(row: row, thread: thread)
             }
             TranscriptTail(thread: thread)
@@ -227,6 +238,25 @@ private struct FadesIn: ViewModifier {
                 guard !shown else { return }
                 withAnimation(.easeOut(duration: FadeInRenderer.duration)) { shown = true }
             }
+    }
+}
+
+extension TranscriptRow {
+    var isToolCall: Bool {
+        switch self {
+        case .toolGroup: true
+        case .item(.toolCall(let call)): call.kind != .todoWrite
+        default: false
+        }
+    }
+
+    /// A finished call with nothing to notice: what Only Running and Failed leaves out.
+    var isQuietToolCall: Bool {
+        switch self {
+        case .toolGroup: true
+        case .item(.toolCall(let call)): call.status == .completed && call.kind != .todoWrite && call.kind != .subagent
+        default: false
+        }
     }
 }
 

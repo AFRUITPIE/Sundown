@@ -118,10 +118,22 @@ struct SessionMenus: View {
     }
 }
 
+private struct ModelLabelStyle: LabelStyle {
+    let showsName: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        if showsName {
+            Label(configuration).labelStyle(.titleAndIcon)
+        } else {
+            Label(configuration).labelStyle(.iconOnly)
+        }
+    }
+}
+
 /// The one control that shows a word: which model is answering is what people look for.
 /// Fast Mode rides in its menu because it is a property of the model, not a fourth control.
 struct ModelMenu: View {
     let settings: SessionSettings
+    @Environment(\.appearance) private var appearance
 
     var body: some View {
         Menu {
@@ -133,8 +145,9 @@ struct ModelMenu: View {
             ReservedWidthLabel(settings.modelLabel, systemImage: SessionSymbol.model,
                                widestOf: settings.models.concrete.map(\.shortName) + [settings.modelLabel])
         }
-        // Toolbar items are icon-only by default; this is the one that has to say a name.
-        .labelStyle(.titleAndIcon)
+        // Toolbar items are icon-only by default; this is the one that says a name, unless
+        // Settings ▸ Appearance ▸ Model in the Toolbar says otherwise.
+        .labelStyle(ModelLabelStyle(showsName: appearance.toolbarModelName))
         .disabled(!settings.isEnabled)
         .help("Choose the model that answers")
         .accessibilityLabel("Model")

@@ -42,6 +42,9 @@ public struct Appearance: Codable, Equatable, Sendable {
     // Sidebar
     public var rowDetail: RowDetail = .folder
     public var runningIndicator = true
+    public var toolbarModelName = true
+    public var newChatFolder: NewChatFolder = .recent
+    public var toolCallVisibility: ToolCallVisibility = .all
     public var doubleClickOpensWindow = true
     public var showTips = true
 
@@ -180,6 +183,34 @@ public struct Appearance: Codable, Equatable, Sendable {
         }
     }
 
+    public enum NewChatFolder: String, Codable, CaseIterable, Identifiable, Sendable {
+        case recent, ask
+        public var id: Self { self }
+        var label: String {
+            switch self {
+            case .recent: "The Most Recent Folder"
+            case .ask: "No Folder Until I Choose One"
+            }
+        }
+    }
+
+    public enum ToolCallVisibility: String, Codable, CaseIterable, Identifiable, Sendable {
+        /// Every call, finished ones folded as Group Finished Calls says.
+        case all
+        /// Only calls still running or that went wrong: finished work is left out.
+        case attention
+        /// No calls at all: just the conversation.
+        case none
+        public var id: Self { self }
+        var label: String {
+            switch self {
+            case .all: "All"
+            case .attention: "Only Running and Failed"
+            case .none: "None"
+            }
+        }
+    }
+
     public enum RowDetail: String, Codable, CaseIterable, Identifiable, Sendable {
         case titleOnly, folder, folderAndTime
         public var id: Self { self }
@@ -225,6 +256,9 @@ public struct Appearance: Codable, Equatable, Sendable {
         offerDontAsk = value(.offerDontAsk, d.offerDontAsk)
         rowDetail = value(.rowDetail, d.rowDetail)
         runningIndicator = value(.runningIndicator, d.runningIndicator)
+        toolbarModelName = value(.toolbarModelName, d.toolbarModelName)
+        newChatFolder = value(.newChatFolder, d.newChatFolder)
+        toolCallVisibility = value(.toolCallVisibility, d.toolCallVisibility)
         doubleClickOpensWindow = value(.doubleClickOpensWindow, d.doubleClickOpensWindow)
         showTips = value(.showTips, d.showTips)
     }

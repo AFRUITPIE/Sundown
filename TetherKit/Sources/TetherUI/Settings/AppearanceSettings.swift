@@ -40,7 +40,11 @@ struct AppearanceSettings: View {
             }
 
             Section("Tool Calls") {
+                Picker("Show", selection: $app.appearance.toolCallVisibility) {
+                    ForEach(Appearance.ToolCallVisibility.allCases) { Text($0.label).tag($0) }
+                }
                 Toggle("Group Finished Calls", isOn: $app.appearance.groupToolCalls)
+                    .disabled(app.appearance.toolCallVisibility != .all)
                 Toggle("Show Icons", isOn: $app.appearance.toolIcons)
                 Picker("Status", selection: $app.appearance.statusSide) {
                     ForEach(Appearance.Side.allCases) { Text($0.label).tag($0) }
@@ -66,6 +70,17 @@ struct AppearanceSettings: View {
                 Text("Motion")
             } footer: {
                 Text("With Reduce Motion on in System Settings, a reply is followed without gliding.")
+            }
+
+            Section("Window") {
+                Picker("Model in the Toolbar", selection: $app.appearance.toolbarModelName) {
+                    Text("Name and Icon").tag(true)
+                    Text("Icon Only").tag(false)
+                }
+                .pickerStyle(.segmented)
+                Picker("New Chats Start In", selection: $app.appearance.newChatFolder) {
+                    ForEach(Appearance.NewChatFolder.allCases) { Text($0.label).tag($0) }
+                }
             }
 
             Section("Composer") {

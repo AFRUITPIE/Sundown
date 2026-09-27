@@ -196,7 +196,7 @@ public final class WindowModel {
         draftEffort = app.defaultEffort.map(EffortLevel.init(rawValue:))
         draftPermissionMode = PermissionMode(rawValue: app.defaultPermissionMode)
         draftFastMode = false
-        draftDirectory = app.connections[hostID]?.projects.first?.cwd
+        draftDirectory = app.appearance.newChatFolder == .recent ? app.connections[hostID]?.projects.first?.cwd : nil
         draftError = nil
     }
 
