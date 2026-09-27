@@ -109,6 +109,7 @@ public struct InspectorPanel: View {
         .frame(minWidth: 280, idealWidth: 320, maxWidth: .infinity, minHeight: 320, idealHeight: 540, maxHeight: .infinity)
         .environment(\.appearance, app.appearance)
         .environment(\.textScale, app.textScale)
+        .environment(\.openFilesWith, app.appearance.openFilesWith)
         .onAppear { app.inspectorPanelShown = true }
         .onDisappear { app.inspectorPanelShown = false }
     }
