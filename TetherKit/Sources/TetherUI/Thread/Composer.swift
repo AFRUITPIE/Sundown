@@ -27,6 +27,7 @@ struct Composer: View {
     @State private var commands: [SlashCommand] = []
     @State private var fileMatches: [String] = []
     @State private var suggestions: [Suggestion] = []
+    @State private var choosingFiles = false
     @FocusState private var focused: Bool
 
     struct Attachment: Identifiable {
@@ -91,55 +92,54 @@ struct Composer: View {
         .animation(.snappy, value: thread?.promptSuggestion)
     }
 
+    /// Laid out like Messages: a round Add button outside the field, and the field a capsule that
+    /// grows with its text, with a round Send — or Stop — at its trailing end.
     private var field: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !images.isEmpty { attachments }
-            TextField(thread?.isRunning == true ? "Send a message while Claude works…" : placeholder, text: $text, axis: .vertical)
-                .accessibilityIdentifier("composer.input")
-                .textFieldStyle(.plain)
-                .lineLimit(1...12)
-                .focused($focused)
-                .onSubmit(send)
-                .textInputSuggestions(suggestions) { s in
-                    Label {
-                        Text(s.title)
-                        if let d = s.detail { Text(d) }
-                    } icon: {
-                        Image(systemName: s.symbol)
-                    }
-                    .textInputCompletion(s.completion)
+        HStack(alignment: .bottom, spacing: 10) {
+            Button("Add Images or Files", systemImage: "plus") { choosingFiles = true }
+                .labelStyle(.iconOnly)
+                .fontWeight(.medium)
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .controlSize(.extraLarge)
+                .help("Attach images, or mention files for Claude to read")
+                .accessibilityIdentifier("composer.add")
+            HStack(alignment: .bottom, spacing: 8) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !images.isEmpty { attachments }
+                    TextField(thread?.isRunning == true ? "Send a message while Claude works…" : placeholder, text: $text, axis: .vertical)
+                        .accessibilityIdentifier("composer.input")
+                        .textFieldStyle(.plain)
+                        .lineLimit(1...12)
+                        .focused($focused)
+                        .onSubmit(send)
+                        .textInputSuggestions(suggestions) { s in
+                            Label {
+                                Text(s.title)
+                                if let d = s.detail { Text(d) }
+                            } icon: {
+                                Image(systemName: s.symbol)
+                            }
+                            .textInputCompletion(s.completion)
+                        }
+                        .padding(.vertical, 6)
                 }
-                .padding(.top, 4)
-            HStack(spacing: 4) {
-                Spacer(minLength: 0)
-                if showStop {
-                    Button("Stop", systemImage: "stop.fill") { onStop?() }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.glassProminent)
-                        .buttonBorderShape(.circle)
-                        .tint(.red)
-                        .keyboardShortcut(".", modifiers: .command)
-                        .help("Stop the current turn")
-                } else {
-                    Button("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up", action: send)
-                        .accessibilityIdentifier("composer.send")
-                        .labelStyle(.iconOnly)
-                        .fontWeight(.semibold)
-                        .buttonStyle(.glassProminent)
-                        .buttonBorderShape(.circle)
-                        .disabled(!canSend || awaitingAnswer)
-                        .help(sendHelp)
-                }
+                sendOrStop
             }
+            .padding(.leading, 16)
+            .padding(.trailing, 5)
+            .padding(.vertical, 5)
+            // A capsule at one line; the same corner radius as the text grows makes it a rounded
+            // rectangle, the way Messages' field grows.
+            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
         }
-        .padding(.leading, 16)
-        .padding(.trailing, 10)
-        .padding(.vertical, 10)
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 24))
         // Under a prompt card the composer is still there and still typable, just clearly not the
         // thing being asked of you.
         .opacity(awaitingAnswer ? 0.7 : 1)
         .onDrop(of: [.image, .fileURL], isTargeted: nil, perform: drop)
+        .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            for url in (try? result.get()) ?? [] { add(file: url) }
+        }
         .onPasteCommand(of: [.png, .tiff, .jpeg], perform: { _ = drop($0) })
         .onAppear {
             focused = true
@@ -168,6 +168,37 @@ struct Composer: View {
             guard !Task.isCancelled else { return }
             fileMatches = await connection.searchFiles(cwd: cwd, query: q)
             refreshSuggestions()
+        }
+    }
+
+    /// Send, a round button inside the field's trailing end; Stop in its place while Claude works
+    /// and the field is empty.
+    @ViewBuilder private var sendOrStop: some View {
+        if showStop {
+            Button("Stop", systemImage: "stop.fill") { onStop?() }
+                .labelStyle(.iconOnly)
+                .modifier(RoundAction())
+                .tint(.red)
+                .keyboardShortcut(".", modifiers: .command)
+                .help("Stop the current turn")
+        } else {
+            Button("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up", action: send)
+                .accessibilityIdentifier("composer.send")
+                .labelStyle(.iconOnly)
+                .modifier(RoundAction())
+                .disabled(!canSend || awaitingAnswer)
+                .help(sendHelp)
+        }
+    }
+
+    /// A prominent round button, as Messages draws Send.
+    private struct RoundAction: ViewModifier {
+        func body(content: Content) -> some View {
+            content
+                .fontWeight(.bold)
+                .buttonStyle(.glassProminent)
+                .buttonBorderShape(.circle)
+                .controlSize(.large)
         }
     }
 
@@ -217,13 +248,7 @@ struct Composer: View {
             if p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 _ = p.loadObject(ofClass: URL.self) { url, _ in
                     guard let url else { return }
-                    Task { @MainActor in
-                        if let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image), let data = try? Data(contentsOf: url) {
-                            add(image: data)
-                        } else {
-                            text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + "@" + url.path + " "
-                        }
-                    }
+                    Task { @MainActor in add(file: url) }
                 }
             } else if p.canLoadObject(ofClass: NSImage.self) {
                 _ = p.loadObject(ofClass: NSImage.self) { obj, _ in
@@ -233,6 +258,17 @@ struct Composer: View {
             }
         }
         return true
+    }
+
+    /// An image is attached; any other file is mentioned by path, for Claude to read.
+    private func add(file url: URL) {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        if let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image), let data = try? Data(contentsOf: url) {
+            add(image: data)
+        } else {
+            text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + "@" + url.path + " "
+        }
     }
 
     private func add(image data: Data) {

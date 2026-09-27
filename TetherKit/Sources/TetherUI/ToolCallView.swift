@@ -30,8 +30,7 @@ struct ToolCallView: View {
                     .padding(10)
                     .background(.fill.quinary, in: .rect(cornerRadius: 8))
                     .padding(.top, 6)
-                    // Under the title: past the triangle and the spacing after it.
-                    .padding(.leading, 18)
+                    .padding(.leading, 12)
             }
         }
     }
@@ -42,8 +41,6 @@ struct ToolCallView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            // A subagent opens in the inspector instead of expanding here.
-            DisclosureIndicator(expanded: expanded).opacity(call.kind == .subagent ? 0 : 1)
             // Status leads the row, where the eye starts; a finished call has none, just its words.
             statusGlyph
             Text(title).foregroundStyle(.secondary)
@@ -54,8 +51,11 @@ struct ToolCallView: View {
             if let s = call.elapsedSeconds, call.status == .running {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
+            // A subagent opens in the inspector instead of expanding here.
             if call.kind == .subagent {
                 Image(systemName: "sidebar.trailing").scaledFont(.caption2).foregroundStyle(.tertiary)
+            } else {
+                DisclosureIndicator(expanded: expanded)
             }
         }
         .scaledFont(.callout)
@@ -198,8 +198,8 @@ enum SubagentLifecycle {
 }
 
 /// A folded run of finished tool calls (see `foldTranscriptRows`) as one "Used N tools" line.
-/// A macOS disclosure triangle: on the leading edge, pointing to the trailing side while closed
-/// and down while open.
+/// The expand chevron at a row's trailing end: pointing to the trailing side while closed and down
+/// while open.
 struct DisclosureIndicator: View {
     let expanded: Bool
 
@@ -230,9 +230,9 @@ struct ToolCallGroupView: View {
                 withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
-                    DisclosureIndicator(expanded: expanded)
                     Text("Used \(calls.count) tools").foregroundStyle(.secondary)
                     Spacer(minLength: 8)
+                    DisclosureIndicator(expanded: expanded)
                 }
                 .scaledFont(.callout)
                 .contentShape(Rectangle())
@@ -242,8 +242,8 @@ struct ToolCallGroupView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
                 }
-                // Each call's triangle under the group's title.
-                .padding(.leading, 18)
+                // The group's calls indented under it.
+                .padding(.leading, 12)
             }
         }
     }
