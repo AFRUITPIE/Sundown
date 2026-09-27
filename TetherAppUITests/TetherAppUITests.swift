@@ -25,9 +25,11 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
         let toggle = app.buttons["Inspector"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-        // The fixture's store is fresh, so the inspector starts closed.
+        // The fixture's store is fresh, so the inspector starts closed, and its pane tabs, a segmented
+        // control in its toolbar, show only once it's open.
+        let mcp = app.toolbars.radioButtons["MCP"]
+        XCTAssertFalse(mcp.exists)
         toggle.click()
-        let mcp = app.tabGroups["Inspector"].tabs["MCP"]
         XCTAssertTrue(mcp.waitForExistence(timeout: 5))
         // With the inspector open the window's minimum width reaches past the CI runner's display
         // (#38), where the tab and the toggle aren't hittable, so both go by shortcut from here.
@@ -81,10 +83,11 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertTrue(permissions.waitForExistence(timeout: 5))
         let before = (effort.frame, permissions.frame)
 
-        choose("Bypass Permissions", in: "Permissions", app: app)
+        // Don't Ask, not Bypass Permissions: Settings offers Bypass only when asked to.
+        choose("Don't Ask", in: "Permissions", app: app)
         choose("Max", in: "Effort", app: app)
 
-        XCTAssertEqual(permissions.value as? String, "Bypass Permissions")
+        XCTAssertEqual(permissions.value as? String, "Don't Ask")
         XCTAssertEqual(effort.frame, before.0)
         XCTAssertEqual(permissions.frame, before.1)
     }
@@ -117,7 +120,7 @@ final class TetherAppUITests: XCTestCase {
         // The fixture's `git/status` says the folder is on main.
         let branch = app.descendants(matching: .any)["newChat.branch"]
         XCTAssertTrue(branch.waitForExistence(timeout: 5))
-        XCTAssertEqual(branch.value as? String, "main")
+        XCTAssertEqual(branch.label, "Branch main")
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         XCTAssertLessThan(folder.frame.maxY, input.frame.minY)
         XCTAssertEqual(folder.value as? String, "/tmp/tether-fixture")

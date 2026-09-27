@@ -397,6 +397,12 @@ extension AttentionCenter: UNUserNotificationCenterDelegate {
 public final class TetherAppDelegate: NSObject, NSApplicationDelegate {
     public weak var app: AppModel?
 
+    /// No window tabs, as in Messages: Window ▸ Show Next Tab would take ⌃⇥ from Chat ▸ Next Chat,
+    /// and a window per chat is what File ▸ New Window and Open in New Window are for.
+    public func applicationWillFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
+
     public func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         app?.dockMenu()
     }

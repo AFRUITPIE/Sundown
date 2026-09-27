@@ -41,15 +41,29 @@ final class AppearanceUITests: XCTestCase {
         return settings
     }
 
+    /// The control of `query`'s kind on the same row as the text `label`: a grouped form's pop-ups
+    /// and switches name their row's title for VoiceOver rather than carrying it as their own label.
+    @MainActor
+    private func control(_ query: XCUIElementQuery, besideLabel label: String, in settings: XCUIElement) -> XCUIElement? {
+        let named = query.matching(NSPredicate(format: "label == %@ OR title == %@", label, label)).firstMatch
+        if named.exists { return named }
+        let text = settings.staticTexts.matching(NSPredicate(format: "value == %@ OR label == %@", label, label)).firstMatch
+        guard text.waitForExistence(timeout: 5) else { return nil }
+        let row = text.frame
+        for i in 0..<query.count {
+            let candidate = query.element(boundBy: i)
+            if abs(candidate.frame.midY - row.midY) < 14 { return candidate }
+        }
+        return nil
+    }
+
     /// A toggle in Settings by its label, whichever control type it's exposed as.
     @MainActor
     private func toggle(_ settings: XCUIElement, _ label: String) -> XCUIElement {
-        let predicate = NSPredicate(format: "label == %@ OR title == %@", label, label)
         for query in [settings.switches, settings.checkBoxes] {
-            let match = query.matching(predicate).firstMatch
-            if match.exists { return match }
+            if let match = control(query, besideLabel: label, in: settings) { return match }
         }
-        return settings.switches.matching(predicate).firstMatch
+        return settings.switches.matching(NSPredicate(format: "label == %@", label)).firstMatch
     }
 
     @MainActor
@@ -60,7 +74,8 @@ final class AppearanceUITests: XCTestCase {
     /// The pop-up labelled `label`.
     @MainActor
     private func popUp(_ settings: XCUIElement, _ label: String) -> XCUIElement {
-        settings.popUpButtons.matching(NSPredicate(format: "label == %@ OR title == %@", label, label)).firstMatch
+        control(settings.popUpButtons, besideLabel: label, in: settings)
+            ?? settings.popUpButtons.matching(NSPredicate(format: "label == %@", label)).firstMatch
     }
 
     /// Chooses `option` from the pop-up labelled `label`.

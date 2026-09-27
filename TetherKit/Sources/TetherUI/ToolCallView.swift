@@ -61,6 +61,7 @@ struct ToolCallView: View {
             .contextMenu { menu }
             // The status glyph is inside the label, where VoiceOver doesn't read it.
             .accessibilityValue(statusDescription)
+            .accessibilityIdentifier("transcript.toolCall")
             .help(ToolCallText.fullObject(call) ?? "")
             if let reason = ToolCallText.reason(call) {
                 Text(reason)

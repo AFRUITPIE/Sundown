@@ -100,12 +100,12 @@ final class ComposerAndMessageUITests: XCTestCase {
         windowButton(app, "Copy").click()
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Summarize this project")
 
-        // A reply offers its Markdown too, from the blank beside its last line: right-clicking the
-        // words gives the text's own menu.
-        // The first match is the reply's full width; its words are a shorter element inside it.
+        // A reply copies from its hover bar the same way. (Its text spans the reply's width, so
+        // right-clicking it gives the text's own menu rather than the message's.)
+        NSPasteboard.general.clearContents()
         let answer = app.staticTexts["Fixture answer from the local transport."].firstMatch
-        answer.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)).rightClick()
-        visibleMenuItem(app, "Copy as Markdown").click()
+        answer.hover()
+        windowButton(app, "Copy").click()
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Fixture answer from the local transport.")
     }
 
@@ -155,7 +155,9 @@ final class ComposerAndMessageUITests: XCTestCase {
         let prompt = app.staticTexts["Summarize this project"].firstMatch
         XCTAssertTrue(prompt.waitForExistence(timeout: 15))
 
-        prompt.rightClick()
+        // In the blank beside the bubble: its words are selectable text, with the text's own menu.
+        let besidePrompt = prompt.coordinate(withNormalizedOffset: CGVector(dx: -0.6, dy: 0.5))
+        besidePrompt.rightClick()
         visibleMenuItem(app, "Restore Code to Here…").click()
         XCTAssertTrue(app.staticTexts["Restore Files to Before This Message?"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "value CONTAINS 'App.swift, README.md'")).firstMatch.exists
@@ -163,7 +165,7 @@ final class ComposerAndMessageUITests: XCTestCase {
         windowButton(app, "Restore").click()
         XCTAssertTrue(app.staticTexts["Restore Files to Before This Message?"].waitForNonExistence(timeout: 5))
 
-        prompt.rightClick()
+        besidePrompt.rightClick()
         visibleMenuItem(app, "Restore Code to Here…").click()
         XCTAssertTrue(app.staticTexts["No Files to Restore"].waitForExistence(timeout: 5))
         windowButton(app, "OK").click()

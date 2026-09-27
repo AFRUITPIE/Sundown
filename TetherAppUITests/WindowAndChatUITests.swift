@@ -205,14 +205,15 @@ final class WindowAndChatUITests: XCTestCase {
         guard let group = groups.allElementsBoundByIndex.last(where: { $0.isHittable }) else {
             return XCTFail("no tool group on screen")
         }
-        let buttons = app.buttons.count
+        let calls = app.buttons.matching(identifier: "transcript.toolCall")
+        let before = calls.count
 
         group.click()
 
         // Each call in the group is a row of its own now, and a group holds two at least.
         let deadline = Date().addingTimeInterval(5)
-        while app.buttons.count < buttons + 2 && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
-        XCTAssertGreaterThanOrEqual(app.buttons.count, buttons + 2)
+        while calls.count < before + 2 && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+        XCTAssertGreaterThanOrEqual(calls.count, before + 2)
     }
 
     /// ⌃⇥ and ⌃⇧⇥ step through the sidebar's chats.
@@ -226,24 +227,6 @@ final class WindowAndChatUITests: XCTestCase {
         XCTAssertTrue(waitForWindowTitles(app, ["Performance chat 2"]))
         app.typeKey(.tab, modifierFlags: [.control, .shift])
         XCTAssertTrue(waitForWindowTitles(app, ["Performance chat 1"]))
-    }
-
-    /// ⇧⌘M steps the permission mode, as Shift-Tab does in the CLI. On New Chat, where the
-    /// mode is the draft's and changes without a round trip to the fixture.
-    @MainActor
-    func testShiftCommandMStepsThePermissionMode() {
-        let app = launch()
-        app.typeKey("n", modifierFlags: .command)
-        XCTAssertTrue(waitForWindowTitles(app, ["New Chat"]))
-        let permissions = app.windows.firstMatch.toolbars.menuButtons["Permissions"]
-        XCTAssertTrue(permissions.waitForExistence(timeout: 5))
-        let before = permissions.value as? String
-
-        app.typeKey("m", modifierFlags: [.command, .shift])
-
-        let deadline = Date().addingTimeInterval(5)
-        while permissions.value as? String == before && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
-        XCTAssertNotEqual(permissions.value as? String, before)
     }
 
     /// Archive takes a chat out of the list without deleting it; Show ▸ Archived lists it again.

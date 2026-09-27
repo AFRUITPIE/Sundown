@@ -134,9 +134,9 @@ struct NewChatView: View {
                 }
                 .foregroundStyle(.secondary)
                 .help("Branch")
+                // One element that reads as "Branch main": a group's value doesn't reach accessibility.
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Branch")
-                .accessibilityValue(branch)
+                .accessibilityLabel("Branch \(branch)")
                 .accessibilityIdentifier("newChat.branch")
             }
             workInMenu
