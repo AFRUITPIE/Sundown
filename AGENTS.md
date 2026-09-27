@@ -114,7 +114,7 @@ The product should feel like a standard current macOS app. Prefer native SwiftUI
 - The composer is laid out like Messages: a round + (a menu: attach, mention, commands) beside a capsule field with a round Send or Stop inside it. Return sends and Shift-Return starts a line (or ⌘Return sends, per Settings); Esc closes an open `/` or `@` list first, and otherwise stops a running turn, as ⌘. does.
 - A finished turn that edited files ends with one quiet row after its last reply: "Edited 3 files" and "+42 −7" (the diff colors), counted from the turn's own Edit/MultiEdit/Write/NotebookEdit inputs — a subagent's included, failed calls not — never the working tree (`TurnEdits`). Open, one line per file (name, folder, counts), each opening to its edits in `DiffView`, and Restore Files…, which is Restore Code to Here… for the turn's prompt. No Undo. Summarized in `ThreadModel.rows(_:)`, cached with the rows (each finished call's changes memoized), in every Tool Calls mode; never for the running turn.
 - The date goes above a prompt, centered and quiet, as Messages does: the first prompt shown, a prompt on a new day, or one more than an hour after the last item (`DateSeparators`, a row of its own). "Today 2:14 PM", "Yesterday …", the weekday within the week, then the date, in the reader's locale (`TranscriptDate`).
-- Chat ▸ Previous Prompt and Next Prompt (⌥⌘↑ and ⌥⌘↓) bring the reader's own prompts (the date above one, when it has one) to the top of the transcript, from the prompt last gone to while it's on screen, else the topmost row on screen; Next past the last goes to the end. Not ⌘↑/↓ or ⌃⌘↓: text fields use those, and the composer usually has focus. The rows on screen come from `onScrollTargetVisibilityChange`, kept in an unobserved box so scrolling redraws nothing.
+- Chat ▸ Previous Prompt and Next Prompt (⌥⌘↑ and ⌥⌘↓) bring the reader's own prompts (the date above one, when it has one) to the top of the transcript, from the prompt last gone to until the reader scrolls for themselves (not until it's on screen: a quick second press came before the scroll landed and went back to the same prompt), else the topmost row on screen; Next past the last goes to the end, and Previous before the first loaded prompt loads older pages until one has a prompt. Not ⌘↑/↓ or ⌃⌘↓: text fields use those, and the composer usually has focus. The rows on screen come from `onScrollTargetVisibilityChange`, kept in an unobserved box so scrolling redraws nothing.
 - A context menu is never the only way to a command. A message's actions (Copy, Fork from Here, Restore Code to Here…) are also on a bar that appears on hover, with the time it was sent, and are VoiceOver actions; right-clicking the words themselves gives the text's own menu.
 - Settings apply immediately; text fields commit on Return or focus loss. No Save/Revert.
 - Settings uses a General/Notifications/Hosts/Advanced sidebar; the Hosts pane selects a host above its detail form.
@@ -231,6 +231,11 @@ the numbers:
 - A live resize of an empty SwiftUI `NavigationSplitView` window already measures about 230 ms/s
   this way, so compare a resize with that, not with zero.
 - The window is set to 1000×740 first; how much of the transcript wraps again depends on its width.
+- Changing the inspector's pane costs about 50 ms/s more than it did with the picker in the pane's
+  own content: any toolbar control changing state makes AppKit re-tile the whole toolbar. Hosting the
+  picker differently (a stack, a fixed size, item ids) didn't change it.
+- Find elements with `element(boundBy: 0)`, not `firstMatch`, after the window's root `TabView`
+  switches tabs: `firstMatch`'s shortcut through the tree then misses elements a whole query finds.
 - `Self._logChanges()` in the view bodies, with `log stream --predicate 'category == "Changed Body
   Properties"'`, shows which views a test updates and why, where the SwiftUI instrument can't be
   used from the command line.
