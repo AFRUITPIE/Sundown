@@ -66,6 +66,9 @@ public final class ThreadModel: Identifiable {
     @ObservationIgnored private var cachedTopLevel: (version: Int, items: [Item])?
     @ObservationIgnored private var cachedRows: (version: Int, rows: [TranscriptRow])?
     @ObservationIgnored private var cachedChildren: (version: Int, byParent: [String: [Item]])?
+    /// When items started live, as opposed to arriving with history, for the rows that fade in.
+    /// Unobserved: a row reads it once, when it appears.
+    @ObservationIgnored private var started: [String: ContinuousClock.Instant] = [:]
 
     /// Claude's name for the session once it has one, else the opening prompt. Stored rather than
     /// computed: a title that reads `items` would make every streamed delta invalidate the sidebar
@@ -216,7 +219,9 @@ public final class ThreadModel: Identifiable {
             upsertTurn(e.turn)
             promptSuggestion = nil
         case .turnCompleted(let e): upsertTurn(e.turn)
-        case .itemStarted(let e): upsert(e.item)
+        case .itemStarted(let e):
+            if index[e.item.id] == nil { noteStarted(e.item.id) }
+            upsert(e.item)
         case .itemUpdated(let e): upsert(e.item)
         case .itemCompleted(let e): upsert(e.item)
         case .itemAgentMessageDelta(let e):
@@ -328,6 +333,19 @@ public final class ThreadModel: Identifiable {
         if item.isSubagentCall { refreshTaskEntries() }
         // Only an opening user message can move the title, and only until Claude names the session.
         if isUnnamed, case .userMessage(let m) = item, m.synthetic != true { refreshTitle() }
+    }
+
+    private func noteStarted(_ id: String) {
+        let now = ContinuousClock.now
+        // Only the last moment matters, so the record stays small in a long turn.
+        if started.count > 64 { started = started.filter { now - $0.value < .seconds(2) } }
+        started[id] = now
+    }
+
+    /// Whether the item started live within the last moment, so its row fades in as it appears.
+    /// False for one that came with history, or a row made again when scrolled back to.
+    public func justStarted(_ id: String) -> Bool {
+        started[id].map { ContinuousClock.now - $0 < .milliseconds(500) } ?? false
     }
 
     /// A streamed change to one item: its box, not the transcript's structure.

@@ -12,11 +12,24 @@ struct TranscriptView: View {
     /// Whether the reader left the transcript at its end. Only their own scrolling changes it, so a
     /// resize that briefly pushes the end off screen doesn't count as scrolling away.
     @State private var followsEnd = true
+    /// The last line or two the end grew by, eased away: see `follow`.
+    @State private var glide = Glide()
     @Environment(\.transcriptFind) private var find
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView {
             TranscriptContent(thread: thread, connection: connection)
+                .keyframeAnimator(initialValue: 0, trigger: glide.count) { content, y in
+                    // Drawing only: an offset moves the content's geometry, and the lazy stack
+                    // worked out again which rows it shows on every frame of the glide.
+                    content.visualEffect { effect, _ in effect.offset(y: y) }
+                } keyframes: { _ in
+                    KeyframeTrack {
+                        MoveKeyframe(glide.distance)
+                        CubicKeyframe(0, duration: 0.3)
+                    }
+                }
         }
         // Opens at the end and keeps it pinned through content and size changes. A transcript shorter
         // than the window sits at the top: aligned to the bottom, it was pushed down by a scroll offset
@@ -45,9 +58,8 @@ struct TranscriptView: View {
             followsEnd = false
             withAnimation { position.scrollTo(id: id, anchor: .center) }
         }
-        // The anchor doesn't survive a width change: every row re-measures at the new width.
-        .onScrollGeometryChange(for: CGSize.self, of: \.containerSize) { _, _ in
-            if followsEnd { position.scrollTo(edge: .bottom) }
+        .onScrollGeometryChange(for: Extent.self, of: { Extent(content: $0.contentSize.height, container: $0.containerSize) }) {
+            follow(from: $0, to: $1)
         }
         .onScrollPhaseChange { old, new, context in
             guard new == .idle, old == .interacting || old == .decelerating else { return }
@@ -75,6 +87,40 @@ struct TranscriptView: View {
             // Scoped to the button so the transcript's own layout changes don't animate.
             .animation(.snappy, value: followsEnd)
         }
+    }
+}
+
+extension TranscriptView {
+    /// What following the end depends on: how tall the content is, and the size of the view.
+    struct Extent: Equatable {
+        let content: CGFloat
+        let container: CGSize
+    }
+
+    /// A distance the content is drawn below where it is, easing back to nothing.
+    struct Glide {
+        var distance: CGFloat = 0
+        var count = 0
+    }
+
+    /// Keeps the end in view while the reader is following it. The scroll view's anchor holds it
+    /// there, which moves the transcript up a whole line at once when a streamed reply wraps; so
+    /// the content is drawn that line lower and eased back up, and the new line glides into view.
+    /// Drawing only, no layout. Not for a resize, whose rows all re-measure, or a jump bigger than
+    /// a few lines, or with Reduce Motion.
+    ///
+    /// Switching the anchor off for this instead (and scrolling to the end by hand) made every frame
+    /// of a resize slower, and switching it during layout made AppKit throw.
+    private func follow(from old: Extent, to new: Extent) {
+        guard followsEnd else { return }
+        // The anchor doesn't survive a width change: every row re-measures at the new width.
+        if old.container != new.container {
+            position.scrollTo(edge: .bottom)
+            return
+        }
+        let growth = new.content - old.content
+        guard growth > 0, growth < 160, !reduceMotion else { return }
+        glide = Glide(distance: growth, count: glide.count + 1)
     }
 }
 
@@ -152,11 +198,32 @@ struct TranscriptRowView: View, Equatable {
     var body: some View {
         Group {
             switch row {
-            case .item(let item): LiveItemView(box: thread.box(for: item), thread: thread)
+            case .item(let item):
+                LiveItemView(box: thread.box(for: item), thread: thread)
+                    .modifier(FadesIn(isNew: thread.justStarted(item.id)))
             case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread)
             }
         }
         .modifier(FindHighlight(id: row.id))
+    }
+}
+
+/// A row for an item that just started fades in rather than popping in. Opacity only, so it suits
+/// Reduce Motion as it is.
+private struct FadesIn: ViewModifier {
+    @State private var shown: Bool
+
+    init(isNew: Bool) {
+        _shown = State(initialValue: !isNew)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .onAppear {
+                guard !shown else { return }
+                withAnimation(.easeOut(duration: FadeInRenderer.duration)) { shown = true }
+            }
     }
 }
 

@@ -1,6 +1,7 @@
+import AppKit
 import XCTest
 
-/// Reading a chat: text size, Find in Chat, and every command being in the menu bar, against the
+/// Reading a chat: text size, Find in Chat, streamed text, and every command being in the menu bar, against the
 /// fixture's long performance chat.
 final class ReadingUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -114,5 +115,35 @@ final class ReadingUITests: XCTestCase {
             }
             app.typeKey(.escape, modifierFlags: [])
         }
+    }
+
+    /// A reply's words fade in as they stream. The screenshots taken on the way are attached to the
+    /// test's report, to look at; what's checked is that the text drawn that way is still ordinary
+    /// text once it has arrived, which can be selected and copied.
+    @MainActor
+    func testStreamedTextFadesInAndStaysSelectable() throws {
+        let app = launch()
+        let input = app.descendants(matching: .any)["composer.input"]
+        input.click()
+        input.typeText("Keep going")
+        app.buttons["composer.send"].click()
+
+        XCTAssertTrue(app.staticTexts["Section 100: tightening the renderer"].firstMatch.waitForExistence(timeout: 20))
+        for i in 1...3 {
+            let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+            shot.name = "Streaming \(i)"
+            shot.lifetime = .keepAlways
+            add(shot)
+        }
+
+        // Done once Stop gives way to Send.
+        XCTAssertTrue(app.buttons["Stop"].waitForNonExistence(timeout: 60))
+        let quote = app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH 'Streaming should cost'"))
+            .allElementsBoundByIndex.last { $0.isHittable }
+        let last = try XCTUnwrap(quote, "the reply's last block isn't on screen")
+        NSPasteboard.general.clearContents()
+        last.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).doubleClick()
+        app.typeKey("c", modifierFlags: .command)
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Streaming")
     }
 }

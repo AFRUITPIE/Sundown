@@ -18,11 +18,15 @@ struct MarkdownView: View {
     }
 
     var body: some View {
+        // A block that appears after the first draw arrived while the reply streamed.
+        let arriving = cache.hasDrawn
         let blocks = cache.blocks(for: text)
+        let _ = cache.hasDrawn = true
         VStack(alignment: .leading, spacing: 0) {
             ForEach(blocks.indices, id: \.self) { i in
                 MarkdownBlockView(rendered: blocks[i],
-                                  topPadding: i == 0 ? 0 : Self.spacing(after: blocks[i - 1].block, before: blocks[i].block))
+                                  topPadding: i == 0 ? 0 : Self.spacing(after: blocks[i - 1].block, before: blocks[i].block),
+                                  isEnd: i == blocks.count - 1, arrives: arriving)
                     .equatable()
             }
         }
@@ -136,9 +140,13 @@ struct MarkdownView: View {
 struct MarkdownBlockView: View, Equatable {
     let rendered: MarkdownView.Rendered
     let topPadding: CGFloat
+    /// The last block, the only one streamed text is added to: its new text fades in.
+    var isEnd = false
+    /// Whether the block appeared while its reply streamed, so its first text fades in too.
+    var arrives = false
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
-        a.rendered.id == b.rendered.id && a.topPadding == b.topPadding
+        a.rendered.id == b.rendered.id && a.topPadding == b.topPadding && a.isEnd == b.isEnd && a.arrives == b.arrives
     }
 
     var body: some View {
@@ -149,27 +157,36 @@ struct MarkdownBlockView: View, Equatable {
         i < rendered.inline.count ? Text(rendered.inline[i]) : Text(verbatim: "")
     }
 
+    /// A block's text, fading in as it arrives when it's the block being streamed into.
+    @ViewBuilder private var line: some View {
+        if isEnd, let text = rendered.inline.first {
+            ArrivingText(text: text, arrives: arrives)
+        } else {
+            inline(0)
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         switch rendered.block {
         case .code(let lang, let body):
-            CodeBlock(code: body, language: lang)
+            CodeBlock(code: body, language: lang, streams: isEnd, arrives: arrives)
         case .heading(let level, _):
-            inline(0).scaledFont(level == 1 ? .title2 : level == 2 ? .title3 : .headline, weight: .bold)
+            line.scaledFont(level == 1 ? .title2 : level == 2 ? .title3 : .headline, weight: .bold)
                 .padding(.top, 6)
         case .paragraph:
-            inline(0)
+            line
         case .bullet(let indent, let marker, _):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(marker).foregroundStyle(.secondary).monospacedDigit()
                     .frame(minWidth: 12, alignment: .trailing)
-                inline(0)
+                line
             }
             .padding(.leading, 6 + CGFloat(indent) * 18)
         case .quote:
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 1).fill(.tertiary).frame(width: 3)
-                inline(0).foregroundStyle(.secondary)
+                line.foregroundStyle(.secondary)
             }
         case .rule:
             Divider()
@@ -198,6 +215,8 @@ struct MarkdownBlockView: View, Equatable {
 /// Characters, and the settled boundary is found by scanning only what arrived since the last call.
 @MainActor
 final class MarkdownCache {
+    /// Whether the view has drawn once: blocks that appear after that arrived as the reply streamed.
+    var hasDrawn = false
     private var text = ""
     private var blocks: [MarkdownView.Rendered] = []
     /// UTF-8 length of the settled prefix, and its blocks.
@@ -350,7 +369,18 @@ struct CodeBlock: View {
     let code: String
     var language: String = ""
     var lineLimit: Int? = nil
+    /// Whether it's being streamed into, and appeared while it was: as `MarkdownBlockView`'s.
+    var streams = false
+    var arrives = false
     @State private var expanded = false
+
+    @ViewBuilder private var codeText: some View {
+        if streams {
+            ArrivingText(text: AttributedString(code), arrives: arrives)
+        } else {
+            Text(verbatim: code)
+        }
+    }
 
     private var lineCount: Int { code.reduce(1) { $1 == "\n" ? $0 + 1 : $0 } }
     private var isTruncated: Bool { lineLimit.map { lineCount > $0 } ?? false }
@@ -373,7 +403,7 @@ struct CodeBlock: View {
             }
             .scaledFont(.caption)
             .foregroundStyle(.secondary)
-            Text(verbatim: code)
+            codeText
                 .scaledFont(.callout, design: .monospaced)
                 .lineLimit(expanded ? nil : lineLimit)
                 .textSelection(.enabled)
