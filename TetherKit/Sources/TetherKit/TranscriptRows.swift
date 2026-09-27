@@ -1,10 +1,14 @@
 import TetherProtocol
 
-/// One row in the rendered transcript: either a single item, or a run of consecutive,
-/// unremarkable finished tool calls collapsed into one quiet summary line.
-public enum TranscriptRow: Sendable {
+/// One row in the rendered transcript: a single item, a run of consecutive finished tool calls
+/// collapsed into one quiet summary line, or a finished turn's work folded behind its last reply.
+public indirect enum TranscriptRow: Sendable, Equatable {
     case item(Item)
     case toolGroup([Item.ToolCall])
+    /// Everything a finished turn did before its last message, as one "Worked for" line
+    /// (Settings ▸ Advanced ▸ Tool Calls ▸ Worked For). `durationMs` runs from the prompt to that
+    /// message, when both are known.
+    case turnWork(id: String, rows: [TranscriptRow], durationMs: Double?)
 
     public var id: String {
         switch self {
@@ -12,14 +16,25 @@ public enum TranscriptRow: Sendable {
         // Keyed on the first call's id: stable as long as the group's contents don't reorder,
         // which they don't — items only ever append or mutate in place.
         case .toolGroup(let calls): return "group-\(calls.first?.id ?? "")"
+        case .turnWork(let id, _, _): return id
         }
     }
 }
 
+/// How finished tool calls fold, per Settings ▸ Advanced ▸ Tool Calls.
+public enum TranscriptFolding: Sendable, Hashable {
+    /// Each run of finished calls on one line.
+    case summarized
+    /// One line per call.
+    case everyCall
+    /// A finished turn's work before its last message on one line; the running turn as `summarized`.
+    case workedFor
+}
+
 /// Folds top-level items into display rows, collapsing consecutive finished tool calls into a
-/// single "Used N tools" row, finished calls that failed or were denied included (the group says
-/// how many). A call breaks the run — and stays on its own line — while it's still doing something
-/// worth watching, or when it's more than a line:
+/// single summary row, calls that failed, were denied or stopped included: an agent's missteps are
+/// ordinary, so the run only says how many failed, quietly. A call breaks the run — and stays on
+/// its own line — while it's still doing something worth watching, or when it's more than a line:
 ///   - still running (`.pending`/`.running`)
 ///   - `.todoWrite`, whose checklist is always shown inline and shouldn't be folded away
 ///   - `.subagent`, whose nested transcript is a heavier construct than a plain tool line
@@ -55,6 +70,50 @@ public func foldTranscriptRows(_ items: [Item], grouping: Bool = true) -> [Trans
     return rows
 }
 
+/// Folds items as `folding` says. With `.workedFor`, each finished turn — every turn but a running
+/// last one — keeps its prompt and its last message, and folds what came between into one
+/// `.turnWork` row when that includes a tool call. A turn with no message after its work shows as
+/// it would with `.summarized`, since nothing would be left to read.
+public func foldTranscriptRows(_ items: [Item], folding: TranscriptFolding, lastTurnRunning: Bool) -> [TranscriptRow] {
+    switch folding {
+    case .summarized: return foldTranscriptRows(items)
+    case .everyCall: return foldTranscriptRows(items, grouping: false)
+    case .workedFor: break
+    }
+    // Turns, each from a prompt (or the start) up to the next prompt.
+    var turns: [ArraySlice<Item>] = []
+    var start = items.startIndex
+    for (i, item) in items.enumerated() where i > start {
+        if case .userMessage = item {
+            turns.append(items[start..<i])
+            start = i
+        }
+    }
+    if start < items.endIndex { turns.append(items[start...]) }
+
+    var rows: [TranscriptRow] = []
+    for (t, turn) in turns.enumerated() {
+        let isRunning = lastTurnRunning && t == turns.count - 1
+        guard !isRunning,
+              case .userMessage(let prompt)? = turn.first,
+              let last = turn.lastIndex(where: { if case .agentMessage = $0 { true } else { false } }) else {
+            rows += foldTranscriptRows(Array(turn))
+            continue
+        }
+        let work = turn[turn.index(after: turn.startIndex)..<last]
+        guard work.contains(where: { if case .toolCall = $0 { true } else { false } }) else {
+            rows += foldTranscriptRows(Array(turn))
+            continue
+        }
+        rows.append(.item(.userMessage(prompt)))
+        let end = turn[last].createdAt
+        rows.append(.turnWork(id: "work-\(prompt.id)", rows: foldTranscriptRows(Array(work)),
+                              durationMs: end > 0 && prompt.createdAt > 0 ? end - prompt.createdAt : nil))
+        rows += foldTranscriptRows(Array(turn[last...]))
+    }
+    return rows
+}
+
 private func isGroupable(_ call: Item.ToolCall) -> Bool {
     call.status != .running && call.status != .pending && call.kind != .todoWrite && call.kind != .subagent
 }
@@ -68,6 +127,7 @@ extension TranscriptRow {
         switch self {
         case .item(let item): return item.searchText
         case .toolGroup(let calls): return calls.map { Item.toolCall($0).searchText }.joined(separator: "\n")
+        case .turnWork(_, let rows, _): return rows.map(\.searchText).joined(separator: "\n")
         }
     }
 

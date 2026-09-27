@@ -112,7 +112,9 @@ enum Format {
     }
 
     static func duration(_ seconds: Double) -> String {
-        seconds < 60 ? String(format: "%.0fs", seconds) : String(format: "%dm %02ds", Int(seconds) / 60, Int(seconds) % 60)
+        if seconds < 60 { return String(format: "%.0fs", seconds) }
+        if seconds < 3600 { return String(format: "%dm %02ds", Int(seconds) / 60, Int(seconds) % 60) }
+        return String(format: "%dh %02dm", Int(seconds) / 3600, Int(seconds) % 3600 / 60)
     }
 
     static func tokens(_ n: Double) -> String {

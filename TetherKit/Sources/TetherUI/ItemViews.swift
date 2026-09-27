@@ -37,13 +37,13 @@ struct ItemView: View {
                     .scaledFont(.caption).foregroundStyle(.secondary).fixedSize()
                 VStack { Divider() }
             }
+        // Quiet, like a failed call: said, selectable to copy, not alarming.
         case .error(let e):
-            Label(e.message, systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(.red)
+            Label(e.message, systemImage: "exclamationmark.circle")
+                .scaledFont(.callout)
+                .foregroundStyle(.secondary)
                 .textSelection(.enabled)
-                .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
         case .notice(let n): NoticeView(notice: n)
         case .unknown(let v):
             DisclosureGroup("Unknown item: \(v["type"]?.stringValue ?? "?")") {
@@ -284,7 +284,7 @@ struct NoticeView: View {
             Image(systemName: symbol)
         }
         .scaledFont(.caption)
-        .foregroundStyle(notice.level == .warning ? AnyShapeStyle(.orange) : notice.level == .error ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+        .foregroundStyle(.secondary)
     }
 }
 

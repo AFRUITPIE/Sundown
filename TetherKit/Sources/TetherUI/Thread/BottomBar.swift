@@ -107,7 +107,7 @@ struct StatusStrip: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassEffect(.regular.tint(thread.lastError != nil ? .red.opacity(0.25) : nil), in: .rect(cornerRadius: 18))
+            .glassEffect(in: .rect(cornerRadius: 18))
         }
     }
 
@@ -144,7 +144,7 @@ struct AuthStatusView: View {
                     Text(line).font(.caption.monospaced()).textSelection(.enabled)
                 }
             }
-            if let e = status.error { Text(e).font(.caption).foregroundStyle(.red) }
+            if let e = status.error { Text(e).font(.caption).foregroundStyle(.secondary) }
         }
     }
 }

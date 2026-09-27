@@ -69,7 +69,8 @@ public final class ThreadModel: Identifiable {
     public private(set) var itemsVersion = 0
     @ObservationIgnored private var cachedTopLevel: (version: Int, items: [Item])?
     @ObservationIgnored private var cachedRows: (version: Int, rows: [TranscriptRow])?
-    @ObservationIgnored private var cachedUngroupedRows: (version: Int, rows: [TranscriptRow])?
+    /// The other foldings' rows, each for the items and running state it was folded from.
+    @ObservationIgnored private var cachedFoldedRows: [TranscriptFolding: (version: Int, running: Bool, rows: [TranscriptRow])] = [:]
     @ObservationIgnored private var cachedChildren: (version: Int, byParent: [String: [Item]])?
     /// When items started live, as opposed to arriving with history, for the rows that fade in.
     /// Unobserved: a row reads it once, when it appears.
@@ -424,13 +425,14 @@ public final class ThreadModel: Identifiable {
         return rows
     }
 
-    /// `rows`, or with every tool call on a row of its own when `grouped` is false (Settings ▸
-    /// Advanced ▸ Tool Calls ▸ Every Call).
-    public func rows(grouped: Bool) -> [TranscriptRow] {
-        if grouped { return rows }
-        if let c = cachedUngroupedRows, c.version == itemsVersion { return c.rows }
-        let rows = foldTranscriptRows(topLevelItems, grouping: false)
-        cachedUngroupedRows = (itemsVersion, rows)
+    /// The rows folded as Settings ▸ Advanced ▸ Tool Calls says; `rows` for `.summarized`.
+    /// Worked For also depends on whether the last turn is still running.
+    public func rows(_ folding: TranscriptFolding) -> [TranscriptRow] {
+        if folding == .summarized { return rows }
+        let running = folding == .workedFor && isRunning
+        if let c = cachedFoldedRows[folding], c.version == itemsVersion, c.running == running { return c.rows }
+        let rows = foldTranscriptRows(topLevelItems, folding: folding, lastTurnRunning: running)
+        cachedFoldedRows[folding] = (itemsVersion, running, rows)
         return rows
     }
 

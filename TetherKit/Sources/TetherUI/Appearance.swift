@@ -1,4 +1,5 @@
 import SwiftUI
+import TetherKit
 
 /// The settings that change how the app behaves or is laid out: a few in Settings ▸ General, and
 /// in Settings ▸ Advanced the layouts still being compared, each switchable in the running app.
@@ -24,13 +25,24 @@ public struct Appearance: Codable, Equatable, Sendable {
     public enum ToolCallDisplay: String, Codable, CaseIterable, Identifiable, Sendable {
         /// Each run of finished calls folds into one line that says what they did.
         case summarized
+        /// A finished turn's work folds into one "Worked for" line above its last message.
+        case workedFor
         /// One line per call, nothing folded.
         case everyCall
         public var id: Self { self }
         var label: String {
             switch self {
             case .summarized: "Summarized"
+            case .workedFor: "Worked For"
             case .everyCall: "Every Call"
+            }
+        }
+
+        var folding: TranscriptFolding {
+            switch self {
+            case .summarized: .summarized
+            case .workedFor: .workedFor
+            case .everyCall: .everyCall
             }
         }
     }

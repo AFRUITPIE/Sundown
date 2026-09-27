@@ -141,7 +141,7 @@ private struct TranscriptContent: View {
             }
             // One plain view per row, identified by the ForEach alone: a `switch` or `.id()` here
             // adds a node to every row, and the lazy stack walks every row on each layout pass.
-            ForEach(thread.rows(grouped: appearance.toolCalls == .summarized), id: \.id) { row in
+            ForEach(thread.rows(appearance.toolCalls.folding), id: \.id) { row in
                 TranscriptRowView(row: row, thread: thread)
             }
             TranscriptTail(thread: thread)
@@ -192,6 +192,9 @@ struct TranscriptRowView: View, Equatable {
         switch (a.row, b.row) {
         case (.item(let x), .item(let y)): return x.id == y.id
         case (.toolGroup(let x), .toolGroup(let y)): return x == y
+        // The same turn's work, as long as it holds the same rows; each item reads its own box.
+        case (.turnWork(let x, let xs, let xd), .turnWork(let y, let ys, let yd)):
+            return x == y && xd == yd && xs.map(\.id) == ys.map(\.id)
         default: return false
         }
     }
@@ -203,6 +206,7 @@ struct TranscriptRowView: View, Equatable {
                 LiveItemView(box: thread.box(for: item), thread: thread)
                     .modifier(FadesIn(isNew: thread.justStarted(item.id)))
             case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread)
+            case .turnWork(_, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread)
             }
         }
         .modifier(FindHighlight(id: row.id))
@@ -345,7 +349,7 @@ struct TurnOutcome: View {
             if status == .interrupted {
                 Label("Interrupted", systemImage: "stop.circle").foregroundStyle(.tertiary)
             } else {
-                Label(error ?? "The turn failed", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                Label(error ?? "The turn failed", systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
         }

@@ -376,6 +376,41 @@ extension ThreadModel {
         )
     }
 
+    /// Two finished turns of real-looking work: messages between runs of reads, searches, edits and
+    /// commands, one of which failed. For comparing Settings ▸ Advanced ▸ Tool Calls.
+    public static func sampleWorkChat() -> ThreadModel {
+        let root = "/Users/hayden/Code/tether-app/TetherKit/Sources/TetherUI/"
+        let build: JSONValue = ["command": "swift build --package-path TetherKit", "description": "Build TetherKit"]
+        let edit: JSONValue = [
+            "file_path": .string(root + "RootView.swift"),
+            "old_string": "        .frame(minWidth: showInspector ? 1000 : 740)",
+            "new_string": "        .frame(minWidth: 740)",
+        ]
+        var first: [Item] = [
+            .sampleUserMessage("Resizing the window with the inspector open stutters. Can you find out why?", secondsAgo: 900),
+            .sampleAgentMessage("I'll look at how the split view sets its widths.", secondsAgo: 895),
+        ]
+        first.append(.sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "RootView.swift")],
+                                     status: .completed, secondsAgo: 890))
+        first.append(.sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Inspector/InspectorView.swift")],
+                                     status: .completed, secondsAgo: 885))
+        first.append(.sampleToolCall(name: "Grep", kind: .grep, input: ["pattern": "minWidth"], status: .completed,
+                                     outputText: "RootView.swift:44\nRootView.swift:67", secondsAgo: 880))
+        first.append(.sampleToolCall(name: "Bash", kind: .bash, input: build, status: .failed,
+                                     outputText: "error: cannot find 'inspectorMinimum' in scope\n  --> RootView.swift:67:21", secondsAgo: 860))
+        first.append(.sampleAgentMessage("The build caught a name I got wrong. Fixing it.", secondsAgo: 850))
+        first.append(.sampleToolCall(name: "Edit", kind: .fileEdit, input: edit, status: .completed, secondsAgo: 840))
+        first.append(.sampleToolCall(name: "Bash", kind: .bash, input: build, status: .completed, outputText: "Build complete!", secondsAgo: 800))
+        first.append(.sampleAgentMessage("Opening the inspector raised the window's minimum width from 740 to 1000 halfway through its animation, so AppKit resized the window while the split view was still laying out. The minimum now stays at 740.", secondsAgo: 690))
+        var second: [Item] = [.sampleUserMessage("Does anything else change the width while it opens?", secondsAgo: 300)]
+        second.append(.sampleToolCall(name: "Grep", kind: .grep, input: ["pattern": "inspectorColumnWidth"], status: .completed, secondsAgo: 295))
+        second.append(.sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptView.swift")],
+                                      status: .completed, secondsAgo: 290))
+        second.append(.sampleAgentMessage("Only the column width itself, which is fixed at 260. The transcript re-measures its rows when its width changes, but it keeps its place.", secondsAgo: 270))
+        return sample(title: "Smooth out the inspector resize", items: first + second,
+                      turns: [.sample(secondsAgo: 690), .sample(secondsAgo: 270)])
+    }
+
     /// A thread waiting on a permission decision — `pending.first` replaces the composer.
     public static func samplePendingPermission() -> ThreadModel {
         sample(title: "Clean the build directory", status: .requiresAction, items: [

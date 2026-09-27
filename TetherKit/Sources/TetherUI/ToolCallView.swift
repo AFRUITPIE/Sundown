@@ -2,8 +2,10 @@ import SwiftUI
 import TetherKit
 import TetherProtocol
 
-/// One quiet transcript line for a tool call, expanding to kind-specific detail. Color only
-/// appears when the call needs attention: failed, denied or still running.
+/// One quiet transcript line for a tool call, starting where the reply's text does and reading as
+/// what it did ("Read RootView.swift"), expanding to kind-specific detail. A call that failed, was
+/// denied or stopped says why on a line beneath, in gray: an agent's missteps are ordinary, and it
+/// usually recovers on its own, so nothing about them is loud.
 struct ToolCallView: View {
     let call: Item.ToolCall
     let thread: ThreadModel
@@ -58,13 +60,21 @@ struct ToolCallView: View {
             .contextMenu { menu }
             // The status glyph is inside the label, where VoiceOver doesn't read it.
             .accessibilityValue(statusDescription)
+            .help(ToolCallText.fullObject(call) ?? "")
+            if let reason = ToolCallText.reason(call) {
+                Text(reason)
+                    .scaledFont(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+                    .padding(.top, 2)
+            }
             if call.kind != .subagent, expanded || alwaysShowBody {
                 detail
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
                     .background(.fill.quinary, in: .rect(cornerRadius: 8))
                     .padding(.top, 6)
-                    .padding(.leading, 12)
             }
         }
     }
@@ -76,7 +86,7 @@ struct ToolCallView: View {
     /// Words first, and the status and the disclosure chevron at the trailing end. A finished call
     /// has no status glyph.
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Text(title).foregroundStyle(.secondary)
             if !subtitle.isEmpty {
                 Text(subtitle).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
@@ -86,10 +96,10 @@ struct ToolCallView: View {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
             status
-            // A subagent opens in the inspector instead of expanding here.
+            // A subagent opens in the inspector instead of expanding here; a checklist is always open.
             if call.kind == .subagent {
                 Image(systemName: "sidebar.trailing").scaledFont(.caption2).foregroundStyle(.tertiary)
-            } else {
+            } else if !alwaysShowBody {
                 DisclosureIndicator(expanded: expanded)
             }
         }
@@ -103,9 +113,9 @@ struct ToolCallView: View {
             // Hidden, or the whole row reads as a progress indicator rather than a button; its
             // value says it's running instead.
             ProgressView().controlSize(.small).accessibilityHidden(true)
-        case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).scaledFont(.caption)
-        case .denied: Image(systemName: "hand.raised.fill").foregroundStyle(.orange).scaledFont(.caption)
-        case .interrupted: Image(systemName: "stop.fill").foregroundStyle(.tertiary).scaledFont(.caption2)
+        case .failed: Image(systemName: "exclamationmark.circle").foregroundStyle(.tertiary).scaledFont(.caption)
+        case .denied: Image(systemName: "hand.raised").foregroundStyle(.tertiary).scaledFont(.caption)
+        case .interrupted: Image(systemName: "stop.circle").foregroundStyle(.tertiary).scaledFont(.caption)
         default: EmptyView()
         }
     }
@@ -121,41 +131,15 @@ struct ToolCallView: View {
     }
 
     private var title: String {
-        switch call.kind {
-        case .bash: return "Ran a command"
-        case .fileRead: return "Read"
-        case .fileWrite: return "Write"
-        case .fileEdit: return "Edit"
-        case .grep, .glob: return "Searched for"
-        case .webSearch: return "Searched the web for"
-        case .subagent:
-            return SubagentLifecycle.title(
-                call: call,
-                task: thread.taskEvent(forToolUseId: call.id),
-                isBackgrounded: thread.isTaskBackgrounded(toolUseId: call.id)
-            )
-        case .mcp:
-            let parts = call.name.split(separator: "_", omittingEmptySubsequences: true)
-            return parts.count >= 3 ? "\(parts[1]) · \(parts[2...].joined(separator: "_"))" : call.name
-        case .todoWrite: return "Todos"
-        default: return call.name
-        }
+        guard call.kind == .subagent else { return ToolCallText.verb(call) }
+        return SubagentLifecycle.title(
+            call: call,
+            task: thread.taskEvent(forToolUseId: call.id),
+            isBackgrounded: thread.isTaskBackgrounded(toolUseId: call.id)
+        )
     }
 
-    private var subtitle: String {
-        if let s = call.summary { return s }
-        switch call.kind {
-        case .bash: return input.string("description") ?? input.string("command") ?? ""
-        case .fileRead, .fileWrite, .fileEdit, .notebookEdit:
-            return (input.string("file_path") ?? input.string("notebook_path") ?? "").abbreviatingHome
-        case .grep, .glob: return input.string("pattern").map { "\"\($0)\"" } ?? ""
-        case .webFetch: return input.string("url") ?? ""
-        case .webSearch: return input.string("query").map { "\"\($0)\"" } ?? ""
-        case .subagent: return input.string("description") ?? ""
-        case .skill: return input.string("skill") ?? input.string("command") ?? ""
-        default: return ""
-        }
-    }
+    private var subtitle: String { ToolCallText.object(call) }
 
     @ViewBuilder private var detail: some View {
         switch call.kind {
@@ -245,7 +229,6 @@ enum SubagentLifecycle {
     }
 }
 
-/// A folded run of finished tool calls (see `foldTranscriptRows`) as one "Used N tools" line.
 /// The expand chevron at a row's trailing end: pointing to the trailing side while closed and down
 /// while open.
 struct DisclosureIndicator: View {
@@ -261,13 +244,30 @@ struct DisclosureIndicator: View {
     }
 }
 
+/// A folded run of finished tool calls (see `foldTranscriptRows`) as one line that says what they
+/// did: "Read 3 files, searched code, and ran 2 commands", and in gray how many failed. Open, its
+/// calls are listed beneath at the same leading edge, each a line of its own.
+/// How many calls in a fold failed, in gray beside its chevron; nothing when none did.
+private struct FailureCount: View {
+    let count: Int
+    init(_ count: Int) { self.count = count }
+
+    var body: some View {
+        if count > 0 {
+            Text(count == 1 ? "1 failed" : "\(count) failed")
+                .scaledFont(.caption)
+                .foregroundStyle(.tertiary)
+                .monospacedDigit()
+        }
+    }
+}
+
 struct ToolCallGroupView: View {
     let calls: [Item.ToolCall]
     let thread: ThreadModel
     @State private var expanded: Bool
 
-    /// Calls in the run that failed or were denied.
-    private var failures: Int { calls.count { $0.status == .failed || $0.status == .denied } }
+    private var failures: Int { calls.count { $0.status == .failed } }
 
     init(calls: [Item.ToolCall], thread: ThreadModel, initiallyExpanded: Bool = false) {
         self.calls = calls
@@ -281,29 +281,64 @@ struct ToolCallGroupView: View {
                 withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
-                    Text("Used \(calls.count) tools").foregroundStyle(.secondary)
+                    Text(ToolCallText.summary(calls)).foregroundStyle(.secondary).lineLimit(1)
                     Spacer(minLength: 8)
-                    // What went wrong in the run, where a lone call shows its status.
-                    if failures > 0 {
-                        Label("\(failures)", systemImage: "exclamationmark.circle.fill")
-                            .labelStyle(.titleAndIcon)
-                            .foregroundStyle(.red)
-                            .scaledFont(.caption)
-                            .monospacedDigit()
-                    }
+                    FailureCount(failures)
                     DisclosureIndicator(expanded: expanded)
                 }
                 .scaledFont(.callout)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityValue(failures == 0 ? "" : failures == 1 ? "1 failed" : "\(failures) failed")
             if expanded {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
+                ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
+            }
+        }
+    }
+}
+
+/// A finished turn's work folded behind its last message (Settings ▸ Advanced ▸ Tool Calls ▸
+/// Worked For): "Worked for 3m 12s", and in gray how many calls failed. Open, the work is shown as
+/// Summarized shows it, at the same leading edge.
+struct TurnWorkView: View {
+    let rows: [TranscriptRow]
+    let durationMs: Double?
+    let thread: ThreadModel
+    @State private var expanded = false
+
+    /// Calls in the work that failed, in runs or on their own.
+    private var failures: Int {
+        rows.reduce(0) { n, row in
+            switch row {
+            case .item(.toolCall(let call)): n + (call.status == .failed ? 1 : 0)
+            case .toolGroup(let calls): n + calls.count { $0.status == .failed }
+            default: n
+            }
+        }
+    }
+
+    private var title: String {
+        guard let durationMs, durationMs >= 1000 else { return "Worked" }
+        return "Worked for \(Format.duration(durationMs / 1000))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(title).foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    FailureCount(failures)
+                    DisclosureIndicator(expanded: expanded)
                 }
-                // The group's calls indented under it.
-                .padding(.leading, 12)
+                .scaledFont(.callout)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if expanded {
+                ForEach(rows, id: \.id) { TranscriptRowView(row: $0, thread: thread) }
             }
         }
     }
