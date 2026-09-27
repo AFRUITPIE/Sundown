@@ -145,7 +145,6 @@ public final class AppModel {
     /// Starts notifications and the Dock badge. The app calls this; tests and previews don't, so
     /// nothing there reaches Notification Center.
     public func startAttention() {
-        Self.current = self
         guard attention == nil else { return }
         let uiTest = ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1"
         attention = AttentionCenter(app: self, deliversToSystem: !uiTest)
@@ -241,6 +240,9 @@ public final class AppModel {
         load()
         for h in hosts { connections[h.id] = HostConnection(host: h) }
         for c in connections.values { c.offersSessionTools = appearance.sessionTools }
+        // Here, not when the first window appears: a Shortcut can launch the app and ask for a
+        // chat before any window has.
+        Self.current = self
         // A draft typed just before quitting is written then.
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in

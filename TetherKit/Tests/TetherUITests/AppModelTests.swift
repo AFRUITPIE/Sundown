@@ -257,6 +257,12 @@ struct WindowModelTests {
         #expect(app.draftDeliveries["new-chat:x"]?.id != first?.id)
     }
 
+    /// Set as soon as the model exists, so a Shortcut that launches the app finds it.
+    @Test func theModelIsCurrentFromTheStart() {
+        let app = AppModel(defaults: isolatedDefaults())
+        #expect(AppModel.current === app)
+    }
+
     @Test func defaultsRoundTripWithoutUsingStandardDefaults() {
         let defaults = isolatedDefaults()
         let app = AppModel.sample(connections: [.sample(), .sampleFailed()], defaults: defaults)
