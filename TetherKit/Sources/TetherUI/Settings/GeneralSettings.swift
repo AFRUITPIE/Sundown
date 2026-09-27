@@ -6,6 +6,8 @@ import TetherProtocol
 /// use the same words and symbols the toolbar uses for the same value.
 struct GeneralSettings: View {
     @Bindable var app: AppModel
+    /// The editors on this Mac, looked up when the pane appears rather than in a body.
+    @State private var editors: [InstalledEditor] = []
 
     var body: some View {
         Form {
@@ -31,6 +33,7 @@ struct GeneralSettings: View {
                     ForEach(TextScale.steps, id: \.self) { Text(TextScale.label($0)).tag($0) }
                 }
                 Toggle("Wrap Long Lines in Code", isOn: $app.appearance.wrapCode)
+                editorRow
             }
             Section {
                 Toggle("Offer Bypass Permissions", isOn: $app.appearance.offerBypass)
@@ -42,6 +45,24 @@ struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
+        .task { editors = InstalledEditor.all() }
+    }
+
+    /// Default App, then the editors that are installed. One chosen before it was removed stays
+    /// listed, so the pop-up still has a row for its value; Open then uses the default app.
+    private var editorRow: some View {
+        Picker("Open Files With", selection: $app.appearance.openFilesWith) {
+            Text(Appearance.FileEditor.defaultApp.label).tag(Appearance.FileEditor.defaultApp)
+            Divider()
+            ForEach(editors) { installed in
+                Label { Text(installed.editor.label) } icon: { Image(nsImage: installed.icon) }
+                    .tag(installed.editor)
+            }
+            let chosen = app.appearance.openFilesWith
+            if chosen != .defaultApp, !editors.contains(where: { $0.editor == chosen }) {
+                Text(chosen.label).tag(chosen)
+            }
+        }
     }
 
     // MARK: new-chat defaults
@@ -84,12 +105,9 @@ struct GeneralSettings: View {
     }
 
     private var permissionsRow: some View {
-        Picker("Permissions", selection: permissionSelection) {
-            ForEach(PermissionMode.offered(bypass: app.appearance.offerBypass,
-                                           current: PermissionMode(rawValue: app.defaultPermissionMode)), id: \.self) { mode in
-                Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
-            }
-        }
+        PermissionModeFormPicker(selection: permissionSelection,
+                                 modes: PermissionMode.offered(bypass: app.appearance.offerBypass,
+                                                               current: PermissionMode(rawValue: app.defaultPermissionMode)))
     }
 
     /// The levels the default model offers, so the gauges mean the same thing they do in the
@@ -116,9 +134,39 @@ struct GeneralSettings: View {
     }
 }
 
+/// Permissions as a Settings row: a pop-up of the modes, with what the chosen one does under the
+/// row's title. A pop-up's rows can't show a subtitle the way the toolbar menu's items do, so the
+/// line goes where a grouped form puts a row's description. Settings and scheduled tasks share it.
+struct PermissionModeFormPicker: View {
+    let selection: Binding<PermissionMode>
+    let modes: [PermissionMode]
+
+    var body: some View {
+        Picker(selection: selection) {
+            ForEach(modes, id: \.self) { mode in
+                Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
+            }
+        } label: {
+            Text("Permissions")
+            if let summary = selection.wrappedValue.summary { Text(summary) }
+        }
+    }
+}
+
 #if DEBUG
 #Preview("General") {
     GeneralSettings(app: .sample())
+        .frame(width: 560, height: 780)
+}
+
+/// Files open in an editor, and new chats start in Plan Mode, whose line reads under the row. The
+/// editors listed are the ones installed on the Mac rendering the preview.
+#Preview("General (editor, plan mode)") {
+    let app = AppModel.sample()
+    app.appearance.openFilesWith = .xcode
+    app.defaultPermissionMode = PermissionMode.plan.rawValue
+    return GeneralSettings(app: app)
+        .frame(width: 560, height: 780)
 }
 
 /// No host has answered yet, so the model row shows what is stored instead of an empty pop-up.

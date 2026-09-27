@@ -12,6 +12,9 @@ struct ChangesPane: View {
     @State private var comments: [ReviewComment] = []
     @State private var commenting: ReviewComment?
     @State private var draft = ""
+    /// Where the repository is on this Mac, which git's paths are relative to, for Open and Show
+    /// in Finder; nil on another host. Found when the changes are read, not in a body.
+    @State private var repository: String?
     /// False when a preview seeded the changes.
     private let fetches: Bool
 
@@ -19,6 +22,7 @@ struct ChangesPane: View {
         self.thread = thread
         self.connection = connection
         _state = State(initialValue: changes.map { .ready($0) } ?? .loading)
+        _repository = State(initialValue: changes != nil && connection.host.isLocal ? thread.cwd : nil)
         fetches = changes == nil
     }
 
@@ -75,7 +79,8 @@ struct ChangesPane: View {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     summary(changes)
                     ForEach(changes.files) { file in
-                        FileSection(file: file, comments: comments.filter { $0.path == file.path },
+                        FileSection(file: file, location: repository.map { ($0 as NSString).appendingPathComponent(file.path) },
+                                    comments: comments.filter { $0.path == file.path },
                                     comment: { line in
                                         draft = ""
                                         commenting = ReviewComment(path: file.path, line: line, text: "")
@@ -136,7 +141,10 @@ struct ChangesPane: View {
             return
         }
         do {
-            state = .ready(try await connection.workingChanges(cwd: cwd))
+            let changes = try await connection.workingChanges(cwd: cwd)
+            // A chat can work in a folder below the repository's top, and git's paths start there.
+            repository = connection.host.isLocal ? cwd.enclosingRepository ?? cwd : nil
+            state = .ready(changes)
         } catch is CancellationError {
         } catch {
             state = .failed(error.localizedDescription)
@@ -144,13 +152,18 @@ struct ChangesPane: View {
     }
 }
 
-/// One file: its name and counts, opening to its hunks.
+/// One file: its name and counts, opening to its hunks. On this Mac, Open (in the editor chosen in
+/// Settings ▸ General) is on the row while the pointer is over it, and in its context menu.
 private struct FileSection: View {
     let file: FileDiff
+    /// The file on this Mac; nil on another host.
+    let location: String?
     let comments: [ChangesPane.ReviewComment]
     let comment: (Int) -> Void
     let remove: (ChangesPane.ReviewComment) -> Void
     @State private var expanded = true
+    @State private var hovering = false
+    @Environment(\.openFilesWith) private var editor
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
@@ -190,12 +203,32 @@ private struct FileSection: View {
                 }
                 .lineLimit(1)
                 Spacer(minLength: 4)
+                if let location {
+                    // Kept in the layout while hidden, so the counts don't move under the pointer.
+                    Button(editor.openTitle, systemImage: "arrow.up.forward.app") { editor.open(location) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help(editor.openTitle)
+                        .opacity(hovering ? 1 : 0)
+                }
                 Text("+\(file.added)").foregroundStyle(.green)
                 Text("−\(file.removed)").foregroundStyle(.red)
             }
             .font(.callout)
             .monospacedDigit()
             .help(file.oldPath.map { "Renamed from \($0)" } ?? file.path)
+            .onHover { hovering = $0 }
+            .contextMenu {
+                if let location {
+                    Button(editor.openTitle) { editor.open(location) }
+                    Button("Show in Finder") { NSWorkspace.shared.selectFile(location, inFileViewerRootedAtPath: "") }
+                    Divider()
+                }
+                Button("Copy Path") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(location ?? file.path, forType: .string)
+                }
+            }
         }
     }
 }

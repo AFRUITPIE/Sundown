@@ -274,11 +274,8 @@ private struct ScheduledTaskEditor: View {
                     Text("Default").tag(String?.none)
                     ForEach(connection.models.concrete, id: \.value) { Text($0.shortName).tag(Optional($0.value)) }
                 }
-                Picker("Permissions", selection: $permissionMode) {
-                    ForEach(PermissionMode.offered(bypass: appearance.offerBypass, current: permissionMode), id: \.self) {
-                        Label($0.longLabel, systemImage: $0.symbol).tag($0)
-                    }
-                }
+                PermissionModeFormPicker(selection: $permissionMode,
+                                         modes: PermissionMode.offered(bypass: appearance.offerBypass, current: permissionMode))
             }
             Section {
                 if let next = task.nextRunAt {

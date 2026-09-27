@@ -12,6 +12,7 @@ struct ToolCallView: View {
     @State private var expanded = false
     @Environment(\.inspectSubagent) private var inspectSubagent
     @Environment(\.hostIsLocal) private var hostIsLocal
+    @Environment(\.openFilesWith) private var editor
 
     private var input: JSONValue { call.input }
 
@@ -26,7 +27,7 @@ struct ToolCallView: View {
     @ViewBuilder private var menu: some View {
         if let path = filePath {
             if hostIsLocal {
-                Button("Open") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+                Button(editor.openTitle) { editor.open(path) }
                 Button("Show in Finder") { NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "") }
                 Divider()
             }

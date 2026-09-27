@@ -17,12 +17,14 @@ struct AppearanceTests {
         app.appearance.toolCalls = .everyCall
         app.appearance.offerBypass = true
         app.appearance.sendShortcut = .commandReturn
+        app.appearance.openFilesWith = .zed
 
         let restored = AppModel(defaults: defaults).appearance
 
         #expect(restored.toolCalls == .everyCall)
         #expect(restored.offerBypass)
         #expect(restored.sendShortcut == .commandReturn)
+        #expect(restored.openFilesWith == .zed)
         #expect(restored.wrapCode)
     }
 
@@ -30,10 +32,11 @@ struct AppearanceTests {
     /// unknown value (a later build's) falls back rather than losing every other choice, and a key
     /// this build dropped is ignored.
     @Test func anOlderOrNewerStoreStillDecodes() throws {
-        let json = #"{"density":"spacious","toolCalls":"somethingNew","sendShortcut":"commandReturn","offerBypass":true}"#
+        let json = #"{"density":"spacious","toolCalls":"somethingNew","sendShortcut":"commandReturn","offerBypass":true,"openFilesWith":"emacs"}"#
         let appearance = try JSONDecoder().decode(Appearance.self, from: Data(json.utf8))
 
         #expect(appearance.toolCalls == .summarized)
+        #expect(appearance.openFilesWith == .defaultApp)
         #expect(appearance.sendShortcut == .commandReturn)
         #expect(appearance.offerBypass)
         #expect(appearance.wrapCode)

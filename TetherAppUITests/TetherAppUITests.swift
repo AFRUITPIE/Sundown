@@ -101,16 +101,23 @@ final class TetherAppUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
     }
 
-    /// New Chat keeps its folder with the composer, not in a form under the toolbar.
+    /// New Chat keeps its folder with the composer, not in a form under the toolbar: the folder,
+    /// the branch checked out there, and Work In, in one row above the field.
     @MainActor
     func testNewChatFolderSitsAboveTheComposer() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["Fixture Chat"].waitForExistence(timeout: 15))
         app.buttons["New Chat"].click()
-        let folder = app.popUpButtons["newChat.folder"]
+        let folder = app.descendants(matching: .any)["newChat.folder"]
         let input = app.descendants(matching: .any)["composer.input"]
         XCTAssertTrue(folder.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.checkBoxes["newChat.worktree"].exists, "New Worktree sits beside the folder")
+        let workIn = app.descendants(matching: .any)["newChat.workIn"]
+        XCTAssertTrue(workIn.exists, "Work In sits beside the folder")
+        XCTAssertEqual(workIn.value as? String, "This Folder")
+        // The fixture's `git/status` says the folder is on main.
+        let branch = app.descendants(matching: .any)["newChat.branch"]
+        XCTAssertTrue(branch.waitForExistence(timeout: 5))
+        XCTAssertEqual(branch.value as? String, "main")
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         XCTAssertLessThan(folder.frame.maxY, input.frame.minY)
         XCTAssertEqual(folder.value as? String, "/tmp/tether-fixture")

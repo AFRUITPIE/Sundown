@@ -15,6 +15,7 @@ public struct Appearance: Codable, Equatable, Sendable {
     public var sessionTools = false
     /// Off by default, as in Claude Code: Bypass Permissions has to be asked for.
     public var offerBypass = false
+    public var openFilesWith: FileEditor = .defaultApp
 
     // Advanced
     public var toolCalls: ToolCallDisplay = .summarized
@@ -111,6 +112,25 @@ public struct Appearance: Codable, Equatable, Sendable {
         }
     }
 
+    /// Where Open sends a file from a chat on this Mac. The editors are the ones people use for
+    /// code; Settings lists those that are installed (`OpenFiles.swift`).
+    public enum FileEditor: String, Codable, CaseIterable, Identifiable, Sendable {
+        case defaultApp, xcode, visualStudioCode, cursor, zed, nova, bbedit, sublimeText
+        public var id: Self { self }
+        var label: String {
+            switch self {
+            case .defaultApp: "Default App"
+            case .xcode: "Xcode"
+            case .visualStudioCode: "Visual Studio Code"
+            case .cursor: "Cursor"
+            case .zed: "Zed"
+            case .nova: "Nova"
+            case .bbedit: "BBEdit"
+            case .sublimeText: "Sublime Text"
+            }
+        }
+    }
+
     // Each key optional, so a store from before a setting existed keeps its other choices.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -124,6 +144,7 @@ public struct Appearance: Codable, Equatable, Sendable {
         worktreeByDefault = value(.worktreeByDefault, d.worktreeByDefault)
         sessionTools = value(.sessionTools, d.sessionTools)
         offerBypass = value(.offerBypass, d.offerBypass)
+        openFilesWith = value(.openFilesWith, d.openFilesWith)
         toolCalls = value(.toolCalls, d.toolCalls)
         sidebar = value(.sidebar, d.sidebar)
         inspector = value(.inspector, d.inspector)
