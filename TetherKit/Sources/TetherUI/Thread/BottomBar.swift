@@ -27,7 +27,7 @@ struct BottomBar: View {
                 Composer(connection: connection, cwd: thread.cwd, thread: thread, draftKey: thread.id,
                          awaitingAnswer: pending != nil, onStop: {
                     Task { await connection.interrupt(thread) }
-                }, accessory: appearance.contextRing ? AnyView(ContextRing(thread: thread, connection: connection)) : nil,
+                }, accessory: AnyView(ContextRing(thread: thread, connection: connection)),
                 submit: { input in
                     await connection.send(thread, input: input)
                 })

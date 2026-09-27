@@ -100,7 +100,7 @@ struct Composer: View {
     var body: some View {
         // Above the field, not in it: it's an offer, not text you've written.
         VStack(alignment: .leading, spacing: 8) {
-            if appearance.promptSuggestions, let s = thread?.promptSuggestion, text.isEmpty {
+            if let s = thread?.promptSuggestion, text.isEmpty {
                 Button { text = s } label: {
                     Label(s, systemImage: "sparkles").lineLimit(1)
                 }
@@ -115,27 +115,18 @@ struct Composer: View {
         .animation(.snappy, value: thread?.promptSuggestion)
     }
 
-    /// As Settings ▸ Appearance ▸ Composer lays it out. Messages: a round Add button outside the
-    /// field, and the field a capsule that grows with its text, with a round Send — or Stop — at its
-    /// trailing end. Inline: Add inside the field at its leading end. Minimal: no Add at all;
-    /// attaching is by dropping or pasting.
+    /// Laid out like Messages: a round + outside the field, and the field a capsule that grows with
+    /// its text, with a round Send — or Stop — at its trailing end.
     private var field: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            if appearance.composerLayout == .messages {
-                addButton(glass: true)
-            }
+            addButton
             HStack(alignment: .bottom, spacing: 8) {
-                if appearance.composerLayout == .inline {
-                    // Inside the glass: a plain control, not glass on glass.
-                    addButton(glass: false)
-                        .padding(.bottom, 4)
-                }
                 VStack(alignment: .leading, spacing: 8) {
                     if !images.isEmpty { attachments }
                     TextField(thread?.isRunning == true ? "Send a message while Claude works…" : placeholder, text: $text, axis: .vertical)
                         .accessibilityIdentifier("composer.input")
                         .textFieldStyle(.plain)
-                        .lineLimit(1...max(appearance.composerLines, 1))
+                        .lineLimit(1...12)
                         .focused($focused)
                         .onSubmit { if appearance.sendShortcut == .returnKey { send() } }
                         .onKeyPress(.return, phases: .down, action: returnPressed)
@@ -161,7 +152,7 @@ struct Composer: View {
                 if let accessory { accessory }
                 sendOrStop
             }
-            .padding(.leading, appearance.composerLayout == .inline ? 8 : 16)
+            .padding(.leading, 16)
             .padding(.trailing, 4)
             .padding(.vertical, 4)
             // A capsule at one line; the same corner radius as the text grows makes it a rounded
@@ -291,7 +282,7 @@ struct Composer: View {
 
     /// The + menu, as the desktop app has it: attach, mention a file, or browse the commands
     /// that typing / offers, for someone who doesn't know them yet.
-    private func addButton(glass: Bool) -> some View {
+    private var addButton: some View {
         Menu {
             Button("Attach Files…", systemImage: "paperclip") { choosingFiles = true }
             Button("Mention a File", systemImage: "at") { insert("@") }
@@ -314,14 +305,13 @@ struct Composer: View {
                 .font(.system(size: 15, weight: .medium))
                 .frame(width: 34, height: 34)
                 .contentShape(.circle)
-                .glassEffect(glass ? .regular.interactive() : .identity, in: .circle)
+                .glassEffect(.regular.interactive(), in: .circle)
         }
         .menuIndicator(.hidden)
         .menuStyle(.button)
         .buttonStyle(.plain)
         .help("Attach files, mention one, or use a command")
         .accessibilityIdentifier("composer.add")
-        .popoverTip(ComposerTip(), arrowEdge: .bottom)
     }
 
     /// Puts `token` where typing it would, and the cursor after it.
@@ -337,7 +327,7 @@ struct Composer: View {
         focused = true
     }
 
-    /// Return and its modifiers, as Settings ▸ Appearance ▸ Send With has them: Return sends and
+    /// Return and its modifiers, as Settings ▸ General ▸ Send With has them: Return sends and
     /// Shift- or Option-Return starts a line, or Command-Return sends and Return starts a line.
     private func returnPressed(_ press: KeyPress) -> KeyPress.Result {
         let newLine = { _ = NSApp.sendAction(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), to: nil, from: nil) }

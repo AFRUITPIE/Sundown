@@ -9,7 +9,6 @@ struct ToolCallView: View {
     let thread: ThreadModel
     @State private var expanded = false
     @Environment(\.inspectSubagent) private var inspectSubagent
-    @Environment(\.appearance) private var appearance
     @Environment(\.hostIsLocal) private var hostIsLocal
 
     private var input: JSONValue { call.input }
@@ -65,41 +64,25 @@ struct ToolCallView: View {
                     .padding(10)
                     .background(.fill.quinary, in: .rect(cornerRadius: 8))
                     .padding(.top, 6)
-                    .padding(.leading, ToolRowLayout.detailInset(appearance))
+                    .padding(.leading, 12)
             }
         }
-        // Settings ▸ Appearance ▸ Open Failed Calls: a call that went wrong shows why at once.
-        .onAppear(perform: openIfWanted)
-        .onChange(of: call.status) { openIfWanted() }
-        .onChange(of: appearance.expandFailures) { openIfWanted() }
-        .onChange(of: appearance.openCommandOutput) { openIfWanted() }
-    }
-
-    /// Settings ▸ Appearance ▸ Open Failed Calls and Open Commands' Output.
-    private func openIfWanted() {
-        guard !expanded else { return }
-        let failed = appearance.expandFailures && (call.status == .failed || call.status == .denied)
-        let command = appearance.openCommandOutput && call.kind == .bash && call.status == .completed && !(call.outputText ?? "").isEmpty
-        if failed || command { expanded = true }
     }
 
     private var alwaysShowBody: Bool {
         call.kind == .todoWrite
     }
 
-    /// Words first: an icon only with Settings ▸ Appearance ▸ Show Icons, and the status and the
-    /// disclosure chevron at the trailing end. A finished call has no status glyph.
+    /// Words first, and the status and the disclosure chevron at the trailing end. A finished call
+    /// has no status glyph.
     private var header: some View {
         HStack(spacing: 8) {
-            if appearance.toolIcons {
-                Image(systemName: symbol).foregroundStyle(accentColor).frame(width: 16).accessibilityHidden(true)
-            }
             Text(title).foregroundStyle(.secondary)
             if !subtitle.isEmpty {
                 Text(subtitle).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            if appearance.showElapsed, let s = call.elapsedSeconds, call.status == .running {
+            if let s = call.elapsedSeconds, call.status == .running {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
             status
@@ -124,38 +107,6 @@ struct ToolCallView: View {
         case .denied: Image(systemName: "hand.raised.fill").foregroundStyle(.orange).scaledFont(.caption)
         case .interrupted: Image(systemName: "stop.fill").foregroundStyle(.tertiary).scaledFont(.caption2)
         default: EmptyView()
-        }
-    }
-
-    /// With Settings ▸ Appearance ▸ Show Icons, what kind of work the call is.
-    private var symbol: String {
-        switch call.kind {
-        case .bash: return "terminal"
-        case .fileRead: return "doc.text"
-        case .fileWrite: return "doc.badge.plus"
-        case .fileEdit, .notebookEdit: return "pencil"
-        case .grep, .glob: return "magnifyingglass"
-        case .webFetch: return "globe"
-        case .webSearch: return "safari"
-        case .mcp: return "puzzlepiece.extension"
-        case .subagent: return "person.2"
-        case .todoWrite, .task: return "checklist"
-        case .askUserQuestion: return "questionmark.bubble"
-        case .exitPlanMode, .enterPlanMode: return "list.bullet.clipboard"
-        case .skill: return "sparkles"
-        case .monitor: return "waveform.path.ecg"
-        case .schedule: return "clock"
-        case .worktree: return "arrow.triangle.branch"
-        default: return "wrench.and.screwdriver"
-        }
-    }
-
-    private var accentColor: Color {
-        switch call.status {
-        case .failed: return .red
-        case .denied: return .orange
-        case .running, .pending: return .blue
-        default: return .secondary
         }
     }
 
@@ -310,18 +261,10 @@ struct DisclosureIndicator: View {
     }
 }
 
-/// Where a tool row's detail starts: under its title, past whatever leads the row.
-enum ToolRowLayout {
-    static func detailInset(_ appearance: Appearance) -> CGFloat {
-        appearance.toolIcons ? 24 : 12
-    }
-}
-
 struct ToolCallGroupView: View {
     let calls: [Item.ToolCall]
     let thread: ThreadModel
     @State private var expanded: Bool
-    @Environment(\.appearance) private var appearance
 
     /// Calls in the run that failed or were denied.
     private var failures: Int { calls.count { $0.status == .failed || $0.status == .denied } }
@@ -338,9 +281,6 @@ struct ToolCallGroupView: View {
                 withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
-                    if appearance.toolIcons {
-                        Image(systemName: "square.stack").foregroundStyle(.secondary).frame(width: 16).accessibilityHidden(true)
-                    }
                     Text("Used \(calls.count) tools").foregroundStyle(.secondary)
                     Spacer(minLength: 8)
                     // What went wrong in the run, where a lone call shows its status.
@@ -363,7 +303,7 @@ struct ToolCallGroupView: View {
                     ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
                 }
                 // The group's calls indented under it.
-                .padding(.leading, ToolRowLayout.detailInset(appearance))
+                .padding(.leading, 12)
             }
         }
     }
@@ -572,12 +512,8 @@ private func sampleFinishedRun() -> [Item.ToolCall] {
         .frame(width: 560)
 }
 
-/// Settings ▸ Appearance ▸ Show Icons, and Open Failed Calls.
-#Preview("Tool calls (icons)") {
-    var appearance = Appearance()
-    appearance.toolIcons = true
-    appearance.expandFailures = true
-    return VStack(alignment: .leading, spacing: 10) {
+#Preview("Tool calls") {
+    VStack(alignment: .leading, spacing: 10) {
         ToolCallGroupView(calls: sampleFinishedRun(), thread: .sampleIdleChat())
         ToolCallView(call: .sample(name: "Bash", kind: .bash, input: ["command": "swift test", "description": "Run the test suite"],
                                     status: .running, elapsedSeconds: 4, secondsAgo: 4), thread: .sampleIdleChat())
@@ -586,7 +522,6 @@ private func sampleFinishedRun() -> [Item.ToolCall] {
         ToolCallView(call: .sample(name: "Read", kind: .fileRead, input: ["file_path": "/tmp/b.swift"], status: .completed, secondsAgo: 1),
                      thread: .sampleIdleChat())
     }
-    .environment(\.appearance, appearance)
     .padding(20)
     .frame(width: 560)
 }

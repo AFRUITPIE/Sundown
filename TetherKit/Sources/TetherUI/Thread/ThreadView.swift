@@ -28,15 +28,10 @@ struct ThreadView: View {
     .frame(width: 900, height: 700)
 }
 
-/// Taller than the window: it opens at its latest message. A shorter one sits at the top.
-/// The other side of each choice in Settings ▸ Appearance.
-#Preview("Idle chat (alternative appearance)") {
+/// Settings ▸ Advanced ▸ Tool Calls ▸ Every Call, and code that doesn't wrap.
+#Preview("Idle chat (every call)") {
     var appearance = Appearance()
-    appearance.timestamps = .always
-    appearance.toolIcons = true
-    appearance.groupToolCalls = false
-    appearance.density = .spacious
-    appearance.composerLayout = .inline
+    appearance.toolCalls = .everyCall
     return NavigationStack {
         ThreadView(thread: .sampleIdleChat(), connection: .sample())
     }
@@ -44,10 +39,8 @@ struct ThreadView: View {
     .frame(width: 900, height: 700)
 }
 
-#Preview("Running turn (compact, minimal composer)") {
+#Preview("Running turn (code not wrapped)") {
     var appearance = Appearance()
-    appearance.density = .compact
-    appearance.composerLayout = .minimal
     appearance.wrapCode = false
     return NavigationStack {
         ThreadView(thread: .sampleRunningTurn(), connection: .sample())

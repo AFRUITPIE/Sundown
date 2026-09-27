@@ -27,7 +27,7 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
 ## Repository map
 
 - `Tether.xcodeproj`: macOS app target, shared `Tether` scheme, signing, and the server-binary copy phase.
-- `Tether/TetherApp.swift`: app entry point, commands, settings scene, the connection log window, the menu bar extra, and the debug-only `TETHER_OPEN_THREAD` launch hook.
+- `Tether/TetherApp.swift`: app entry point, commands, settings scene, the host windows (Plugins, Scheduled Tasks, Connection Log), and the debug-only `TETHER_OPEN_THREAD` launch hook.
 - `Tether/TetherIntents.swift`: the Start a Chat shortcut (App Intents live in the app target).
 - `TetherKit/Sources/TetherKit`: transport and state layer.
   - `Bootstrap.swift`: selects a bundled binary, installs it locally or over SSH, and builds the `tether connect` command.
@@ -40,10 +40,9 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
 - `TetherKit/Sources/TetherUI`: views and app-level state.
   - `AppModel.swift`: hosts and their connections, the last window's state (for a new window and the next launch), drafts, and persisted preferences.
   - `WindowModel.swift`: one window's host, chat, inspector and New Chat draft. Each window has its own; commands reach the frontmost through `@FocusedValue(\.window)`.
-  - `Appearance.swift`: Settings ▸ Appearance as one `Codable`, `Equatable` value in the environment.
+  - `Appearance.swift`: the General and Advanced settings views read, as one `Codable`, `Equatable` value in the environment.
   - `Attention.swift`: notifications (with Allow/Deny on permission requests), the Dock badge and menu, VoiceOver announcements, and Settings ▸ Notifications' preferences.
   - `Secrets.swift`: hosts' environment values, kept in the Keychain rather than the defaults file.
-  - `Tips.swift`, `MenuBarChats.swift`: TipKit tips, and the opt-in menu bar extra.
   - `RootView.swift`: the shell only — split view, the one toolbar, the one inspector, View-menu commands.
   - `Sidebar/`: one host's chats, and `HostCommands` (the Host menu); `SidebarSections.swift` is the pure, tested grouping (date or directory).
   - `Toolbar/`: `SessionControls` (the model, effort and permissions menus over one `SessionSettings`, live chat or draft, and the Chat menu) and `ReservedWidthLabel`.
@@ -52,7 +51,7 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
   - `NewChat/`: the new-chat screen (folder pop-up and New Worktree above the composer) and the remote folder picker.
   - `Scheduled/`: a host's Scheduled Tasks window (Host ▸ Scheduled Tasks…), over the daemon's `schedule/*` methods.
   - `Plugins/`: a host's Plugins window (Host ▸ Plugins…), over the daemon's `plugin/*` methods (the host's `claude plugin`). A grouped Form, not a List: an inset List trapped in SwiftUI's outline code on its rows.
-  - `Settings/`: General, Appearance, Notifications and Hosts panes, host detail, the environment sheet, and the connection log window.
+  - `Settings/`: General, Notifications, Hosts and Advanced panes, host detail, the environment sheet, and the connection log window.
   - `PromptViews.swift`: permission, question, plan, and elicitation requests.
   - `ItemViews.swift`, `ToolCallView.swift`, `Markdown.swift`: transcript rendering.
 - `TetherKit/Tests/TetherKitTests`: transcript folding and opt-in live-server coverage.
@@ -95,24 +94,24 @@ The product should feel like a standard current macOS app. Prefer native SwiftUI
 - The transcript follows its end until the reader scrolls away. A resize, or the inspector or sidebar opening, re-measures every row; it must not count as scrolling away (`followsEnd` in `TranscriptView`).
 - Toolbar, leading to trailing: sidebar toggle, New Chat (always visible; `Command-N` too), title and subtitle, then model, effort and permissions (one `.primaryAction` item, trailing, so the title keeps the space and the three share one glass capsule), then the inspector toggle.
 - The subtitle is the chat's folder name (the New Chat draft's on New Chat), prefixed by the host when more than one is configured. The full path is in the Session pane, or the folder pop-up on New Chat.
-- Model, effort and permissions are three pull-down menus with inline pickers: the model by name (Fast Mode is a toggle in its menu), effort as a gauge that follows the level, permissions as the mode's symbol (red for bypass). Not pop-ups: an icon-only pop-up shows its rows as bare symbols. Each label reserves the width of its widest listed value (`ReservedWidthLabel`), so choosing among them never resizes a control. Settings uses the same symbols and labels; the mappings live in `Helpers.swift`.
+- Model, effort and permissions are three pull-down menus with inline pickers: the model by name (Fast Mode is a toggle in its menu), effort as a gauge that follows the level, permissions as the mode's symbol (red for bypass). Not pop-ups: an icon-only pop-up shows its rows as bare symbols. Each label reserves the width of its widest value (`ReservedWidthLabel`), so choosing among them never resizes a control. Bypass Permissions is listed only with Settings ▸ General ▸ Offer Bypass Permissions (off by default, as in Claude Code) or while it's the mode in use; the permissions label reserves its width either way. Settings uses the same symbols and labels; the mappings live in `Helpers.swift`.
 - Every toolbar control is also in the menu bar, since the toolbar can be hidden or customized: File ▸ New Chat, the Chat menu (model, Fast Mode, effort, permissions), and View (sidebar, inspector panes).
 - The inspector is full-height, attached to the split view, and present on every screen (`No Session` on New Chat). Its toggle is a plain button declared in the inspector's own toolbar, so it sits above the column and never tints. Inside, a `.pickerStyle(.tabs)` picker (`Tasks`, `Session`, `MCP`, `Changes`; `Tasks` first and default) sits in a top `safeAreaBar` over the pane. View ▸ Inspector repeats the panes (⌥⌘1–4 always show theirs); ⌥⌘I shows or hides it on the last pane.
 - Changes is the working tree against the last commit (`git/status`, `git/diff`, untracked files read whole), refreshed after each turn. A click on a line leaves a comment; the comments go to Claude as one message (⌘Return).
 - The sidebar shows one host, chosen from the Host menu in the menu bar (hosts, Connect/Reconnect, Manage Hosts…). It is not a toolbar control: it changes only when switching sessions, and the subtitle names it whenever more than one host is configured. Switching host opens New Chat on it. Chats are grouped by date or by directory (View menu and the list's context menu), most recent first, using Claude's generated session title when available. Connection states are an overlay, not rows.
 - New Chat has no form: the folder pop-up sits above the composer, where a chat's status strip goes, so nothing scrolls under the toolbar and the detail column looks the same as a chat's. A host that isn't connected shows `NotConnectedView` over the detail area, as the sidebar does.
 - The composer stays mounted under a pending prompt (Send disabled) so a draft survives it.
-- The composer is laid out like Messages by default: a round + (a menu: attach, mention, commands) beside a capsule field with a round Send or Stop inside it. Return sends and Shift-Return starts a line (or ⌘Return sends, per Settings); Esc stops a running turn, as ⌘. does.
-- A context menu is never the only way to a command. A message's actions (Copy, Fork from Here, Restore Code to Here…) are also on a bar that appears on hover; right-clicking the words themselves gives the text's own menu.
+- The composer is laid out like Messages: a round + (a menu: attach, mention, commands) beside a capsule field with a round Send or Stop inside it. Return sends and Shift-Return starts a line (or ⌘Return sends, per Settings); Esc stops a running turn, as ⌘. does.
+- A context menu is never the only way to a command. A message's actions (Copy, Fork from Here, Restore Code to Here…) are also on a bar that appears on hover, with the time it was sent, and are VoiceOver actions; right-clicking the words themselves gives the text's own menu.
 - Settings apply immediately; text fields commit on Return or focus loss. No Save/Revert.
-- Settings uses a General/Appearance/Notifications/Hosts sidebar; the Hosts pane selects a host above its detail form.
-- A choice of pattern (a layout, a side, a motion) goes in `Appearance`, read from the environment where it's drawn, with its own `decodeIfPresent` so older stores keep their other choices. Settings ▸ Appearance is where the owner compares the alternatives; keep both sides of a choice working and previewed (the "alternative appearance" previews).
+- Settings uses a General/Notifications/Hosts/Advanced sidebar; the Hosts pane selects a host above its detail form.
+- Few settings. A behavior gets a setting only when people genuinely differ on it (Send With, reading width); otherwise pick the sensible behavior. Settings ▸ Advanced holds only the layouts still being compared (tool-call display, and the placements to come), so the owner can switch between them in the running app; keep each side working and previewed, and remove the losers once one is chosen. Every setting lives in `Appearance`, read from the environment where it's drawn, with its own `decodeIfPresent` so older stores keep their other choices.
 - Copy is terse and title case. An empty state is a title; add a description only when it says something the title doesn't and the user can act on it. Never show raw enum or wire values.
 - Prompt suggestions are buttons above the composer, not text inside its glass field.
 - Transcript and composer share the selected reading width: Narrow (default), Medium, or Wide.
 - Do not show reasoning/“Thought” content. A quiet “Thinking…” line may mark the interval before visible output; it disappears once a message or tool call is present.
-- Completed adjacent tool calls fold into a compact group (Settings can turn grouping off). Running, failed, and denied work remains individually visible. Subagents and workflows belong primarily in the Tasks inspector.
-- A tool row is words first: no kind icon by default, the status (spinner while running, a glyph when it went wrong) and the disclosure chevron at the trailing end. Settings can put either at the leading end, where each gets a fixed slot so titles line up, and bring the icons back. A running call's spinner is hidden from accessibility and its row says "Running" as its value; otherwise the row reads as a progress indicator.
+- Finished adjacent tool calls fold into a compact group (Settings ▸ Advanced ▸ Tool Calls can show every call instead). Running work stays individually visible. Subagents and workflows belong primarily in the Tasks inspector.
+- A tool row is words first: no kind icon, and the status (spinner while running, a glyph when it went wrong) and the disclosure chevron at the trailing end. A running call's spinner is hidden from accessibility and its row says "Running" as its value; otherwise the row reads as a progress indicator.
 - Streamed text fades in: only the block at the end of a streaming reply uses `ArrivingText`, and it redraws per frame only while a piece is fading. The transcript glides to its end as a reply wraps by drawing the content offset (`visualEffect`, not `offset`, which re-lays out the lazy stack) while the scroll view's own anchor holds the end. Don't switch `defaultScrollAnchor` during layout: AppKit throws.
 - The detail column declares its minimum (`navigationSplitViewColumnWidth(min: 520)`) like the other columns. Measured from its content instead, the composer's + sent AppKit into an endless layout pass when the inspector opened in a window at its minimum width.
 - Worktrees: New Chat can start a chat in a new git worktree (`thread/start`'s `worktree`, made by the daemon under `<repo>/.claude/worktrees/`). Archiving or deleting such a chat offers to remove the worktree, asking again before discarding uncommitted changes.

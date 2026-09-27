@@ -2,8 +2,8 @@ import SwiftUI
 import TetherKit
 import TetherProtocol
 
-/// What a new chat starts with. Every row here is a pop-up or a
-/// segmented control with the same words and symbols the toolbar uses for the same value.
+/// What a new chat starts with, how chats read and send, and what Claude may do. The session rows
+/// use the same words and symbols the toolbar uses for the same value.
 struct GeneralSettings: View {
     @Bindable var app: AppModel
 
@@ -13,32 +13,32 @@ struct GeneralSettings: View {
                 modelRow
                 effortRow
                 permissionsRow
+                Picker("Folder", selection: $app.appearance.newChatFolder) {
+                    ForEach(Appearance.NewChatFolder.allCases) { Text($0.label).tag($0) }
+                }
                 Toggle("Start in a New Worktree", isOn: $app.appearance.worktreeByDefault)
-                    .help("Each new chat in a git repository works in a worktree of its own, under .claude/worktrees")
+                    .help("Work in a worktree under .claude/worktrees")
             }
-            Section {
-                Toggle("Let Claude See Your Other Chats", isOn: $app.appearance.sessionTools)
-            } header: {
-                Text("Across Chats")
-            } footer: {
-                Text("Claude can list and read this host’s other chats, and suggest a task to start in a chat of its own. Applies to chats started or reopened after it’s turned on.")
-            }
-            Section {
-                Toggle("Show Tips", isOn: $app.appearance.showTips)
-                Button("Show Tips Again") { TetherTips.reset() }
-                    .disabled(!app.appearance.showTips)
-            } header: {
-                Text("Tips")
-            } footer: {
-                Text("Tips point out what’s easy to miss, like / and @ in the message field. Turning them off takes effect the next time Tether opens.")
+            Section("Chats") {
+                Picker("Send With", selection: $app.appearance.sendShortcut) {
+                    ForEach(Appearance.SendShortcut.allCases) { Text($0.label).tag($0) }
+                }
+                Picker("Reading Width", selection: $app.transcriptWidth) {
+                    ForEach(TranscriptWidth.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Picker("Text Size", selection: $app.textScale) {
+                    ForEach(TextScale.steps, id: \.self) { Text(TextScale.label($0)).tag($0) }
+                }
+                Toggle("Wrap Long Lines in Code", isOn: $app.appearance.wrapCode)
             }
             Section {
                 Toggle("Offer Bypass Permissions", isOn: $app.appearance.offerBypass)
-                Toggle("Offer Don’t Ask", isOn: $app.appearance.offerDontAsk)
+                Toggle("Let Claude Read Your Other Chats", isOn: $app.appearance.sessionTools)
             } header: {
-                Text("Permission Modes")
+                Text("Permissions")
             } footer: {
-                Text("Bypass Permissions lets Claude act without asking; Don’t Ask denies anything not already allowed. A chat already in a hidden mode keeps it.")
+                Text("Reading other chats applies to chats started or reopened after it’s turned on.")
             }
         }
         .formStyle(.grouped)
@@ -85,7 +85,8 @@ struct GeneralSettings: View {
 
     private var permissionsRow: some View {
         Picker("Permissions", selection: permissionSelection) {
-            ForEach(PermissionMode.selectable, id: \.self) { mode in
+            ForEach(PermissionMode.offered(bypass: app.appearance.offerBypass,
+                                           current: PermissionMode(rawValue: app.defaultPermissionMode)), id: \.self) { mode in
                 Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
             }
         }

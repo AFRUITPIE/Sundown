@@ -11,11 +11,6 @@ public struct AlertPreferences: Codable, Equatable, Sendable {
     public var sound = true
     public var dockBadge: DockBadge = .waiting
 
-    /// Show Chats in the Menu Bar, in plain defaults rather than here: a `MenuBarExtra` whose
-    /// `isInserted` read the observable app model sent the app's scene graph into an endless update
-    /// loop at launch, until the main thread's stack overflowed.
-    public static let menuBarExtraKey = "tether.menuBarExtra"
-
     public init() {}
 
     public enum When: String, Codable, CaseIterable, Identifiable, Sendable {

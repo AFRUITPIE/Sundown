@@ -70,7 +70,6 @@ struct InspectorToggle: View {
             window.showInspector.toggle()
         }
         .help(window.showInspector ? "Hide tasks, session details, MCP servers and changes" : "Show tasks, session details, MCP servers and changes")
-        .popoverTip(InspectorTip())
     }
 }
 

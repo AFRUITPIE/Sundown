@@ -54,11 +54,11 @@ struct ItemView: View {
     }
 }
 
-/// What can be done with a message: copy it, or branch the chat from it (Fork from Here). In its
-/// context menu, and — since right-clicking the words themselves gives the text's own menu, and a
-/// context menu shouldn't be the only way to a command — in a small bar that appears on hover,
-/// unless Settings ▸ Appearance keeps them to the menu. VoiceOver gets the same as actions. When it
-/// was sent shows beside it, in the bar or always, as Settings ▸ Appearance ▸ Timestamps says.
+/// What can be done with a message: copy it, branch the chat from it (Fork from Here), or, from a
+/// prompt, put the files back as they were before it. In its context menu, and — since
+/// right-clicking the words themselves gives the text's own menu, and a context menu shouldn't be
+/// the only way to a command — in a small bar that appears on hover, with when it was sent.
+/// VoiceOver gets the same as actions.
 private struct MessageMenu: ViewModifier {
     let id: String
     /// The message as it arrived: plain for a prompt, Markdown for a reply.
@@ -68,55 +68,49 @@ private struct MessageMenu: ViewModifier {
     let sentAt: Double
     @Environment(\.forkChat) private var forkChat
     @Environment(\.restoreCode) private var restoreCode
-    @Environment(\.appearance) private var appearance
     @State private var hovering = false
 
     /// A prompt's bubble sits at the trailing edge; a reply at the leading one.
     private var trailing: Bool { !isMarkdown }
-    private var barShowsActions: Bool { appearance.messageActions == .onHover }
-    private var barShowsTime: Bool { appearance.timestamps == .onHover }
 
     func body(content: Content) -> some View {
-        VStack(alignment: trailing ? .trailing : .leading, spacing: 4) {
-            content
-            if appearance.timestamps == .always {
-                time.frame(maxWidth: .infinity, alignment: trailing ? .trailing : .leading)
+        content
+            // The blank beside a short line is the message too, so right-clicking there works.
+            .contentShape(.rect)
+            .contextMenu {
+                Button("Copy", action: copyText)
+                if isMarkdown { Button("Copy as Markdown") { copy(text) } }
+                Divider()
+                Button("Fork from Here") { forkChat(id) }
+                // Files go back to a prompt's checkpoint; a reply has none of its own.
+                if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
             }
-        }
-        // The blank beside a short line is the message too, so right-clicking there works.
-        .contentShape(.rect)
-        .contextMenu {
-            Button("Copy", action: copyText)
-            if isMarkdown { Button("Copy as Markdown") { copy(text) } }
-            Divider()
-            Button("Fork from Here") { forkChat(id) }
-            // Files go back to a prompt's checkpoint; a reply has none of its own.
-            if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
-        }
-        .overlay(alignment: trailing ? .topLeading : .topTrailing) {
-            if hovering, barShowsActions || barShowsTime { bar.offset(y: -14) }
-        }
-        // After the overlay, so moving onto the bar doesn't hide it.
-        .onHover { hovering = $0 }
-        .accessibilityAction(named: "Copy", copyText)
-        .accessibilityAction(named: "Fork from Here") { forkChat(id) }
-    }
-
-    private var time: some View {
-        Text(Format.messageTime(msSinceEpoch: sentAt))
-            .scaledFont(.caption, design: .default)
-            .foregroundStyle(.tertiary)
-            .accessibilityIdentifier("message.time")
+            .overlay(alignment: trailing ? .topLeading : .topTrailing) {
+                if hovering { bar.offset(y: -14) }
+            }
+            // After the overlay, so moving onto the bar doesn't hide it.
+            .onHover { hovering = $0 }
+            .accessibilityAction(named: "Copy", copyText)
+            .accessibilityAction(named: "Fork from Here") { forkChat(id) }
+            .accessibilityActions {
+                if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
+            }
     }
 
     private var bar: some View {
         HStack(spacing: 2) {
-            if barShowsTime { time.padding(.horizontal, 4) }
-            if barShowsActions {
-                Button("Copy", systemImage: "doc.on.doc", action: copyText)
-                    .help(isMarkdown ? "Copy this reply as text" : "Copy this message")
-                Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
-                    .help("Start a new chat with the conversation up to here")
+            Text(Format.messageTime(msSinceEpoch: sentAt))
+                .scaledFont(.caption, design: .default)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+                .accessibilityIdentifier("message.time")
+            Button("Copy", systemImage: "doc.on.doc", action: copyText)
+                .help("Copy")
+            Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
+                .help("Fork from Here")
+            if !isMarkdown {
+                Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
+                    .help("Restore Code to Here")
             }
         }
         .labelStyle(.iconOnly)

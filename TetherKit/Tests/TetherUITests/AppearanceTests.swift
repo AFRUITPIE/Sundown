@@ -14,28 +14,41 @@ struct AppearanceTests {
     @Test func choicesAreKeptAcrossLaunches() {
         let defaults = isolatedDefaults()
         let app = AppModel(defaults: defaults)
-        app.appearance.density = .compact
-        app.appearance.toolIcons = true
+        app.appearance.toolCalls = .everyCall
+        app.appearance.offerBypass = true
         app.appearance.sendShortcut = .commandReturn
 
         let restored = AppModel(defaults: defaults).appearance
 
-        #expect(restored.density == .compact)
-        #expect(restored.toolIcons)
+        #expect(restored.toolCalls == .everyCall)
+        #expect(restored.offerBypass)
         #expect(restored.sendShortcut == .commandReturn)
         #expect(restored.wrapCode)
     }
 
-    /// A store from a build that had fewer settings keeps what it had and defaults the rest; an
-    /// unknown value (a later build's) falls back rather than losing every other choice.
-    @Test func aPartialOrNewerStoreStillDecodes() throws {
-        let json = #"{"density":"spacious","composerLayout":"somethingNew","groupToolCalls":false}"#
+    /// A store from a build with other settings keeps what it shares and defaults the rest; an
+    /// unknown value (a later build's) falls back rather than losing every other choice, and a key
+    /// this build dropped is ignored.
+    @Test func anOlderOrNewerStoreStillDecodes() throws {
+        let json = #"{"density":"spacious","toolCalls":"somethingNew","sendShortcut":"commandReturn","offerBypass":true}"#
         let appearance = try JSONDecoder().decode(Appearance.self, from: Data(json.utf8))
 
-        #expect(appearance.density == .spacious)
-        #expect(!appearance.groupToolCalls)
-        #expect(appearance.composerLayout == .messages)
+        #expect(appearance.toolCalls == .summarized)
+        #expect(appearance.sendShortcut == .commandReturn)
+        #expect(appearance.offerBypass)
         #expect(appearance.wrapCode)
+    }
+
+    /// Restore Defaults in Advanced leaves General's choices alone.
+    @Test func restoringAdvancedKeepsGeneral() {
+        var appearance = Appearance()
+        appearance.toolCalls = .everyCall
+        appearance.worktreeByDefault = true
+        #expect(!appearance.advancedIsDefault)
+        appearance.restoreAdvanced()
+        #expect(appearance.advancedIsDefault)
+        #expect(appearance.toolCalls == .summarized)
+        #expect(appearance.worktreeByDefault)
     }
 
     @Test func textSizeStepsReadAsPercentages() {
@@ -100,27 +113,6 @@ struct HostSecretsTests {
         let raw = try #require(store.data(forKey: "tether.hosts.v1"))
         #expect(!String(decoding: raw, as: UTF8.self).contains("AWS_PROFILE"))
         #expect(AppModel(defaults: store).hosts.first { $0.id == id }?.env == ["AWS_PROFILE": "dev"])
-    }
-}
-
-@Suite
-struct ToolCallVisibilityTests {
-    private func call(_ id: String, _ status: ToolStatus, kind: ToolKind = .bash) -> TranscriptRow {
-        .item(.toolCall(.sample(id: id, name: "Bash", kind: kind, input: [:], status: status, secondsAgo: 1)))
-    }
-
-    @Test func quietCallsAreFinishedOnes() {
-        #expect(call("a", .completed).isQuietToolCall)
-        #expect(!call("b", .running).isQuietToolCall)
-        #expect(!call("c", .failed).isQuietToolCall)
-        #expect(!call("d", .completed, kind: .todoWrite).isQuietToolCall)
-        #expect(TranscriptRow.toolGroup([]).isQuietToolCall)
-    }
-
-    @Test func messagesAreNeverToolCalls() {
-        let message = TranscriptRow.item(.agentMessage(.init(id: "m", createdAt: 0, text: "hi")))
-        #expect(!message.isToolCall && !message.isQuietToolCall)
-        #expect(call("a", .running).isToolCall)
     }
 }
 

@@ -127,7 +127,7 @@ struct FindBarHost: View {
 
     var body: some View {
         if let find, find.isPresented {
-            FindBar(find: find, rows: thread.rows(grouped: appearance.groupToolCalls))
+            FindBar(find: find, rows: thread.rows(grouped: appearance.toolCalls == .summarized))
         }
     }
 }

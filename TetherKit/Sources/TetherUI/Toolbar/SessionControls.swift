@@ -13,9 +13,6 @@ struct SessionSettings {
     let fastMode: Binding<Bool>
     let models: [ModelInfo]
     let isEnabled: Bool
-    /// Which of the riskier modes the menus list (Settings ▸ General ▸ Permissions).
-    var offerBypass = true
-    var offerDontAsk = true
     /// The daemon's own reason fast mode is off limits right now (rate limit, cooldown, …).
     private let fastModeDisabledReason: String?
 
@@ -55,21 +52,15 @@ struct SessionSettings {
         } else {
             SessionSettings(draft: window, connection: window.connection)
         }
-        settings.offerBypass = window.app.appearance.offerBypass
-        settings.offerDontAsk = window.app.appearance.offerDontAsk
+        settings.offersBypass = window.app.appearance.offerBypass
         return settings
     }
 
-    /// The modes the menus list: every one but those Settings hides, which still show while chosen.
+    /// Settings ▸ General ▸ Offer Bypass Permissions.
+    var offersBypass = false
+
     var offeredModes: [PermissionMode] {
-        let current = permissionMode.wrappedValue
-        return PermissionMode.selectable.filter { mode in
-            switch mode {
-            case .bypassPermissions: offerBypass || mode == current
-            case .dontAsk: offerDontAsk || mode == current
-            default: true
-            }
-        }
+        PermissionMode.offered(bypass: offersBypass, current: permissionMode.wrappedValue)
     }
 
     /// Auto needs a model that supports it; one that says it doesn't can't be put in it.
@@ -118,22 +109,10 @@ struct SessionMenus: View {
     }
 }
 
-private struct ModelLabelStyle: LabelStyle {
-    let showsName: Bool
-    func makeBody(configuration: Configuration) -> some View {
-        if showsName {
-            Label(configuration).labelStyle(.titleAndIcon)
-        } else {
-            Label(configuration).labelStyle(.iconOnly)
-        }
-    }
-}
-
 /// The one control that shows a word: which model is answering is what people look for.
 /// Fast Mode rides in its menu because it is a property of the model, not a fourth control.
 struct ModelMenu: View {
     let settings: SessionSettings
-    @Environment(\.appearance) private var appearance
 
     var body: some View {
         Menu {
@@ -145,9 +124,8 @@ struct ModelMenu: View {
             ReservedWidthLabel(settings.modelLabel, systemImage: SessionSymbol.model,
                                widestOf: settings.models.concrete.map(\.shortName) + [settings.modelLabel])
         }
-        // Toolbar items are icon-only by default; this is the one that says a name, unless
-        // Settings ▸ Appearance ▸ Model in the Toolbar says otherwise.
-        .labelStyle(ModelLabelStyle(showsName: appearance.toolbarModelName))
+        // Toolbar items are icon-only by default; this is the one that has to say a name.
+        .labelStyle(.titleAndIcon)
         .disabled(!settings.isEnabled)
         .help("Choose the model that answers")
         .accessibilityLabel("Model")
@@ -191,7 +169,8 @@ struct PermissionsMenu: View {
                 .pickerStyle(.inline)
         } label: {
             let label = ReservedWidthLabel(mode.label, systemImage: mode.symbol,
-                                           symbols: settings.offeredModes.map(\.symbol))
+                                           // Every mode, offered or not, so hiding one never resizes the control.
+                                           symbols: PermissionMode.selectable.map(\.symbol))
             // Only the dangerous mode styles its label: an unconditional `.foregroundStyle` would
             // also paint over the disabled appearance.
             if mode.isDangerous {
@@ -264,41 +243,6 @@ struct PermissionsPicker: View {
     }
 }
 
-/// Steps each setting to its next value from the keyboard, as Shift-Tab steps the CLI's
-/// permission mode: ⇧⌘I the model, ⇧⌘E the effort, ⇧⌘M the mode.
-struct SessionCycleCommands: View {
-    let settings: SessionSettings
-
-    var body: some View {
-        Group {
-            Button("Next Model") {
-                let values = settings.models.concrete.map(\.value)
-                settings.model.wrappedValue = next(in: values, after: settings.currentModel?.value)
-            }
-            .keyboardShortcut("i", modifiers: [.command, .shift])
-            .disabled(settings.models.concrete.count < 2)
-            Button("Next Effort Level") {
-                settings.effort.wrappedValue = next(in: settings.effortLevels, after: settings.effort.wrappedValue)
-            }
-            .keyboardShortcut("e", modifiers: [.command, .shift])
-            Button("Next Permission Mode") {
-                let modes = settings.offeredModes.filter { $0 != .auto || !settings.autoModeUnavailable }
-                if let mode = next(in: modes, after: settings.permissionMode.wrappedValue) {
-                    settings.permissionMode.wrappedValue = mode
-                }
-            }
-            .keyboardShortcut("m", modifiers: [.command, .shift])
-        }
-        .disabled(!settings.isEnabled)
-    }
-
-    private func next<T: Equatable>(in values: [T], after current: T?) -> T? {
-        guard !values.isEmpty else { return nil }
-        guard let current, let i = values.firstIndex(of: current) else { return values.first }
-        return values[(i + 1) % values.count]
-    }
-}
-
 /// The Chat menu, for the frontmost window: the open chat's settings, or the New Chat draft's,
 /// for a hidden or customized toolbar, then what can be done to the chat itself. With no window
 /// open every item is still listed, dimmed.
@@ -317,7 +261,6 @@ public struct ChatCommands: View {
                 PermissionsPicker(settings: settings)
             }
             .disabled(!settings.isEnabled)
-            SessionCycleCommands(settings: settings)
             Divider()
             Button("Ask a Side Question…") { window.askingSideQuestion = true }
                 .keyboardShortcut(";", modifiers: .command)
@@ -334,8 +277,6 @@ public struct ChatCommands: View {
         } else {
             Group {
                 ForEach(["Model", "Fast Mode", "Effort", "Permissions"], id: \.self) { Button($0) {} }
-                Divider()
-                ForEach(["Next Model", "Next Effort Level", "Next Permission Mode"], id: \.self) { Button($0) {} }
                 Divider()
                 Button("Ask a Side Question…") {}
                 Divider()

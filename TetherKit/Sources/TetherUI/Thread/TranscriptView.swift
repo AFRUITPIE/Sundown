@@ -16,7 +16,6 @@ struct TranscriptView: View {
     @State private var glide = Glide()
     @Environment(\.transcriptFind) private var find
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.appearance) private var appearance
 
     var body: some View {
         ScrollView {
@@ -132,19 +131,8 @@ private struct TranscriptContent: View {
     let connection: HostConnection?
     @Environment(\.appearance) private var appearance
 
-    /// The rows, less the tool calls Settings ▸ Appearance ▸ Show leaves out. Read only when the
-    /// transcript's structure changes, not per streamed delta.
-    private var visibleRows: [TranscriptRow] {
-        let rows = thread.rows(grouped: appearance.groupToolCalls && appearance.toolCallVisibility == .all)
-        switch appearance.toolCallVisibility {
-        case .all: return rows
-        case .attention: return rows.filter { !$0.isQuietToolCall }
-        case .none: return rows.filter { !$0.isToolCall }
-        }
-    }
-
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: appearance.density.rowSpacing) {
+        LazyVStack(alignment: .leading, spacing: 14) {
             if !thread.historyLoaded {
                 TranscriptUnavailable(thread: thread, connection: connection)
             }
@@ -153,7 +141,7 @@ private struct TranscriptContent: View {
             }
             // One plain view per row, identified by the ForEach alone: a `switch` or `.id()` here
             // adds a node to every row, and the lazy stack walks every row on each layout pass.
-            ForEach(visibleRows, id: \.id) { row in
+            ForEach(thread.rows(grouped: appearance.toolCalls == .summarized), id: \.id) { row in
                 TranscriptRowView(row: row, thread: thread)
             }
             TranscriptTail(thread: thread)
@@ -198,7 +186,6 @@ private struct OlderHistoryTrigger: View {
 struct TranscriptRowView: View, Equatable {
     let row: TranscriptRow
     let thread: ThreadModel
-    @Environment(\.appearance) private var appearance
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
         guard a.thread === b.thread else { return false }
@@ -241,24 +228,6 @@ private struct FadesIn: ViewModifier {
     }
 }
 
-extension TranscriptRow {
-    var isToolCall: Bool {
-        switch self {
-        case .toolGroup: true
-        case .item(.toolCall(let call)): call.kind != .todoWrite
-        default: false
-        }
-    }
-
-    /// A finished call with nothing to notice: what Only Running and Failed leaves out.
-    var isQuietToolCall: Bool {
-        switch self {
-        case .toolGroup: true
-        case .item(.toolCall(let call)): call.status == .completed && call.kind != .todoWrite && call.kind != .subagent
-        default: false
-        }
-    }
-}
 
 /// A row Find in Chat matched: tinted with the system's find color, strongest on the current match.
 private struct FindHighlight: ViewModifier {
@@ -343,7 +312,6 @@ struct TranscriptPlaceholder<Actions: View>: View {
 /// A `Group` rather than a stack, so that with neither of them the enclosing spacing collapses too.
 struct TranscriptTail: View {
     let thread: ThreadModel
-    @Environment(\.appearance) private var appearance
 
     var body: some View {
         Group {
@@ -351,13 +319,6 @@ struct TranscriptTail: View {
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
                 TurnOutcome(status: turn.status, error: turn.result?.errors?.first)
-            } else if appearance.turnSummary, !thread.isRunning, let result = thread.turns.last?.result {
-                // Settings ▸ Appearance ▸ Show the Last Turn's Time and Cost.
-                Text("Worked for \(Format.duration(result.durationMs / 1000)) · \(Format.cost(result.totalCostUsd))")
-                    .scaledFont(.caption, design: .default)
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .accessibilityIdentifier("turn.summary")
             }
         }
     }

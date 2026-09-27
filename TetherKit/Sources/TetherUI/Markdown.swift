@@ -6,7 +6,6 @@ struct MarkdownView: View {
     let text: String
     /// Parses once per text change rather than once per layout pass.
     @State private var cache = MarkdownCache()
-    @Environment(\.appearance) private var appearance
 
     enum Block: Hashable {
         case code(lang: String, body: String)
@@ -26,7 +25,7 @@ struct MarkdownView: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(blocks.indices, id: \.self) { i in
                 MarkdownBlockView(rendered: blocks[i],
-                                  topPadding: i == 0 ? 0 : Self.spacing(after: blocks[i - 1].block, before: blocks[i].block) * appearance.density.blockScale,
+                                  topPadding: i == 0 ? 0 : Self.spacing(after: blocks[i - 1].block, before: blocks[i].block),
                                   isEnd: i == blocks.count - 1, arrives: arriving)
                     .equatable()
             }

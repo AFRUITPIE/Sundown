@@ -98,10 +98,12 @@ public final class AppModel {
     /// The transcript and composer's text size, 1 being the system's (persisted).
     public var textScale: CGFloat = 1 { didSet { save() } }
 
-    /// Settings ▸ Appearance (persisted under a key of its own).
+    /// Settings ▸ General and Advanced (persisted under a key of its own).
     public var appearance = Appearance() {
         didSet {
-            for c in connections.values { c.offersSessionTools = appearance.sessionTools }
+            if appearance.sessionTools != oldValue.sessionTools {
+                for c in connections.values { c.offersSessionTools = appearance.sessionTools }
+            }
             guard !isLoading, appearance != oldValue, let data = try? JSONEncoder().encode(appearance) else { return }
             defaults.set(data, forKey: Self.appearanceKey)
         }
@@ -125,7 +127,6 @@ public final class AppModel {
     public func startAttention() {
         Self.current = self
         guard attention == nil else { return }
-        TetherTips.configure(showing: appearance.showTips)
         let uiTest = ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1"
         attention = AttentionCenter(app: self, deliversToSystem: !uiTest)
     }

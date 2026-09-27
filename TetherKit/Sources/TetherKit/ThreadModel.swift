@@ -425,7 +425,7 @@ public final class ThreadModel: Identifiable {
     }
 
     /// `rows`, or with every tool call on a row of its own when `grouped` is false (Settings ▸
-    /// Appearance ▸ Group Finished Calls).
+    /// Advanced ▸ Tool Calls ▸ Every Call).
     public func rows(grouped: Bool) -> [TranscriptRow] {
         if grouped { return rows }
         if let c = cachedUngroupedRows, c.version == itemsVersion { return c.rows }

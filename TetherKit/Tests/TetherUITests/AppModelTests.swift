@@ -271,15 +271,14 @@ struct WindowModelTests {
         #expect(w.threadID == order.last)
     }
 
-    /// Settings can hide the riskier modes from the menus, but never the one a chat is in.
-    @Test func hiddenModesStayListedWhileChosen() {
+    /// Bypass Permissions is listed only when Settings offers it, or while a chat is in it.
+    @Test func bypassStaysListedWhileChosen() {
         let app = AppModel.sample()
         let w = window(app)
         app.appearance.offerBypass = false
-        app.appearance.offerDontAsk = false
         var settings = SessionSettings.current(w)
         #expect(!settings.offeredModes.contains(.bypassPermissions))
-        #expect(!settings.offeredModes.contains(.dontAsk))
+        #expect(settings.offeredModes.contains(.dontAsk))
 
         w.draftPermissionMode = .bypassPermissions
         settings = SessionSettings.current(w)

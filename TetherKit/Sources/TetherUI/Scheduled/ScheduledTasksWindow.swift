@@ -47,10 +47,12 @@ public struct ScheduledTasksWindow: View {
         .toolbar {
             Button("New Task", systemImage: "plus") { Task { await create() } }
                 .disabled(!tasks.isReady)
-                .help("Schedule a prompt to run on its own")
+                .help("New Task")
         }
         .task(id: isConnected) { await reload() }
         .frame(minWidth: 640, minHeight: 420)
+        // A scene of its own, so it doesn't get the chat windows' environment.
+        .environment(\.appearance, app.appearance)
     }
 
     @ViewBuilder private var list: some View {
@@ -197,6 +199,7 @@ private struct ScheduledTaskEditor: View {
     @State private var cwd: String
     @State private var model: String?
     @State private var permissionMode: PermissionMode
+    @Environment(\.appearance) private var appearance
     @State private var cadence: ScheduleCadence
     @State private var time: Date
     @State private var minute: Int
@@ -272,7 +275,9 @@ private struct ScheduledTaskEditor: View {
                     ForEach(connection.models.concrete, id: \.value) { Text($0.shortName).tag(Optional($0.value)) }
                 }
                 Picker("Permissions", selection: $permissionMode) {
-                    ForEach(PermissionMode.selectable, id: \.self) { Label($0.longLabel, systemImage: $0.symbol).tag($0) }
+                    ForEach(PermissionMode.offered(bypass: appearance.offerBypass, current: permissionMode), id: \.self) {
+                        Label($0.longLabel, systemImage: $0.symbol).tag($0)
+                    }
                 }
             }
             Section {

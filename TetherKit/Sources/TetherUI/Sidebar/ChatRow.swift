@@ -7,13 +7,9 @@ struct ChatRow: View {
     let thread: ThreadModel
     /// The second line says what the section header doesn't.
     var grouping: SidebarGrouping = .date
-    @Environment(\.appearance) private var appearance
 
-    /// Waiting on you always shows; working, only with Settings ▸ Appearance ▸ Mark Chats Claude Is
-    /// Working In.
-    private var marked: Bool {
-        thread.isRunning && (appearance.runningIndicator || thread.status == .requiresAction)
-    }
+    /// Claude working in the chat, or waiting on you.
+    private var marked: Bool { thread.isRunning }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -35,19 +31,11 @@ struct ChatRow: View {
         .badge(thread.pending.count)
     }
 
-    /// As Settings ▸ Appearance ▸ Chat Rows Show says; the folder only where the section header
-    /// doesn't already name it.
+    /// The folder, where the section header doesn't already name it; otherwise when it was last used.
     private var secondary: String? {
-        let folder = grouping == .date ? thread.cwd?.lastPathComponent : nil
-        let time = thread.summary.map { Format.relative(msSinceEpoch: $0.updatedAt) }
-        let parts: [String?]
-        switch appearance.rowDetail {
-        case .titleOnly: parts = []
-        case .folder: parts = grouping == .date ? [folder] : [time]
-        case .folderAndTime: parts = [folder, time]
-        }
-        let line = parts.compactMap { $0 }.joined(separator: " · ")
-        return line.isEmpty ? nil : line
+        grouping == .date
+            ? thread.cwd?.lastPathComponent
+            : thread.summary.map { Format.relative(msSinceEpoch: $0.updatedAt) }
     }
 }
 

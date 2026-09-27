@@ -224,6 +224,12 @@ extension PermissionMode {
     /// toolbar menu and Settings so the two lists can't drift apart.
     static let selectable: [PermissionMode] = [.default, .acceptEdits, .plan, .auto, .dontAsk, .bypassPermissions]
 
+    /// The modes a menu lists: Bypass Permissions only with Settings ▸ General ▸ Offer Bypass
+    /// Permissions, or while it is the mode already chosen, so leaving it is still possible.
+    static func offered(bypass: Bool, current: PermissionMode) -> [PermissionMode] {
+        selectable.filter { $0 != .bypassPermissions || bypass || current == .bypassPermissions }
+    }
+
     /// One word each: a pop-up button is as wide as its widest item.
     var label: String {
         switch self {

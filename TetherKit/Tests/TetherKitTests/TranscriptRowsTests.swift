@@ -27,7 +27,7 @@ struct TranscriptRowsTests {
         #expect(calls.map(\.id) == ["t1", "t2", "t3"])
     }
 
-    /// Settings ▸ Appearance ▸ Group Finished Calls off: every call on a row of its own.
+    /// Settings ▸ Advanced ▸ Tool Calls ▸ Every Call: every call on a row of its own.
     @Test func withoutGroupingEveryCallIsItsOwnRow() {
         let rows = foldTranscriptRows([message("m1"), call("t1"), call("t2"), call("t3"), message("m2")], grouping: false)
         #expect(rows.map(\.id) == ["m1", "t1", "t2", "t3", "m2"])

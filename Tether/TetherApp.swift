@@ -31,7 +31,7 @@ struct TetherApp: App {
 
     var body: some Scene {
         // Each window has its own host and chat. One opened by File ▸ New Window or Open in New
-        // Window carries its target; the system restores it with the window.
+        // Window carries its target.
         WindowGroup("Tether", for: WindowTarget.self) { $target in
             WindowRoot(app: app, target: target)
                 .onAppear {
@@ -71,8 +71,8 @@ struct TetherApp: App {
         HostWindows(app: app)
         // The Settings view supplies the split window's minimum size.
         Settings { SettingsView(app: app) }
-        // No menu bar extra for now: declared at all, even hidden, it kept SwiftUI updating its label
-        // in a loop from launch (see `MenuBarChats`).
+        // No menu bar extra: declared at all, even hidden, it kept SwiftUI updating its label in a
+        // loop from launch.
     }
 }
 
