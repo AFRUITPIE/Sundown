@@ -87,6 +87,7 @@ public struct RootView: View {
         .environment(\.readingWidth, app.transcriptWidth.points)
         .environment(\.textScale, app.textScale)
         .environment(\.appearance, app.appearance)
+        .environment(\.hostIsLocal, window.connection?.host.isLocal == true)
         .environment(\.transcriptFind, window.find)
         .environment(\.composerDrafts, ComposerDrafts(app: app))
         .frame(minWidth: minWidth, minHeight: 400)

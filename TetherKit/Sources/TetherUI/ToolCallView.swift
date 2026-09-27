@@ -10,8 +10,39 @@ struct ToolCallView: View {
     @State private var expanded = false
     @Environment(\.inspectSubagent) private var inspectSubagent
     @Environment(\.appearance) private var appearance
+    @Environment(\.hostIsLocal) private var hostIsLocal
 
     private var input: JSONValue { call.input }
+
+    /// The file the call worked on, for Open, Show in Finder and Copy Path.
+    private var filePath: String? {
+        switch call.kind {
+        case .fileRead, .fileWrite, .fileEdit, .notebookEdit: input.string("file_path") ?? input.string("notebook_path")
+        default: nil
+        }
+    }
+
+    @ViewBuilder private var menu: some View {
+        if let path = filePath {
+            if hostIsLocal {
+                Button("Open") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+                Button("Show in Finder") { NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "") }
+                Divider()
+            }
+            Button("Copy Path") { copy(path) }
+        }
+        if call.kind == .bash, let command = input.string("command") {
+            Button("Copy Command") { copy(command) }
+        }
+        if let output = call.outputText, !output.isEmpty {
+            Button("Copy Output") { copy(output) }
+        }
+    }
+
+    private func copy(_ string: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -25,6 +56,7 @@ struct ToolCallView: View {
                 header.contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .contextMenu { menu }
             // The status glyph is inside the label, where VoiceOver doesn't read it.
             .accessibilityValue(statusDescription)
             if call.kind != .subagent, expanded || alwaysShowBody {

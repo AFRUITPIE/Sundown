@@ -347,6 +347,9 @@ private struct ScaledFont: ViewModifier {
 }
 
 extension EnvironmentValues {
+    /// Whether the window's host is this Mac, so a path in the transcript can be opened here.
+    @Entry var hostIsLocal = false
+
     /// The design `scaledFont` uses where none is given: a reply's font.
     @Entry var contentFontDesign: Font.Design?
 }
