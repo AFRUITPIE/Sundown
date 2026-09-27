@@ -321,6 +321,13 @@ struct TranscriptTail: View {
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
                 TurnOutcome(status: turn.status, error: turn.result?.errors?.first)
+            } else if appearance.turnSummary, !thread.isRunning, let result = thread.turns.last?.result {
+                // Settings ▸ Appearance ▸ Show the Last Turn's Time and Cost.
+                Text("Worked for \(Format.duration(result.durationMs / 1000)) · \(Format.cost(result.totalCostUsd))")
+                    .scaledFont(.caption, design: .default)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .accessibilityIdentifier("turn.summary")
             }
         }
     }

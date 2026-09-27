@@ -26,12 +26,14 @@ public struct Appearance: Codable, Equatable, Sendable {
     public var fadeInRows = true
     public var followMotion: FollowMotion = .glide
     public var showThinking = true
+    public var turnSummary = false
 
     // Composer
     public var composerLayout: ComposerLayout = .messages
     public var sendShortcut: SendShortcut = .returnKey
     public var promptSuggestions = true
     public var contextRing = true
+    public var composerLines = 12
 
     // Permissions
     public var offerBypass = true
@@ -40,6 +42,7 @@ public struct Appearance: Codable, Equatable, Sendable {
     // Sidebar
     public var rowDetail: RowDetail = .folder
     public var runningIndicator = true
+    public var doubleClickOpensWindow = true
 
     public init() {}
 
@@ -211,14 +214,17 @@ public struct Appearance: Codable, Equatable, Sendable {
         fadeInRows = value(.fadeInRows, d.fadeInRows)
         followMotion = value(.followMotion, d.followMotion)
         showThinking = value(.showThinking, d.showThinking)
+        turnSummary = value(.turnSummary, d.turnSummary)
         composerLayout = value(.composerLayout, d.composerLayout)
         sendShortcut = value(.sendShortcut, d.sendShortcut)
         promptSuggestions = value(.promptSuggestions, d.promptSuggestions)
         contextRing = value(.contextRing, d.contextRing)
+        composerLines = value(.composerLines, d.composerLines)
         offerBypass = value(.offerBypass, d.offerBypass)
         offerDontAsk = value(.offerDontAsk, d.offerDontAsk)
         rowDetail = value(.rowDetail, d.rowDetail)
         runningIndicator = value(.runningIndicator, d.runningIndicator)
+        doubleClickOpensWindow = value(.doubleClickOpensWindow, d.doubleClickOpensWindow)
     }
 }
 

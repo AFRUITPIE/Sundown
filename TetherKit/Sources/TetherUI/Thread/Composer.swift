@@ -119,7 +119,7 @@ struct Composer: View {
                     TextField(thread?.isRunning == true ? "Send a message while Claude works…" : placeholder, text: $text, axis: .vertical)
                         .accessibilityIdentifier("composer.input")
                         .textFieldStyle(.plain)
-                        .lineLimit(1...12)
+                        .lineLimit(1...max(appearance.composerLines, 1))
                         .focused($focused)
                         .onSubmit { if appearance.sendShortcut == .returnKey { send() } }
                         .onKeyPress(.return, phases: .down, action: returnPressed)

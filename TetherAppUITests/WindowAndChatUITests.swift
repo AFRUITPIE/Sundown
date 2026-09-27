@@ -267,4 +267,13 @@ final class WindowAndChatUITests: XCTestCase {
         visibleMenuItem(app, "Unarchive").click()
         XCTAssertTrue(chat.waitForNonExistence(timeout: 5))
     }
+
+    /// Double-clicking a chat opens it in a window of its own, as Mail opens a message.
+    @MainActor
+    func testDoubleClickOpensAChatInANewWindow() {
+        let app = launch()
+        XCTAssertTrue(waitForWindowTitles(app, ["Fixture Chat"]))
+        row("Performance chat 1", in: sidebar(app)).doubleClick()
+        XCTAssertTrue(waitForWindowTitles(app, ["Performance chat 1", "Performance chat 1"]))
+    }
 }

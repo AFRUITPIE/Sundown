@@ -36,6 +36,7 @@ struct AppearanceSettings: View {
                     ForEach(Appearance.MessageActions.allCases) { Text($0.label).tag($0) }
                 }
                 Toggle("Wrap Long Lines in Code", isOn: $app.appearance.wrapCode)
+                Toggle("Show the Last Turn’s Time and Cost", isOn: $app.appearance.turnSummary)
             }
 
             Section("Tool Calls") {
@@ -77,6 +78,9 @@ struct AppearanceSettings: View {
                 }
                 Toggle("Offer Prompt Suggestions", isOn: $app.appearance.promptSuggestions)
                 Toggle("Show How Full the Context Is", isOn: $app.appearance.contextRing)
+                Picker("Grows Up To", selection: $app.appearance.composerLines) {
+                    ForEach([4, 8, 12, 20], id: \.self) { Text("\($0) Lines").tag($0) }
+                }
             }
 
             Section("Sidebar") {
@@ -87,6 +91,7 @@ struct AppearanceSettings: View {
                     ForEach(Appearance.RowDetail.allCases) { Text($0.label).tag($0) }
                 }
                 Toggle("Mark Chats Claude Is Working In", isOn: $app.appearance.runningIndicator)
+                Toggle("Double-Click a Chat to Open It in a New Window", isOn: $app.appearance.doubleClickOpensWindow)
             }
 
             Section {

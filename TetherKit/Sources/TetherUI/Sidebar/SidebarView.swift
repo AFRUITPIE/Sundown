@@ -7,6 +7,7 @@ import TetherKit
 struct SidebarView: View {
     @Bindable var window: WindowModel
     @State private var search: String
+    @Environment(\.openWindow) private var openWindow
 
     /// `search` is a parameter only so a preview can show the no-results state.
     init(window: WindowModel, search: String = "") {
@@ -36,7 +37,11 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .searchable(text: $search, placement: .sidebar, prompt: "Search Chats")
         // One menu for the list: the row's when a row was hit, the list's own when the empty area was.
-        .contextMenu(forSelectionType: String.self) { menu(for: $0) }
+        .contextMenu(forSelectionType: String.self) { menu(for: $0) } primaryAction: { ids in
+            // Double-click, as Mail opens a message: in a window of its own.
+            guard app.appearance.doubleClickOpensWindow, let id = ids.first else { return }
+            openWindow(value: WindowTarget(hostID: window.hostID, threadID: id))
+        }
         .overlay { emptyState(isEmpty: sections.isEmpty) }
     }
 
