@@ -7,6 +7,11 @@ struct AdvancedSettings: View {
 
     var body: some View {
         Form {
+            Section("Window") {
+                Picker("Inspector", selection: $app.appearance.inspector) {
+                    ForEach(Appearance.InspectorPlacement.allCases) { Text($0.label).tag($0) }
+                }
+            }
             Section("Sidebar") {
                 Picker("Layout", selection: $app.appearance.sidebar) {
                     ForEach(Appearance.SidebarStyle.allCases) { Text($0.label).tag($0) }
@@ -32,6 +37,7 @@ extension Appearance {
         let d = Appearance()
         toolCalls = d.toolCalls
         sidebar = d.sidebar
+        inspector = d.inspector
     }
 
     var advancedIsDefault: Bool {

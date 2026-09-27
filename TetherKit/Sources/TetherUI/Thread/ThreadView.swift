@@ -9,6 +9,8 @@ struct ThreadView: View {
 
     var body: some View {
         TranscriptView(thread: thread, connection: connection)
+            // Before the bottom bar, so the card stops above it.
+            .inspectorCardOverlay()
             // Controls float over the transcript on glass; content scrolls underneath with the system edge effect.
             .safeAreaBar(edge: .bottom) {
                 BottomBar(thread: thread, connection: connection)

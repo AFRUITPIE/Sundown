@@ -7,6 +7,7 @@ public struct WindowRoot: View {
     @State private var window: WindowModel
     @Environment(\.appearsActive) private var appearsActive
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
 
     public init(app: AppModel, target: WindowTarget? = nil) {
         // Side-effect free until `start()`, so a discarded instance leaves nothing behind.
@@ -23,13 +24,29 @@ public struct WindowRoot: View {
                 window.app.openWindow = { open(value: $0) }
             }
             .onDisappear { window.close() }
-            .onChange(of: appearsActive, initial: true) { window.isKey = appearsActive }
+            .onChange(of: appearsActive, initial: true) {
+                window.isKey = appearsActive
+                if appearsActive { window.app.activate(window) }
+            }
+            // The floating inspector panel follows the app's state, whichever window changed it.
+            .onChange(of: window.app.inspectorPanelShown) { _, shown in
+                if shown { openWindow(id: InspectorPanel.id) } else { dismissWindow(id: InspectorPanel.id) }
+            }
+            // Leaving the panel for another placement closes it; its state carries to this window.
+            .onChange(of: window.app.appearance.inspector) { old, new in
+                guard old != new else { return }
+                if old == .panel, window.app.inspectorPanelShown {
+                    window.app.inspectorPanelShown = false
+                    if window.isKey { window.showInspector = true }
+                } else if new == .panel, window.isKey, window.showInspector {
+                    window.app.inspectorPanelShown = true
+                }
+            }
     }
 }
 
 public struct RootView: View {
     @Bindable var window: WindowModel
-    @State private var inspectedTaskID: String?
     /// Whether the inspector has finished opening; see `minWidth`.
     @State private var inspectorSettled = true
 
@@ -64,9 +81,11 @@ public struct RootView: View {
                     ToolbarSpacer(.fixed, placement: .primaryAction)
                 }
         }
-        // Attached to the split view, so it is full height and present on every screen.
-        .inspector(isPresented: $window.showInspector) {
-            InspectorView(window: window, selectedTaskID: $inspectedTaskID)
+        // Attached to the split view, so it is full height and present on every screen. Presented only
+        // when Settings ▸ Advanced ▸ Inspector puts it beside the chat; its toolbar button stays
+        // either way, and shows the inspector wherever it is.
+        .inspector(isPresented: columnInspector) {
+            InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
                 .toolbar {
                     ToolbarSpacer(.flexible)
@@ -75,7 +94,7 @@ public struct RootView: View {
         }
         // Reaches the inspector too, whose task list shows subagents the same way.
         .environment(\.inspectSubagent, InspectSubagentAction(owner: window) { toolUseId in
-            inspectedTaskID = toolUseId
+            window.inspectedTaskID = toolUseId
             window.openInspector(on: .tasks)
         })
         .environment(\.restoreCode, ForkChatAction(owner: window) { window.restoreCode(before: $0) })
@@ -115,8 +134,14 @@ public struct RootView: View {
     /// where a minimum raised at the same moment jumps it wider first. Once open, the minimum
     /// replaces the one AppKit leaves behind, which is the window's whole width at that point.
     private var minWidth: CGFloat? {
-        guard window.showInspector else { return 740 }
+        guard app.appearance.inspector == .column, window.showInspector else { return 740 }
         return inspectorSettled ? 1000 : nil
+    }
+
+    /// The inspector column, open only in its placement.
+    private var columnInspector: Binding<Bool> {
+        Binding(get: { app.appearance.inspector == .column && window.showInspector },
+                set: { window.showInspector = $0 })
     }
 }
 
@@ -127,16 +152,29 @@ struct DetailView: View {
     var body: some View {
         // The column's root keeps one identity. When the root itself changed (the branch, or the
         // chat's `.id`), the column's toolbar items were torn down and rebuilt, fading in on every switch.
-        ZStack {
-            if let thread = window.selectedThread, let connection = window.connection {
-                // The only `.id()` in the shell: a different chat gets its own composer draft and scroll position.
-                ThreadView(thread: thread, connection: connection)
-                    .id(thread.id)
-            } else {
-                NewChatView(window: window)
+        // Always a split view, holding the drawer only while it's open, so opening it doesn't change
+        // the column's root.
+        VSplitView {
+            ZStack {
+                if let thread = window.selectedThread, let connection = window.connection {
+                    // The only `.id()` in the shell: a different chat gets its own composer draft and scroll position.
+                    ThreadView(thread: thread, connection: connection)
+                        .id(thread.id)
+                } else {
+                    NewChatView(window: window)
+                }
+            }
+            .frame(minHeight: 240)
+            // Settings ▸ Advanced ▸ Inspector ▸ Over the Chat: the chat and New Chat place the card
+            // themselves, above their bottom bars.
+            .environment(\.inspectorCardWindow, window)
+            if placement == .drawer, window.showInspector {
+                InspectorDrawer(window: window)
             }
         }
     }
+
+    private var placement: Appearance.InspectorPlacement { window.app.appearance.inspector }
 }
 
 struct NewChatButton: View {
@@ -276,7 +314,7 @@ public struct ShellViewCommands: View {
             }
         }
         .disabled(window == nil)
-        Button(window?.showInspector == true ? "Hide Inspector" : "Show Inspector") { window?.showInspector.toggle() }
+        Button(window?.inspectorShown == true ? "Hide Inspector" : "Show Inspector") { window?.inspectorShown.toggle() }
             .keyboardShortcut("i", modifiers: [.command, .option])
             .disabled(window == nil)
     }
@@ -302,9 +340,27 @@ private func rootPreviewWindow() -> WindowModel {
 
 #Preview("RootView (inspector open)") {
     let window = rootPreviewWindow()
+    window.app.appearance.inspector = .column
     window.showInspector = true
     return RootView(window: window)
         .frame(width: 1160, height: 760)
+}
+
+/// Settings ▸ Advanced ▸ Inspector: under the chat, and over it.
+#Preview("RootView (inspector drawer)") {
+    let window = rootPreviewWindow()
+    window.app.appearance.inspector = .drawer
+    window.showInspector = true
+    return RootView(window: window)
+        .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (inspector over the chat)") {
+    let window = rootPreviewWindow()
+    window.app.appearance.inspector = .overlay
+    window.showInspector = true
+    return RootView(window: window)
+        .frame(width: 1100, height: 760)
 }
 
 #Preview("RootView (wide transcript)") {

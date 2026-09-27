@@ -19,8 +19,31 @@ public struct Appearance: Codable, Equatable, Sendable {
     // Advanced
     public var toolCalls: ToolCallDisplay = .summarized
     public var sidebar: SidebarStyle = .chats
+    public var inspector: InspectorPlacement = .panel
 
     public init() {}
+
+    /// Where Tasks, Session, MCP and Changes are shown.
+    public enum InspectorPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
+        /// A column beside the chat, attached to the split view.
+        case column
+        /// A floating panel above the windows, showing the front window's chat. The chat window never
+        /// changes width.
+        case panel
+        /// A drawer under the chat, whose height changes rather than the transcript's width.
+        case drawer
+        /// A card over the chat's trailing edge; the transcript underneath keeps its width.
+        case overlay
+        public var id: Self { self }
+        var label: String {
+            switch self {
+            case .column: "Beside the Chat"
+            case .panel: "Floating Panel"
+            case .drawer: "Drawer"
+            case .overlay: "Over the Chat"
+            }
+        }
+    }
 
     /// What the sidebar lists, and how.
     public enum SidebarStyle: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -103,6 +126,7 @@ public struct Appearance: Codable, Equatable, Sendable {
         offerBypass = value(.offerBypass, d.offerBypass)
         toolCalls = value(.toolCalls, d.toolCalls)
         sidebar = value(.sidebar, d.sidebar)
+        inspector = value(.inspector, d.inspector)
     }
 }
 

@@ -19,6 +19,7 @@ struct NewChatView: View {
             .overlay {
                 if let connection { NotConnectedView(connection: connection) }
             }
+            .inspectorCardOverlay()
             .safeAreaBar(edge: .bottom) {
                 if let connection {
                     VStack(alignment: .leading, spacing: 10) {

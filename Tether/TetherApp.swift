@@ -92,6 +92,14 @@ private struct HostWindows: Scene {
             ScheduledTasksWindow(app: app, hostID: hostID)
         }
         .defaultSize(width: 820, height: 560)
+        // Settings ▸ Advanced ▸ Inspector ▸ Floating Panel: one panel for the front window's chat.
+        // Its View-menu item is the app's own Show Inspector, so the scene's is removed.
+        UtilityWindow("Inspector", id: InspectorPanel.id) {
+            InspectorPanel(app: app)
+        }
+        .defaultSize(width: 320, height: 560)
+        .restorationBehavior(.disabled)
+        .commandsRemoved()
         // One per host, kept open beside a chat to follow a reconnect.
         WindowGroup("Connection Log", id: ConnectionLogWindow.id, for: UUID.self) { $hostID in
             ConnectionLogWindow(app: app, hostID: hostID)
