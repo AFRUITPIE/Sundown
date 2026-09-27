@@ -165,8 +165,7 @@ struct PermissionsMenu: View {
 
     var body: some View {
         Menu {
-            PermissionsPicker(settings: settings)
-                .pickerStyle(.inline)
+            Section("Permissions") { PermissionModeItems(settings: settings) }
         } label: {
             let label = ReservedWidthLabel(mode.label, systemImage: mode.symbol,
                                            // Every mode, offered or not, so hiding one never resizes the control.
@@ -230,15 +229,23 @@ struct EffortPicker: View {
     }
 }
 
-struct PermissionsPicker: View {
+/// The modes as menu items, each with a line under its name saying what it does. Toggles bound to
+/// the selection, not a Picker: a Picker's rows become menu items without their second `Text`,
+/// where a Toggle's becomes the item's subtitle, and a Toggle is checked like a picker row
+/// (`PermissionMenuItemsTests` reads the menu SwiftUI builds). Choosing the checked mode again
+/// leaves it chosen.
+struct PermissionModeItems: View {
     let settings: SessionSettings
 
     var body: some View {
-        Picker("Permissions", selection: settings.permissionMode) {
-            ForEach(settings.offeredModes, id: \.self) { mode in
-                Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
-                    .selectionDisabled(mode == .auto && settings.autoModeUnavailable)
+        let selection = settings.permissionMode
+        ForEach(settings.offeredModes, id: \.self) { mode in
+            Toggle(isOn: Binding(get: { selection.wrappedValue == mode },
+                                 set: { if $0 { selection.wrappedValue = mode } })) {
+                Label(mode.longLabel, systemImage: mode.symbol)
+                if let summary = mode.summary { Text(summary) }
             }
+            .disabled(mode == .auto && settings.autoModeUnavailable)
         }
     }
 }
@@ -258,7 +265,7 @@ public struct ChatCommands: View {
                 ModelPicker(settings: settings)
                 FastModeToggle(settings: settings)
                 EffortPicker(settings: settings)
-                PermissionsPicker(settings: settings)
+                Menu("Permissions") { PermissionModeItems(settings: settings) }
             }
             .disabled(!settings.isEnabled)
             Divider()
@@ -355,11 +362,26 @@ private struct SessionControlsPreview: View {
             FastModeToggle(settings: settings)
         }
         Section("Effort") { EffortPicker(settings: settings).labelsHidden() }
-        Section("Permissions") { PermissionsPicker(settings: settings).labelsHidden() }
+        Section("Permissions") { PermissionModeItems(settings: settings) }
     }
     .pickerStyle(.inline)
+    // Checked like the menu's items, rather than switches.
+    .toggleStyle(.checkbox)
     .formStyle(.grouped)
-    .frame(width: 340, height: 760)
+    .frame(width: 380, height: 800)
+}
+
+/// Every mode's name and the line under it, Bypass Permissions offered, as the permissions menu
+/// lists them.
+#Preview("Permissions menu contents") {
+    var settings = previewSettings(thread: .sample(model: "sonnet", effort: .medium, permissionMode: .acceptEdits))
+    settings.offersBypass = true
+    return Form {
+        Section("Permissions") { PermissionModeItems(settings: settings) }
+    }
+    .toggleStyle(.checkbox)
+    .formStyle(.grouped)
+    .frame(width: 400, height: 440)
 }
 
 /// The needle spread for every catalog shape, so a model with four levels reads as sensibly as

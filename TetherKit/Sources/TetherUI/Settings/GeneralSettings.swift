@@ -84,12 +84,9 @@ struct GeneralSettings: View {
     }
 
     private var permissionsRow: some View {
-        Picker("Permissions", selection: permissionSelection) {
-            ForEach(PermissionMode.offered(bypass: app.appearance.offerBypass,
-                                           current: PermissionMode(rawValue: app.defaultPermissionMode)), id: \.self) { mode in
-                Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
-            }
-        }
+        PermissionModeFormPicker(selection: permissionSelection,
+                                 modes: PermissionMode.offered(bypass: app.appearance.offerBypass,
+                                                               current: PermissionMode(rawValue: app.defaultPermissionMode)))
     }
 
     /// The levels the default model offers, so the gauges mean the same thing they do in the
@@ -113,6 +110,25 @@ struct GeneralSettings: View {
     private var permissionSelection: Binding<PermissionMode> {
         Binding(get: { PermissionMode(rawValue: app.defaultPermissionMode) },
                 set: { app.defaultPermissionMode = $0.rawValue })
+    }
+}
+
+/// Permissions as a Settings row: a pop-up of the modes, with what the chosen one does under the
+/// row's title. A pop-up's rows can't show a subtitle the way the toolbar menu's items do, so the
+/// line goes where a grouped form puts a row's description. Settings and scheduled tasks share it.
+struct PermissionModeFormPicker: View {
+    let selection: Binding<PermissionMode>
+    let modes: [PermissionMode]
+
+    var body: some View {
+        Picker(selection: selection) {
+            ForEach(modes, id: \.self) { mode in
+                Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
+            }
+        } label: {
+            Text("Permissions")
+            if let summary = selection.wrappedValue.summary { Text(summary) }
+        }
     }
 }
 

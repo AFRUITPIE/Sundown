@@ -258,6 +258,20 @@ extension PermissionMode {
         }
     }
 
+    /// What Claude does in this mode, in one line under its name wherever it's chosen. Nil for a
+    /// mode a newer server sends that this build can't describe.
+    var summary: String? {
+        switch self {
+        case .default: return "Asks before editing files or running commands"
+        case .acceptEdits: return "Edits files without asking; asks before commands"
+        case .plan: return "Plans without making changes"
+        case .auto: return "Doesn’t ask; a classifier blocks risky actions"
+        case .dontAsk: return "Denies anything not already allowed"
+        case .bypassPermissions: return "Never asks. Use only in a sandbox."
+        default: return nil
+        }
+    }
+
     /// The one mode that lets Claude act without ever asking; shown in red.
     var isDangerous: Bool { self == .bypassPermissions }
 
