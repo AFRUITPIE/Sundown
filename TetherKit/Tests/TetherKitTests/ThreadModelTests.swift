@@ -287,6 +287,24 @@ struct ThreadModelTests {
         #expect(thread.streamingReplyID == nil)
     }
 
+    /// What refreshes after a turn (the Changes pane, the context ring) does so when it ends, not
+    /// when the next one starts.
+    @Test func theLastFinishedTurnChangesWhenATurnEnds() {
+        let thread = ThreadModel(id: threadID)
+        #expect(thread.lastFinishedTurn == nil)
+        thread.apply(.turnStarted(.init(threadId: threadID, seq: 1, turn: .init(id: "t1", status: .inProgress, startedAt: 0))))
+        #expect(thread.lastFinishedTurn == nil)
+        thread.apply(.turnCompleted(.init(threadId: threadID, seq: 2, turn: .init(id: "t1", status: .completed, startedAt: 0))))
+        let first = thread.lastFinishedTurn
+        #expect(first != nil)
+
+        thread.apply(.turnStarted(.init(threadId: threadID, seq: 3, turn: .init(id: "t2", status: .inProgress, startedAt: 0))))
+        #expect(thread.lastFinishedTurn == first)
+        thread.apply(.turnCompleted(.init(threadId: threadID, seq: 4, turn: .init(id: "t2", status: .failed, startedAt: 0))))
+        #expect(thread.lastFinishedTurn != first)
+        #expect(thread.lastFinishedTurn != nil)
+    }
+
     /// A chat opened partway through a reply: it came with history, and streams from its next delta.
     @Test func aReplyFromHistoryStreamsFromItsNextDelta() {
         let thread = ThreadModel(id: threadID)

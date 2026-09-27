@@ -67,14 +67,15 @@ struct SessionPane: View {
                 }
             }
         }
-        // Keyed on the thread too, or two chats with the same turn count share a stale result.
-        .task(id: Key(threadId: thread.id, turns: thread.turns.count)) {
+        // Keyed on the thread too, or two chats share a stale result; and on the last finished
+        // turn, since the context only settles when a turn ends.
+        .task(id: Key(threadId: thread.id, turn: thread.lastFinishedTurn)) {
             guard fetchesUsage else { return }
             await refresh()
         }
     }
 
-    private struct Key: Equatable { let threadId: String; let turns: Int }
+    private struct Key: Equatable { let threadId: String; let turn: String? }
 
     @ViewBuilder private func contextBody(_ u: JSONValue?) -> some View {
         if let u {

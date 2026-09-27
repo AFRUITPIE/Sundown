@@ -48,7 +48,8 @@ struct ContextRing: View {
                 .padding(.bottom, 3)
             }
         }
-        .task(id: Key(thread: thread.id, turns: thread.turns.count, loaded: connection.isLoaded(thread))) {
+        // Once per finished turn: the context only settles when a turn ends.
+        .task(id: Key(thread: thread.id, turn: thread.lastFinishedTurn, loaded: connection.isLoaded(thread))) {
             guard connection.isLoaded(thread), let u = try? await connection.contextUsage(thread) else { return }
             let tokens = u["totalTokens"]?.doubleValue ?? 0
             let limit = u["maxTokens"]?.doubleValue ?? u["rawMaxTokens"]?.doubleValue ?? 0
@@ -56,7 +57,7 @@ struct ContextRing: View {
         }
     }
 
-    private struct Key: Equatable { let thread: String; let turns: Int; let loaded: Bool }
+    private struct Key: Equatable { let thread: String; let turn: String?; let loaded: Bool }
 }
 
 /// Opens the window's inspector on a pane, from views that don't hold the window. Compared by

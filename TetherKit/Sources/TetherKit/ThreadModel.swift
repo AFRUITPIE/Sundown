@@ -122,6 +122,13 @@ public final class ThreadModel: Identifiable {
     public var isRunning: Bool { status == .running || status == .requiresAction }
     public var currentTurn: Turn? { turns.last.flatMap { $0.status == .inProgress ? $0 : nil } }
 
+    /// The latest turn that has ended, as its id and outcome. Changes when a turn ends (or history
+    /// brings one), not when the next one starts: what is asked again after a turn, such as the
+    /// working tree or the context window, is keyed on it.
+    public var lastFinishedTurn: String? {
+        turns.last { $0.status != .inProgress }.map { "\($0.id):\($0.status.rawValue)" }
+    }
+
     /// True while the model is working with nothing on screen to show for it. Keyed on the last
     /// item: a running tool call has its own spinner, and a reply that has started speaks for itself.
     public var isThinking: Bool {

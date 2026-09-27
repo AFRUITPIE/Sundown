@@ -36,7 +36,8 @@ struct ChangesPane: View {
     var body: some View {
         content
             .safeAreaBar(edge: .bottom) { actions }
-            .task(id: Key(thread: thread.id, turns: thread.turns.count)) {
+            // After each turn ends, when Claude has changed what it's going to change.
+            .task(id: Key(thread: thread.id, turn: thread.lastFinishedTurn)) {
                 guard fetches else { return }
                 await refresh()
             }
@@ -56,7 +57,7 @@ struct ChangesPane: View {
             }
     }
 
-    private struct Key: Equatable { let thread: String; let turns: Int }
+    private struct Key: Equatable { let thread: String; let turn: String? }
 
     @ViewBuilder private var content: some View {
         switch state {
