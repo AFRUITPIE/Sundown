@@ -28,6 +28,13 @@ struct ChatActionItems: View {
         item("Show in Finder", enabled: folder != nil) {
             if let folder { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder) }
         }
+        // Out of the list without deleting anything; View ▸ Show ▸ Archived brings it back.
+        item(thread?.isArchived == true ? "Unarchive" : "Archive", enabled: thread != nil && connection != nil) {
+            guard let thread, let connection else { return }
+            let archiving = !thread.isArchived
+            if archiving, window.selectedThread === thread { window.newChat() }
+            Task { await connection.setArchived(thread, archiving) }
+        }
         Divider()
         item("Delete…", enabled: thread != nil) { window.deleting = thread }
     }

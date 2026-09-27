@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TetherKit
 @testable import TetherUI
 
 @MainActor
@@ -40,5 +41,28 @@ struct AppearanceTests {
         #expect(TextScale.label(1) == "100%")
         #expect(TextScale.label(0.85) == "85%")
         #expect(TextScale.label(1.75) == "175%")
+    }
+}
+
+@MainActor
+@Suite
+struct SidebarFilterTests {
+    @Test func archivedChatsAreOnlyInArchived() {
+        let archived = ThreadModel.sampleListed(title: "Old", cwd: "/tmp", secondsAgo: 10, tag: ThreadModel.archivedTag)
+        let current = ThreadModel.sampleListed(title: "New", cwd: "/tmp", secondsAgo: 5)
+        #expect(!SidebarFilter.all.includes(archived))
+        #expect(SidebarFilter.all.includes(current))
+        #expect(SidebarFilter.archived.includes(archived))
+        #expect(!SidebarFilter.archived.includes(current))
+    }
+
+    @Test func workingAndWaiting() {
+        let running = ThreadModel.sampleRunningTurn()
+        let waiting = ThreadModel.samplePendingPermission()
+        let idle = ThreadModel.sampleIdleChat()
+        #expect(SidebarFilter.working.includes(running))
+        #expect(!SidebarFilter.working.includes(idle))
+        #expect(SidebarFilter.waiting.includes(waiting))
+        #expect(!SidebarFilter.waiting.includes(idle))
     }
 }

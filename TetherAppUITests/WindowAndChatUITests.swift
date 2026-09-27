@@ -246,4 +246,25 @@ final class WindowAndChatUITests: XCTestCase {
         while permissions.value as? String == before && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
         XCTAssertNotEqual(permissions.value as? String, before)
     }
+
+    /// Archive takes a chat out of the list without deleting it; Show ▸ Archived lists it again.
+    @MainActor
+    func testArchivingHidesAChatUntilShown() {
+        let app = launch()
+        let outline = sidebar(app)
+        let chat = row("Performance chat 2", in: outline)
+        chat.rightClick()
+        visibleMenuItem(app, "Archive").click()
+        XCTAssertTrue(chat.waitForNonExistence(timeout: 5))
+
+        app.menuBars.menuBarItems["View"].click()
+        app.menuBars.menuItems["Show"].hover()
+        app.menuBars.menuItems["Archived"].click()
+        XCTAssertTrue(chat.waitForExistence(timeout: 5))
+        XCTAssertFalse(row("Performance chat 1", in: outline).exists)
+
+        chat.rightClick()
+        visibleMenuItem(app, "Unarchive").click()
+        XCTAssertTrue(chat.waitForNonExistence(timeout: 5))
+    }
 }

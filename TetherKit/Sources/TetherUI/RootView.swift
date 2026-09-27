@@ -254,6 +254,9 @@ public struct ShellViewCommands: View {
         Picker("Group By", selection: $app.sidebarGrouping) {
             ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
         }
+        Picker("Show", selection: $app.sidebarFilter) {
+            ForEach(SidebarFilter.allCases, id: \.self) { Text($0.label).tag($0) }
+        }
         Divider()
         // A shortcut always shows its pane, opening the inspector if needed; ⌥⌘I hides it.
         Menu("Inspector") {

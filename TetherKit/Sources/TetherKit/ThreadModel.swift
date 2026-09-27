@@ -96,6 +96,10 @@ public final class ThreadModel: Identifiable {
 
     /// Watched from its transcript while another client runs it; the daemon hasn't loaded it.
     public var isFollowed: Bool { info?.status == .notLoaded }
+
+    /// The session tag Archive sets.
+    public static let archivedTag = "archived"
+    public var isArchived: Bool { summary?.tag == Self.archivedTag }
     public var isRunning: Bool { status == .running || status == .requiresAction }
     public var currentTurn: Turn? { turns.last.flatMap { $0.status == .inProgress ? $0 : nil } }
 

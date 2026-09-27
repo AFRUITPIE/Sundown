@@ -12,6 +12,30 @@ public enum SidebarGrouping: String, CaseIterable, Sendable {
     public var label: String { rawValue.capitalized }
 }
 
+/// Which chats the sidebar lists (persisted).
+public enum SidebarFilter: String, CaseIterable, Sendable {
+    case all, working, waiting, archived
+
+    public var label: String {
+        switch self {
+        case .all: "All Chats"
+        case .working: "Working"
+        case .waiting: "Waiting on You"
+        case .archived: "Archived"
+        }
+    }
+
+    /// Everything but Archived leaves archived chats out.
+    @MainActor func includes(_ thread: ThreadModel) -> Bool {
+        switch self {
+        case .all: !thread.isArchived
+        case .working: !thread.isArchived && thread.isRunning
+        case .waiting: !thread.isArchived && (!thread.pending.isEmpty || thread.status == .requiresAction)
+        case .archived: thread.isArchived
+        }
+    }
+}
+
 /// The inspector's panes, in toolbar order (persisted).
 public enum InspectorPane: String, CaseIterable, Identifiable, Sendable {
     case tasks, session, mcp, changes
@@ -64,6 +88,9 @@ public final class AppModel {
 
     /// How the sidebar groups chats (persisted).
     public var sidebarGrouping: SidebarGrouping = .date { didSet { save() } }
+
+    /// Which chats the sidebar lists (persisted).
+    public var sidebarFilter: SidebarFilter = .all { didSet { save() } }
 
     /// How wide the transcript may get (persisted).
     public var transcriptWidth: TranscriptWidth = .narrow { didSet { save() } }
@@ -235,6 +262,7 @@ public final class AppModel {
         var sidebarGrouping: String?
         var threadID: String?
         var textScale: Double?
+        var sidebarFilter: String?
     }
 
     private func load() {
@@ -255,6 +283,7 @@ public final class AppModel {
         lastInspectorPane = s.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
         sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
         textScale = s.textScale.map { CGFloat($0) } ?? 1
+        sidebarFilter = s.sidebarFilter.flatMap(SidebarFilter.init(rawValue:)) ?? .all
         // A remembered host can disappear between launches; this Mac is always configured.
         if let id = s.hostID, hosts.contains(where: { $0.id == id }) {
             lastHostID = id
@@ -267,7 +296,8 @@ public final class AppModel {
         let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
                        showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue, hostID: lastHostID,
-                       sidebarGrouping: sidebarGrouping.rawValue, threadID: lastThreadID, textScale: Double(textScale))
+                       sidebarGrouping: sidebarGrouping.rawValue, threadID: lastThreadID, textScale: Double(textScale),
+                       sidebarFilter: sidebarFilter.rawValue)
         if let data = try? JSONEncoder().encode(s) { defaults.set(data, forKey: Self.hostsKey) }
     }
 }

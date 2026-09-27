@@ -257,10 +257,13 @@ extension ThreadModel {
         title: String,
         cwd: String?,
         secondsAgo: Double,
-        status: ThreadStatus = .notLoaded
+        status: ThreadStatus = .notLoaded,
+        tag: String? = nil
     ) -> ThreadModel {
-        ThreadModel(id: id, summary: .init(threadId: id, title: title, cwd: cwd,
-                                           updatedAt: preview(secondsAgo: secondsAgo), status: status))
+        var summary = ThreadSummary(threadId: id, title: title, cwd: cwd,
+                                    updatedAt: preview(secondsAgo: secondsAgo), status: status)
+        summary.tag = tag
+        return ThreadModel(id: id, summary: summary)
     }
 
     /// A chat whose transcript hasn't arrived — what the transcript stands in for. With a message

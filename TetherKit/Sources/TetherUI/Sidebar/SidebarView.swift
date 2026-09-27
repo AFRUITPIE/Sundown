@@ -51,7 +51,10 @@ struct SidebarView: View {
             search: search)
     }
 
-    private var threads: [ThreadModel] { window.connection?.chats ?? [] }
+    private var threads: [ThreadModel] {
+        let filter = app.sidebarFilter
+        return (window.connection?.chats ?? []).filter { filter.includes($0) || $0 === window.selectedThread }
+    }
 
     private var threadsByID: [String: ThreadModel] {
         Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -109,6 +112,9 @@ struct SidebarView: View {
             Picker("Group By", selection: Bindable(app).sidebarGrouping) {
                 ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
             }
+            Picker("Show", selection: Bindable(app).sidebarFilter) {
+                ForEach(SidebarFilter.allCases, id: \.self) { Text($0.label).tag($0) }
+            }
             Divider()
             hostActions
         }
@@ -126,7 +132,13 @@ struct SidebarView: View {
             case .failed, .disconnected:
                 NotConnectedView(connection: connection)
             case .connected:
-                if search.isEmpty {
+                if search.isEmpty, app.sidebarFilter != .all {
+                    ContentUnavailableView {
+                        Label("No \(app.sidebarFilter.label) Chats", systemImage: "line.3.horizontal.decrease.circle")
+                    } actions: {
+                        Button("Show All Chats") { app.sidebarFilter = .all }
+                    }
+                } else if search.isEmpty {
                     ContentUnavailableView("No Chats", systemImage: "bubble.left")
                 } else {
                     ContentUnavailableView.search(text: search)

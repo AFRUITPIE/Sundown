@@ -94,6 +94,7 @@ private actor FixtureScript {
     /// Rename, Duplicate and Delete, as the list and reads then show them.
     private var titles: [String: String] = [:]
     private var deleted: Set<String> = []
+    private var tags: [String: String] = [:]
     /// A fork's id, and the chat whose items it reads.
     private var forks: [String: String] = [:]
     /// How many times Restore Code has run.
@@ -131,9 +132,13 @@ private actor FixtureScript {
                 .map { summary in
                     var summary = summary
                     if let title = titles[summary.threadId] { summary.customTitle = title }
+                    if let tag = tags[summary.threadId] { summary.tag = tag }
                     return summary
                 }
             return .init(value: .result(json(ThreadListResult(threads: threads))))
+        case "thread/tag":
+            if let id = params["threadId"]?.stringValue { tags[id] = params["tag"]?.stringValue }
+            return .init(value: .result([:]))
         case "thread/rename":
             if let id = params["threadId"]?.stringValue, let title = params["title"]?.stringValue { titles[id] = title }
             return .init(value: .result([:]))

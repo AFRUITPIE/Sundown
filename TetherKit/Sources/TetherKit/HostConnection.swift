@@ -520,6 +520,12 @@ public final class HostConnection: Identifiable {
         await loadChats()
     }
 
+    /// Archive keeps a chat but out of the sidebar's list, as the session's tag: nothing is deleted.
+    public func setArchived(_ model: ThreadModel, _ archived: Bool) async {
+        await perform(model) { try await $0.call(Methods.ThreadTag.self, .init(threadId: model.id, tag: archived ? ThreadModel.archivedTag : nil)) }
+        await loadChats()
+    }
+
     public func fork(_ model: ThreadModel, at messageId: String? = nil) async -> ThreadModel? {
         guard let client else { return nil }
         guard let r = try? await client.call(Methods.ThreadFork.self, .init(threadId: model.id, atMessageId: messageId)) else { return nil }
