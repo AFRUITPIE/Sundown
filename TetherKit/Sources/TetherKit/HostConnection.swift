@@ -624,7 +624,13 @@ public final class HostConnection: Identifiable {
                 files.append(FileDiff(path: file.path, hunks: [], isBinary: true))
             }
         }
-        return WorkingChanges(branch: status.branch, files: files.sorted { $0.path < $1.path })
+        return WorkingChanges(branch: status.branchName, files: files.sorted { $0.path < $1.path })
+    }
+
+    /// Whether `cwd` is in a git repository and what is checked out there (`branchName`), for New
+    /// Chat. Nil when the host couldn't say.
+    public func gitStatus(cwd: String) async -> GitStatusResult? {
+        try? await client?.call(Methods.GitStatus.self, .init(cwd: cwd))
     }
 
     /// Removes a worktree a chat started in, and its branch. Throws when it has uncommitted changes,
@@ -773,6 +779,19 @@ public struct AvailablePlugin: Identifiable, Sendable, Equatable {
         description = json["description"]?.stringValue ?? ""
         marketplace = json["marketplaceName"]?.stringValue
         installCount = json["installCount"]?.intValue
+    }
+}
+
+extension GitStatusResult {
+    /// The branch from the header of `git status -b`, which the daemon passes on as git wrote it:
+    /// "main", "No commits yet on main" in a new repository, and "HEAD (no branch)" when detached,
+    /// which has no branch to name.
+    public var branchName: String? {
+        guard isRepo, let branch, !branch.isEmpty, branch != "HEAD (no branch)" else { return nil }
+        for prefix in ["No commits yet on ", "Initial commit on "] where branch.hasPrefix(prefix) {
+            return String(branch.dropFirst(prefix.count))
+        }
+        return branch
     }
 }
 
