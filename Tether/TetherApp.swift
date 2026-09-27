@@ -21,6 +21,14 @@ struct TetherApp: App {
         #endif
     }()
 
+    init() {
+        // The system's own window restoration is off; the app reopens the last window's host and
+        // chat itself. After a crash it restored a state with no windows, and neither
+        // `.defaultLaunchBehavior(.presented)` nor `.restorationBehavior(.disabled)` overrode it: the
+        // app launched with no window. Registered here, before `NSApplicationMain` reads it.
+        UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])
+    }
+
     var body: some Scene {
         // Each window has its own host and chat. One opened by File ▸ New Window or Open in New
         // Window carries its target; the system restores it with the window.
@@ -35,6 +43,10 @@ struct TetherApp: App {
         // A window at every launch, including after a crash or force quit, which otherwise restored
         // the app with none.
         .defaultLaunchBehavior(.presented)
+        // Not restored by the system: after a crash it restored a state with no windows, and
+        // `.presented` didn't override it, so the app launched with none. The app reopens the last
+        // window's host and chat itself (`AppModel.lastHostID`, `lastThreadID`).
+        .restorationBehavior(.disabled)
         .commands {
             CommandGroup(replacing: .newItem) { FileCommands(app: app) }
             CommandGroup(replacing: .help) { HelpCommands() }
