@@ -49,7 +49,8 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
   - `Toolbar/`: `SessionControls` (the model, effort and permissions menus over one `SessionSettings`, live chat or draft, and the Chat menu) and `ReservedWidthLabel`.
   - `Inspector/`: the tabbed shell, its toolbar toggle, and one view per pane (`TasksPane`, `SessionPane`, `MCPPane`, `ChangesPane`).
   - `Thread/`: `ThreadView` (transcript over bottom bar), `TranscriptView`, `BottomBar`, `Composer` (`/` commands, `@` files, images), `ContextRing`, `ArrivingText` (streamed text fading in), `TranscriptFind`.
-  - `NewChat/`: the new-chat screen (folder pop-up above the composer) and the remote folder picker.
+  - `NewChat/`: the new-chat screen (folder pop-up and New Worktree above the composer) and the remote folder picker.
+  - `Scheduled/`: a host's Scheduled Tasks window (Host ▸ Scheduled Tasks…), over the daemon's `schedule/*` methods.
   - `Settings/`: General, Appearance, Notifications and Hosts panes, host detail, the environment sheet, and the connection log window.
   - `PromptViews.swift`: permission, question, plan, and elicitation requests.
   - `ItemViews.swift`, `ToolCallView.swift`, `Markdown.swift`: transcript rendering.
@@ -113,6 +114,9 @@ The product should feel like a standard current macOS app. Prefer native SwiftUI
 - A tool row is words first: no kind icon by default, the status (spinner while running, a glyph when it went wrong) and the disclosure chevron at the trailing end. Settings can put either at the leading end, where each gets a fixed slot so titles line up, and bring the icons back. A running call's spinner is hidden from accessibility and its row says "Running" as its value; otherwise the row reads as a progress indicator.
 - Streamed text fades in: only the block at the end of a streaming reply uses `ArrivingText`, and it redraws per frame only while a piece is fading. The transcript glides to its end as a reply wraps by drawing the content offset (`visualEffect`, not `offset`, which re-lays out the lazy stack) while the scroll view's own anchor holds the end. Don't switch `defaultScrollAnchor` during layout: AppKit throws.
 - The detail column declares its minimum (`navigationSplitViewColumnWidth(min: 520)`) like the other columns. Measured from its content instead, the composer's + sent AppKit into an endless layout pass when the inspector opened in a window at its minimum width.
+- Worktrees: New Chat can start a chat in a new git worktree (`thread/start`'s `worktree`, made by the daemon under `<repo>/.claude/worktrees/`). Archiving or deleting such a chat offers to remove the worktree, asking again before discarding uncommitted changes.
+- Scheduled tasks live in the daemon, which runs them while no app is open; the app only edits them. Each run is a new chat.
+- A plan's usage limit (`thread/rateLimit`) is said in the status strip only once it's near or reached; the Session pane shows the gauge.
 - Notifications are for a chat you aren't looking at: a finished reply (per Settings), and a request, whose notification has Allow and Deny. A chat on screen gets a VoiceOver announcement instead. UI tests never reach Notification Center.
 - A running task's detail in the Tasks inspector offers Stop Task, and Move to Background while it still holds up its turn (the CLI registers a foreground command as a task a few seconds in). A background task settling is a notice in the transcript, never the CLI's raw `<task-notification>` message.
 - Progress indicators are transient. Every failed, unavailable, disconnected, or not-loaded path needs an explanatory state and a useful recovery action.
