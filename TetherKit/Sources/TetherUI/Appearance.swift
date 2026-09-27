@@ -32,6 +32,10 @@ public struct Appearance: Codable, Equatable, Sendable {
     public var sendShortcut: SendShortcut = .returnKey
     public var promptSuggestions = true
 
+    // Permissions
+    public var offerBypass = true
+    public var offerDontAsk = true
+
     // Sidebar
     public var rowDetail: RowDetail = .folder
     public var runningIndicator = true
@@ -209,6 +213,8 @@ public struct Appearance: Codable, Equatable, Sendable {
         composerLayout = value(.composerLayout, d.composerLayout)
         sendShortcut = value(.sendShortcut, d.sendShortcut)
         promptSuggestions = value(.promptSuggestions, d.promptSuggestions)
+        offerBypass = value(.offerBypass, d.offerBypass)
+        offerDontAsk = value(.offerDontAsk, d.offerDontAsk)
         rowDetail = value(.rowDetail, d.rowDetail)
         runningIndicator = value(.runningIndicator, d.runningIndicator)
     }

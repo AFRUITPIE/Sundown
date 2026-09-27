@@ -253,6 +253,39 @@ struct WindowModelTests {
         #expect(w.inspectorPane == .session)
     }
 
+    /// ⌃⇥ and ⌃⇧⇥ step through the chats in the sidebar's order, wrapping at the ends.
+    @Test func nextAndPreviousChatFollowTheSidebar() {
+        let w = window(.sample())
+        let order = sidebarSections(chats: (w.connection?.chats ?? []).map {
+            SidebarChat(id: $0.id, title: $0.title, cwd: $0.cwd, updatedAt: $0.summary?.updatedAt)
+        }, grouping: .date).flatMap { $0.chats.map(\.id) }
+        #expect(order.count >= 2)
+
+        #expect(w.adjacentChat(1) == order.first)
+        w.showAdjacentChat(1)
+        #expect(w.threadID == order[0])
+        w.showAdjacentChat(1)
+        #expect(w.threadID == order[1])
+        w.showAdjacentChat(-1)
+        w.showAdjacentChat(-1)
+        #expect(w.threadID == order.last)
+    }
+
+    /// Settings can hide the riskier modes from the menus, but never the one a chat is in.
+    @Test func hiddenModesStayListedWhileChosen() {
+        let app = AppModel.sample()
+        let w = window(app)
+        app.appearance.offerBypass = false
+        app.appearance.offerDontAsk = false
+        var settings = SessionSettings.current(w)
+        #expect(!settings.offeredModes.contains(.bypassPermissions))
+        #expect(!settings.offeredModes.contains(.dontAsk))
+
+        w.draftPermissionMode = .bypassPermissions
+        settings = SessionSettings.current(w)
+        #expect(settings.offeredModes.contains(.bypassPermissions))
+    }
+
     @Test func newChatUsesTheConfiguredDefaults() {
         let app = AppModel(defaults: isolatedDefaults())
         let w = window(app)

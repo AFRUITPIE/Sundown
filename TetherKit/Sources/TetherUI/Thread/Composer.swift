@@ -121,6 +121,12 @@ struct Composer: View {
                         .focused($focused)
                         .onSubmit { if appearance.sendShortcut == .returnKey { send() } }
                         .onKeyPress(.return, phases: .down, action: returnPressed)
+                        // Esc stops Claude, as in the CLI; with nothing running it's the field's own.
+                        .onKeyPress(.escape) {
+                            guard thread?.isRunning == true, let onStop else { return .ignored }
+                            onStop()
+                            return .handled
+                        }
                         .textInputSuggestions(suggestions) { s in
                             Label {
                                 Text(s.title)

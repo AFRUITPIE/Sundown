@@ -13,6 +13,9 @@ struct SessionSettings {
     let fastMode: Binding<Bool>
     let models: [ModelInfo]
     let isEnabled: Bool
+    /// Which of the riskier modes the menus list (Settings ▸ General ▸ Permissions).
+    var offerBypass = true
+    var offerDontAsk = true
     /// The daemon's own reason fast mode is off limits right now (rate limit, cooldown, …).
     private let fastModeDisabledReason: String?
 
@@ -47,11 +50,30 @@ struct SessionSettings {
 
     /// The one place that decides which of the two the toolbar is driving.
     static func current(_ window: WindowModel) -> SessionSettings {
-        if let thread = window.selectedThread, let connection = window.connection {
-            return SessionSettings(thread: thread, connection: connection)
+        var settings = if let thread = window.selectedThread, let connection = window.connection {
+            SessionSettings(thread: thread, connection: connection)
+        } else {
+            SessionSettings(draft: window, connection: window.connection)
         }
-        return SessionSettings(draft: window, connection: window.connection)
+        settings.offerBypass = window.app.appearance.offerBypass
+        settings.offerDontAsk = window.app.appearance.offerDontAsk
+        return settings
     }
+
+    /// The modes the menus list: every one but those Settings hides, which still show while chosen.
+    var offeredModes: [PermissionMode] {
+        let current = permissionMode.wrappedValue
+        return PermissionMode.selectable.filter { mode in
+            switch mode {
+            case .bypassPermissions: offerBypass || mode == current
+            case .dontAsk: offerDontAsk || mode == current
+            default: true
+            }
+        }
+    }
+
+    /// Auto needs a model that supports it; one that says it doesn't can't be put in it.
+    var autoModeUnavailable: Bool { currentModel?.supportsAutoMode == false }
 
     /// The catalog entry behind the current selection — the catalog's own default while the chat
     /// hasn't reported one, and nil for a model the CLI doesn't list.
@@ -156,7 +178,7 @@ struct PermissionsMenu: View {
                 .pickerStyle(.inline)
         } label: {
             let label = ReservedWidthLabel(mode.label, systemImage: mode.symbol,
-                                           symbols: PermissionMode.selectable.map(\.symbol))
+                                           symbols: settings.offeredModes.map(\.symbol))
             // Only the dangerous mode styles its label: an unconditional `.foregroundStyle` would
             // also paint over the disabled appearance.
             if mode.isDangerous {
@@ -221,10 +243,46 @@ struct PermissionsPicker: View {
 
     var body: some View {
         Picker("Permissions", selection: settings.permissionMode) {
-            ForEach(PermissionMode.selectable, id: \.self) { mode in
+            ForEach(settings.offeredModes, id: \.self) { mode in
                 Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
+                    .selectionDisabled(mode == .auto && settings.autoModeUnavailable)
             }
         }
+    }
+}
+
+/// Steps each setting to its next value from the keyboard, as Shift-Tab steps the CLI's
+/// permission mode: ⇧⌘I the model, ⇧⌘E the effort, ⇧⌘M the mode.
+struct SessionCycleCommands: View {
+    let settings: SessionSettings
+
+    var body: some View {
+        Group {
+            Button("Next Model") {
+                let values = settings.models.concrete.map(\.value)
+                settings.model.wrappedValue = next(in: values, after: settings.currentModel?.value)
+            }
+            .keyboardShortcut("i", modifiers: [.command, .shift])
+            .disabled(settings.models.concrete.count < 2)
+            Button("Next Effort Level") {
+                settings.effort.wrappedValue = next(in: settings.effortLevels, after: settings.effort.wrappedValue)
+            }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
+            Button("Next Permission Mode") {
+                let modes = settings.offeredModes.filter { $0 != .auto || !settings.autoModeUnavailable }
+                if let mode = next(in: modes, after: settings.permissionMode.wrappedValue) {
+                    settings.permissionMode.wrappedValue = mode
+                }
+            }
+            .keyboardShortcut("m", modifiers: [.command, .shift])
+        }
+        .disabled(!settings.isEnabled)
+    }
+
+    private func next<T: Equatable>(in values: [T], after current: T?) -> T? {
+        guard !values.isEmpty else { return nil }
+        guard let current, let i = values.firstIndex(of: current) else { return values.first }
+        return values[(i + 1) % values.count]
     }
 }
 
@@ -246,11 +304,23 @@ public struct ChatCommands: View {
                 PermissionsPicker(settings: settings)
             }
             .disabled(!settings.isEnabled)
+            SessionCycleCommands(settings: settings)
+            Divider()
+            Button("Next Chat") { window.showAdjacentChat(1) }
+                .keyboardShortcut(.tab, modifiers: .control)
+                .disabled(window.adjacentChat(1) == nil)
+            Button("Previous Chat") { window.showAdjacentChat(-1) }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+                .disabled(window.adjacentChat(-1) == nil)
             Divider()
             ChatActionItems(window: window, thread: window.selectedThread)
         } else {
             Group {
                 ForEach(["Model", "Fast Mode", "Effort", "Permissions"], id: \.self) { Button($0) {} }
+                Divider()
+                ForEach(["Next Model", "Next Effort Level", "Next Permission Mode"], id: \.self) { Button($0) {} }
+                Divider()
+                ForEach(["Next Chat", "Previous Chat"], id: \.self) { Button($0) {} }
                 Divider()
                 ForEach(["Open in New Window", "Rename…", "Duplicate", "Show in Finder", "Delete…"], id: \.self) { Button($0) {} }
             }

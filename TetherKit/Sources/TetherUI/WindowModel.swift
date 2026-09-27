@@ -199,6 +199,24 @@ extension FocusedValues {
     @Entry public var window: WindowModel?
 }
 
+extension WindowModel {
+    /// The chat above or below this one in the sidebar's order (Chat ▸ Next Chat, ⌃⇥); from New
+    /// Chat, the first. Wraps at the ends, as ⌃⇥ does between tabs.
+    func adjacentChat(_ offset: Int) -> String? {
+        let chats = (connection?.chats ?? []).map {
+            SidebarChat(id: $0.id, title: $0.title, cwd: $0.cwd, updatedAt: $0.summary?.updatedAt)
+        }
+        let order = sidebarSections(chats: chats, grouping: app.sidebarGrouping).flatMap { $0.chats.map(\.id) }
+        guard !order.isEmpty else { return nil }
+        guard let threadID, let i = order.firstIndex(of: threadID) else { return offset >= 0 ? order.first : order.last }
+        return order[(i + offset + order.count) % order.count]
+    }
+
+    func showAdjacentChat(_ offset: Int) {
+        if let id = adjacentChat(offset) { open(threadID: id) }
+    }
+}
+
 #if DEBUG
 extension WindowModel {
     /// A started window on `app`, showing `threadID` if given, for `#Preview`s and tests.

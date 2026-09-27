@@ -14,6 +14,14 @@ struct GeneralSettings: View {
                 effortRow
                 permissionsRow
             }
+            Section {
+                Toggle("Offer Bypass Permissions", isOn: $app.appearance.offerBypass)
+                Toggle("Offer Don’t Ask", isOn: $app.appearance.offerDontAsk)
+            } header: {
+                Text("Permission Modes")
+            } footer: {
+                Text("Bypass Permissions lets Claude act without asking; Don’t Ask denies anything not already allowed. A chat already in a hidden mode keeps it.")
+            }
         }
         .formStyle(.grouped)
     }

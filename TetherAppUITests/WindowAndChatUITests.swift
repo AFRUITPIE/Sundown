@@ -215,4 +215,32 @@ final class WindowAndChatUITests: XCTestCase {
         while app.buttons.count < buttons + count && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
         XCTAssertGreaterThanOrEqual(app.buttons.count, buttons + count)
     }
+
+    /// ⌃⇥ and ⌃⇧⇥ step through the sidebar's chats.
+    @MainActor
+    func testControlTabStepsThroughChats() {
+        let app = launch()
+        row("Performance chat 1", in: sidebar(app)).click()
+        XCTAssertTrue(waitForWindowTitles(app, ["Performance chat 1"]))
+
+        app.typeKey(.tab, modifierFlags: .control)
+        XCTAssertTrue(waitForWindowTitles(app, ["Performance chat 2"]))
+        app.typeKey(.tab, modifierFlags: [.control, .shift])
+        XCTAssertTrue(waitForWindowTitles(app, ["Performance chat 1"]))
+    }
+
+    /// ⇧⌘M steps the permission mode, as Shift-Tab does in the CLI.
+    @MainActor
+    func testShiftCommandMStepsThePermissionMode() {
+        let app = launch()
+        let permissions = app.windows.firstMatch.toolbars.menuButtons["Permissions"]
+        XCTAssertTrue(permissions.waitForExistence(timeout: 5))
+        let before = permissions.value as? String
+
+        app.typeKey("m", modifierFlags: [.command, .shift])
+
+        let deadline = Date().addingTimeInterval(5)
+        while permissions.value as? String == before && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+        XCTAssertNotEqual(permissions.value as? String, before)
+    }
 }
