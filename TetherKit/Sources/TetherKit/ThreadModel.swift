@@ -667,8 +667,10 @@ public struct RateLimit: Sendable, Equatable {
     public init(_ info: JSONValue) {
         status = info["status"]?.stringValue.flatMap(Status.init(rawValue:)) ?? .allowed
         let used = info["utilization"]?.doubleValue
-        // Reported as a fraction or a percentage depending on the CLI's version.
-        utilization = used.map { $0 > 1 ? $0 / 100 : $0 }
+        // A fraction, from the API's rate-limit headers, and a little over 1 past the limit. Only a
+        // CLI that reported a percentage gives more than 2; anything up to that is a fraction, or
+        // 1% read as a percentage would be a full limit, and 105% as a fraction would be 1%.
+        utilization = used.map { $0 > 2 ? $0 / 100 : $0 }
         resetsAt = info["resetsAt"]?.doubleValue.map { Date(timeIntervalSince1970: $0 > 1e11 ? $0 / 1000 : $0) }
         kind = info["rateLimitType"]?.stringValue
     }
@@ -682,6 +684,42 @@ public struct RateLimit: Sendable, Equatable {
         case "seven_day_sonnet": "weekly Sonnet limit"
         case "overage", "seven_day_overage_included": "extra usage limit"
         default: "usage limit"
+        }
+    }
+
+    /// Whether what it says still holds at `now`: a limit that has reset says nothing any more.
+    public func isCurrent(at now: Date) -> Bool {
+        resetsAt.map { $0 > now } ?? true
+    }
+
+    /// What the status strip says about the limit at `now`: nothing while requests go through as
+    /// usual or once it has reset; otherwise how much is used, or that it's reached, and when it
+    /// resets.
+    public func warning(now: Date, calendar: Calendar = .current, locale: Locale = .current) -> String? {
+        guard status != .allowed, isCurrent(at: now) else { return nil }
+        let reset = resetsAt.map { " It resets \(Self.describeReset($0, now: now, calendar: calendar, locale: locale))." } ?? ""
+        switch status {
+        case .rejected:
+            return "You’ve reached your \(name).\(reset)"
+        default:
+            let used = utilization.map { "\(Int((min(max($0, 0), 1) * 100).rounded()))% of " } ?? "most of "
+            return "You’ve used \(used)your \(name).\(reset)"
+        }
+    }
+
+    /// When a limit resets, as the rest of a sentence: "at 3:00 PM" today, "tomorrow at 3:00 PM",
+    /// "on Tuesday at 3:00 PM" within the week, and "on Oct 5 at 3:00 PM" after that. A weekly
+    /// limit's time of day alone didn't say which day.
+    static func describeReset(_ date: Date, now: Date, calendar: Calendar, locale: Locale) -> String {
+        let clock = date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale,
+                                                    calendar: calendar, timeZone: calendar.timeZone))
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)).day ?? 0
+        let day = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+        switch days {
+        case ...0: return "at \(clock)"
+        case 1: return "tomorrow at \(clock)"
+        case 2..<7: return "on \(date.formatted(day.weekday(.wide))) at \(clock)"
+        default: return "on \(date.formatted(day.month(.abbreviated).day())) at \(clock)"
         }
     }
 }

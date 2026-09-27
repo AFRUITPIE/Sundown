@@ -462,6 +462,18 @@ extension ThreadModel {
         ])
     }
 
+    /// A finished chat whose plan limit is `status` (`allowed_warning`, `rejected`), resetting
+    /// `resetsIn` seconds from now — exercises StatusStrip's usage line.
+    public static func sampleRateLimited(_ status: String, kind: String, utilization: Double, resetsIn: TimeInterval) -> ThreadModel {
+        let thread = sampleIdleChat()
+        let info: [String: JSONValue] = [
+            "status": .string(status), "rateLimitType": .string(kind), "utilization": .number(utilization),
+            "resetsAt": .number(Date.now.addingTimeInterval(resetsIn).timeIntervalSince1970),
+        ]
+        thread.apply(.threadRateLimit(.init(threadId: thread.id, seq: 10_000, info: .object(info))))
+        return thread
+    }
+
     /// A running turn stuck retrying the API — exercises StatusStrip's retry banner.
     public static func sampleApiRetry() -> ThreadModel {
         let thread = sample(title: "Long-running migration", status: .running, items: [

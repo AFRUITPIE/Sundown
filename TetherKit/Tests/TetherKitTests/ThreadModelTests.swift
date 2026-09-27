@@ -344,6 +344,67 @@ private final class Invalidation: @unchecked Sendable {
     #expect(rejected.name == "weekly limit")
 }
 
+/// Up to 2 is a fraction: 1 is the whole limit, and a little over it is past the limit, not 1%.
+@Test func aRateLimitsUtilizationIsAFractionUpToTwo() {
+    #expect(RateLimit(["utilization": 1]).utilization == 1)
+    #expect(RateLimit(["utilization": 0.01]).utilization == 0.01)
+    #expect(RateLimit(["utilization": 1.05]).utilization == 1.05)
+    #expect(RateLimit(["utilization": 85]).utilization == 0.85)
+}
+
+@Suite
+struct RateLimitWarningTests {
+    private var calendar: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        return c
+    }
+    private let locale = Locale(identifier: "en_US")
+    /// 09:00 UTC on some day.
+    private let now = Date(timeIntervalSince1970: TimeInterval(1_790_500_000 / 86_400 * 86_400 + 9 * 3600))
+
+    private func limit(_ status: String, resetsIn: TimeInterval, utilization: Double? = nil, kind: String = "five_hour") -> RateLimit {
+        var info: [String: JSONValue] = ["status": .string(status), "rateLimitType": .string(kind),
+                                         "resetsAt": .number(now.addingTimeInterval(resetsIn).timeIntervalSince1970)]
+        if let utilization { info["utilization"] = .number(utilization) }
+        return RateLimit(.object(info))
+    }
+
+    private func clock(_ date: Date) -> String {
+        date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, calendar: calendar, timeZone: calendar.timeZone))
+    }
+
+    @Test func aLimitSaysNothingOnceItHasReset() {
+        let reached = limit("rejected", resetsIn: 3600)
+        #expect(reached.warning(now: now, calendar: calendar, locale: locale) != nil)
+        #expect(reached.warning(now: now.addingTimeInterval(3601), calendar: calendar, locale: locale) == nil)
+        #expect(limit("allowed", resetsIn: 3600).warning(now: now, calendar: calendar, locale: locale) == nil)
+    }
+
+    @Test func aResetTodaySaysTheTime() {
+        let reset = now.addingTimeInterval(2 * 3600)
+        let text = limit("rejected", resetsIn: 2 * 3600).warning(now: now, calendar: calendar, locale: locale)
+        #expect(text == "You’ve reached your 5-hour limit. It resets at \(clock(reset)).")
+    }
+
+    @Test func aLaterResetSaysTheDay() {
+        let tomorrow = limit("allowed_warning", resetsIn: 20 * 3600, utilization: 0.9).warning(now: now, calendar: calendar, locale: locale)
+        #expect(tomorrow == "You’ve used 90% of your 5-hour limit. It resets tomorrow at \(clock(now.addingTimeInterval(20 * 3600))).")
+
+        let weekly = limit("rejected", resetsIn: 3 * 86_400, kind: "seven_day").warning(now: now, calendar: calendar, locale: locale)
+        let weekday = now.addingTimeInterval(3 * 86_400).formatted(Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone).weekday(.wide))
+        #expect(weekly == "You’ve reached your weekly limit. It resets on \(weekday) at \(clock(now.addingTimeInterval(3 * 86_400))).")
+
+        let far = limit("rejected", resetsIn: 10 * 86_400, kind: "seven_day").warning(now: now, calendar: calendar, locale: locale)
+        #expect(far?.contains(" on ") == true && far?.contains(weekday) == false)
+    }
+
+    @Test func pastTheLimitReadsAsAllOfIt() {
+        let text = limit("allowed_warning", resetsIn: 3600, utilization: 1.05).warning(now: now, calendar: calendar, locale: locale)
+        #expect(text?.hasPrefix("You’ve used 100% of your 5-hour limit.") == true)
+    }
+}
+
 @MainActor
 @Test func aSuggestedTaskIsKeptUntilStartedOrDismissed() {
     let thread = ThreadModel(id: "t")
