@@ -190,8 +190,16 @@ public final class AppModel {
     /// How many windows show each thread: a followed thread is let go only when none does.
     @ObservationIgnored private var viewers: [ObjectIdentifier: Int] = [:]
 
+    /// Hosts' environment values, by host id. The Keychain for the app's own defaults; anything
+    /// with its own defaults (tests, previews, UI tests) keeps them in memory instead.
+    private let secrets: SecretStore
+    /// What each host's environment was when last written, so saving doesn't touch the Keychain
+    /// for every change of selection.
+    private var writtenEnv: [UUID: [String: String]] = [:]
+
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.secrets = defaults === UserDefaults.standard ? KeychainSecrets() : DefaultsSecrets(defaults)
         load()
         for h in hosts { connections[h.id] = HostConnection(host: h) }
     }
@@ -224,6 +232,8 @@ public final class AppModel {
     public func removeHost(_ id: UUID) {
         guard id != HostConfig.local.id else { return }
         hosts.removeAll { $0.id == id }
+        secrets.write(nil, for: id.uuidString)
+        writtenEnv[id] = nil
         if let c = connections.removeValue(forKey: id) { Task { await c.disconnect() } }
         if lastHostID == id { lastHostID = HostConfig.local.id; lastThreadID = nil }
         for window in openWindows { window.hostRemoved(id) }
@@ -311,6 +321,15 @@ public final class AppModel {
         let stored = defaults.data(forKey: Self.hostsKey).flatMap { try? JSONDecoder().decode(Stored.self, from: $0) }
         hosts = stored?.hosts ?? []
         if !hosts.contains(where: { $0.id == HostConfig.local.id }) { hosts.insert(.local, at: 0) }
+        for i in hosts.indices {
+            // A store from before the Keychain kept them has them inline; they move on the next save.
+            guard hosts[i].env.isEmpty else { continue }
+            if let data = secrets.read(hosts[i].id.uuidString),
+               let env = try? JSONDecoder().decode([String: String].self, from: data) {
+                hosts[i].env = env
+                writtenEnv[hosts[i].id] = env
+            }
+        }
         drafts = defaults.data(forKey: Self.draftsKey).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
         appearance = defaults.data(forKey: Self.appearanceKey).flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
         alerts = defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode(AlertPreferences.self, from: $0) } ?? AlertPreferences()
@@ -333,6 +352,12 @@ public final class AppModel {
 
     private func save() {
         guard !isLoading else { return }
+        for host in hosts where writtenEnv[host.id] ?? [:] != host.env {
+            secrets.write(host.env.isEmpty ? nil : try? JSONEncoder().encode(host.env), for: host.id.uuidString)
+            writtenEnv[host.id] = host.env
+        }
+        // The defaults file keeps everything but the values.
+        let hosts = hosts.map { host in var h = host; h.env = [:]; return h }
         let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
                        showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue, hostID: lastHostID,

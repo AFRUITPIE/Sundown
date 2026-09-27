@@ -66,3 +66,38 @@ struct SidebarFilterTests {
         #expect(!SidebarFilter.waiting.includes(idle))
     }
 }
+
+@MainActor
+@Suite
+struct HostSecretsTests {
+    private func defaults() -> UserDefaults { UserDefaults(suiteName: "tether.tests.\(UUID().uuidString)")! }
+
+    /// A host's environment values are kept apart from the defaults file's hosts, and come back.
+    @Test func environmentValuesAreKeptApartAndRestored() throws {
+        let store = defaults()
+        let app = AppModel(defaults: store)
+        var host = HostConfig(name: "build-box", kind: .ssh(destination: "build-box"))
+        host.env = ["ANTHROPIC_API_KEY": "sk-test"]
+        app.addHost(host)
+
+        let raw = try #require(store.data(forKey: "tether.hosts.v1"))
+        #expect(!String(decoding: raw, as: UTF8.self).contains("sk-test"))
+        let restored = AppModel(defaults: store)
+        #expect(restored.hosts.first { $0.id == host.id }?.env == ["ANTHROPIC_API_KEY": "sk-test"])
+    }
+
+    /// A store from before keeps its values inline; the next save moves them out.
+    @Test func inlineValuesMoveOnTheNextSave() throws {
+        let store = defaults()
+        let id = UUID()
+        let old = #"{"hosts":[{"id":"\#(id.uuidString)","name":"box","kind":{"ssh":{"destination":"box"}},"env":{"AWS_PROFILE":"dev"}}]}"#
+        store.set(Data(old.utf8), forKey: "tether.hosts.v1")
+        let app = AppModel(defaults: store)
+        #expect(app.hosts.first { $0.id == id }?.env == ["AWS_PROFILE": "dev"])
+
+        app.transcriptWidth = .wide
+        let raw = try #require(store.data(forKey: "tether.hosts.v1"))
+        #expect(!String(decoding: raw, as: UTF8.self).contains("AWS_PROFILE"))
+        #expect(AppModel(defaults: store).hosts.first { $0.id == id }?.env == ["AWS_PROFILE": "dev"])
+    }
+}
