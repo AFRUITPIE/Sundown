@@ -369,6 +369,9 @@ extension EnvironmentValues {
     /// Whether the window's host is this Mac, so a path in the transcript can be opened here.
     @Entry var hostIsLocal = false
 
+    /// Settings ▸ General ▸ Open Files With, on its own rather than read from `appearance`, so
+    /// another setting changing doesn't redraw every tool call.
+    @Entry var openFilesWith: Appearance.FileEditor = .defaultApp
 }
 
 extension View {
