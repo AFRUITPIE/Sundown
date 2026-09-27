@@ -81,6 +81,14 @@ public final class ThreadModel: Identifiable {
     /// row and the window title.
     public private(set) var title = "New Chat"
 
+    /// The chat's latest reply as one plain paragraph, for the Activity sidebar. Stored, like
+    /// `title`: set when a reply completes or history loads, never per streamed token. Kept when the
+    /// transcript is let go, so a chat opened once this launch keeps it. Nil for a chat not loaded
+    /// here: the host's chat list (`thread/list`) doesn't carry a preview.
+    public private(set) var replyPreview: String?
+    /// The item `replyPreview` came from, so an older reply arriving later doesn't replace it.
+    @ObservationIgnored private var replyPreviewItemID: String?
+
     public init(id: String, summary: ThreadSummary? = nil) {
         self.id = id
         self.summary = summary
@@ -190,6 +198,8 @@ public final class ThreadModel: Identifiable {
         itemsVersion &+= 1
         refreshTaskEntries()
         refreshTitle()
+        // Unloading leaves the preview as it was: the reply hasn't changed, only been let go.
+        if let latest = storage.last(where: { Self.replyText($0) != nil }) { noteReply(latest) }
     }
 
     /// Drops the transcript so the next open reads it afresh.
@@ -351,6 +361,45 @@ public final class ThreadModel: Identifiable {
         if item.isSubagentCall { refreshTaskEntries() }
         // Only an opening user message can move the title, and only until Claude names the session.
         if isUnnamed, case .userMessage(let m) = item, m.synthetic != true { refreshTitle() }
+        // A reply starts empty and fills by deltas, which don't come here; it completes here.
+        noteReply(item)
+    }
+
+    /// The text of a finished top-level reply; nil for anything else, or a reply still empty.
+    private static func replyText(_ item: Item) -> String? {
+        guard case .agentMessage(let m) = item, m.parentToolUseId == nil, !m.text.isEmpty else { return nil }
+        return m.text
+    }
+
+    private func noteReply(_ item: Item) {
+        guard let text = Self.replyText(item), let i = index[item.id] else { return }
+        if let current = replyPreviewItemID, current != item.id, let j = index[current], j > i { return }
+        replyPreviewItemID = item.id
+        let preview = Self.plainPreview(text)
+        if preview != replyPreview { replyPreview = preview }
+    }
+
+    /// Markdown as one short plain paragraph: no headings, list markers, emphasis, link targets or
+    /// fenced code, unless code is all there is.
+    static func plainPreview(_ markdown: String, limit: Int = 300) -> String {
+        var prose: [String] = []
+        var code: [String] = []
+        var inFence = false
+        for raw in markdown.split(whereSeparator: \.isNewline) {
+            var line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("```") || line.hasPrefix("~~~") { inFence.toggle(); continue }
+            if inFence { code.append(line); continue }
+            // Rules and a table's divider row.
+            if line.allSatisfy({ "-*_|: ".contains($0) }) { continue }
+            line = line.replacing(/^(#{1,6}|>+|[-*+]|\d+[.)])\s+/, with: "")
+            line = line.replacing(/!?\[([^\]]*)\]\([^)]*\)/) { String($0.output.1) }
+            for marker in ["**", "__", "~~", "`", "*"] { line = line.replacingOccurrences(of: marker, with: "") }
+            line = line.replacingOccurrences(of: "|", with: " ")
+            prose.append(line)
+        }
+        let text = (prose.isEmpty ? code : prose).joined(separator: " ")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return text.count > limit ? String(text.prefix(limit)) : text
     }
 
     private func noteStarted(_ id: String) {

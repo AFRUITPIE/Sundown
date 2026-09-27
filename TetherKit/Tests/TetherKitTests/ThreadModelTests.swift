@@ -182,6 +182,68 @@ struct ThreadModelTests {
         #expect(thread.title == "New Chat")
     }
 
+    private func reply(_ text: String, id: String = "a1", parent: String? = nil) -> Item {
+        .agentMessage(.init(id: id, parentToolUseId: parent, createdAt: 0, text: text))
+    }
+
+    /// The Activity sidebar's preview changes when a reply completes, never per streamed token.
+    @Test func theReplyPreviewChangesWhenAReplyCompletesNotPerDelta() {
+        let thread = ThreadModel(id: threadID)
+        thread.apply(started(userMessage("Explain the reducer"), seq: 1))
+        thread.apply(started(reply(""), seq: 2))
+        #expect(thread.replyPreview == nil)
+
+        let observed = Invalidation()
+        withObservationTracking { _ = thread.replyPreview } onChange: { observed.happened = true }
+        for (offset, delta) in ["It ", "folds ", "items."].enumerated() {
+            thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 3 + offset, itemId: "a1", delta: delta)))
+        }
+        #expect(!observed.happened)
+        #expect(thread.replyPreview == nil)
+
+        thread.apply(.itemCompleted(.init(threadId: threadID, seq: 6, item: reply("It folds items."))))
+        #expect(observed.happened)
+        #expect(thread.replyPreview == "It folds items.")
+    }
+
+    /// A subagent's words aren't the chat's reply, and an older reply arriving late doesn't win.
+    @Test func thePreviewIsTheLatestTopLevelReply() {
+        let thread = ThreadModel(id: threadID)
+        thread.loadHistory(items: [userMessage("Go"), reply("First answer."), reply("Second answer.", id: "a2")], turns: [], seq: 3)
+        #expect(thread.replyPreview == "Second answer.")
+
+        thread.apply(.itemCompleted(.init(threadId: threadID, seq: 4, item: reply("A subagent's note.", id: "s1", parent: "toolu_1"))))
+        thread.apply(.itemUpdated(.init(threadId: threadID, seq: 5, item: reply("First answer, again.", id: "a1"))))
+        #expect(thread.replyPreview == "Second answer.")
+    }
+
+    /// Letting a transcript go keeps its preview: the sidebar still has something to show.
+    @Test func unloadingKeepsThePreview() {
+        let thread = ThreadModel(id: threadID)
+        thread.loadHistory(items: [userMessage("Go"), reply("Done.")], turns: [], seq: 2)
+        thread.unload()
+        #expect(thread.replyPreview == "Done.")
+    }
+
+    @Test func thePreviewIsPlainText() {
+        let markdown = """
+        ## How it works
+
+        - **Items** are kept in `order`, see [the docs](https://example.com).
+        1. Then *turns*.
+
+        ```swift
+        let x = 1
+        ```
+
+        | a | b |
+        |---|---|
+        """
+        #expect(ThreadModel.plainPreview(markdown) == "How it works Items are kept in order, see the docs. Then turns. a b")
+        #expect(ThreadModel.plainPreview("```\nswift build\n```") == "swift build")
+        #expect(ThreadModel.plainPreview(String(repeating: "word ", count: 200)).count == 300)
+    }
+
     @Test func taskEntriesFollowTaskEventsWithoutAnyItemChange() {
         let thread = ThreadModel(id: threadID)
         #expect(thread.taskEntries.isEmpty)
