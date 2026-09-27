@@ -36,6 +36,23 @@ struct AttentionTests {
         #expect(AttentionCenter.badgeCount(chats, badge: .off) == 0)
     }
 
+    /// A request the daemon re-sends on every reconnect is told about once.
+    @Test func aRequestIsToldAboutOnce() {
+        var sightings = RequestSightings()
+        let seen = ["host/req_1", "host/req_1", "host/req_2", "other/req_1"].map { sightings.firstSighting(of: $0) }
+        // Another host's request is its own.
+        #expect(seen == [true, false, true, true])
+    }
+
+    /// Only the oldest are forgotten, and only past the limit.
+    @Test func sightingsForgetTheOldestPastTheLimit() {
+        var sightings = RequestSightings()
+        for i in 0...RequestSightings.limit { _ = sightings.firstSighting(of: "r\(i)") }
+        let oldest = sightings.firstSighting(of: "r0")
+        let newest = sightings.firstSighting(of: "r\(RequestSightings.limit)")
+        #expect(oldest && !newest)
+    }
+
     @Test func aNotificationSaysWhatIsAsked() {
         let permission = PermissionRequestParams(threadId: "t", requestId: "r", toolUseId: "u", toolName: "Bash",
                                                  input: ["command": "ls"])

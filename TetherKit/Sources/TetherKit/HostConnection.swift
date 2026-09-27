@@ -216,6 +216,11 @@ public final class HostConnection: Identifiable {
         // Its query is gone. The next send resumes it with history rather than streaming into a
         // subscription to the process that ended.
         if case .threadClosed = n { subscribed.remove(tid) }
+        // Answered here, by another client, or cancelled: a notification about it is out of date.
+        if case .serverRequestResolved(let e) = n {
+            NotificationCenter.default.post(name: .tetherRequestResolved, object: self,
+                                            userInfo: ["threadId": tid, "requestId": e.requestId])
+        }
         // Claude's name for a session only appears in thread/list; nothing announces it.
         if case .turnCompleted(let e) = n {
             scheduleChatsRefresh()
@@ -826,11 +831,15 @@ public struct RewindResult: Sendable, Equatable {
 
 extension Notification.Name {
     /// Posted when a thread needs user input (approval, question, plan). The object is the
-    /// `HostConnection`; `threadId` and `requestId` are in the user info.
+    /// `HostConnection`; `threadId` and `requestId` are in the user info. Posted again for the same
+    /// request each time the daemon re-sends it, as it does on every reconnect.
     public static let tetherNeedsAttention = Notification.Name("TetherNeedsAttention")
     /// Posted when a turn ends, as it arrives live (not replayed). The object is the
     /// `HostConnection`; `threadId` and the turn's `status` are in the user info.
     public static let tetherTurnFinished = Notification.Name("TetherTurnFinished")
+    /// Posted when a request no longer needs an answer: answered by any client, or cancelled. The
+    /// object is the `HostConnection`; `threadId` and `requestId` are in the user info.
+    public static let tetherRequestResolved = Notification.Name("TetherRequestResolved")
 }
 
 final class OnceFlag: @unchecked Sendable {
