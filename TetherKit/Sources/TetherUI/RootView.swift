@@ -79,6 +79,7 @@ public struct RootView: View {
             window.openInspector(on: .tasks)
         })
         .environment(\.restoreCode, ForkChatAction(owner: window) { window.restoreCode(before: $0) })
+        .environment(\.startSuggestedTask, StartSuggestedTaskAction(owner: window) { window.startSuggestedTask($0, from: $1) })
         .environment(\.openChat, ForkChatAction(owner: window) { id in
             // A desktop session's id carries a prefix ("local_…"); Claude Code's own is the rest.
             let bare = id.split(separator: "_", maxSplits: 1).last.map(String.init) ?? id

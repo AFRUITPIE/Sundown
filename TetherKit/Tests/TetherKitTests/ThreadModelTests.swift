@@ -225,3 +225,14 @@ private final class Invalidation: @unchecked Sendable {
     #expect(rejected.resetsAt == Date(timeIntervalSince1970: 1_790_500_000))
     #expect(rejected.name == "weekly limit")
 }
+
+@MainActor
+@Test func aSuggestedTaskIsKeptUntilStartedOrDismissed() {
+    let thread = ThreadModel(id: "t")
+    thread.apply(.threadTaskSuggested(.init(threadId: "t", seq: 1, title: "Update the docs", prompt: "Document the new API", cwd: "/repo")))
+    thread.apply(.threadTaskSuggested(.init(threadId: "t", seq: 2, title: "Add tests", prompt: "Cover the parser")))
+    #expect(thread.suggestedTasks.map(\.title) == ["Update the docs", "Add tests"])
+    #expect(thread.suggestedTasks[0].cwd == "/repo")
+    thread.dismissSuggestedTask(thread.suggestedTasks[0].id)
+    #expect(thread.suggestedTasks.map(\.title) == ["Add tests"])
+}

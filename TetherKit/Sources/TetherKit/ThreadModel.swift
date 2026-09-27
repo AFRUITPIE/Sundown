@@ -54,6 +54,8 @@ public final class ThreadModel: Identifiable {
     public private(set) var backgroundTaskIDs: Set<String> = []
     public private(set) var authStatus: ThreadAuthStatusNotification?
     public private(set) var apiRetry: ThreadApiRetryNotification?
+    /// Tasks Claude suggested starting in chats of their own (session tools' suggest_task).
+    public private(set) var suggestedTasks: [SuggestedTask] = []
     /// The plan's usage limit as Claude Code last reported it (claude.ai subscriptions).
     public private(set) var rateLimit: RateLimit?
     public private(set) var lastError: String?
@@ -247,6 +249,8 @@ public final class ThreadModel: Identifiable {
         case .threadAuthStatus(let e): authStatus = e
         case .threadApiRetry(let e): apiRetry = e
         case .threadRateLimit(let e): rateLimit = RateLimit(e.info)
+        case .threadTaskSuggested(let e):
+            suggestedTasks.append(SuggestedTask(title: e.title, prompt: e.prompt, cwd: e.cwd))
         case .serverRequestResolved(let e):
             // Answered by another client (or cancelled): release our side without replying.
             for p in pending where p.id == e.requestId { p.respond(nil) }
@@ -262,6 +266,11 @@ public final class ThreadModel: Identifiable {
     }
 
     /// Answer a prompt. The server broadcasts serverRequest/resolved to every client.
+    /// A suggested task started or dismissed.
+    public func dismissSuggestedTask(_ id: UUID) {
+        suggestedTasks.removeAll { $0.id == id }
+    }
+
     public func answer(_ p: PendingRequest, with result: JSONValue) {
         pending.removeAll { $0.id == p.id }
         p.respond(result)
@@ -595,4 +604,12 @@ public struct RateLimit: Sendable, Equatable {
         default: "usage limit"
         }
     }
+}
+
+/// A task Claude suggested starting separately: a title, the prompt for it, and where.
+public struct SuggestedTask: Identifiable, Sendable, Equatable {
+    public let id = UUID()
+    public let title: String
+    public let prompt: String
+    public let cwd: String?
 }

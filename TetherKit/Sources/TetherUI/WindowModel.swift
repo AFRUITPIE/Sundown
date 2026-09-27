@@ -82,6 +82,14 @@ public final class WindowModel {
     /// The chat Rename… or Delete… is acting on, from the Chat menu or a sidebar row's context menu.
     public private(set) var renaming: ThreadModel?
     public var deleting: ThreadModel?
+    /// Starts a task Claude suggested in `thread` as a new chat, where it said, or in `thread`'s folder.
+    func startSuggestedTask(_ task: SuggestedTask, from thread: ThreadModel) {
+        thread.dismissSuggestedTask(task.id)
+        newChat()
+        draftDirectory = task.cwd ?? thread.cwd
+        Task { await startDraftChat([.text(.init(text: task.prompt))]) }
+    }
+
     /// Chat ▸ Ask a Side Question… (⌘;) is showing its sheet.
     var askingSideQuestion = false
 

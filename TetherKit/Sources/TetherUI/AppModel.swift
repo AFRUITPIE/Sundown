@@ -101,6 +101,7 @@ public final class AppModel {
     /// Settings ▸ Appearance (persisted under a key of its own).
     public var appearance = Appearance() {
         didSet {
+            for c in connections.values { c.offersSessionTools = appearance.sessionTools }
             guard !isLoading, appearance != oldValue, let data = try? JSONEncoder().encode(appearance) else { return }
             defaults.set(data, forKey: Self.appearanceKey)
         }
@@ -202,6 +203,7 @@ public final class AppModel {
         self.secrets = defaults === UserDefaults.standard ? KeychainSecrets() : DefaultsSecrets(defaults)
         load()
         for h in hosts { connections[h.id] = HostConnection(host: h) }
+        for c in connections.values { c.offersSessionTools = appearance.sessionTools }
     }
 
     public func connection(_ id: UUID) -> HostConnection? { connections[id] }
@@ -216,6 +218,7 @@ public final class AppModel {
     public func addHost(_ h: HostConfig) {
         hosts.append(h)
         let c = HostConnection(host: h)
+        c.offersSessionTools = appearance.sessionTools
         connections[h.id] = c
         save()
         Task { await c.connect() }

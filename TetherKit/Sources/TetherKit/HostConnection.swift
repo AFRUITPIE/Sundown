@@ -15,6 +15,8 @@ public final class HostConnection: Identifiable {
     }
 
     public private(set) var host: HostConfig
+    /// Whether chats started or resumed here get the session tools (Settings ▸ General).
+    public var offersSessionTools = false
     public nonisolated let id: UUID
     public private(set) var state: State = .disconnected
     public private(set) var serverInfo: InitializeResult?
@@ -406,7 +408,8 @@ public final class HostConnection: Identifiable {
             fastMode: options.fastMode,
             additionalDirectories: options.additionalDirectories.isEmpty ? nil : options.additionalDirectories,
             input: input.isEmpty ? nil : input,
-            worktree: options.worktree ? true : nil))
+            worktree: options.worktree ? true : nil,
+            sessionTools: offersSessionTools ? true : nil))
         let model = thread(r.thread.threadId)
         model.setInfo(r.thread)
         model.loadHistory(items: model.items, turns: model.turns, seq: nil)
@@ -424,7 +427,7 @@ public final class HostConnection: Identifiable {
         // while it wasn't loaded.
         let pending = model.takePendingSettings()
         let r = try await client.call(Methods.ThreadResume.self, .init(
-            threadId: model.id, cwd: model.cwd,
+            threadId: model.id, sessionTools: offersSessionTools ? true : nil, cwd: model.cwd,
             model: pending.model ?? model.info?.model,
             effort: pending.effort ?? model.info?.effort,
             permissionMode: pending.permissionMode ?? model.info?.permissionMode,

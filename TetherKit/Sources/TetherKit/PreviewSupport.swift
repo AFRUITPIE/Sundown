@@ -299,6 +299,14 @@ extension ThreadModel {
 
     /// A finished conversation: a question, some visible thinking, and a Markdown reply that
     /// exercises headings, a bullet list, inline code and a fenced code block.
+    /// A finished chat in which Claude suggested a task to start separately.
+    public static func sampleWithSuggestedTask() -> ThreadModel {
+        let t = sampleIdleChat()
+        t.apply(.threadTaskSuggested(.init(threadId: t.id, seq: 10_000, title: "Add previews for SessionPane",
+                                           prompt: "Add #Preview coverage for SessionPane's loading, failed and ready states.")))
+        return t
+    }
+
     public static func sampleIdleChat() -> ThreadModel {
         sample(
             title: "Explain ThreadModel's turn tracking",

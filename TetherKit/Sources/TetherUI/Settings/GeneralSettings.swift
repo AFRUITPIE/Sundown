@@ -17,6 +17,13 @@ struct GeneralSettings: View {
                     .help("Each new chat in a git repository works in a worktree of its own, under .claude/worktrees")
             }
             Section {
+                Toggle("Let Claude See Your Other Chats", isOn: $app.appearance.sessionTools)
+            } header: {
+                Text("Across Chats")
+            } footer: {
+                Text("Claude can list and read this host’s other chats, and suggest a task to start in a chat of its own. Applies to chats started or reopened after it’s turned on.")
+            }
+            Section {
                 Toggle("Show Tips", isOn: $app.appearance.showTips)
                 Button("Show Tips Again") { TetherTips.reset() }
                     .disabled(!app.appearance.showTips)

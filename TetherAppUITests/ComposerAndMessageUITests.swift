@@ -205,4 +205,21 @@ final class ComposerAndMessageUITests: XCTestCase {
         windowButton(app, "Done").click()
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "value CONTAINS 'What did we decide?' OR label CONTAINS 'What did we decide?'")).firstMatch.exists)
     }
+
+    /// A task Claude suggests is a button above the composer; it starts a new chat with its prompt.
+    @MainActor
+    func testASuggestedTaskStartsANewChat() {
+        let app = launch()
+        XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].firstMatch.waitForExistence(timeout: 15))
+        let input = app.descendants(matching: .any)["composer.input"]
+        input.click()
+        input.typeText("Please suggest a task")
+        input.typeKey(.return, modifierFlags: [])
+
+        let chip = windowButton(app, "Start “Write the release notes”")
+        XCTAssertTrue(chip.waitForExistence(timeout: 10))
+        chip.click()
+        XCTAssertTrue(chip.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS 'Draft release notes' OR label CONTAINS 'Draft release notes'")).firstMatch.waitForExistence(timeout: 10))
+    }
 }

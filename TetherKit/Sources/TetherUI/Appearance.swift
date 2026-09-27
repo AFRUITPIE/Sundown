@@ -45,6 +45,7 @@ public struct Appearance: Codable, Equatable, Sendable {
     public var toolbarModelName = true
     public var newChatFolder: NewChatFolder = .recent
     public var worktreeByDefault = false
+    public var sessionTools = false
     public var toolCallVisibility: ToolCallVisibility = .all
     public var doubleClickOpensWindow = true
     public var hostPickerInSidebar = false
@@ -263,6 +264,7 @@ public struct Appearance: Codable, Equatable, Sendable {
         toolbarModelName = value(.toolbarModelName, d.toolbarModelName)
         newChatFolder = value(.newChatFolder, d.newChatFolder)
         worktreeByDefault = value(.worktreeByDefault, d.worktreeByDefault)
+        sessionTools = value(.sessionTools, d.sessionTools)
         toolCallVisibility = value(.toolCallVisibility, d.toolCallVisibility)
         doubleClickOpensWindow = value(.doubleClickOpensWindow, d.doubleClickOpensWindow)
         hostPickerInSidebar = value(.hostPickerInSidebar, d.hostPickerInSidebar)

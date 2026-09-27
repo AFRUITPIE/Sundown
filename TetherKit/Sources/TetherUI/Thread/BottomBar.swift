@@ -19,6 +19,9 @@ struct BottomBar: View {
                         .id(pending.id)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+                if !thread.suggestedTasks.isEmpty {
+                    SuggestedTasksBar(thread: thread)
+                }
                 // Always mounted, so a draft survives a prompt arriving (#3). The prompt is answered
                 // first — Send is disabled under it, Stop is not.
                 Composer(connection: connection, cwd: thread.cwd, thread: thread, draftKey: thread.id,
@@ -38,6 +41,53 @@ struct BottomBar: View {
         .readingColumn()
         .scaledFont(.body)
     }
+}
+
+/// Tasks Claude suggested starting separately, as buttons above the composer, like prompt
+/// suggestions: each starts a new chat with its prompt.
+struct SuggestedTasksBar: View {
+    let thread: ThreadModel
+    @Environment(\.startSuggestedTask) private var start
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(thread.suggestedTasks) { task in
+                HStack(spacing: 4) {
+                    Button { start(task, thread) } label: {
+                        Label("Start “\(task.title)”", systemImage: "arrow.up.forward.app").lineLimit(1)
+                    }
+                    .buttonStyle(.glass)
+                    .help(task.prompt)
+                    Button("Dismiss", systemImage: "xmark") { thread.dismissSuggestedTask(task.id) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                }
+                .controlSize(.small)
+                .scaledFont(.callout)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Starts a suggested task as a new chat in the window. Compared by owner, like the others.
+struct StartSuggestedTaskAction: Equatable {
+    private let owner: ObjectIdentifier?
+    private let run: @MainActor (SuggestedTask, ThreadModel) -> Void
+
+    init(owner: AnyObject?, run: @escaping @MainActor (SuggestedTask, ThreadModel) -> Void) {
+        self.owner = owner.map(ObjectIdentifier.init)
+        self.run = run
+    }
+
+    @MainActor func callAsFunction(_ task: SuggestedTask, _ thread: ThreadModel) { run(task, thread) }
+
+    static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
+}
+
+extension EnvironmentValues {
+    @Entry var startSuggestedTask = StartSuggestedTaskAction(owner: nil) { _, _ in }
 }
 
 struct StatusStrip: View {
@@ -108,6 +158,16 @@ struct AuthStatusView: View {
         BottomBar(thread: thread, connection: connection)
     }
     .frame(width: 900, height: 220)
+}
+
+#Preview("BottomBar (suggested task)") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.sampleWithSuggestedTask()
+    VStack {
+        Spacer()
+        BottomBar(thread: thread, connection: connection)
+    }
+    .frame(width: 900, height: 260)
 }
 
 #Preview("BottomBar (pending request)") {

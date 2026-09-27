@@ -286,7 +286,7 @@ private actor FixtureScript {
                                           content: [.text(.init(text: text))]))
         let answerID = "fixture-stream-\(nextMessage)"
         let answer = Item.agentMessage(.init(id: answerID, createdAt: timestamp + 1, text: ""))
-        let notifications: [(String, JSONValue)] = [
+        var notifications: [(String, JSONValue)] = [
             ("item/started", json(ItemStartedNotification(threadId: threadID, seq: nextSequence + 1, item: user))),
             ("item/started", json(ItemStartedNotification(threadId: threadID, seq: nextSequence + 2, item: answer))),
             ("item/agentMessage/delta", json(ItemAgentMessageDeltaNotification(
@@ -296,6 +296,12 @@ private actor FixtureScript {
             ("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(nextSequence + 5)), "status": "idle"])
         ]
         nextSequence += 5
+        // As session tools' suggest_task would.
+        if text.localizedCaseInsensitiveContains("suggest a task") {
+            nextSequence += 1
+            notifications.append(("thread/taskSuggested", ["threadId": .string(threadID), "seq": .number(Double(nextSequence)),
+                                                           "title": "Write the release notes", "prompt": "Draft release notes for 0.6."]))
+        }
         return notifications
     }
 }
