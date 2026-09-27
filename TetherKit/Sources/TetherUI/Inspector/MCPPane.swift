@@ -24,7 +24,7 @@ struct MCPPane: View {
                         ForEach(servers, id: \.name) { row($0) }
                     } footer: {
                         if servers.contains(where: { $0.status == "needs-auth" }) {
-                            Text("To sign in to a server, run /mcp in Claude Code in Terminal.")
+                            Text("Sign in with /mcp in Claude Code.")
                         }
                     }
                 }

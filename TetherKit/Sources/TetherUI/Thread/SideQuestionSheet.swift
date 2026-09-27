@@ -21,7 +21,7 @@ struct SideQuestionSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Ask a Side Question").font(.headline)
-            Text("Claude answers with this chat’s context. The question and answer aren’t added to the chat.")
+            Text("Answered from this chat, but not added to it.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             if !exchanges.isEmpty || asking {

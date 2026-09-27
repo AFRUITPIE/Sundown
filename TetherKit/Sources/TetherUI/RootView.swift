@@ -200,7 +200,7 @@ struct NewChatButton: View {
             Image(systemName: "square.and.pencil")
         }
         .accessibilityLabel("New Chat")
-        .help("Start a chat in a new or recent folder")
+        .help("New Chat")
     }
 }
 

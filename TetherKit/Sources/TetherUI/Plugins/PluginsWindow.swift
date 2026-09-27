@@ -45,7 +45,7 @@ public struct PluginsWindow: View {
                 Button("Uninstall", action: uninstall)
                 Button("Cancel", role: .cancel) { uninstalling = nil }
             } message: {
-                Text("Its skills, agents and commands go away from new chats.")
+                Text("New chats won’t have its skills, agents or commands.")
             }
             .frame(minWidth: 560, minHeight: 420)
     }
@@ -65,7 +65,7 @@ public struct PluginsWindow: View {
                 Text("No Project").tag(String?.none)
                 ForEach(connection?.projects.prefix(15) ?? [], id: \.cwd) { Text($0.cwd.lastPathComponent).tag(Optional($0.cwd)) }
             }
-            .help("The project whose plugins to show, and to install for")
+            .help("Project")
         }
         ToolbarItem {
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await reload() } }

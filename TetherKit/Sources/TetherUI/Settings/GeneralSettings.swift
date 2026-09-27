@@ -19,7 +19,6 @@ struct GeneralSettings: View {
                     ForEach(Appearance.NewChatFolder.allCases) { Text($0.label).tag($0) }
                 }
                 Toggle("Start in a New Worktree", isOn: $app.appearance.worktreeByDefault)
-                    .help("Work in a worktree under .claude/worktrees")
             }
             Section("Chats") {
                 Picker("Send With", selection: $app.appearance.sendShortcut) {
@@ -41,7 +40,7 @@ struct GeneralSettings: View {
             } header: {
                 Text("Permissions")
             } footer: {
-                Text("Reading other chats applies to chats started or reopened after it’s turned on.")
+                Text("Reading other chats takes effect in chats started or reopened after it’s turned on.")
             }
         }
         .formStyle(.grouped)

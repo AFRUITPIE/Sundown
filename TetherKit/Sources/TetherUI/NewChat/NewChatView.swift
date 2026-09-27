@@ -134,7 +134,7 @@ struct NewChatView: View {
                         .truncationMode(.middle)
                 }
                 .foregroundStyle(.secondary)
-                .help("Checked out in this folder")
+                .help("Branch")
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Branch")
                 .accessibilityValue(branch)

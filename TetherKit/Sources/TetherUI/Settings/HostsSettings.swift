@@ -41,7 +41,7 @@ struct HostsSettings: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Chats and configuration on the host itself are unchanged.")
+            Text("Its chats stay on the host.")
         }
     }
 
@@ -64,7 +64,7 @@ struct HostsSettings: View {
                     Image(systemName: "plus")
                 }
                 .accessibilityLabel("Add SSH Host")
-                .help("Add a computer you reach over SSH")
+                .help("Add SSH Host")
 
                 Button {
                     hostToRemove = removableHost
@@ -73,7 +73,7 @@ struct HostsSettings: View {
                 }
                 .disabled(removableHost == nil)
                 .accessibilityLabel("Remove Host")
-                .help("Stop showing this host; its chats stay on it")
+                .help("Remove Host")
             }
         }
         .padding()

@@ -18,7 +18,6 @@ struct NotificationSettings: View {
                         }
                     } label: {
                         Text("Notifications Are Off for Tether")
-                        Text("Turn them on in System Settings to hear from your chats.")
                     }
                 }
             }
@@ -30,8 +29,6 @@ struct NotificationSettings: View {
                 Toggle("Play a Sound", isOn: $app.alerts.sound)
             } header: {
                 Text("Notifications")
-            } footer: {
-                Text("A permission request’s notification has Allow and Deny, so it can be answered without switching.")
             }
             Section("Dock") {
                 Picker("Badge Shows", selection: $app.alerts.dockBadge) {
