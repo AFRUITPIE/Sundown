@@ -20,66 +20,28 @@ struct MarkdownView: View {
     var body: some View {
         let blocks = cache.blocks(for: text)
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { i, block in
-                view(for: block)
-                    .padding(.top, i == 0 ? 0 : Self.spacing(after: blocks[i - 1], before: block))
+            ForEach(blocks.indices, id: \.self) { i in
+                MarkdownBlockView(rendered: blocks[i],
+                                  topPadding: i == 0 ? 0 : Self.spacing(after: blocks[i - 1].block, before: blocks[i].block))
+                    .equatable()
             }
         }
         .lineSpacing(3)
         .textSelection(.enabled)
     }
 
-    @ViewBuilder
-    private func view(for block: Block) -> some View {
-        switch block {
-        case .code(let lang, let body):
-            CodeBlock(code: body, language: lang)
-        case .heading(let level, let text):
-            inline(text).font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline)
-                .padding(.top, 6)
-        case .paragraph(let text):
-            inline(text)
-        case .bullet(let indent, let marker, let text):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(marker).foregroundStyle(.secondary).monospacedDigit()
-                    .frame(minWidth: 12, alignment: .trailing)
-                inline(text)
-            }
-            .padding(.leading, 6 + CGFloat(indent) * 18)
-        case .quote(let text):
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 1).fill(.tertiary).frame(width: 3)
-                inline(text).foregroundStyle(.secondary)
-            }
-        case .rule:
-            Divider()
-        case .table(let rows):
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
-                    GridRow {
-                        ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
-                            inline(cell).font(i == 0 ? .body.bold() : .body)
-                        }
-                    }
-                    if i == 0 { Divider() }
-                }
-            }
-            .padding(8)
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
-        }
+    /// One parsed block and its inline text, parsed once. `id` changes only when the block is parsed
+    /// again, so a settled block of a streaming message compares equal from frame to frame.
+    struct Rendered {
+        let id: Int
+        let block: Block
+        let inline: [AttributedString]
     }
 
     /// List items sit closer together than paragraphs.
     private static func spacing(after previous: Block, before block: Block) -> CGFloat {
         if case .bullet = previous, case .bullet = block { return 6 }
         return 12
-    }
-
-    private func inline(_ s: String) -> Text {
-        if let a = cache.inline(for: s) {
-            return Text(a)
-        }
-        return Text(s)
     }
 
     static func parse(_ text: String) -> [Block] {
@@ -156,42 +118,189 @@ struct MarkdownView: View {
     }
 }
 
+/// One Markdown block. Equal to its last value while the block wasn't parsed again, so a
+/// streaming message redraws only its growing tail, not every block before it.
+struct MarkdownBlockView: View, Equatable {
+    let rendered: MarkdownView.Rendered
+    let topPadding: CGFloat
+
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        a.rendered.id == b.rendered.id && a.topPadding == b.topPadding
+    }
+
+    var body: some View {
+        content.padding(.top, topPadding)
+    }
+
+    private func inline(_ i: Int) -> Text {
+        i < rendered.inline.count ? Text(rendered.inline[i]) : Text(verbatim: "")
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch rendered.block {
+        case .code(let lang, let body):
+            CodeBlock(code: body, language: lang)
+        case .heading(let level, _):
+            inline(0).font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline)
+                .padding(.top, 6)
+        case .paragraph:
+            inline(0)
+        case .bullet(let indent, let marker, _):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(marker).foregroundStyle(.secondary).monospacedDigit()
+                    .frame(minWidth: 12, alignment: .trailing)
+                inline(0)
+            }
+            .padding(.leading, 6 + CGFloat(indent) * 18)
+        case .quote:
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 1).fill(.tertiary).frame(width: 3)
+                inline(0).foregroundStyle(.secondary)
+            }
+        case .rule:
+            Divider()
+        case .table(let rows):
+            let columns = rows.first?.count ?? 0
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
+                ForEach(rows.indices, id: \.self) { r in
+                    GridRow {
+                        ForEach(0..<rows[r].count, id: \.self) { c in
+                            inline(r * columns + c).font(r == 0 ? .body.bold() : .body)
+                        }
+                    }
+                    if r == 0 { Divider() }
+                }
+            }
+            .padding(8)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+        }
+    }
+}
+
 /// Remembers the last parse for one message, and reuses the finished blocks of a message that is
 /// still streaming: new text only ever arrives at the end, so everything before the last blank
-/// line outside a code fence is already settled and doesn't need parsing again.
+/// line outside a code fence is settled and isn't parsed again. Per token the work is the size of
+/// the unsettled tail, not of the message: lengths are compared in UTF-8 bytes rather than counted in
+/// Characters, and the settled boundary is found by scanning only what arrived since the last call.
 @MainActor
 final class MarkdownCache {
     private var text = ""
-    private var blocks: [MarkdownView.Block] = []
-    private var settledText = ""
-    private var settledBlocks: [MarkdownView.Block] = []
-    /// Inline parses for the current blocks only, so streaming doesn't leave one per token.
-    private var inlineValues: [String: AttributedString] = [:]
+    private var blocks: [MarkdownView.Rendered] = []
+    /// UTF-8 length of the settled prefix, and its blocks.
+    private var settledLength = 0
+    private var settledBlocks: [MarkdownView.Rendered] = []
+    /// Where the boundary scan stopped, whether a code fence was open there, and whether the line
+    /// before it was blank.
+    private var scannedLength = 0
+    private var fenceOpen = false
+    private var previousLineBlank = false
+    /// App-wide, so a block reused from `recent` never shares an id with one parsed here.
+    private static var nextID = 0
+    /// Whole messages as a new view first saw them. A view is made again when its chat is reopened
+    /// or its row scrolls back into view; this spares it parsing the message on that frame.
+    private static var recent: [String: [MarkdownView.Rendered]] = [:]
+    private static var recentOrder: [String] = []
+    /// The unsettled tail's blocks from the last call: a block whose text didn't change keeps its
+    /// render, so it isn't parsed again and its view compares equal.
+    private var tailBlocks: [MarkdownView.Rendered] = []
 
-    func blocks(for newText: String) -> [MarkdownView.Block] {
-        if newText == text { return blocks }
-        if !settledText.isEmpty, newText.hasPrefix(settledText) {
-            blocks = settledBlocks + MarkdownView.parse(String(newText.dropFirst(settledText.count)))
-        } else {
-            blocks = MarkdownView.parse(newText)
-            settledText = ""
+    func blocks(for newText: String) -> [MarkdownView.Rendered] {
+        if newText.utf8.count == text.utf8.count, newText == text { return blocks }
+        if text.isEmpty, let known = Self.recent[newText] {
+            // A fresh view of a message parsed before; streaming, if any, continues from here.
+            text = newText
+            blocks = known
+            tailBlocks = known
+            settledLength = 0
             settledBlocks = []
+            scannedLength = 0
+            return blocks
         }
+        let isFirst = text.isEmpty
+        let appended = newText.utf8.count >= scannedLength
+            && newText.utf8.prefix(scannedLength).elementsEqual(text.utf8.prefix(scannedLength))
+        if !appended { reset() }
         text = newText
-        let currentInlineText = Set(blocks.flatMap(\.inlineText))
-        inlineValues = inlineValues.filter { currentInlineText.contains($0.key) }
-        updateSettledPrefix()
+        advanceSettledPrefix()
+        let tail = String(decoding: text.utf8.dropFirst(settledLength), as: UTF8.self)
+        let previous = tailBlocks
+        tailBlocks = MarkdownView.parse(tail).enumerated().map { i, block in
+            i < previous.count && previous[i].block == block ? previous[i] : render(block)
+        }
+        blocks = settledBlocks + tailBlocks
+        if isFirst { Self.remember(newText, blocks) }
         return blocks
     }
 
-    func inline(for text: String) -> AttributedString? {
-        if let value = inlineValues[text] { return value }
+    private func reset() {
+        tailBlocks = []
+        settledLength = 0
+        settledBlocks = []
+        scannedLength = 0
+        fenceOpen = false
+        previousLineBlank = false
+    }
+
+    private func render(_ block: MarkdownView.Block) -> MarkdownView.Rendered {
+        Self.nextID += 1
+        return MarkdownView.Rendered(id: Self.nextID, block: block, inline: block.inlineText.map(Self.inline))
+    }
+
+    private static func remember(_ text: String, _ blocks: [MarkdownView.Rendered]) {
+        guard recent[text] == nil else { return }
+        recent[text] = blocks
+        recentOrder.append(text)
+        if recentOrder.count > 400 { recent[recentOrder.removeFirst()] = nil }
+    }
+
+    /// Moves the settled boundary to the last blank line outside a code fence, scanning only the
+    /// complete lines that arrived since the last call.
+    private func advanceSettledPrefix() {
+        let utf8 = text.utf8
+        guard utf8.count > 2048 else { return } // short messages aren't worth tracking
+        let newline = UInt8(ascii: "\n"), backtick = UInt8(ascii: "`")
+        var boundary: Int?
+        var lineStart = scannedLength
+        var lineLength = 0
+        var lineIsBlank = true
+        var startsWithFence = true
+        var offset = scannedLength
+        for byte in utf8.dropFirst(scannedLength) {
+            if byte == newline {
+                if lineLength >= 3, startsWithFence { fenceOpen.toggle() }
+                if lineIsBlank, !previousLineBlank, !fenceOpen { boundary = lineStart }
+                previousLineBlank = lineIsBlank
+                lineStart = offset + 1
+                lineLength = 0
+                lineIsBlank = true
+                startsWithFence = true
+            } else {
+                if lineLength < 3, byte != backtick { startsWithFence = false }
+                if byte != UInt8(ascii: " "), byte != UInt8(ascii: "\t"), byte != UInt8(ascii: "\r") { lineIsBlank = false }
+                lineLength += 1
+            }
+            offset += 1
+        }
+        scannedLength = lineStart
+        guard let boundary, boundary > settledLength else { return }
+        let newlySettled = String(decoding: utf8.dropFirst(settledLength).prefix(boundary - settledLength), as: UTF8.self)
+        // Blocks that were the tail's until now keep their render as they settle.
+        let parsed = MarkdownView.parse(newlySettled)
+        settledBlocks += parsed.enumerated().map { i, block in
+            i < tailBlocks.count && tailBlocks[i].block == block ? tailBlocks[i] : render(block)
+        }
+        tailBlocks = Array(tailBlocks.dropFirst(parsed.count))
+        settledLength = boundary
+    }
+
+    /// Inline Markdown as an attributed string, styled for the transcript.
+    static func inline(_ text: String) -> AttributedString {
         guard var value = try? AttributedString(
             markdown: text,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        ) else { return nil }
-        Self.style(&value)
-        inlineValues[text] = value
+        ) else { return AttributedString(text) }
+        style(&value)
         return value
     }
 
@@ -211,30 +320,9 @@ final class MarkdownCache {
             }
         }
     }
-
-    /// The prefix up to the last blank line that isn't inside an open code fence.
-    private func updateSettledPrefix() {
-        guard text.count > 2048 else { return } // not worth tracking for short messages
-        var fenceCount = 0
-        var lastBoundary: String.Index?
-        var previousWasBlank = false
-        var lineStart = text.startIndex
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            if line.hasPrefix("```") { fenceCount += 1 }
-            let isBlank = line.allSatisfy(\.isWhitespace)
-            if isBlank, !previousWasBlank, fenceCount.isMultiple(of: 2) { lastBoundary = lineStart }
-            previousWasBlank = isBlank
-            lineStart = text.index(lineStart, offsetBy: line.count + 1, limitedBy: text.endIndex) ?? text.endIndex
-        }
-        guard let boundary = lastBoundary, boundary > text.startIndex else { return }
-        let prefix = String(text[text.startIndex..<boundary])
-        guard prefix != settledText else { return }
-        settledText = prefix
-        settledBlocks = MarkdownView.parse(prefix)
-    }
 }
 
-private extension MarkdownView.Block {
+extension MarkdownView.Block {
     var inlineText: [String] {
         switch self {
         case .heading(_, let text), .paragraph(let text), .bullet(_, _, let text), .quote(let text):

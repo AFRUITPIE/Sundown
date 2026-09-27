@@ -255,9 +255,10 @@ extension AppModel {
     public static func uiTestFixture() -> AppModel {
         let failFirst = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "connect-failure"
         let pendingPermission = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "permission"
+        let performance = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "performance"
         let ssh = HostConfig(name: "Fixture SSH", kind: .ssh(destination: "fixture.invalid"))
         let app = sample(connections: [
-            UITestFixture.connection(failFirstConnect: failFirst, pendingPermission: pendingPermission),
+            UITestFixture.connection(failFirstConnect: failFirst, pendingPermission: pendingPermission, performance: performance),
             UITestFixture.connection(host: ssh)
         ])
         app.open(threadID: UITestFixture.threadID)

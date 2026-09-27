@@ -26,6 +26,9 @@ struct TetherApp: App {
                 }
         }
         .defaultSize(width: 1100, height: 760)
+        // A window at every launch, including after a crash or force quit, which otherwise restored
+        // the app with none.
+        .defaultLaunchBehavior(.presented)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Chat") { app.newChat() }.keyboardShortcut("n")

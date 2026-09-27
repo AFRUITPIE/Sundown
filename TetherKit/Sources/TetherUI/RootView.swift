@@ -42,7 +42,8 @@ public struct RootView: View {
                     ToolbarItem { InspectorToggle(app: app) }
                 }
         }
-        .environment(\.inspectSubagent, InspectSubagentAction { toolUseId in
+        // Reaches the inspector too, whose task list shows subagents the same way.
+        .environment(\.inspectSubagent, InspectSubagentAction(owner: app) { toolUseId in
             inspectedTaskID = toolUseId
             app.openInspector(on: .tasks)
         })

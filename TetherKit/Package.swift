@@ -1,5 +1,14 @@
 // swift-tools-version: 6.2
+import Foundation
 import PackageDescription
+
+/// Local development: with a tether-server checkout beside this repo, the protocol package comes
+/// from it, so a protocol change is seen on the next build with no release. The build phase
+/// compiles the server binaries from the same checkout. `TETHER_USE_RELEASE=1`, or no sibling
+/// (a fresh clone, CI), uses the published package instead.
+let siblingServer = Context.packageDirectory + "/../../tether-server"
+let useSiblingServer = Context.environment["TETHER_USE_RELEASE"] != "1"
+    && FileManager.default.fileExists(atPath: siblingServer + "/Package.swift")
 
 let package = Package(
     name: "TetherKit",
@@ -10,11 +19,9 @@ let package = Package(
     ],
     dependencies: [
         // Generated protocol types are published by the server repository as a Swift package.
-        // Versioned rather than a sibling path, so this repo can be cloned and built on its own.
-        // To work on the protocol, override it with the local checkout instead of editing this:
-        //   swift package edit TetherProtocol --path ../../tether-server
-        // or add that folder to the Xcode workspace, which takes precedence over the remote.
-        .package(url: "https://github.com/AFRUITPIE/tether-server.git", from: "0.1.0"),
+        useSiblingServer
+            ? .package(path: "../../tether-server")
+            : .package(url: "https://github.com/AFRUITPIE/tether-server.git", from: "0.1.0"),
     ],
     targets: [
         .target(name: "TetherKit", dependencies: [.product(name: "TetherProtocol", package: "tether-server")]),

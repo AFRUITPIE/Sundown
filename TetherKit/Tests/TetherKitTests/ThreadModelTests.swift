@@ -117,6 +117,37 @@ struct ThreadModelTests {
         #expect(thread.title == "Rebuild the window layout")
     }
 
+    /// A streamed token redraws its own row, not the transcript: it changes the item's box, and the
+    /// rows only on the first token, which ends "Thinking…".
+    @Test func streamedTextGoesToTheItemsBoxNotTheTranscript() {
+        let thread = ThreadModel(id: threadID)
+        thread.apply(started(userMessage("Explain the reducer"), seq: 1))
+        thread.apply(.turnStarted(.init(threadId: threadID, seq: 2, turn: .init(id: "t1", status: .inProgress, startedAt: 0))))
+        thread.apply(.threadStatusChanged(.init(threadId: threadID, seq: 3, status: .running)))
+        thread.apply(started(.agentMessage(.init(id: "a1", createdAt: 0, text: "")), seq: 4))
+        let box = thread.box(for: thread.items.last!)
+        #expect(thread.isThinking)
+
+        thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 5, itemId: "a1", delta: "It ")))
+        #expect(!thread.isThinking)
+
+        let transcript = Invalidation()
+        withObservationTracking { _ = thread.rows; _ = thread.items } onChange: { transcript.happened = true }
+        let row = Invalidation()
+        withObservationTracking { _ = box.item } onChange: { row.happened = true }
+        for (offset, delta) in ["folds ", "items."].enumerated() {
+            thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 6 + offset, itemId: "a1", delta: delta)))
+        }
+
+        #expect(!transcript.happened)
+        #expect(row.happened)
+        guard case .agentMessage(let m) = box.item else { Issue.record("expected an agent message"); return }
+        #expect(m.text == "It folds items.")
+        // Readers of `items` still see the current text, though they aren't told about each token.
+        guard case .agentMessage(let stored) = thread.items.last else { Issue.record("expected an agent message"); return }
+        #expect(stored.text == "It folds items.")
+    }
+
     @Test func aNamedSessionOutranksTheOpeningPrompt() {
         let thread = ThreadModel(id: threadID)
         thread.apply(started(userMessage("Rebuild the window layout"), seq: 1))

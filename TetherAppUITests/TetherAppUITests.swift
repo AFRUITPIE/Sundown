@@ -210,4 +210,36 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Allow fixture command?"].exists)
         XCTAssertTrue(String(describing: input.value ?? "").contains("Draft survives permission"))
     }
+
+    /// A chat opens with its latest page; each time the reader reaches the top, the page before it
+    /// loads above them, page after page. It used to stop after one or two.
+    @MainActor
+    func testScrollingUpLoadsOlderMessages() {
+        let app = launch(scenario: "performance")
+        XCTAssertTrue(app.staticTexts["Section 29: tightening the renderer"].firstMatch.waitForExistence(timeout: 20))
+        // Several pages back: each turn is about twenty items, a page fifty.
+        let older = app.staticTexts["Section 12: tightening the renderer"].firstMatch
+        // A point in the transcript: a heading leaves the lazy stack once it scrolls away.
+        let transcript = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
+        for _ in 0..<30 where !older.exists {
+            transcript.scroll(byDeltaX: 0, deltaY: 4000)
+            _ = older.waitForExistence(timeout: 1)
+        }
+        XCTAssertTrue(older.exists)
+    }
+
+    /// The jump button is offered once the reader scrolls away from the end, and takes them back.
+    @MainActor
+    func testJumpToLatestAfterScrollingUp() {
+        let app = launch(scenario: "performance")
+        let latest = app.staticTexts["Section 29: tightening the renderer"].firstMatch
+        XCTAssertTrue(latest.waitForExistence(timeout: 20))
+        let jump = app.buttons["Jump to Latest"]
+        XCTAssertFalse(jump.exists)
+        latest.scroll(byDeltaX: 0, deltaY: 3000)
+        XCTAssertTrue(jump.waitForExistence(timeout: 5))
+        jump.click()
+        XCTAssertTrue(jump.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(latest.isHittable)
+    }
 }

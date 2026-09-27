@@ -2,38 +2,20 @@ import SwiftUI
 import TetherKit
 import TetherProtocol
 
-/// The scrolling transcript. Only this view and its rows read `thread.rows`; everything that is not
-/// a row is its own view, so a connection or turn change doesn't invalidate the whole list.
+/// The scrolling transcript: the scroll state, over the rows in `TranscriptContent`. The two are
+/// separate views because the scroll position changes on every frame of a resize or an inspector
+/// animation, and with the rows in this body each of those frames rebuilt the whole list.
 struct TranscriptView: View {
     let thread: ThreadModel
     var connection: HostConnection?
     @State private var position = ScrollPosition(edge: .bottom)
-    /// Whether the end is on screen right now; drives the jump button.
-    @State private var atBottom = true
     /// Whether the reader left the transcript at its end. Only their own scrolling changes it, so a
     /// resize that briefly pushes the end off screen doesn't count as scrolling away.
     @State private var followsEnd = true
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                if !thread.historyLoaded {
-                    TranscriptUnavailable(thread: thread, connection: connection)
-                }
-                if thread.historyLoaded, thread.hasMoreHistory {
-                    olderHistoryTrigger
-                }
-                ForEach(thread.rows, id: \.id) { row in
-                    switch row {
-                    case .item(let item): ItemView(item: item, thread: thread).id(item.id)
-                    case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread).id(row.id)
-                    }
-                }
-                TranscriptTail(thread: thread)
-                bottomSentinel
-            }
-            .padding(.vertical, 16)
-            .readingColumn()
+            TranscriptContent(thread: thread, connection: connection)
         }
         // Opens at the end and keeps it pinned through content and size changes. A transcript shorter
         // than the window sits at the top: aligned to the bottom, it was pushed down by a scroll offset
@@ -45,9 +27,16 @@ struct TranscriptView: View {
         // A newly opened chat starts at its latest message.
         .onChange(of: thread.historyLoaded) {
             guard thread.historyLoaded else { return }
-            if !atBottom { atBottom = true }
             followsEnd = true
             position.scrollTo(edge: .bottom)
+        }
+        // An older page goes in above the reader, who stays on the row they were reading: the scroll
+        // view kept the same offset from the top, which showed the page's first rows and left the
+        // spinner that asks for the next one on screen, so it never asked again.
+        .onChange(of: thread.rows.first?.id) { old, new in
+            guard let old, new != old else { return }
+            // Once the page's rows exist, on the next turn of the run loop.
+            Task { position.scrollTo(id: old, anchor: .top) }
         }
         // The anchor doesn't survive a width change: every row re-measures at the new width.
         .onScrollGeometryChange(for: CGSize.self, of: \.containerSize) { _, _ in
@@ -58,52 +47,104 @@ struct TranscriptView: View {
             let g = context.geometry
             followsEnd = g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 24
         }
+        // Offered once the reader has scrolled away, not whenever the end is off screen: a resize
+        // pushes it off for a frame or two, and the button flickered in and out.
         .overlay(alignment: .bottom) {
-            if !atBottom {
-                Button("Jump to Latest", systemImage: "arrow.down") {
-                    followsEnd = true
-                    withAnimation { position.scrollTo(edge: .bottom) }
+            ZStack {
+                if !followsEnd {
+                    Button("Jump to Latest", systemImage: "arrow.down") {
+                        followsEnd = true
+                        withAnimation { position.scrollTo(edge: .bottom) }
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .controlSize(.large)
+                    .help("Jump to Latest")
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .controlSize(.large)
-                .help("Jump to Latest")
-                .padding(.bottom, 8)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                // Scoped to the button so the transcript's own layout changes don't animate.
-                .animation(.snappy, value: atBottom)
             }
+            // Scoped to the button so the transcript's own layout changes don't animate.
+            .animation(.snappy, value: followsEnd)
         }
     }
+}
 
-    /// Asks for the previous page when the top comes into view; one page is fetched at a time.
-    private var olderHistoryTrigger: some View {
+/// The rows. Only this view and the rows read `thread.rows`; everything that is not a row is its
+/// own view, so a connection or turn change doesn't invalidate the whole list.
+private struct TranscriptContent: View {
+    let thread: ThreadModel
+    let connection: HostConnection?
+
+    var body: some View {
+        LazyVStack(alignment: .leading, spacing: 14) {
+            if !thread.historyLoaded {
+                TranscriptUnavailable(thread: thread, connection: connection)
+            }
+            if thread.historyLoaded, thread.hasMoreHistory {
+                OlderHistoryTrigger(thread: thread, connection: connection)
+            }
+            // One plain view per row, identified by the ForEach alone: a `switch` or `.id()` here
+            // adds a node to every row, and the lazy stack walks every row on each layout pass.
+            ForEach(thread.rows, id: \.id) { row in
+                TranscriptRowView(row: row, thread: thread)
+            }
+            TranscriptTail(thread: thread)
+        }
+        // Rows are scroll targets by their ids, so an older page can keep the reader where they were.
+        .scrollTargetLayout()
+        .padding(.vertical, 16)
+        .readingColumn()
+    }
+}
+
+/// Asks for the previous page while the top of the transcript is on screen, one page at a time.
+private struct OlderHistoryTrigger: View {
+    let thread: ThreadModel
+    let connection: HostConnection?
+    @State private var visible = false
+
+    var body: some View {
         ProgressView()
             .controlSize(.small)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
-            .onScrollVisibilityChange(threshold: 0.01) { visible in
-                // `loadingOlder` is checked here as well as inside the call: the spinner stays on
-                // screen while its page loads, and every visibility report would queue another task.
-                guard visible, !thread.loadingOlder else { return }
-                Task { await connection?.loadOlderHistory(thread) }
+            .onScrollVisibilityChange(threshold: 0.01) { visible = $0 }
+            // A page goes in above the reader and normally takes the spinner off screen, which ends
+            // this. One short enough to leave it showing changes no visibility, so after a moment for
+            // the scroll to settle the next page is asked for here.
+            .task(id: visible) {
+                while visible, thread.hasMoreHistory, !Task.isCancelled {
+                    await connection?.loadOlderHistory(thread)
+                    try? await Task.sleep(for: .milliseconds(300))
+                }
             }
     }
+}
 
-    /// Whether the end is on screen. The last child rather than an overlay, which would make
-    /// the LazyVStack measure every row.
-    private var bottomSentinel: some View {
-        Color.clear
-            .frame(height: 1)
-            .allowsHitTesting(false)
-            .onScrollVisibilityChange(threshold: 0.01) { visible in
-                // Only on a real change. Visibility is reported again after the jump button appears
-                // and after a chat swap re-anchors the scroll, and writing the value back unchanged
-                // is the "tried to update multiple times per frame" complaint.
-                guard atBottom != visible else { return }
-                atBottom = visible
-            }
+/// One transcript row: an item, read live from its box, or a group of finished tool calls.
+/// Equatable because the lazy stack asks for a row again whenever it lays out, which is every frame
+/// of a resize, and a row it can't compare is drawn again: an item's row is the same row as long as
+/// it is the same item, since it reads the item's current state from its box.
+struct TranscriptRowView: View, Equatable {
+    let row: TranscriptRow
+    let thread: ThreadModel
+
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        guard a.thread === b.thread else { return false }
+        switch (a.row, b.row) {
+        case (.item(let x), .item(let y)): return x.id == y.id
+        case (.toolGroup(let x), .toolGroup(let y)): return x == y
+        default: return false
+        }
+    }
+
+    var body: some View {
+        switch row {
+        case .item(let item): LiveItemView(box: thread.box(for: item), thread: thread)
+        case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread)
+        }
     }
 }
 

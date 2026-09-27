@@ -10,11 +10,6 @@ struct InspectorView: View {
         if let thread = app.selectedThread, let connection = app.connection {
             ThreadInspector(thread: thread, connection: connection, pane: $app.inspectorPane,
                             selectedTaskID: $selectedTaskID)
-                // Already in the inspector: showing a subagent only changes the pane and the task.
-                .environment(\.inspectSubagent, InspectSubagentAction { id in
-                    selectedTaskID = id
-                    app.openInspector(on: .tasks)
-                })
         } else {
             ContentUnavailableView("No Session", systemImage: "sidebar.trailing")
         }

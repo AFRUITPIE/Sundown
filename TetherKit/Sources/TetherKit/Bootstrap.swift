@@ -87,6 +87,7 @@ public struct HostBootstrapper: Sendable {
                 _ = try? FileManager.default.replaceItemAt(dest, withItemAt: tmp)
                 if !FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.moveItem(at: tmp, to: dest) }
                 try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest.path)
+                Self.pruneDevBuilds(in: dest.deletingLastPathComponent(), keeping: dest.lastPathComponent)
             }
             return (shell, ["-lc", "exec \(dest.path) connect"])
 
@@ -101,11 +102,24 @@ public struct HostBootstrapper: Sendable {
                 log("Uploading Tether \(version) (\(platform)) to \(destHost)")
                 _ = try await Self.run("/usr/bin/ssh", Self.sshOptions + [destHost, "mkdir -p ~/.tether/bin"])
                 _ = try await Self.run("/usr/bin/scp", ["-q", "-o", "BatchMode=yes", bin.url.path, "\(destHost):.tether/bin/tether-\(version).tmp"])
-                _ = try await Self.run("/usr/bin/ssh", Self.sshOptions + [destHost, "chmod +x \(remotePath).tmp && mv -f \(remotePath).tmp \(remotePath)"])
+                // A dev build replaces the previous one rather than piling up beside it.
+                let prune = version.contains("-dev.") ? " && find ~/.tether/bin -name 'tether-*-dev.*' ! -name 'tether-\(version)' -delete" : ""
+                _ = try await Self.run("/usr/bin/ssh", Self.sshOptions + [destHost, "chmod +x \(remotePath).tmp && mv -f \(remotePath).tmp \(remotePath)\(prune)"])
             }
             // Run under the remote user's login shell so PATH (and the first `claude`) match their terminal.
             let remote = "exec \"$SHELL\" -lc 'exec \(remotePath) connect'"
             return ("/usr/bin/ssh", Self.sshOptions + [destHost, remote])
+        }
+    }
+
+    /// Local development compiles a new `-dev.<time>` build whenever the server changes; each would
+    /// otherwise stay in `~/.tether/bin` (about 70 MB apiece). A running daemon keeps its deleted file.
+    static func pruneDevBuilds(in dir: URL, keeping name: String) {
+        guard name.contains("-dev.") else { return }
+        let fm = FileManager.default
+        for file in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+        where file.hasPrefix("tether-") && file.contains("-dev.") && file != name {
+            try? fm.removeItem(at: dir.appendingPathComponent(file))
         }
     }
 
