@@ -41,6 +41,7 @@ struct ThreadView: View {
     appearance.density = .spacious
     appearance.replyFont = .serif
     appearance.composerLayout = .inline
+    appearance.replyCards = true
     return NavigationStack {
         ThreadView(thread: .sampleIdleChat(), connection: .sample())
     }

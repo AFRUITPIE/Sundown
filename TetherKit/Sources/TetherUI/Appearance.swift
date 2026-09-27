@@ -47,6 +47,9 @@ public struct Appearance: Codable, Equatable, Sendable {
     public var worktreeByDefault = false
     public var toolCallVisibility: ToolCallVisibility = .all
     public var doubleClickOpensWindow = true
+    public var hostPickerInSidebar = false
+    public var openCommandOutput = false
+    public var replyCards = false
     public var showTips = true
 
     public init() {}
@@ -262,6 +265,9 @@ public struct Appearance: Codable, Equatable, Sendable {
         worktreeByDefault = value(.worktreeByDefault, d.worktreeByDefault)
         toolCallVisibility = value(.toolCallVisibility, d.toolCallVisibility)
         doubleClickOpensWindow = value(.doubleClickOpensWindow, d.doubleClickOpensWindow)
+        hostPickerInSidebar = value(.hostPickerInSidebar, d.hostPickerInSidebar)
+        openCommandOutput = value(.openCommandOutput, d.openCommandOutput)
+        replyCards = value(.replyCards, d.replyCards)
         showTips = value(.showTips, d.showTips)
     }
 }

@@ -35,6 +35,16 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Settings ▸ Appearance ▸ Choose the Host at the Top of the Sidebar; the Host menu otherwise.
+        .safeAreaBar(edge: .top) {
+            if app.appearance.hostPickerInSidebar, app.hosts.count > 1 {
+                HostPicker(window: window)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 6)
+            }
+        }
         .searchable(text: $search, placement: .sidebar, prompt: "Search Chats")
         // One menu for the list: the row's when a row was hit, the list's own when the empty area was.
         .contextMenu(forSelectionType: String.self) { menu(for: $0) } primaryAction: { ids in
@@ -215,6 +225,13 @@ private func sidebarPreview(_ app: AppModel, host: UUID? = nil, search: String =
 
 #Preview("Sidebar (two hosts)") {
     sidebarPreview(.sample(connections: [.sample(), .sampleConnecting()]))
+}
+
+/// Settings ▸ Appearance ▸ Choose the Host at the Top of the Sidebar.
+#Preview("Sidebar (host picker)") {
+    let app = AppModel.sample(connections: [.sample(), .sampleConnecting()])
+    app.appearance.hostPickerInSidebar = true
+    return sidebarPreview(app)
 }
 
 #Preview("Sidebar (host failed)") {

@@ -26,6 +26,7 @@ struct ItemView: View {
         case .agentMessage(let m):
             MarkdownView(text: m.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .modifier(ReplyCard())
                 .messageMenu(id: m.id, text: m.text, isMarkdown: true, sentAt: m.createdAt)
         // Reasoning never renders; subagent items come through here too.
         case .reasoning: EmptyView()
@@ -50,6 +51,22 @@ struct ItemView: View {
                 Text(v.pretty).scaledFont(.caption, design: .monospaced).textSelection(.enabled)
             }
             .scaledFont(.caption)
+        }
+    }
+}
+
+/// Settings ▸ Appearance ▸ Show Replies in Cards: a reply on a quiet fill of its own, the way a
+/// prompt has its bubble. An ordinary fill, not glass: transcript content isn't a control.
+private struct ReplyCard: ViewModifier {
+    @Environment(\.appearance) private var appearance
+
+    func body(content: Content) -> some View {
+        if appearance.replyCards {
+            content
+                .padding(12)
+                .background(.fill.quinary, in: .rect(cornerRadius: 12))
+        } else {
+            content
         }
     }
 }

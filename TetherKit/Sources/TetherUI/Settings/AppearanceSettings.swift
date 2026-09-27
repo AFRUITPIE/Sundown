@@ -35,6 +35,7 @@ struct AppearanceSettings: View {
                 Picker("Message Actions", selection: $app.appearance.messageActions) {
                     ForEach(Appearance.MessageActions.allCases) { Text($0.label).tag($0) }
                 }
+                Toggle("Show Replies in Cards", isOn: $app.appearance.replyCards)
                 Toggle("Wrap Long Lines in Code", isOn: $app.appearance.wrapCode)
                 Toggle("Show the Last Turn’s Time and Cost", isOn: $app.appearance.turnSummary)
             }
@@ -56,6 +57,7 @@ struct AppearanceSettings: View {
                 .pickerStyle(.segmented)
                 Toggle("Show How Long a Call Has Run", isOn: $app.appearance.showElapsed)
                 Toggle("Open Failed Calls", isOn: $app.appearance.expandFailures)
+                Toggle("Open Commands’ Output", isOn: $app.appearance.openCommandOutput)
             }
 
             Section {
@@ -107,6 +109,7 @@ struct AppearanceSettings: View {
                 }
                 Toggle("Mark Chats Claude Is Working In", isOn: $app.appearance.runningIndicator)
                 Toggle("Double-Click a Chat to Open It in a New Window", isOn: $app.appearance.doubleClickOpensWindow)
+                Toggle("Choose the Host at the Top of the Sidebar", isOn: $app.appearance.hostPickerInSidebar)
             }
 
             Section {

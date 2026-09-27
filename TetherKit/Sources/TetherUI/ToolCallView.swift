@@ -69,14 +69,18 @@ struct ToolCallView: View {
             }
         }
         // Settings ▸ Appearance ▸ Open Failed Calls: a call that went wrong shows why at once.
-        .onAppear(perform: openIfFailed)
-        .onChange(of: call.status) { openIfFailed() }
-        .onChange(of: appearance.expandFailures) { openIfFailed() }
+        .onAppear(perform: openIfWanted)
+        .onChange(of: call.status) { openIfWanted() }
+        .onChange(of: appearance.expandFailures) { openIfWanted() }
+        .onChange(of: appearance.openCommandOutput) { openIfWanted() }
     }
 
-    private func openIfFailed() {
-        guard appearance.expandFailures, call.status == .failed || call.status == .denied, !expanded else { return }
-        expanded = true
+    /// Settings ▸ Appearance ▸ Open Failed Calls and Open Commands' Output.
+    private func openIfWanted() {
+        guard !expanded else { return }
+        let failed = appearance.expandFailures && (call.status == .failed || call.status == .denied)
+        let command = appearance.openCommandOutput && call.kind == .bash && call.status == .completed && !(call.outputText ?? "").isEmpty
+        if failed || command { expanded = true }
     }
 
     private var alwaysShowBody: Bool {
