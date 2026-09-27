@@ -122,13 +122,15 @@ struct Composer: View {
                             }
                             .textInputCompletion(s.completion)
                         }
-                        .padding(.vertical, 6)
+                        // A line of text no taller than Send, so one line leaves the field as tall as
+                        // the + beside it and Send sits evenly inside.
+                        .padding(.vertical, 4)
                 }
                 sendOrStop
             }
             .padding(.leading, 16)
-            .padding(.trailing, 5)
-            .padding(.vertical, 5)
+            .padding(.trailing, 4)
+            .padding(.vertical, 4)
             // A capsule at one line; the same corner radius as the text grows makes it a rounded
             // rectangle, the way Messages' field grows.
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
