@@ -43,16 +43,15 @@ struct NewChatView: View {
 
     var body: some View {
         // No Form: a scrolling Form draws a hard scroll edge under the toolbar, which a chat
-        // doesn't have. The folder sits where a chat's status strip goes.
+        // doesn't have. The folder sits where a chat's status strip goes. A host that isn't
+        // connected is said once, by the status card in the composer's place, as in a chat; the
+        // folder waits with the draft until it is.
         Color.clear
-            .overlay {
-                if let connection { NotConnectedView(connection: connection) }
-            }
             .inspectorCardOverlay()
             .safeAreaBar(edge: .bottom) {
                 if let connection {
                     VStack(alignment: .leading, spacing: 10) {
-                        chips(connection)
+                        if connection.state == .connected { chips(connection) }
                         Group {
                             if let error = window.draftError {
                                 Label(error, systemImage: "exclamationmark.circle")

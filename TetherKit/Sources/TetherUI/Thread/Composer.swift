@@ -8,6 +8,8 @@ import UniformTypeIdentifiers
 ///
 /// The only thread properties it reads are `promptSuggestion` and `isRunning`, both of which change
 /// at turn boundaries rather than per streamed delta, so a running turn doesn't re-render the field.
+/// It also reads the connection's state: while the host isn't connected, `ConnectionStatusCard`
+/// takes the field's place.
 struct Composer: View {
     let connection: HostConnection
     let cwd: String?
@@ -102,9 +104,12 @@ struct Composer: View {
     private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty }
 
     var body: some View {
+        // While the host isn't connected, a card says so in the field's place. The composer stays,
+        // so the draft and its attachments are there when the field comes back.
+        let status = ConnectionStatusCard.Status(connection.state, host: connection.host.name)
         // Above the field, not in it: it's an offer, not text you've written.
         VStack(alignment: .leading, spacing: 8) {
-            if let s = thread?.promptSuggestion, text.isEmpty {
+            if status == nil, let s = thread?.promptSuggestion, text.isEmpty {
                 Button { text = s } label: {
                     Label(s, systemImage: "sparkles").lineLimit(1)
                 }
@@ -114,7 +119,11 @@ struct Composer: View {
                 .help("Put this suggestion in the message field")
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            field
+            if let status {
+                ConnectionStatusCard(status: status, connection: connection)
+            } else {
+                field
+            }
         }
         .animation(.snappy, value: thread?.promptSuggestion)
     }

@@ -216,7 +216,8 @@ struct SidebarView: View {
     }
 }
 
-/// A host that isn't connected, and how to connect it: the sidebar's empty state, and New Chat's.
+/// A host that isn’t connected, and how to connect it: the sidebar’s empty state, and the Scheduled
+/// Tasks window’s. A chat and New Chat say it with `ConnectionStatusCard` instead.
 /// Empty while the host is connected or connecting.
 struct NotConnectedView: View {
     let connection: HostConnection

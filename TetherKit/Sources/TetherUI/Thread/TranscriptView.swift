@@ -14,7 +14,12 @@ struct TranscriptView: View {
     @State private var followsEnd = true
     /// The last line or two the end grew by, eased away: see `follow`.
     @State private var glide = Glide()
+    /// The rows on screen, for Chat ▸ Previous and Next Prompt. Not observed: it changes as rows
+    /// scroll in and out, and nothing is drawn from it.
+    @State private var onScreen = OnScreenRows()
     @Environment(\.transcriptFind) private var find
+    @Environment(\.promptNavigator) private var promptNavigator
+    @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -58,6 +63,9 @@ struct TranscriptView: View {
             followsEnd = false
             withAnimation { position.scrollTo(id: id, anchor: .center) }
         }
+        // Chat ▸ Previous and Next Prompt, from where the reader is.
+        .onChange(of: promptNavigator?.step) { goToPrompt() }
+        .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { onScreen.ids = Set($0) }
         .onScrollGeometryChange(for: Extent.self, of: { Extent(content: $0.contentSize.height, container: $0.containerSize) }) {
             follow(from: $0, to: $1)
         }
@@ -95,6 +103,29 @@ extension TranscriptView {
     struct Extent: Equatable {
         let content: CGFloat
         let container: CGSize
+    }
+
+    /// Which rows are on screen, and the prompt Previous or Next Prompt last went to, which the next
+    /// press goes on from while it's still in view.
+    final class OnScreenRows {
+        var ids: Set<String> = []
+        var lastPrompt: String?
+    }
+
+    /// Brings the prompt before or after the reader's place to the top; past the last one, Next goes
+    /// to the end. The reader has left the end to read it, as with Find.
+    private func goToPrompt() {
+        guard let navigator = promptNavigator else { return }
+        let rows = thread.rows(appearance.toolCalls.folding)
+        if let id = PromptNavigation.target(navigator.direction, rows: rows, visible: onScreen.ids, lastTarget: onScreen.lastPrompt) {
+            onScreen.lastPrompt = id
+            followsEnd = false
+            withAnimation { position.scrollTo(id: id, anchor: .top) }
+        } else if navigator.direction == .next {
+            onScreen.lastPrompt = nil
+            followsEnd = true
+            withAnimation { position.scrollTo(edge: .bottom) }
+        }
     }
 
     /// A distance the content is drawn below where it is, easing back to nothing.
@@ -195,6 +226,8 @@ struct TranscriptRowView: View, Equatable {
         // The same turn's work, as long as it holds the same rows; each item reads its own box.
         case (.turnWork(let x, let xs, let xd), .turnWork(let y, let ys, let yd)):
             return x == y && xd == yd && xs.map(\.id) == ys.map(\.id)
+        case (.turnEdits(let x), .turnEdits(let y)): return x == y
+        case (.dateSeparator(let x, let xs), .dateSeparator(let y, let ys)): return x == y && xs == ys
         default: return false
         }
     }
@@ -207,6 +240,8 @@ struct TranscriptRowView: View, Equatable {
                     .modifier(FadesIn(isNew: thread.justStarted(item.id)))
             case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread)
             case .turnWork(_, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread)
+            case .turnEdits(let edits): TurnEditsView(edits: edits, cwd: thread.cwd)
+            case .dateSeparator(_, let ms): DateSeparatorView(ms: ms)
             }
         }
         .modifier(FindHighlight(id: row.id))
@@ -253,34 +288,24 @@ private struct FindHighlight: ViewModifier {
     }
 }
 
-/// Stands in for the transcript before it arrives; a failure says so and offers a way out.
+/// Stands in for the transcript before it arrives; a failure says so and offers a way out. Nothing
+/// while the host isn't connected: the status card in the composer's place says that, once.
 /// Its own view so `connection.state` and `thread.lastError` are not read in the transcript's body.
 struct TranscriptUnavailable: View {
     let thread: ThreadModel
     var connection: HostConnection?
 
     var body: some View {
-        if let error = thread.lastError {
+        if let connection, connection.state != .connected {
+            EmptyView()
+        } else if let error = thread.lastError {
             TranscriptPlaceholder("Couldn\u{2019}t Open This Chat", symbol: "exclamationmark.triangle", detail: error) {
                 if let connection { Button("Try Again") { Task { await connection.open(thread) } } }
             }
-        } else if case .failed(let message) = connection?.state {
-            TranscriptPlaceholder("Not Connected", symbol: "bolt.horizontal.circle", detail: message) {
-                if let connection { Button("Reconnect") { Task { await connection.reconnect() } } }
-            }
-        } else if case .disconnected = connection?.state {
-            TranscriptPlaceholder("Not Connected", symbol: "bolt.horizontal.circle", detail: nil) {
-                if let connection { Button("Connect") { Task { await connection.connect() } } }
-            }
         } else {
-            VStack(spacing: 8) {
-                ProgressView()
-                if case .connecting(let message) = connection?.state {
-                    Text(message).scaledFont(.callout).foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(40)
+            ProgressView()
+                .frame(maxWidth: .infinity)
+                .padding(40)
         }
     }
 }
@@ -364,13 +389,8 @@ struct TurnOutcome: View {
         .frame(width: 900, height: 760)
 }
 
-/// What stands in for a transcript that hasn't arrived: the host is down, …
-#Preview("TranscriptView (not connected)") {
-    TranscriptView(thread: .sampleUnloaded(), connection: .sampleDisconnected())
-        .frame(width: 900, height: 420)
-}
-
-/// … or the chat itself couldn't be opened.
+/// What stands in for a transcript that couldn't be opened. A host that's down is said by the
+/// status card instead ("Status card (chat not loaded)").
 #Preview("TranscriptView (open failed)") {
     TranscriptView(thread: .sampleUnloaded(lastError: "thread/read failed: no thread with that id"),
                    connection: .sample())

@@ -375,27 +375,15 @@ struct DiffView: View {
 
     struct Line: Hashable { let sign: Character; let text: String }
 
+    /// The same comparison the edited-files row counts with (`LineDiff`), as signed lines.
     static func diff(old: String, new: String) -> [Line] {
-        let a = old.components(separatedBy: "\n"), b = new.components(separatedBy: "\n")
-        let diff = b.difference(from: a)
-        var removed = Set<Int>(), inserted = Set<Int>()
-        for c in diff {
-            switch c {
-            case .remove(let o, _, _): removed.insert(o)
-            case .insert(let o, _, _): inserted.insert(o)
+        LineDiff.lines(old: old, new: new).map { line in
+            switch line.kind {
+            case .removed: Line(sign: "-", text: line.text)
+            case .added: Line(sign: "+", text: line.text)
+            case .context: Line(sign: " ", text: line.text)
             }
         }
-        var out: [Line] = []
-        var i = 0, j = 0
-        while i < a.count || j < b.count {
-            if i < a.count, removed.contains(i) { out.append(Line(sign: "-", text: a[i])); i += 1 }
-            else if j < b.count, inserted.contains(j) { out.append(Line(sign: "+", text: b[j])); j += 1 }
-            else {
-                if j < b.count { out.append(Line(sign: " ", text: b[j])) }
-                i += 1; j += 1
-            }
-        }
-        return out
     }
 
     var body: some View {

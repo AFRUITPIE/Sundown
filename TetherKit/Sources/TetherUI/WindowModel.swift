@@ -90,6 +90,8 @@ public final class WindowModel {
 
     /// Find in Chat for this window's transcript.
     public let find = TranscriptFind()
+    /// Chat ▸ Previous Prompt and Next Prompt, for this window's transcript.
+    public let prompts = PromptNavigator()
 
     /// The chat Rename… or Delete… is acting on, from the Chat menu or a sidebar row's context menu.
     public private(set) var renaming: ThreadModel?
