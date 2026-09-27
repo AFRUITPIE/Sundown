@@ -14,7 +14,7 @@ public enum SidebarGrouping: String, CaseIterable, Sendable {
 
 /// The inspector's panes, in toolbar order (persisted).
 public enum InspectorPane: String, CaseIterable, Identifiable, Sendable {
-    case tasks, session, mcp
+    case tasks, session, mcp, changes
 
     public var id: Self { self }
 
@@ -23,6 +23,7 @@ public enum InspectorPane: String, CaseIterable, Identifiable, Sendable {
         case .tasks: "Tasks"
         case .session: "Session"
         case .mcp: "MCP"
+        case .changes: "Changes"
         }
     }
 
@@ -31,6 +32,7 @@ public enum InspectorPane: String, CaseIterable, Identifiable, Sendable {
         case .tasks: "checklist"
         case .session: "info"
         case .mcp: "puzzlepiece.extension"
+        case .changes: "plus.forwardslash.minus"
         }
     }
 
@@ -40,6 +42,7 @@ public enum InspectorPane: String, CaseIterable, Identifiable, Sendable {
         case .tasks: "1"
         case .session: "2"
         case .mcp: "3"
+        case .changes: "4"
         }
     }
 }

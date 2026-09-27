@@ -201,6 +201,20 @@ private actor FixtureScript {
             if performance { return performanceTurn(threadID: id, input: params["input"]) }
             return .init(value: .result(json(TurnStartResult(turnId: "fixture-turn", messageId: "fixture-message", queued: false))),
                          notifications: turnNotifications(threadID: id, input: params["input"]))
+        case "git/status":
+            return .init(value: .result(["isRepo": true, "branch": "main", "files": [["status": "M", "path": "Sources/App.swift"]]]))
+        case "git/diff":
+            let staged = params["staged"]?.boolValue ?? false
+            return .init(value: .result(["diff": .string(staged ? "" : """
+            diff --git a/Sources/App.swift b/Sources/App.swift
+            --- a/Sources/App.swift
+            +++ b/Sources/App.swift
+            @@ -1,3 +1,3 @@
+             import SwiftUI
+            -let greeting = "Hello"
+            +let greeting = "Hello, Tether"
+             print(greeting)
+            """)]))
         case "thread/rewindFiles":
             let dryRun = params["dryRun"]?.boolValue ?? false
             rewound += dryRun ? 0 : 1

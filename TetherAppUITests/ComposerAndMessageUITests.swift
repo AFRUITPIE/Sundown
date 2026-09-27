@@ -161,4 +161,26 @@ final class ComposerAndMessageUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["No Files to Restore"].waitForExistence(timeout: 5))
         windowButton(app, "OK").click()
     }
+
+    /// The Changes pane lists what differs from the last commit; a comment on a line goes to Claude.
+    @MainActor
+    func testCommentingOnAChangeSendsIt() {
+        let app = launch()
+        XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].firstMatch.waitForExistence(timeout: 15))
+        app.typeKey("4", modifierFlags: [.command, .option])
+        XCTAssertTrue(app.staticTexts["App.swift"].waitForExistence(timeout: 10))
+
+        let changed = app.staticTexts["let greeting = \"Hello, Tether\""].firstMatch
+        XCTAssertTrue(changed.exists)
+        changed.click()
+        let field = app.sheets.firstMatch.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.typeText("Use the app's name from its bundle")
+        windowButton(app, "Add").click()
+
+        let send = windowButton(app, "Send Comment")
+        XCTAssertTrue(send.isEnabled)
+        send.click()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS 'Sources/App.swift:2' OR label CONTAINS 'Sources/App.swift:2'")).firstMatch.waitForExistence(timeout: 10))
+    }
 }

@@ -21,6 +21,8 @@ struct InspectorView: View {
 struct ThreadInspector: View {
     let thread: ThreadModel
     let connection: HostConnection
+    /// Changes for a preview, which has no repository to read.
+    @Environment(\.previewChanges) private var previewChanges
     @Binding var pane: InspectorPane
     @Binding var selectedTaskID: String?
 
@@ -38,6 +40,7 @@ struct ThreadInspector: View {
             case .tasks: TasksPane(thread: thread, connection: connection, selectedTaskID: $selectedTaskID)
             case .session: SessionPane(thread: thread, connection: connection)
             case .mcp: MCPPane(thread: thread, connection: connection)
+            case .changes: ChangesPane(thread: thread, connection: connection, changes: previewChanges)
             }
         }
         .inspectorPaneStyle()
@@ -66,8 +69,12 @@ struct InspectorToggle: View {
         Button("Inspector", systemImage: "sidebar.trailing") {
             window.showInspector.toggle()
         }
-        .help(window.showInspector ? "Hide tasks, session details and MCP servers" : "Show tasks, session details and MCP servers")
+        .help(window.showInspector ? "Hide tasks, session details, MCP servers and changes" : "Show tasks, session details, MCP servers and changes")
     }
+}
+
+extension EnvironmentValues {
+    @Entry var previewChanges: WorkingChanges?
 }
 
 extension View {

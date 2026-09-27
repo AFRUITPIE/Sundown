@@ -580,6 +580,35 @@ public final class HostConnection: Identifiable {
         try? await client?.call(Methods.GitDiff.self, .init(cwd: cwd)).diff
     }
 
+    /// Everything that differs from the last commit in `cwd`: staged and unstaged edits, and new
+    /// files git doesn't track yet (their whole content, as added). Nil when `cwd` isn't a repository.
+    public func workingChanges(cwd: String) async throws -> WorkingChanges? {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        let status = try await client.call(Methods.GitStatus.self, .init(cwd: cwd))
+        guard status.isRepo else { return nil }
+        async let unstaged = client.call(Methods.GitDiff.self, .init(cwd: cwd))
+        async let staged = client.call(Methods.GitDiff.self, .init(cwd: cwd, staged: true))
+        var files = UnifiedDiff.parse(try await staged.diff)
+        for file in UnifiedDiff.parse(try await unstaged.diff) {
+            // A file with staged and unstaged edits shows both, one after the other.
+            if let i = files.firstIndex(where: { $0.path == file.path }) {
+                files[i] = FileDiff(path: file.path, oldPath: files[i].oldPath, hunks: files[i].hunks + file.hunks)
+            } else {
+                files.append(file)
+            }
+        }
+        for file in status.files where file.status == "??" && !file.path.hasSuffix("/") {
+            let full = (cwd as NSString).appendingPathComponent(file.path)
+            let read = try? await client.call(Methods.FsRead.self, .init(path: full, maxBytes: 64 * 1024))
+            if let read, read.encoding == .utf8 {
+                files.append(.added(path: file.path, content: read.content))
+            } else {
+                files.append(FileDiff(path: file.path, hunks: [], isBinary: true))
+            }
+        }
+        return WorkingChanges(branch: status.branch, files: files.sorted { $0.path < $1.path })
+    }
+
     // MARK: MCP
 
     /// The chat's MCP servers as Claude Code reports them now; nil if it can't be asked.
@@ -618,6 +647,18 @@ public struct NewThreadOptions: Sendable {
         self.effort = effort
         self.permissionMode = permissionMode
         self.fastMode = fastMode
+    }
+}
+
+public struct WorkingChanges: Sendable, Equatable {
+    public let branch: String?
+    public let files: [FileDiff]
+    public var added: Int { files.reduce(0) { $0 + $1.added } }
+    public var removed: Int { files.reduce(0) { $0 + $1.removed } }
+
+    public init(branch: String?, files: [FileDiff]) {
+        self.branch = branch
+        self.files = files
     }
 }
 
