@@ -251,13 +251,46 @@ struct Composer: View {
         suggestions = Self.matchingSuggestions(for: text, commands: commands, fileMatches: fileMatches)
     }
 
+    /// The + menu, as the desktop app has it: attach, mention a file, or browse the commands
+    /// that typing / offers, for someone who doesn't know them yet.
     private var addButton: some View {
-        Button("Add Images or Files", systemImage: "plus") { choosingFiles = true }
-            .labelStyle(.iconOnly)
-            .fontWeight(.medium)
-            .buttonBorderShape(.circle)
-            .help("Attach images, or mention files for Claude to read")
-            .accessibilityIdentifier("composer.add")
+        Menu {
+            Button("Attach Files…", systemImage: "paperclip") { choosingFiles = true }
+            Button("Mention a File", systemImage: "at") { insert("@") }
+                .disabled(cwd == nil)
+            let offered = commands.filter { $0.terminalOnly != true }
+            Menu("Commands", systemImage: "command") {
+                ForEach(offered, id: \.name) { command in
+                    Button { insert("/\(command.name) ") } label: {
+                        Text("/" + command.name)
+                        Text(command.description)
+                    }
+                }
+            }
+            .disabled(offered.isEmpty)
+        } label: {
+            Label("Add", systemImage: "plus")
+        }
+        .menuIndicator(.hidden)
+        .menuStyle(.button)
+        .labelStyle(.iconOnly)
+        .fontWeight(.medium)
+        .buttonBorderShape(.circle)
+        .help("Attach files, mention one, or use a command")
+        .accessibilityIdentifier("composer.add")
+    }
+
+    /// Puts `token` where typing it would, and the cursor after it.
+    private func insert(_ token: String) {
+        if token.hasPrefix("/") {
+            // A command goes first, in place of one already there.
+            var rest = Substring(text)
+            if rest.hasPrefix("/") { rest = rest.drop { $0 != " " } }
+            text = token + rest.trimmingCharacters(in: .whitespaces)
+        } else {
+            text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + token
+        }
+        focused = true
     }
 
     /// Return and its modifiers, as Settings ▸ Appearance ▸ Send With has them: Return sends and

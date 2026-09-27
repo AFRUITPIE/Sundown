@@ -53,14 +53,21 @@ final class ComposerAndMessageUITests: XCTestCase {
         XCTAssertFalse(send.isEnabled)
     }
 
-    /// The round + beside the field opens the Open panel, for images and files to mention.
+    /// The round + beside the field is a menu; Attach Files… opens the Open panel, and Mention a
+    /// File starts an @ mention.
     @MainActor
     func testAddOpensTheFilePanel() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
-        let add = app.buttons["composer.add"]
+        let add = app.descendants(matching: .any)["composer.add"].firstMatch
         XCTAssertTrue(add.exists)
         add.click()
+        visibleMenuItem(app, "Mention a File").click()
+        let input = app.descendants(matching: .any)["composer.input"]
+        XCTAssertEqual(input.value as? String, "@")
+
+        add.click()
+        visibleMenuItem(app, "Attach Files…").click()
 
         let panel = app.sheets.firstMatch
         let dialog = app.dialogs.firstMatch
