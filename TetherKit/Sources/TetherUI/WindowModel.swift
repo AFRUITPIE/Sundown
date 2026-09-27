@@ -264,13 +264,43 @@ extension WindowModel {
 }
 
 extension WindowModel {
+    /// The chats the sidebar lists: those View ▸ Show includes, and the open one whatever it says.
+    var sidebarThreads: [ThreadModel] {
+        let filter = app.sidebarFilter
+        return (connection?.chats ?? []).filter { filter.includes($0) || $0 === selectedThread }
+    }
+
+    /// The sidebar's sections for this window's host, with its pins and grouping. Reads only what
+    /// doesn't change while a turn streams: title, folder, timestamp and tag.
+    func sidebarList(_ threads: [ThreadModel], search: String = "") -> [SidebarSection] {
+        let pins = app.pinnedChats[hostID] ?? []
+        let chats = threads.map {
+            SidebarChat(id: $0.id, title: $0.title, cwd: $0.cwd, updatedAt: $0.summary?.updatedAt,
+                        isPinned: pins.contains($0.id), isArchived: $0.isArchived)
+        }
+        return sidebarSections(chats: chats, grouping: app.sidebarGrouping, search: search)
+    }
+
+    public func isPinned(_ thread: ThreadModel) -> Bool { app.isPinned(thread.id, on: hostID) }
+
+    /// Chat ▸ Pin or Unpin.
+    public func togglePin(_ thread: ThreadModel) {
+        app.setPinned(!isPinned(thread), thread.id, on: hostID)
+    }
+
+    /// Archives or unarchives chats on this window's host; nothing is deleted. Leaves a chat being
+    /// archived for New Chat, and offers to remove the worktree of the one chat archived on its own.
+    func setArchived(_ threads: [ThreadModel], _ archived: Bool) {
+        guard let connection, !threads.isEmpty else { return }
+        if archived, let open = selectedThread, threads.contains(where: { $0 === open }) { newChat() }
+        Task { for thread in threads { await connection.setArchived(thread, archived) } }
+        if archived, threads.count == 1 { offerWorktreeRemoval(for: threads[0]) }
+    }
+
     /// The chat above or below this one in the sidebar's order (Chat ▸ Next Chat, ⌃⇥); from New
     /// Chat, the first. Wraps at the ends, as ⌃⇥ does between tabs.
     func adjacentChat(_ offset: Int) -> String? {
-        let chats = (connection?.chats ?? []).map {
-            SidebarChat(id: $0.id, title: $0.title, cwd: $0.cwd, updatedAt: $0.summary?.updatedAt)
-        }
-        let order = sidebarSections(chats: chats, grouping: app.sidebarGrouping).flatMap { $0.chats.map(\.id) }
+        let order = sidebarList(sidebarThreads).flatMap { $0.chats.map(\.id) }
         guard !order.isEmpty else { return nil }
         guard let threadID, let i = order.firstIndex(of: threadID) else { return offset >= 0 ? order.first : order.last }
         return order[(i + offset + order.count) % order.count]

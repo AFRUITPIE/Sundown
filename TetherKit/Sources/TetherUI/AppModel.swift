@@ -92,6 +92,22 @@ public final class AppModel {
     /// Which chats the sidebar lists (persisted).
     public var sidebarFilter: SidebarFilter = .all { didSet { save() } }
 
+    /// Chats pinned to the top of the sidebar, by host (persisted). Kept here rather than on the
+    /// host: pinning is how this Mac lists them, not something Claude Code knows about.
+    public private(set) var pinnedChats: [UUID: Set<String>] = [:]
+
+    public func isPinned(_ threadID: String, on host: UUID) -> Bool {
+        pinnedChats[host]?.contains(threadID) == true
+    }
+
+    public func setPinned(_ pinned: Bool, _ threadID: String, on host: UUID) {
+        guard pinned != isPinned(threadID, on: host) else { return }
+        var ids = pinnedChats[host] ?? []
+        if pinned { ids.insert(threadID) } else { ids.remove(threadID) }
+        pinnedChats[host] = ids.isEmpty ? nil : ids
+        save()
+    }
+
     /// How wide the transcript may get (persisted).
     public var transcriptWidth: TranscriptWidth = .narrow { didSet { save() } }
 
@@ -238,6 +254,7 @@ public final class AppModel {
         hosts.removeAll { $0.id == id }
         secrets.write(nil, for: id.uuidString)
         writtenEnv[id] = nil
+        pinnedChats[id] = nil
         if let c = connections.removeValue(forKey: id) { Task { await c.disconnect() } }
         if lastHostID == id { lastHostID = HostConfig.local.id; lastThreadID = nil }
         for window in openWindows { window.hostRemoved(id) }
@@ -317,6 +334,8 @@ public final class AppModel {
         var threadID: String?
         var textScale: Double?
         var sidebarFilter: String?
+        /// By host id.
+        var pinnedChats: [String: [String]]?
     }
 
     private func load() {
@@ -347,6 +366,9 @@ public final class AppModel {
         sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
         textScale = s.textScale.map { CGFloat($0) } ?? 1
         sidebarFilter = s.sidebarFilter.flatMap(SidebarFilter.init(rawValue:)) ?? .all
+        for (host, ids) in s.pinnedChats ?? [:] {
+            if let id = UUID(uuidString: host), !ids.isEmpty { pinnedChats[id] = Set(ids) }
+        }
         // A remembered host can disappear between launches; this Mac is always configured.
         if let id = s.hostID, hosts.contains(where: { $0.id == id }) {
             lastHostID = id
@@ -366,7 +388,8 @@ public final class AppModel {
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
                        showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue, hostID: lastHostID,
                        sidebarGrouping: sidebarGrouping.rawValue, threadID: lastThreadID, textScale: Double(textScale),
-                       sidebarFilter: sidebarFilter.rawValue)
+                       sidebarFilter: sidebarFilter.rawValue,
+                       pinnedChats: Dictionary(uniqueKeysWithValues: pinnedChats.map { ($0.key.uuidString, $0.value.sorted()) }))
         if let data = try? JSONEncoder().encode(s) { defaults.set(data, forKey: Self.hostsKey) }
     }
 }

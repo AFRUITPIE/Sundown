@@ -282,7 +282,7 @@ public struct ChatCommands: View {
                 Divider()
                 ForEach(["Next Chat", "Previous Chat"], id: \.self) { Button($0) {} }
                 Divider()
-                ForEach(["Open in New Window", "Rename…", "Duplicate", "Show in Finder", "Delete…"], id: \.self) { Button($0) {} }
+                ForEach(["Open in New Window", "Pin", "Rename…", "Duplicate", "Show in Finder", "Archive", "Delete…"], id: \.self) { Button($0) {} }
             }
             .disabled(true)
         }

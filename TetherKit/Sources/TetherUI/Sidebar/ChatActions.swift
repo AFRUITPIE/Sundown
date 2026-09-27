@@ -20,6 +20,11 @@ struct ChatActionItems: View {
             if let thread { openWindow(value: WindowTarget(hostID: window.hostID, threadID: thread.id)) }
         }
         Divider()
+        // Pinned in this app, per host; ⌥⌘P from the menu bar.
+        item(thread.map { window.isPinned($0) } == true ? "Unpin" : "Pin", enabled: thread != nil) {
+            if let thread { window.togglePin(thread) }
+        }
+        .keyboardShortcut("p", modifiers: [.command, .option])
         item("Rename…", enabled: thread != nil) { window.rename(thread) }
         item("Duplicate", enabled: thread != nil && connection != nil) {
             guard let thread, let connection else { return }
@@ -30,11 +35,7 @@ struct ChatActionItems: View {
         }
         // Out of the list without deleting anything; View ▸ Show ▸ Archived brings it back.
         item(thread?.isArchived == true ? "Unarchive" : "Archive", enabled: thread != nil && connection != nil) {
-            guard let thread, let connection else { return }
-            let archiving = !thread.isArchived
-            if archiving, window.selectedThread === thread { window.newChat() }
-            Task { await connection.setArchived(thread, archiving) }
-            if archiving { window.offerWorktreeRemoval(for: thread) }
+            if let thread { window.setArchived([thread], !thread.isArchived) }
         }
         Divider()
         item("Delete…", enabled: thread != nil) { window.deleting = thread }
@@ -170,6 +171,7 @@ struct ChatActionAlerts: ViewModifier {
         window.deleting = nil
         // Every window showing it moves to New Chat first, so none is left on a deleted chat.
         for other in window.app.openWindows where other.selectedThread === thread { other.newChat() }
+        window.app.setPinned(false, thread.id, on: window.hostID)
         Task { await connection.delete(thread) }
         window.offerWorktreeRemoval(for: thread)
     }

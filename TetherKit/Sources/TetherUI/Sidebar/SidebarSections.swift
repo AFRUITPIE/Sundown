@@ -10,6 +10,9 @@ struct SidebarChat: Identifiable, Hashable, Sendable {
     /// Milliseconds since the epoch, as the server reports it. Nil for a chat that exists only in
     /// this app so far (no first message on disk yet); it is the newest thing there is.
     let updatedAt: Double?
+    /// Pinned in this app. An archived chat keeps its pin, but leaves Pinned until it's unarchived.
+    var isPinned = false
+    var isArchived = false
 }
 
 /// One `Section` of the sidebar list.
@@ -19,6 +22,10 @@ struct SidebarSection: Identifiable, Equatable {
     /// The full path behind a directory section's short name; nil when the title says it all.
     let help: String?
     let chats: [SidebarChat]
+    /// The folder a directory section lists, for its header's actions; nil for every other section.
+    var folder: String? = nil
+
+    static let pinnedID = "pinned"
 }
 
 /// The date buckets, in the order they are shown.
@@ -50,6 +57,9 @@ private enum DateBucket: CaseIterable {
 /// Groups a host's chats for the sidebar. Pure — same inputs, same sections. `now` and `calendar`
 /// are parameters so the date buckets can be tested at their boundaries.
 ///
+/// Pinned on top, then the rest by `grouping`. A chat is listed once: the sidebar's outline list
+/// traps on two rows with one id.
+///
 /// Search runs before grouping, so a section only exists if something in it matched.
 func sidebarSections(
     chats: [SidebarChat],
@@ -66,9 +76,12 @@ func sidebarSections(
         return l == r ? a.offset < b.offset : l > r
     }.map(\.element)
 
+    let pinned = ordered.filter { $0.isPinned && !$0.isArchived }
+    let rest = pinned.isEmpty ? ordered : ordered.filter { !($0.isPinned && !$0.isArchived) }
+    let top = pinned.isEmpty ? [] : [SidebarSection(id: SidebarSection.pinnedID, title: "Pinned", help: nil, chats: pinned)]
     switch grouping {
-    case .date: return byDate(ordered, now: now, calendar: calendar)
-    case .directory: return byDirectory(ordered)
+    case .date: return top + byDate(rest, now: now, calendar: calendar)
+    case .directory: return top + byDirectory(rest)
     }
 }
 
@@ -112,7 +125,8 @@ private func byDirectory(_ ordered: [SidebarChat]) -> [SidebarSection] {
         SidebarSection(id: cwd.map { "dir:\($0)" } ?? "dir:none",
                        title: cwd?.lastPathComponent ?? "No Folder",
                        help: cwd?.abbreviatingHome,
-                       chats: grouped[cwd] ?? [])
+                       chats: grouped[cwd] ?? [],
+                       folder: cwd)
     }
 }
 

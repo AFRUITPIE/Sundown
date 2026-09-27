@@ -271,6 +271,47 @@ struct WindowModelTests {
         #expect(w.threadID == order.last)
     }
 
+    /// Pins are per host, survive a relaunch, and go with a host that's removed.
+    @Test func pinsArePerHostAndSurviveRelaunch() {
+        let defaults = isolatedDefaults()
+        let ssh = HostConnection.sampleFailed()
+        let app = AppModel.sample(connections: [.sample(), ssh], defaults: defaults)
+        app.setPinned(true, "a", on: HostConfig.local.id)
+        app.setPinned(true, "b", on: HostConfig.local.id)
+        app.setPinned(false, "b", on: HostConfig.local.id)
+        app.setPinned(true, "c", on: ssh.id)
+
+        let restored = AppModel(defaults: defaults)
+
+        #expect(restored.isPinned("a", on: HostConfig.local.id))
+        #expect(!restored.isPinned("b", on: HostConfig.local.id))
+        #expect(restored.isPinned("c", on: ssh.id))
+        #expect(!restored.isPinned("c", on: HostConfig.local.id))
+
+        restored.removeHost(ssh.id)
+        #expect(AppModel(defaults: defaults).pinnedChats[ssh.id] == nil)
+    }
+
+    /// Chat ▸ Pin moves the chat into Pinned, and ⌃⇥ follows the sidebar with it on top.
+    @Test func pinningMovesAChatToTheTopOfTheSidebar() {
+        let w = window(.sample())
+        let chats = w.connection?.chats ?? []
+        let oldest = chats.min { ($0.summary?.updatedAt ?? .infinity) < ($1.summary?.updatedAt ?? .infinity) }!
+        #expect(!w.isPinned(oldest))
+
+        w.togglePin(oldest)
+
+        #expect(w.isPinned(oldest))
+        let sections = w.sidebarList(w.sidebarThreads)
+        #expect(sections.first?.title == "Pinned")
+        #expect(sections.first?.chats.map(\.id) == [oldest.id])
+        #expect(sections.dropFirst().allSatisfy { !$0.chats.contains { $0.id == oldest.id } })
+        #expect(w.adjacentChat(1) == oldest.id)
+
+        w.togglePin(oldest)
+        #expect(w.sidebarList(w.sidebarThreads).first?.title != "Pinned")
+    }
+
     /// Bypass Permissions is listed only when Settings offers it, or while a chat is in it.
     @Test func bypassStaysListedWhileChosen() {
         let app = AppModel.sample()
