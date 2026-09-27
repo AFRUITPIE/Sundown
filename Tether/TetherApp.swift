@@ -56,6 +56,19 @@ struct TetherApp: App {
             // View ▸ Show Toolbar / Customize Toolbar…, for the identified toolbar in RootView.
             ToolbarCommands()
         }
+        HostWindows(app: app)
+        // The Settings view supplies the split window's minimum size.
+        Settings { SettingsView(app: app) }
+        MenuBarScene(app: app)
+    }
+}
+
+/// The windows a host opens from the Host menu. A scene of their own: in `TetherApp.body` itself
+/// the scene type nested deeply enough that resolving it at launch overflowed the main thread's stack.
+private struct HostWindows: Scene {
+    let app: AppModel
+
+    var body: some Scene {
         // A host's Claude Code plugins.
         WindowGroup("Plugins", id: PluginsWindow.id, for: UUID.self) { $hostID in
             PluginsWindow(app: app, hostID: hostID)
@@ -71,10 +84,17 @@ struct TetherApp: App {
             ConnectionLogWindow(app: app, hostID: hostID)
         }
         .defaultSize(width: 620, height: 400)
-        // The Settings view supplies the split window's minimum size.
-        Settings { SettingsView(app: app) }
-        // Off unless Settings ▸ Notifications turns it on.
-        MenuBarExtra(isInserted: Binding(get: { app.alerts.menuBarExtra }, set: { app.alerts.menuBarExtra = $0 })) {
+    }
+}
+
+/// Chats waiting or working, in the menu bar; off unless Settings ▸ Notifications turns it on.
+private struct MenuBarScene: Scene {
+    let app: AppModel
+    /// Plain defaults, not the app model: see `AlertPreferences.menuBarExtraKey`.
+    @AppStorage(AlertPreferences.menuBarExtraKey) private var shown = false
+
+    var body: some Scene {
+        MenuBarExtra(isInserted: $shown) {
             MenuBarChats(app: app)
         } label: {
             MenuBarLabel(app: app)

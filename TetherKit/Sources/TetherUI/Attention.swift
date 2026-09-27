@@ -10,7 +10,11 @@ public struct AlertPreferences: Codable, Equatable, Sendable {
     public var needsInput = true
     public var sound = true
     public var dockBadge: DockBadge = .waiting
-    public var menuBarExtra = false
+
+    /// Show Chats in the Menu Bar, in plain defaults rather than here: a `MenuBarExtra` whose
+    /// `isInserted` read the observable app model sent the app's scene graph into an endless update
+    /// loop at launch, until the main thread's stack overflowed.
+    public static let menuBarExtraKey = "tether.menuBarExtra"
 
     public init() {}
 
@@ -45,7 +49,6 @@ public struct AlertPreferences: Codable, Equatable, Sendable {
         needsInput = (try? c.decodeIfPresent(Bool.self, forKey: .needsInput)) ?? d.needsInput
         sound = (try? c.decodeIfPresent(Bool.self, forKey: .sound)) ?? d.sound
         dockBadge = (try? c.decodeIfPresent(DockBadge.self, forKey: .dockBadge)) ?? d.dockBadge
-        menuBarExtra = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarExtra)) ?? d.menuBarExtra
     }
 }
 

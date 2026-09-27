@@ -5,6 +5,7 @@ import SwiftUI
 struct NotificationSettings: View {
     @Bindable var app: AppModel
     @State private var systemDenied = false
+    @AppStorage(AlertPreferences.menuBarExtraKey) private var menuBarExtra = false
 
     var body: some View {
         Form {
@@ -37,7 +38,7 @@ struct NotificationSettings: View {
                 Picker("Badge Shows", selection: $app.alerts.dockBadge) {
                     ForEach(AlertPreferences.DockBadge.allCases) { Text($0.label).tag($0) }
                 }
-                Toggle("Show Chats in the Menu Bar", isOn: $app.alerts.menuBarExtra)
+                Toggle("Show Chats in the Menu Bar", isOn: $menuBarExtra)
             }
         }
         .formStyle(.grouped)
