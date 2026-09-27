@@ -328,8 +328,9 @@ enum PerformanceTranscript {
                 running.status = .running
                 running.outputText = nil
                 out.append(("item/started", json(ItemStartedNotification(threadId: threadID, seq: next(), item: .toolCall(running)))))
-                // Blank frames: the call runs for a moment before it completes.
-                for _ in 0..<4 { out.append(("item/toolCall/progress", json(ItemToolCallProgressNotification(
+                // Blank frames: the call runs for a moment before it completes. The first runs for
+                // a few seconds, long enough for a UI test to find it running.
+                for _ in 0..<(section == 0 && call == 0 ? 200 : 4) { out.append(("item/toolCall/progress", json(ItemToolCallProgressNotification(
                     threadId: threadID, seq: next(), itemId: id, elapsedSeconds: 0.1)))) }
                 out.append(("item/completed", json(ItemCompletedNotification(threadId: threadID, seq: next(), item: done))))
             }

@@ -54,24 +54,54 @@ struct ItemView: View {
     }
 }
 
-/// A message's context menu: copy it, or branch the chat from it. Also how a person keeps what a
-/// reply said, or goes back to a point and tries something else (Fork from Here).
+/// What can be done with a message: copy it, or branch the chat from it (Fork from Here). In its
+/// context menu, and — since right-clicking the words themselves gives the text's own menu, and a
+/// context menu shouldn't be the only way to a command — in a small bar that appears on hover.
+/// VoiceOver gets the same as actions.
 private struct MessageMenu: ViewModifier {
     let id: String
     /// The message as it arrived: plain for a prompt, Markdown for a reply.
     let text: String
     let isMarkdown: Bool
     @Environment(\.forkChat) private var forkChat
+    @State private var hovering = false
 
     func body(content: Content) -> some View {
-        content.contextMenu {
-            // Converted when chosen, not per update: a streaming reply's body runs every frame.
-            Button("Copy") { copy(isMarkdown ? MarkdownView.plainText(text) : text) }
-            if isMarkdown { Button("Copy as Markdown") { copy(text) } }
-            Divider()
-            Button("Fork from Here") { forkChat(id) }
-        }
+        content
+            // The blank beside a short line is the message too, so right-clicking there works.
+            .contentShape(.rect)
+            .contextMenu {
+                Button("Copy", action: copyText)
+                if isMarkdown { Button("Copy as Markdown") { copy(text) } }
+                Divider()
+                Button("Fork from Here") { forkChat(id) }
+            }
+            .overlay(alignment: .topTrailing) {
+                if hovering { actions.offset(y: -14) }
+            }
+            // After the overlay, so moving onto the bar doesn't hide it.
+            .onHover { hovering = $0 }
+            .accessibilityAction(named: "Copy", copyText)
+            .accessibilityAction(named: "Fork from Here") { forkChat(id) }
     }
+
+    private var actions: some View {
+        HStack(spacing: 2) {
+            Button("Copy", systemImage: "doc.on.doc", action: copyText)
+                .help(isMarkdown ? "Copy this reply as text" : "Copy this message")
+            Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
+                .help("Start a new chat with the conversation up to here")
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .scaledFont(.callout)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .glassEffect(in: .capsule)
+    }
+
+    // Converted when chosen, not per update: a streaming reply's body runs every frame.
+    private func copyText() { copy(isMarkdown ? MarkdownView.plainText(text) : text) }
 
     private func copy(_ string: String) {
         NSPasteboard.general.clearContents()

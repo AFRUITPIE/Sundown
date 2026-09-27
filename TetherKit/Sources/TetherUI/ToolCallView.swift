@@ -24,6 +24,8 @@ struct ToolCallView: View {
                 header.contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // The status glyph is inside the label, where VoiceOver doesn't read it.
+            .accessibilityValue(statusDescription)
             if call.kind != .subagent, expanded || alwaysShowBody {
                 detail
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -41,7 +43,8 @@ struct ToolCallView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            // Status leads the row, where the eye starts; a finished call has none, just its words.
+            // A call that went wrong says so where the eye starts; a finished call has no glyph,
+            // just its words. A running one's spinner is at the trailing end, with its time.
             statusGlyph
             Text(title).foregroundStyle(.secondary)
             if !subtitle.isEmpty {
@@ -50,6 +53,11 @@ struct ToolCallView: View {
             Spacer(minLength: 8)
             if let s = call.elapsedSeconds, call.status == .running {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
+            }
+            if call.status == .pending || call.status == .running {
+                // Hidden, or the whole row reads as a progress indicator rather than a button;
+                // its value says it's running instead.
+                ProgressView().controlSize(.small).accessibilityHidden(true)
             }
             // A subagent opens in the inspector instead of expanding here.
             if call.kind == .subagent {
@@ -64,11 +72,20 @@ struct ToolCallView: View {
     /// A glyph only when there's something to notice.
     @ViewBuilder private var statusGlyph: some View {
         switch call.status {
-        case .pending, .running: ProgressView().controlSize(.small)
         case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).scaledFont(.caption)
         case .denied: Image(systemName: "hand.raised.fill").foregroundStyle(.orange).scaledFont(.caption)
         case .interrupted: Image(systemName: "stop.fill").foregroundStyle(.tertiary).scaledFont(.caption2)
         default: EmptyView()
+        }
+    }
+
+    private var statusDescription: String {
+        switch call.status {
+        case .pending, .running: "Running"
+        case .failed: "Failed"
+        case .denied: "Denied"
+        case .interrupted: "Stopped"
+        default: ""
         }
     }
 
