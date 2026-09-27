@@ -333,11 +333,8 @@ private struct ScaledFont: ViewModifier {
     let weight: Font.Weight?
     let explicitDesign: Font.Design?
     @Environment(\.textScale) private var scale
-    /// A reply's font (Settings ▸ Appearance ▸ Reply Font) comes down as the design.
-    @Environment(\.contentFontDesign) private var inheritedDesign
-
     func body(content: Content) -> some View {
-        let design = explicitDesign ?? inheritedDesign ?? .default
+        let design = explicitDesign ?? .default
         if abs(scale - 1) < 0.001 {
             content.font(.system(style, design: design, weight: weight))
         } else {
@@ -350,8 +347,6 @@ extension EnvironmentValues {
     /// Whether the window's host is this Mac, so a path in the transcript can be opened here.
     @Entry var hostIsLocal = false
 
-    /// The design `scaledFont` uses where none is given: a reply's font.
-    @Entry var contentFontDesign: Font.Design?
 }
 
 extension View {

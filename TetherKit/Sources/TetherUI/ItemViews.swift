@@ -26,7 +26,6 @@ struct ItemView: View {
         case .agentMessage(let m):
             MarkdownView(text: m.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .modifier(ReplyCard())
                 .messageMenu(id: m.id, text: m.text, isMarkdown: true, sentAt: m.createdAt)
         // Reasoning never renders; subagent items come through here too.
         case .reasoning: EmptyView()
@@ -55,22 +54,6 @@ struct ItemView: View {
     }
 }
 
-/// Settings ▸ Appearance ▸ Show Replies in Cards: a reply on a quiet fill of its own, the way a
-/// prompt has its bubble. An ordinary fill, not glass: transcript content isn't a control.
-private struct ReplyCard: ViewModifier {
-    @Environment(\.appearance) private var appearance
-
-    func body(content: Content) -> some View {
-        if appearance.replyCards {
-            content
-                .padding(12)
-                .background(.fill.quinary, in: .rect(cornerRadius: 12))
-        } else {
-            content
-        }
-    }
-}
-
 /// What can be done with a message: copy it, or branch the chat from it (Fork from Here). In its
 /// context menu, and — since right-clicking the words themselves gives the text's own menu, and a
 /// context menu shouldn't be the only way to a command — in a small bar that appears on hover,
@@ -88,8 +71,8 @@ private struct MessageMenu: ViewModifier {
     @Environment(\.appearance) private var appearance
     @State private var hovering = false
 
-    /// A prompt in a bubble sits at the trailing edge; everything else at the leading one.
-    private var trailing: Bool { !isMarkdown && appearance.promptStyle == .bubble }
+    /// A prompt's bubble sits at the trailing edge; a reply at the leading one.
+    private var trailing: Bool { !isMarkdown }
     private var barShowsActions: Bool { appearance.messageActions == .onHover }
     private var barShowsTime: Bool { appearance.timestamps == .onHover }
 
@@ -193,31 +176,15 @@ extension EnvironmentValues {
 struct UserMessageView: View {
     let message: Item.UserMessage
     @State private var images = MessageImageCache()
-    @Environment(\.appearance) private var appearance
 
     var body: some View {
-        switch appearance.promptStyle {
-        case .bubble:
-            HStack {
-                Spacer(minLength: 60)
-                parts(alignment: .trailing)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(message.synthetic == true ? AnyShapeStyle(.quaternary.opacity(0.4)) : AnyShapeStyle(.quaternary),
-                                in: RoundedRectangle(cornerRadius: 12))
-            }
-        case .plain:
-            // The column's full width, marked as yours by a bar at the leading edge.
-            parts(alignment: .leading)
-                .fontWeight(.medium)
-                .padding(.leading, 12)
-                .padding(.vertical, 2)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(message.synthetic == true ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.tint))
-                        .frame(width: 3)
-                }
+        HStack {
+            Spacer(minLength: 60)
+            parts(alignment: .trailing)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(message.synthetic == true ? AnyShapeStyle(.quaternary.opacity(0.4)) : AnyShapeStyle(.quaternary),
+                            in: RoundedRectangle(cornerRadius: 12))
         }
     }
 

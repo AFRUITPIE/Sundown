@@ -122,16 +122,12 @@ struct Composer: View {
     private var field: some View {
         HStack(alignment: .bottom, spacing: 10) {
             if appearance.composerLayout == .messages {
-                addButton
-                    .buttonStyle(.glass)
-                    .controlSize(.extraLarge)
+                addButton(glass: true)
             }
             HStack(alignment: .bottom, spacing: 8) {
                 if appearance.composerLayout == .inline {
                     // Inside the glass: a plain control, not glass on glass.
-                    addButton
-                        .buttonStyle(.borderless)
-                        .controlSize(.large)
+                    addButton(glass: false)
                         .padding(.bottom, 4)
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -235,11 +231,12 @@ struct Composer: View {
     }
 
     /// A prominent round button, as Messages draws Send.
+    /// Send or Stop inside the glass field: a standard prominent circle, not glass on glass.
     private struct RoundAction: ViewModifier {
         func body(content: Content) -> some View {
             content
                 .fontWeight(.bold)
-                .buttonStyle(.glassProminent)
+                .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.circle)
                 .controlSize(.large)
         }
@@ -294,7 +291,7 @@ struct Composer: View {
 
     /// The + menu, as the desktop app has it: attach, mention a file, or browse the commands
     /// that typing / offers, for someone who doesn't know them yet.
-    private var addButton: some View {
+    private func addButton(glass: Bool) -> some View {
         Menu {
             Button("Attach Files…", systemImage: "paperclip") { choosingFiles = true }
             Button("Mention a File", systemImage: "at") { insert("@") }
@@ -310,13 +307,18 @@ struct Composer: View {
             }
             .disabled(offered.isEmpty)
         } label: {
+            // Glass on the label itself: a glass button style doesn't reach a `Menu`. As tall as
+            // the field beside it at one line.
             Label("Add", systemImage: "plus")
+                .labelStyle(.iconOnly)
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: 34, height: 34)
+                .contentShape(.circle)
+                .glassEffect(glass ? .regular.interactive() : .identity, in: .circle)
         }
         .menuIndicator(.hidden)
         .menuStyle(.button)
-        .labelStyle(.iconOnly)
-        .fontWeight(.medium)
-        .buttonBorderShape(.circle)
+        .buttonStyle(.plain)
         .help("Attach files, mention one, or use a command")
         .accessibilityIdentifier("composer.add")
         .popoverTip(ComposerTip(), arrowEdge: .bottom)

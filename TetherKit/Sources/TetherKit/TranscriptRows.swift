@@ -17,9 +17,10 @@ public enum TranscriptRow: Sendable {
 }
 
 /// Folds top-level items into display rows, collapsing consecutive finished tool calls into a
-/// single "Used N tools" row. A call breaks the run — and stays on its own line — while it's
-/// still doing something worth watching, or while it needs attention:
-///   - not yet `.completed` (pending/running/failed/denied/interrupted)
+/// single "Used N tools" row, finished calls that failed or were denied included (the group says
+/// how many). A call breaks the run — and stays on its own line — while it's still doing something
+/// worth watching, or when it's more than a line:
+///   - still running (`.pending`/`.running`)
 ///   - `.todoWrite`, whose checklist is always shown inline and shouldn't be folded away
 ///   - `.subagent`, whose nested transcript is a heavier construct than a plain tool line
 /// A single ungroupable-adjacent completed call is left as a plain `.item`, not a one-call group.
@@ -55,7 +56,7 @@ public func foldTranscriptRows(_ items: [Item], grouping: Bool = true) -> [Trans
 }
 
 private func isGroupable(_ call: Item.ToolCall) -> Bool {
-    call.status == .completed && call.kind != .todoWrite && call.kind != .subagent
+    call.status != .running && call.status != .pending && call.kind != .todoWrite && call.kind != .subagent
 }
 
 // MARK: find

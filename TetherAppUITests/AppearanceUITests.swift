@@ -118,25 +118,6 @@ final class AppearanceUITests: XCTestCase {
         XCTAssertTrue(times.firstMatch.waitForExistence(timeout: 5))
     }
 
-    /// A prompt in a bubble sits at the trailing edge; plain, it starts at the column's leading edge
-    /// with the reply under it.
-    @MainActor
-    func testPlainPromptsStartAtTheLeadingEdge() {
-        let app = launch()
-        waitForLongChat(app)
-        let window = mainWindow(app)
-        let prompt = window.staticTexts["Step 29: look at the next part of the renderer and tighten it up."].firstMatch
-        let reply = window.staticTexts["Section 29: tightening the renderer"].firstMatch
-        XCTAssertTrue(prompt.waitForExistence(timeout: 5))
-        XCTAssertGreaterThan(prompt.frame.minX, reply.frame.minX + 40)
-
-        segment(openAppearance(app), "Plain", in: "Your Messages")
-
-        let deadline = Date().addingTimeInterval(5)
-        while prompt.frame.minX > reply.frame.minX + 40 && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
-        XCTAssertLessThan(prompt.frame.minX, reply.frame.minX + 40)
-    }
-
     /// Minimal has no + button; Inline puts it back, inside the field.
     @MainActor
     func testComposerLayouts() {

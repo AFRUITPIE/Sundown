@@ -27,14 +27,13 @@ struct MarkdownView: View {
             ForEach(blocks.indices, id: \.self) { i in
                 MarkdownBlockView(rendered: blocks[i],
                                   topPadding: i == 0 ? 0 : Self.spacing(after: blocks[i - 1].block, before: blocks[i].block) * appearance.density.blockScale,
-                                  isEnd: appearance.fadeInText && i == blocks.count - 1, arrives: arriving)
+                                  isEnd: i == blocks.count - 1, arrives: arriving)
                     .equatable()
             }
         }
         .lineSpacing(3)
         .textSelection(.enabled)
         .scaledFont(.body)
-        .environment(\.contentFontDesign, appearance.replyFont.design)
     }
 
     /// One parsed block and its inline text, parsed once. `id` changes only when the block is parsed

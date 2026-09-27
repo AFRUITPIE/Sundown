@@ -120,7 +120,7 @@ extension TranscriptView {
             return
         }
         let growth = new.content - old.content
-        guard growth > 0, growth < 160, !reduceMotion, appearance.followMotion == .glide else { return }
+        guard growth > 0, growth < 160, !reduceMotion else { return }
         glide = Glide(distance: growth, count: glide.count + 1)
     }
 }
@@ -214,7 +214,7 @@ struct TranscriptRowView: View, Equatable {
             switch row {
             case .item(let item):
                 LiveItemView(box: thread.box(for: item), thread: thread)
-                    .modifier(FadesIn(isNew: appearance.fadeInRows && thread.justStarted(item.id)))
+                    .modifier(FadesIn(isNew: thread.justStarted(item.id)))
             case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread)
             }
         }
@@ -347,7 +347,7 @@ struct TranscriptTail: View {
 
     var body: some View {
         Group {
-            if thread.isThinking, appearance.showThinking { ThinkingLine() }
+            if thread.isThinking { ThinkingLine() }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
                 TurnOutcome(status: turn.status, error: turn.result?.errors?.first)

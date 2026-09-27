@@ -20,22 +20,12 @@ struct AppearanceSettings: View {
                     ForEach(Appearance.Density.allCases) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                Picker("Reply Font", selection: $app.appearance.replyFont) {
-                    ForEach(Appearance.ReplyFont.allCases) { font in
-                        Text(font.label).fontDesign(font.design).tag(font)
-                    }
-                }
-                Picker("Your Messages", selection: $app.appearance.promptStyle) {
-                    ForEach(Appearance.PromptStyle.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
                 Picker("Timestamps", selection: $app.appearance.timestamps) {
                     ForEach(Appearance.Timestamps.allCases) { Text($0.label).tag($0) }
                 }
                 Picker("Message Actions", selection: $app.appearance.messageActions) {
                     ForEach(Appearance.MessageActions.allCases) { Text($0.label).tag($0) }
                 }
-                Toggle("Show Replies in Cards", isOn: $app.appearance.replyCards)
                 Toggle("Wrap Long Lines in Code", isOn: $app.appearance.wrapCode)
                 Toggle("Show the Last Turn’s Time and Cost", isOn: $app.appearance.turnSummary)
             }
@@ -47,31 +37,9 @@ struct AppearanceSettings: View {
                 Toggle("Group Finished Calls", isOn: $app.appearance.groupToolCalls)
                     .disabled(app.appearance.toolCallVisibility != .all)
                 Toggle("Show Icons", isOn: $app.appearance.toolIcons)
-                Picker("Status", selection: $app.appearance.statusSide) {
-                    ForEach(Appearance.Side.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                Picker("Disclosure Chevron", selection: $app.appearance.chevronSide) {
-                    ForEach(Appearance.Side.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
                 Toggle("Show How Long a Call Has Run", isOn: $app.appearance.showElapsed)
                 Toggle("Open Failed Calls", isOn: $app.appearance.expandFailures)
                 Toggle("Open Commands’ Output", isOn: $app.appearance.openCommandOutput)
-            }
-
-            Section {
-                Toggle("Fade In Streamed Text", isOn: $app.appearance.fadeInText)
-                Toggle("Fade In New Messages and Calls", isOn: $app.appearance.fadeInRows)
-                Picker("Follow a Reply", selection: $app.appearance.followMotion) {
-                    ForEach(Appearance.FollowMotion.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                Toggle("Show “Thinking…” Before a Reply", isOn: $app.appearance.showThinking)
-            } header: {
-                Text("Motion")
-            } footer: {
-                Text("With Reduce Motion on in System Settings, a reply is followed without gliding.")
             }
 
             Section("Window") {

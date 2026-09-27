@@ -49,9 +49,12 @@ struct TranscriptRowsTests {
         #expect(running.id == "t3" && running.status == .running)
     }
 
-    @Test func failedAndDeniedCallsBreakTheGroup() {
+    /// A failed or denied call is finished work too: it folds into the run, which says so.
+    @Test func failedAndDeniedCallsJoinTheGroup() {
         let rows = foldTranscriptRows([call("t1"), call("t2", status: .failed), call("t3"), call("t4", status: .denied), call("t5")])
-        #expect(rows.count == 5)
+        #expect(rows.count == 1)
+        guard case .toolGroup(let calls) = rows[0] else { Issue.record("expected one group"); return }
+        #expect(calls.count == 5)
     }
 
     @Test func todoWriteNeverGroups() {

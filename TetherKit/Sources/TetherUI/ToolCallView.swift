@@ -87,16 +87,10 @@ struct ToolCallView: View {
         call.kind == .todoWrite
     }
 
-    /// Chevron, status and icon on the sides Settings ▸ Appearance puts them. A finished call has
-    /// no status glyph, just its words.
+    /// Words first: an icon only with Settings ▸ Appearance ▸ Show Icons, and the status and the
+    /// disclosure chevron at the trailing end. A finished call has no status glyph.
     private var header: some View {
         HStack(spacing: 8) {
-            if appearance.chevronSide == .leading {
-                // A subagent opens in the inspector instead: its space is kept so titles line up.
-                DisclosureIndicator(expanded: expanded).opacity(call.kind == .subagent ? 0 : 1)
-            }
-            // Leading, a slot of its own even when empty, so every title starts in the same place.
-            if appearance.statusSide == .leading { Color.clear.frame(width: 16, height: 1).overlay { status } }
             if appearance.toolIcons {
                 Image(systemName: symbol).foregroundStyle(accentColor).frame(width: 16).accessibilityHidden(true)
             }
@@ -108,10 +102,11 @@ struct ToolCallView: View {
             if appearance.showElapsed, let s = call.elapsedSeconds, call.status == .running {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
-            if appearance.statusSide == .trailing { status }
+            status
+            // A subagent opens in the inspector instead of expanding here.
             if call.kind == .subagent {
                 Image(systemName: "sidebar.trailing").scaledFont(.caption2).foregroundStyle(.tertiary)
-            } else if appearance.chevronSide == .trailing {
+            } else {
                 DisclosureIndicator(expanded: expanded)
             }
         }
@@ -318,11 +313,7 @@ struct DisclosureIndicator: View {
 /// Where a tool row's detail starts: under its title, past whatever leads the row.
 enum ToolRowLayout {
     static func detailInset(_ appearance: Appearance) -> CGFloat {
-        var inset: CGFloat = 0
-        if appearance.chevronSide == .leading { inset += 18 }
-        if appearance.statusSide == .leading { inset += 24 }
-        if appearance.toolIcons { inset += 24 }
-        return max(inset, 12)
+        appearance.toolIcons ? 24 : 12
     }
 }
 
@@ -331,6 +322,9 @@ struct ToolCallGroupView: View {
     let thread: ThreadModel
     @State private var expanded: Bool
     @Environment(\.appearance) private var appearance
+
+    /// Calls in the run that failed or were denied.
+    private var failures: Int { calls.count { $0.status == .failed || $0.status == .denied } }
 
     init(calls: [Item.ToolCall], thread: ThreadModel, initiallyExpanded: Bool = false) {
         self.calls = calls
@@ -344,19 +338,26 @@ struct ToolCallGroupView: View {
                 withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
-                    if appearance.chevronSide == .leading { DisclosureIndicator(expanded: expanded) }
-                    if appearance.statusSide == .leading { Color.clear.frame(width: 16, height: 1) }
                     if appearance.toolIcons {
                         Image(systemName: "square.stack").foregroundStyle(.secondary).frame(width: 16).accessibilityHidden(true)
                     }
                     Text("Used \(calls.count) tools").foregroundStyle(.secondary)
                     Spacer(minLength: 8)
-                    if appearance.chevronSide == .trailing { DisclosureIndicator(expanded: expanded) }
+                    // What went wrong in the run, where a lone call shows its status.
+                    if failures > 0 {
+                        Label("\(failures)", systemImage: "exclamationmark.circle.fill")
+                            .labelStyle(.titleAndIcon)
+                            .foregroundStyle(.red)
+                            .scaledFont(.caption)
+                            .monospacedDigit()
+                    }
+                    DisclosureIndicator(expanded: expanded)
                 }
                 .scaledFont(.callout)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityValue(failures == 0 ? "" : failures == 1 ? "1 failed" : "\(failures) failed")
             if expanded {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
@@ -571,12 +572,10 @@ private func sampleFinishedRun() -> [Item.ToolCall] {
         .frame(width: 560)
 }
 
-/// Settings ▸ Appearance's other tool-call choices: icons, and chevron and status leading.
-#Preview("Tool calls (icons, leading)") {
+/// Settings ▸ Appearance ▸ Show Icons, and Open Failed Calls.
+#Preview("Tool calls (icons)") {
     var appearance = Appearance()
     appearance.toolIcons = true
-    appearance.chevronSide = .leading
-    appearance.statusSide = .leading
     appearance.expandFailures = true
     return VStack(alignment: .leading, spacing: 10) {
         ToolCallGroupView(calls: sampleFinishedRun(), thread: .sampleIdleChat())

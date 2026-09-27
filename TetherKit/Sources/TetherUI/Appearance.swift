@@ -7,8 +7,6 @@ import SwiftUI
 public struct Appearance: Codable, Equatable, Sendable {
     // Transcript
     public var density: Density = .standard
-    public var replyFont: ReplyFont = .system
-    public var promptStyle: PromptStyle = .bubble
     public var timestamps: Timestamps = .never
     public var messageActions: MessageActions = .onHover
     public var wrapCode = true
@@ -16,16 +14,10 @@ public struct Appearance: Codable, Equatable, Sendable {
     // Tool calls
     public var groupToolCalls = true
     public var toolIcons = false
-    public var statusSide: Side = .trailing
-    public var chevronSide: Side = .trailing
     public var showElapsed = true
     public var expandFailures = false
 
     // Motion
-    public var fadeInText = true
-    public var fadeInRows = true
-    public var followMotion: FollowMotion = .glide
-    public var showThinking = true
     public var turnSummary = false
 
     // Composer
@@ -50,7 +42,6 @@ public struct Appearance: Codable, Equatable, Sendable {
     public var doubleClickOpensWindow = true
     public var hostPickerInSidebar = false
     public var openCommandOutput = false
-    public var replyCards = false
     public var showTips = true
 
     public init() {}
@@ -77,41 +68,6 @@ public struct Appearance: Codable, Equatable, Sendable {
         }
     }
 
-    public enum ReplyFont: String, Codable, CaseIterable, Identifiable, Sendable {
-        case system, serif, rounded, monospaced
-        public var id: Self { self }
-        var label: String {
-            switch self {
-            case .system: "System"
-            case .serif: "Serif"
-            case .rounded: "Rounded"
-            case .monospaced: "Monospaced"
-            }
-        }
-        var design: Font.Design {
-            switch self {
-            case .system: .default
-            case .serif: .serif
-            case .rounded: .rounded
-            case .monospaced: .monospaced
-            }
-        }
-    }
-
-    public enum PromptStyle: String, Codable, CaseIterable, Identifiable, Sendable {
-        /// A bubble at the trailing edge, as Messages draws what you sent.
-        case bubble
-        /// Full width, marked by a bar at the leading edge, like a reply's quote.
-        case plain
-        public var id: Self { self }
-        var label: String {
-            switch self {
-            case .bubble: "Bubble"
-            case .plain: "Plain"
-            }
-        }
-    }
-
     public enum Timestamps: String, Codable, CaseIterable, Identifiable, Sendable {
         case never, onHover, always
         public var id: Self { self }
@@ -131,28 +87,6 @@ public struct Appearance: Codable, Equatable, Sendable {
             switch self {
             case .onHover: "On Hover and in the Context Menu"
             case .contextMenu: "In the Context Menu Only"
-            }
-        }
-    }
-
-    public enum Side: String, Codable, CaseIterable, Identifiable, Sendable {
-        case leading, trailing
-        public var id: Self { self }
-        var label: String {
-            switch self {
-            case .leading: "Leading"
-            case .trailing: "Trailing"
-            }
-        }
-    }
-
-    public enum FollowMotion: String, Codable, CaseIterable, Identifiable, Sendable {
-        case glide, jump
-        public var id: Self { self }
-        var label: String {
-            switch self {
-            case .glide: "Glide"
-            case .jump: "Jump"
             }
         }
     }
@@ -236,21 +170,13 @@ public struct Appearance: Codable, Equatable, Sendable {
         }
         let d = Appearance()
         density = value(.density, d.density)
-        replyFont = value(.replyFont, d.replyFont)
-        promptStyle = value(.promptStyle, d.promptStyle)
         timestamps = value(.timestamps, d.timestamps)
         messageActions = value(.messageActions, d.messageActions)
         wrapCode = value(.wrapCode, d.wrapCode)
         groupToolCalls = value(.groupToolCalls, d.groupToolCalls)
         toolIcons = value(.toolIcons, d.toolIcons)
-        statusSide = value(.statusSide, d.statusSide)
-        chevronSide = value(.chevronSide, d.chevronSide)
         showElapsed = value(.showElapsed, d.showElapsed)
         expandFailures = value(.expandFailures, d.expandFailures)
-        fadeInText = value(.fadeInText, d.fadeInText)
-        fadeInRows = value(.fadeInRows, d.fadeInRows)
-        followMotion = value(.followMotion, d.followMotion)
-        showThinking = value(.showThinking, d.showThinking)
         turnSummary = value(.turnSummary, d.turnSummary)
         composerLayout = value(.composerLayout, d.composerLayout)
         sendShortcut = value(.sendShortcut, d.sendShortcut)
@@ -269,7 +195,6 @@ public struct Appearance: Codable, Equatable, Sendable {
         doubleClickOpensWindow = value(.doubleClickOpensWindow, d.doubleClickOpensWindow)
         hostPickerInSidebar = value(.hostPickerInSidebar, d.hostPickerInSidebar)
         openCommandOutput = value(.openCommandOutput, d.openCommandOutput)
-        replyCards = value(.replyCards, d.replyCards)
         showTips = value(.showTips, d.showTips)
     }
 }

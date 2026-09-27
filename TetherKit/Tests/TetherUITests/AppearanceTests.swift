@@ -23,7 +23,7 @@ struct AppearanceTests {
         #expect(restored.density == .compact)
         #expect(restored.toolIcons)
         #expect(restored.sendShortcut == .commandReturn)
-        #expect(restored.replyFont == .system)
+        #expect(restored.wrapCode)
     }
 
     /// A store from a build that had fewer settings keeps what it had and defaults the rest; an
@@ -35,7 +35,7 @@ struct AppearanceTests {
         #expect(appearance.density == .spacious)
         #expect(!appearance.groupToolCalls)
         #expect(appearance.composerLayout == .messages)
-        #expect(appearance.fadeInText)
+        #expect(appearance.wrapCode)
     }
 
     @Test func textSizeStepsReadAsPercentages() {

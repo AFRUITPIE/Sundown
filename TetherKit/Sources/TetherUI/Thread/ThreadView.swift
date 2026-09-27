@@ -32,16 +32,11 @@ struct ThreadView: View {
 /// The other side of each choice in Settings ▸ Appearance.
 #Preview("Idle chat (alternative appearance)") {
     var appearance = Appearance()
-    appearance.promptStyle = .plain
     appearance.timestamps = .always
     appearance.toolIcons = true
-    appearance.chevronSide = .leading
-    appearance.statusSide = .leading
     appearance.groupToolCalls = false
     appearance.density = .spacious
-    appearance.replyFont = .serif
     appearance.composerLayout = .inline
-    appearance.replyCards = true
     return NavigationStack {
         ThreadView(thread: .sampleIdleChat(), connection: .sample())
     }
@@ -52,7 +47,6 @@ struct ThreadView: View {
 #Preview("Running turn (compact, minimal composer)") {
     var appearance = Appearance()
     appearance.density = .compact
-    appearance.replyFont = .rounded
     appearance.composerLayout = .minimal
     appearance.wrapCode = false
     return NavigationStack {
