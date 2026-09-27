@@ -20,7 +20,8 @@ struct BottomBar: View {
                 }
                 // Always mounted, so a draft survives a prompt arriving (#3). The prompt is answered
                 // first — Send is disabled under it, Stop is not.
-                Composer(connection: connection, cwd: thread.cwd, thread: thread, awaitingAnswer: pending != nil, onStop: {
+                Composer(connection: connection, cwd: thread.cwd, thread: thread, draftKey: thread.id,
+                         awaitingAnswer: pending != nil, onStop: {
                     Task { await connection.interrupt(thread) }
                 }, submit: { input in
                     await connection.send(thread, input: input)
@@ -45,7 +46,8 @@ struct StatusStrip: View {
         if !parts.isEmpty || auth != nil {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(parts, id: \.self) { m in
-                    Text(m).font(.callout).lineLimit(3)
+                    // Selectable, so an error can be copied into a search or a bug report.
+                    Text(m).font(.callout).lineLimit(3).textSelection(.enabled)
                 }
                 if let auth { AuthStatusView(status: auth) }
             }

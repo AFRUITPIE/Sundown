@@ -3,12 +3,12 @@ import TetherKit
 
 /// The inspector's content: the selected chat's, or a placeholder so the column is never blank.
 struct InspectorView: View {
-    @Bindable var app: AppModel
+    @Bindable var window: WindowModel
     @Binding var selectedTaskID: String?
 
     var body: some View {
-        if let thread = app.selectedThread, let connection = app.connection {
-            ThreadInspector(thread: thread, connection: connection, pane: $app.inspectorPane,
+        if let thread = window.selectedThread, let connection = window.connection {
+            ThreadInspector(thread: thread, connection: connection, pane: $window.inspectorPane,
                             selectedTaskID: $selectedTaskID)
         } else {
             ContentUnavailableView("No Session", systemImage: "sidebar.trailing")
@@ -60,13 +60,13 @@ struct ThreadInspector: View {
 /// The inspector's show/hide button: plain, like Xcode's, so it doesn't tint while the inspector
 /// is open. Declared by the inspector, so it sits above the column.
 struct InspectorToggle: View {
-    @Bindable var app: AppModel
+    @Bindable var window: WindowModel
 
     var body: some View {
         Button("Inspector", systemImage: "sidebar.trailing") {
-            app.showInspector.toggle()
+            window.showInspector.toggle()
         }
-        .help(app.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+        .help(window.showInspector ? "Hide tasks, session details and MCP servers" : "Show tasks, session details and MCP servers")
     }
 }
 
@@ -115,26 +115,25 @@ func inspectorPreview<Content: View>(@ViewBuilder _ content: () -> Content) -> s
     .frame(width: 900, height: 640)
 }
 
-/// The whole inspector the way `RootView` builds it, from an `AppModel` with a chat selected.
+/// The whole inspector the way `RootView` builds it, from a window with a chat selected.
 /// The segmented shell itself is shown by each pane's previews, which host `ThreadInspector`.
 /// #Preview bodies are result-builder closures (no `if`/control flow), so selection happens here.
 @MainActor
-private func inspectorPreviewApp() -> AppModel {
+private func inspectorPreviewWindow() -> WindowModel {
     let app = AppModel.sample()
-    if let chat = app.connection?.chats.first { app.open(threadID: chat.id) }
-    return app
+    return .sample(app, threadID: app.connection(app.lastHostID)?.chats.first?.id)
 }
 
 #Preview("Inspector (from AppModel)") {
     inspectorPreview {
-        InspectorView(app: inspectorPreviewApp(), selectedTaskID: .constant(nil))
+        InspectorView(window: inspectorPreviewWindow(), selectedTaskID: .constant(nil))
     }
 }
 
 /// New Chat: no session to inspect, and the column still says so.
 #Preview("Inspector (no session)") {
     inspectorPreview {
-        InspectorView(app: .sample(), selectedTaskID: .constant(nil))
+        InspectorView(window: .sample(), selectedTaskID: .constant(nil))
     }
 }
 #endif

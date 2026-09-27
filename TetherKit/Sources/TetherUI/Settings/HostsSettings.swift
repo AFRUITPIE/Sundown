@@ -24,7 +24,7 @@ struct HostsSettings: View {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .task { if selection == nil { selection = app.hostID } }
+        .task { if selection == nil { selection = app.lastHostID } }
         .sheet(isPresented: $addingHost) {
             AddSSHHostSheet { host in
                 app.addHost(host)
@@ -64,7 +64,7 @@ struct HostsSettings: View {
                     Image(systemName: "plus")
                 }
                 .accessibilityLabel("Add SSH Host")
-                .help("Add SSH Host")
+                .help("Add a computer you reach over SSH")
 
                 Button {
                     hostToRemove = removableHost
@@ -73,7 +73,7 @@ struct HostsSettings: View {
                 }
                 .disabled(removableHost == nil)
                 .accessibilityLabel("Remove Host")
-                .help("Remove Host")
+                .help("Stop showing this host; its chats stay on it")
             }
         }
         .padding()
@@ -168,22 +168,19 @@ extension HostConnection.State {
 
 #Preview("Hosts (connected SSH host)") {
     let ssh = HostConnection.sampleConnectedSSH()
-    let app = AppModel.sample(connections: [.sample(), ssh])
-    app.hostID = ssh.id
-    return HostsSettings(app: app)
+    // First, so Settings opens on it.
+    return HostsSettings(app: .sample(connections: [ssh, .sample()]))
 }
 
 #Preview("Hosts (connection failed)") {
     let failed = HostConnection.sampleFailed()
-    let app = AppModel.sample(connections: [.sample(), failed])
-    app.hostID = failed.id
-    return HostsSettings(app: app)
+    // First, so Settings opens on it.
+    return HostsSettings(app: .sample(connections: [failed, .sample()]))
 }
 
 #Preview("Hosts (connecting)") {
     let connecting = HostConnection.sampleConnecting()
-    let app = AppModel.sample(connections: [.sample(), connecting])
-    app.hostID = connecting.id
-    return HostsSettings(app: app)
+    // First, so Settings opens on it.
+    return HostsSettings(app: .sample(connections: [connecting, .sample()]))
 }
 #endif

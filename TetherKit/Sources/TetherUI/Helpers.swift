@@ -64,6 +64,20 @@ extension EnvironmentValues {
     /// What the composer's field starts with. Empty everywhere in the app; previews set it to show
     /// the field with a draft in it, which is otherwise the composer's own private state.
     @Entry var composerDraft: String = ""
+
+    /// Where each chat's unsent text is kept; the shell sets it to the app's store.
+    @Entry var composerDrafts = ComposerDrafts()
+}
+
+/// The app's per-chat drafts, as the composer reaches them. Compares by the store it points at, so
+/// setting it in a body doesn't invalidate every composer.
+struct ComposerDrafts: Equatable {
+    weak var app: AppModel?
+
+    @MainActor func text(for key: String) -> String { app?.draft(for: key) ?? "" }
+    @MainActor func set(_ text: String, for key: String) { app?.setDraft(text, for: key) }
+
+    static func == (a: Self, b: Self) -> Bool { a.app === b.app }
 }
 
 enum Layout {

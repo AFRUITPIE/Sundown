@@ -60,7 +60,7 @@ struct TranscriptView: View {
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
                     .controlSize(.large)
-                    .help("Jump to Latest")
+                    .help("Scroll to the newest message")
                     .padding(.bottom, 8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -198,7 +198,7 @@ struct TranscriptPlaceholder<Actions: View>: View {
         ContentUnavailableView {
             Label(title, systemImage: symbol)
         } description: {
-            if let detail { Text(detail) }
+            if let detail { Text(detail).textSelection(.enabled) }
         } actions: {
             actions
         }
@@ -245,6 +245,7 @@ struct TurnOutcome: View {
                 Label("Interrupted", systemImage: "stop.circle").foregroundStyle(.tertiary)
             } else {
                 Label(error ?? "The turn failed", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
+                    .textSelection(.enabled)
             }
         }
         .font(.caption)

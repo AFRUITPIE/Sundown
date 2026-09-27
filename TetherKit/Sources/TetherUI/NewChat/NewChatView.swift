@@ -5,12 +5,12 @@ import TetherProtocol
 /// Compose a new chat: choose the working directory, then send the first message. The host is
 /// the one the sidebar shows.
 struct NewChatView: View {
-    @Bindable var app: AppModel
+    @Bindable var window: WindowModel
     @State private var choosingLocalFolder = false
     @State private var choosingRemoteFolder = false
 
     /// The same host the sidebar shows, so its chats and this draft always agree.
-    private var connection: HostConnection? { app.connection }
+    private var connection: HostConnection? { window.connection }
 
     var body: some View {
         // No Form: a scrolling Form draws a hard scroll edge under the toolbar, which a chat
@@ -23,13 +23,14 @@ struct NewChatView: View {
                 if let connection {
                     VStack(alignment: .leading, spacing: 10) {
                         folderPicker
-                        if let error = app.draftError {
+                        if let error = window.draftError {
                             Label(error, systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(.red)
                         }
                         GlassEffectContainer(spacing: 10) {
-                            Composer(connection: connection, cwd: app.draftDirectory,
-                                     placeholder: app.draftDirectory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…",
+                            Composer(connection: connection, cwd: window.draftDirectory,
+                                     draftKey: "new-chat:\(window.hostID)",
+                                     placeholder: window.draftDirectory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…",
                                      submit: { input in await start(connection, input) })
                         }
                     }
@@ -53,17 +54,17 @@ struct NewChatView: View {
 
     /// Recent folders, then Other… for any folder.
     private var folderPicker: some View {
-        Picker("Folder", selection: Binding(get: { app.draftDirectory }, set: { new in
+        Picker("Folder", selection: Binding(get: { window.draftDirectory }, set: { new in
             if new == Self.otherTag { chooseFolder() } else { choose(new) }
         })) {
             // Only while there is nothing to select: a menu Picker needs a row for its value.
-            if app.draftDirectory == nil {
+            if window.draftDirectory == nil {
                 Text("No Folder").tag(String?.none)
             }
             ForEach(connection?.projects.prefix(15) ?? [], id: \.cwd) { p in
                 Text(p.cwd.abbreviatingHome).tag(Optional(p.cwd))
             }
-            if let d = app.draftDirectory, !(connection?.projects.contains { $0.cwd == d } ?? false) {
+            if let d = window.draftDirectory, !(connection?.projects.contains { $0.cwd == d } ?? false) {
                 Text(d.abbreviatingHome).tag(Optional(d))
             }
             Divider()
@@ -79,13 +80,13 @@ struct NewChatView: View {
     private static let otherTag = "__other__"
 
     private func choose(_ directory: String?) {
-        app.draftDirectory = directory
-        app.draftError = nil
+        window.draftDirectory = directory
+        window.draftError = nil
     }
 
     private func useFirstProjectIfUnset() {
-        guard app.draftDirectory == nil else { return }
-        app.draftDirectory = connection?.projects.first?.cwd
+        guard window.draftDirectory == nil else { return }
+        window.draftDirectory = connection?.projects.first?.cwd
     }
 
     private func chooseFolder() {
@@ -93,15 +94,15 @@ struct NewChatView: View {
     }
 
     private func start(_ connection: HostConnection, _ input: [UserInput]) async {
-        guard let cwd = app.draftDirectory else { app.draftError = "Choose a folder first."; return }
-        app.draftError = nil
+        guard let cwd = window.draftDirectory else { window.draftError = "Choose a folder first."; return }
+        window.draftError = nil
         do {
             let t = try await connection.startThread(cwd: cwd, input: input,
-                                                       options: .init(model: app.draftModel, effort: app.draftEffort,
-                                                                      permissionMode: app.draftPermissionMode, fastMode: app.draftFastMode))
-            app.open(threadID: t.id, on: connection.id)
+                                                       options: .init(model: window.draftModel, effort: window.draftEffort,
+                                                                      permissionMode: window.draftPermissionMode, fastMode: window.draftFastMode))
+            window.open(threadID: t.id, on: connection.id)
         } catch {
-            app.draftError = error.localizedDescription
+            window.draftError = error.localizedDescription
         }
     }
 }
@@ -109,14 +110,14 @@ struct NewChatView: View {
 #if DEBUG
 #Preview("NewChatView") {
     NavigationStack {
-        NewChatView(app: .sample())
+        NewChatView(window: .sample())
     }
     .frame(width: 900, height: 700)
 }
 
 #Preview("NewChatView (not connected)") {
     NavigationStack {
-        NewChatView(app: .sample(connections: [.sampleFailed()]))
+        NewChatView(window: .sample(.sample(connections: [.sampleFailed()])))
     }
     .frame(width: 900, height: 700)
 }

@@ -1,0 +1,195 @@
+import Foundation
+import Observation
+import SwiftUI
+import TetherKit
+import TetherProtocol
+
+/// What a new window opens on: a host, and a chat on it or New Chat. Codable so File ▸ New Window
+/// and Open in New Window can pass it to `openWindow(value:)`, and the system can restore it.
+public struct WindowTarget: Codable, Hashable, Sendable {
+    public var hostID: UUID
+    public var threadID: String?
+
+    public init(hostID: UUID, threadID: String? = nil) {
+        self.hostID = hostID
+        self.threadID = threadID
+    }
+}
+
+/// One window's state: its host, the chat on screen (or New Chat and its draft), its inspector,
+/// and the chat a sheet or alert is acting on. App-wide state — hosts, connections, preferences —
+/// is on `app`. Each change is also remembered there, so a new window or the next launch opens
+/// where the most recently used window left off.
+@MainActor
+@Observable
+public final class WindowModel {
+    public let app: AppModel
+
+    /// The host the sidebar is showing. Changing it starts a new chat there.
+    public var hostID: UUID {
+        didSet {
+            guard hostID != oldValue else { return }
+            // A remembered host can disappear between launches; this Mac is always configured.
+            if app.connections[hostID] == nil && !app.hosts.contains(where: { $0.id == hostID }) {
+                hostID = HostConfig.local.id
+            }
+            threadID = nil
+            seedDraft()
+            app.remember(self)
+        }
+    }
+
+    /// The chat on screen, or nil for New Chat.
+    /// Resolved here rather than in a view body: resolving can create the thread's model.
+    public var threadID: String? {
+        didSet {
+            guard started else { return }
+            resolveSelection()
+            app.remember(self)
+        }
+    }
+    public private(set) var selectedThread: ThreadModel?
+    /// Which host `selectedThread` came from, so it is let go on the right connection.
+    private var selectedThreadHost: UUID?
+
+    /// Whether the trailing inspector is shown.
+    public var showInspector: Bool { didSet { app.remember(self) } }
+    /// The pane the inspector shows, kept while it is closed.
+    public var inspectorPane: InspectorPane { didSet { app.remember(self) } }
+
+    /// The New Chat screen's session controls, reset to the defaults by `newChat()`.
+    public var draftModel: String?
+    public var draftEffort: EffortLevel?
+    public var draftPermissionMode: PermissionMode = .default
+    /// Carried into `startThread`; off unless the user asks for it on this chat.
+    public var draftFastMode = false
+    /// The New Chat folder: the host's most recent project until one is chosen, nil before the
+    /// projects arrive.
+    public var draftDirectory: String?
+    /// Why the New Chat draft couldn't start, cleared with the draft.
+    var draftError: String?
+
+    /// The chat Rename… or Delete… is acting on, from the Chat menu or a sidebar row's context menu.
+    public var renaming: ThreadModel?
+    public var deleting: ThreadModel?
+
+    /// Whether `start()` has run: until then nothing is resolved, so making a model in a view's
+    /// initializer has no side effects.
+    private var started = false
+
+    /// Opens on `target`, or where the most recently used window was.
+    public init(app: AppModel, target: WindowTarget? = nil) {
+        self.app = app
+        let host = target?.hostID ?? app.lastHostID
+        self.hostID = app.connections[host] != nil || app.hosts.contains(where: { $0.id == host }) ? host : HostConfig.local.id
+        self.threadID = target == nil ? app.lastThreadID : target?.threadID
+        self.showInspector = app.lastShowInspector
+        self.inspectorPane = app.lastInspectorPane
+    }
+
+    /// Shows the chat and seeds the draft. Called once the window is on screen.
+    public func start() {
+        guard !started else { return }
+        started = true
+        app.register(self)
+        seedDraft()
+        resolveSelection()
+    }
+
+    /// The window closed: its chat is no longer on screen here.
+    public func close() {
+        guard started else { return }
+        app.unregister(self)
+        app.release(selectedThread, on: selectedThreadHost)
+        selectedThread = nil
+        selectedThreadHost = nil
+        started = false
+    }
+
+    /// The host the sidebar is showing.
+    public var host: HostConfig? { app.hosts.first { $0.id == hostID } }
+
+    /// The connection for the host the sidebar is showing.
+    public var connection: HostConnection? { app.connections[hostID] }
+
+    /// Where Open in New Window and the window's restoration point.
+    public var target: WindowTarget { WindowTarget(hostID: hostID, threadID: threadID) }
+
+    /// The window's subtitle: the chat's folder name, or the New Chat folder's; the full path is in
+    /// the Session pane, or the folder pop-up on New Chat. Prefixed with the host when there is
+    /// more than one, since nothing else in the window names it.
+    public var subtitle: String {
+        let folder = selectedThread.map { $0.cwd } ?? draftDirectory
+        let name = folder.map { ($0 as NSString).lastPathComponent } ?? ""
+        guard app.hosts.count > 1, let host = host?.name else { return name }
+        return name.isEmpty ? host : "\(host) · \(name)"
+    }
+
+    /// True when the inspector is open on `pane`.
+    public func isInspecting(_ pane: InspectorPane) -> Bool { showInspector && inspectorPane == pane }
+
+    /// Shows `pane`, opening the inspector if it is closed.
+    public func openInspector(on pane: InspectorPane) {
+        if inspectorPane != pane { inspectorPane = pane }
+        if !showInspector { showInspector = true }
+    }
+
+    /// Start composing a new chat on the host the sidebar is showing.
+    public func newChat() {
+        threadID = nil
+        seedDraft()
+    }
+
+    /// Show a chat, optionally switching host first (the debug launch hook does).
+    public func open(threadID id: String, on host: UUID? = nil) {
+        if let host, host != hostID { hostID = host }
+        threadID = id
+    }
+
+    /// A host this window shows was removed: fall back to this Mac.
+    func hostRemoved(_ id: UUID) {
+        if hostID == id { hostID = HostConfig.local.id }
+    }
+
+    /// Picks the defaults up again after Settings changes them, if New Chat hasn't been touched.
+    func seedDraft() {
+        // Always a concrete model: the Settings default, else the catalog's.
+        draftModel = app.defaultModel ?? app.connections[hostID]?.models.defaultValue
+        draftEffort = app.defaultEffort.map(EffortLevel.init(rawValue:))
+        draftPermissionMode = PermissionMode(rawValue: app.defaultPermissionMode)
+        draftFastMode = false
+        draftDirectory = app.connections[hostID]?.projects.first?.cwd
+        draftError = nil
+    }
+
+    private func resolveSelection() {
+        let previous = selectedThread
+        let previousHost = selectedThreadHost
+        if let id = threadID, let c = app.connections[hostID] {
+            selectedThread = c.thread(id)
+            selectedThreadHost = hostID
+        } else {
+            selectedThread = nil
+            selectedThreadHost = nil
+        }
+        guard previous !== selectedThread else { return }
+        app.retain(selectedThread)
+        app.release(previous, on: previousHost)
+    }
+}
+
+extension FocusedValues {
+    /// The frontmost window's model, for the menu bar's commands.
+    @Entry public var window: WindowModel?
+}
+
+#if DEBUG
+extension WindowModel {
+    /// A started window on `app`, showing `threadID` if given, for `#Preview`s and tests.
+    public static func sample(_ app: AppModel = .sample(), threadID: String? = nil) -> WindowModel {
+        let window = WindowModel(app: app, target: WindowTarget(hostID: app.lastHostID, threadID: threadID))
+        window.start()
+        return window
+    }
+}
+#endif

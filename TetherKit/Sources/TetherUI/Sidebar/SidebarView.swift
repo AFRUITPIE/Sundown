@@ -5,26 +5,28 @@ import TetherKit
 /// The chats of the one host the window is showing: grouped, searchable, and with a single
 /// context menu for the whole list.
 struct SidebarView: View {
-    @Bindable var app: AppModel
+    @Bindable var window: WindowModel
     @State private var search: String
-    @State private var renaming: ThreadModel?
-    @State private var renameTitle = ""
 
     /// `search` is a parameter only so a preview can show the no-results state.
-    init(app: AppModel, search: String = "") {
-        self.app = app
+    init(window: WindowModel, search: String = "") {
+        self.window = window
         _search = State(initialValue: search)
     }
+
+    private var app: AppModel { window.app }
 
     var body: some View {
         // Once per body: the list and its empty state both need it, and it sorts every chat.
         let sections = resolvedSections
-        List(selection: $app.threadID) {
+        List(selection: $window.threadID) {
             ForEach(sections) { section in
                 Section {
                     ForEach(section.rows) { row in
                         ChatRow(thread: row.thread, grouping: app.sidebarGrouping)
                             .tag(row.id)
+                            // The full title, for one the column truncates.
+                            .help(row.thread.title)
                     }
                 } header: {
                     header(section)
@@ -36,17 +38,6 @@ struct SidebarView: View {
         // One menu for the list: the row's when a row was hit, the list's own when the empty area was.
         .contextMenu(forSelectionType: String.self) { menu(for: $0) }
         .overlay { emptyState(isEmpty: sections.isEmpty) }
-        // On the List, not on a Section: a Section is not where SwiftUI looks for a presentation.
-        .alert("Rename Chat", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-            TextField("Title", text: $renameTitle)
-            Button("Rename") {
-                if let thread = renaming, let connection = app.connection, !renameTitle.isEmpty {
-                    Task { await connection.rename(thread, renameTitle) }
-                }
-                renaming = nil
-            }
-            Button("Cancel", role: .cancel) { renaming = nil }
-        }
     }
 
     // MARK: rows
@@ -60,7 +51,7 @@ struct SidebarView: View {
             search: search)
     }
 
-    private var threads: [ThreadModel] { app.connection?.chats ?? [] }
+    private var threads: [ThreadModel] { window.connection?.chats ?? [] }
 
     private var threadsByID: [String: ThreadModel] {
         Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -100,7 +91,7 @@ struct SidebarView: View {
     }
 
     @ViewBuilder private var hostActions: some View {
-        if let connection = app.connection {
+        if let connection = window.connection {
             ConnectButton(connection: connection)
             if let info = connection.serverInfo {
                 Divider()
@@ -112,21 +103,10 @@ struct SidebarView: View {
     // MARK: menus
 
     @ViewBuilder private func menu(for ids: Set<String>) -> some View {
-        if let id = ids.first, let thread = threadsByID[id], let connection = app.connection {
-            Button("Rename…") {
-                renameTitle = thread.title
-                renaming = thread
-            }
-            Button("Duplicate") {
-                Task { if let fork = await connection.fork(thread) { app.open(threadID: fork.id) } }
-            }
-            if let cwd = thread.cwd, connection.host.isLocal {
-                Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: cwd) }
-            }
-            Divider()
-            Button("Delete", role: .destructive) { Task { await connection.delete(thread) } }
+        if let id = ids.first, let thread = threadsByID[id] {
+            ChatActionItems(window: window, thread: thread, hidesUnavailable: true)
         } else {
-            Picker("Group By", selection: $app.sidebarGrouping) {
+            Picker("Group By", selection: Bindable(app).sidebarGrouping) {
                 ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
             }
             Divider()
@@ -139,7 +119,7 @@ struct SidebarView: View {
     /// Shown only when there is no list to show: a reconnect that still has its chats keeps them
     /// on screen rather than covering them with a progress message.
     @ViewBuilder private func emptyState(isEmpty: Bool) -> some View {
-        if isEmpty, let connection = app.connection {
+        if isEmpty, let connection = window.connection {
             switch connection.state {
             case .connecting(let message):
                 ContentUnavailableView { ProgressView() } description: { Text(message) }
@@ -187,9 +167,11 @@ struct NotConnectedView: View {
 /// The sidebar as the split view hosts it: same column width as RootView, so truncation and
 /// alignment here are the ones the app has.
 @MainActor
-private func sidebarPreview(_ app: AppModel, search: String = "") -> some View {
-    NavigationSplitView {
-        SidebarView(app: app, search: search)
+private func sidebarPreview(_ app: AppModel, host: UUID? = nil, search: String = "") -> some View {
+    let window = WindowModel.sample(app)
+    if let host { window.hostID = host }
+    return NavigationSplitView {
+        SidebarView(window: window, search: search)
             .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
     } detail: {
         Text("Detail").foregroundStyle(.secondary)
@@ -213,16 +195,12 @@ private func sidebarPreview(_ app: AppModel, search: String = "") -> some View {
 
 #Preview("Sidebar (host failed)") {
     let failed = HostConnection.sampleFailed()
-    let app = AppModel.sample(connections: [.sample(), failed])
-    app.hostID = failed.id
-    return sidebarPreview(app)
+    return sidebarPreview(.sample(connections: [.sample(), failed]), host: failed.id)
 }
 
 #Preview("Sidebar (host connecting)") {
     let connecting = HostConnection.sampleConnecting()
-    let app = AppModel.sample(connections: [.sample(), connecting])
-    app.hostID = connecting.id
-    return sidebarPreview(app)
+    return sidebarPreview(.sample(connections: [.sample(), connecting]), host: connecting.id)
 }
 
 #Preview("Sidebar (no chats)") {

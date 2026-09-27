@@ -304,8 +304,9 @@ final class MarkdownCache {
         return value
     }
 
-    /// Inline code as a tinted monospaced run on a faint fill; bold a touch heavier than the
-    /// default so it reads as emphasis in body text.
+    /// Inline code as a monospaced run on a faint fill, in the text's own color: red already means
+    /// a failure or a risky permission elsewhere. Bold a touch heavier than the default so it reads
+    /// as emphasis in body text.
     private static func style(_ value: inout AttributedString) {
         let ranges = value.runs.compactMap { run -> (Range<AttributedString.Index>, InlinePresentationIntent)? in
             run.inlinePresentationIntent.map { (run.range, $0) }
@@ -313,8 +314,7 @@ final class MarkdownCache {
         for (range, intent) in ranges {
             if intent.contains(.code) {
                 value[range].font = .system(.callout, design: .monospaced)
-                value[range].foregroundColor = Color.inlineCode
-                value[range].backgroundColor = Color.primary.opacity(0.07)
+                value[range].backgroundColor = Color.primary.opacity(0.08)
             } else if intent.contains(.stronglyEmphasized) {
                 value[range].font = .body.weight(.semibold)
             }
@@ -333,15 +333,6 @@ extension MarkdownView.Block {
             []
         }
     }
-}
-
-extension Color {
-    /// Inline code: a muted red that holds contrast in both appearances.
-    static let inlineCode = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0.93, green: 0.49, blue: 0.47, alpha: 1)
-            : NSColor(srgbRed: 0.75, green: 0.22, blue: 0.20, alpha: 1)
-    })
 }
 
 /// Monospaced block that wraps and sizes itself; long output collapses to `lineLimit` lines.

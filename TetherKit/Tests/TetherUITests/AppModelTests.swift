@@ -5,128 +5,216 @@ import TetherKit
 
 @MainActor
 @Suite
-struct AppModelTests {
+struct WindowModelTests {
     private func isolatedDefaults() -> UserDefaults {
         UserDefaults(suiteName: "tether.tests.\(UUID().uuidString)")!
     }
 
-    @Test func opensOnANewLocalChat() {
-        let app = AppModel(defaults: isolatedDefaults())
+    private func window(_ app: AppModel, target: WindowTarget? = nil) -> WindowModel {
+        let window = WindowModel(app: app, target: target)
+        window.start()
+        return window
+    }
 
-        #expect(app.hostID == HostConfig.local.id)
-        #expect(app.threadID == nil)
-        #expect(app.selectedThread == nil)
+    @Test func opensOnANewLocalChat() {
+        let w = window(AppModel(defaults: isolatedDefaults()))
+
+        #expect(w.hostID == HostConfig.local.id)
+        #expect(w.threadID == nil)
+        #expect(w.selectedThread == nil)
     }
 
     @Test func selectingAChatResolvesItOnTheCurrentHost() {
-        let app = AppModel(defaults: isolatedDefaults())
+        let w = window(AppModel(defaults: isolatedDefaults()))
 
-        app.open(threadID: "thread-1")
+        w.open(threadID: "thread-1")
 
-        #expect(app.threadID == "thread-1")
-        #expect(app.selectedThread?.id == "thread-1")
+        #expect(w.threadID == "thread-1")
+        #expect(w.selectedThread?.id == "thread-1")
         // The same identity every time, or subscriptions and pending prompts would be lost.
-        let again = app.selectedThread
-        app.threadID = "thread-1"
-        #expect(app.selectedThread === again)
+        let again = w.selectedThread
+        w.threadID = "thread-1"
+        #expect(w.selectedThread === again)
+    }
+
+    @Test func nothingResolvesBeforeTheWindowStarts() {
+        let app = AppModel(defaults: isolatedDefaults())
+        let w = WindowModel(app: app, target: WindowTarget(hostID: HostConfig.local.id, threadID: "thread-1"))
+        #expect(w.selectedThread == nil)
+        #expect(app.openWindows.isEmpty)
+        w.start()
+        #expect(w.selectedThread?.id == "thread-1")
+        #expect(app.openWindows.count == 1)
     }
 
     @Test func newChatKeepsTheSelectedHost() {
-        let app = AppModel(defaults: isolatedDefaults())
-        app.open(threadID: "thread-1")
+        let w = window(AppModel(defaults: isolatedDefaults()))
+        w.open(threadID: "thread-1")
 
-        app.newChat()
+        w.newChat()
 
-        #expect(app.hostID == HostConfig.local.id)
-        #expect(app.threadID == nil)
-        #expect(app.selectedThread == nil)
+        #expect(w.hostID == HostConfig.local.id)
+        #expect(w.threadID == nil)
+        #expect(w.selectedThread == nil)
     }
 
     @Test func newChatStartsInTheHostsMostRecentFolder() {
-        let app = AppModel.sample()
-        let first = app.connection?.projects.first?.cwd
+        let w = window(.sample())
+        let first = w.connection?.projects.first?.cwd
         #expect(first != nil)
-        #expect(app.draftDirectory == first)
-        app.draftError = "Choose a folder first."
+        #expect(w.draftDirectory == first)
+        w.draftError = "Choose a folder first."
 
-        app.newChat()
+        w.newChat()
 
-        #expect(app.draftDirectory == first)
-        #expect(app.draftError == nil)
+        #expect(w.draftDirectory == first)
+        #expect(w.draftError == nil)
     }
 
     @Test func subtitleIsTheFolderNameWithOneHost() {
-        let app = AppModel.sample()
-        #expect(app.draftDirectory != nil)
-        #expect(app.subtitle == (app.draftDirectory as NSString?)?.lastPathComponent)
+        let w = window(.sample())
+        #expect(w.draftDirectory != nil)
+        #expect(w.subtitle == (w.draftDirectory as NSString?)?.lastPathComponent)
     }
 
     @Test func subtitleNamesTheHostWhenThereAreSeveral() {
-        let app = AppModel.sample(connections: [.sample(), .sampleFailed()])
-        let name = (app.draftDirectory as NSString?)?.lastPathComponent ?? ""
-        #expect(app.subtitle == "\(app.host?.name ?? "") · \(name)")
+        let w = window(.sample(connections: [.sample(), .sampleFailed()]))
+        let name = (w.draftDirectory as NSString?)?.lastPathComponent ?? ""
+        #expect(w.subtitle == "\(w.host?.name ?? "") · \(name)")
 
         // A host with no projects yet: the host alone, not a dangling separator.
-        app.hostID = app.hosts[1].id
-        #expect(app.draftDirectory == nil)
-        #expect(app.subtitle == "staging")
+        w.hostID = w.app.hosts[1].id
+        #expect(w.draftDirectory == nil)
+        #expect(w.subtitle == "staging")
     }
 
     @Test func subtitleFollowsTheOpenChatsFolder() {
-        let app = AppModel.sample()
-        guard let chat = app.connection?.chats.first(where: { $0.cwd != nil }) else {
+        let w = window(.sample())
+        guard let chat = w.connection?.chats.first(where: { $0.cwd != nil }) else {
             Issue.record("the sample host has no chat with a folder")
             return
         }
-        app.open(threadID: chat.id)
-        #expect(app.subtitle == (chat.cwd! as NSString).lastPathComponent)
+        w.open(threadID: chat.id)
+        #expect(w.subtitle == (chat.cwd! as NSString).lastPathComponent)
     }
 
     @Test func switchingHostClearsTheSelectedChat() {
-        let app = AppModel.sample(connections: [.sample(), .sampleFailed()])
-        let other = app.hosts[1].id
-        app.open(threadID: "thread-1")
+        let w = window(.sample(connections: [.sample(), .sampleFailed()]))
+        let other = w.app.hosts[1].id
+        w.open(threadID: "thread-1")
 
-        app.hostID = other
+        w.hostID = other
 
-        #expect(app.threadID == nil)
-        #expect(app.selectedThread == nil)
+        #expect(w.threadID == nil)
+        #expect(w.selectedThread == nil)
     }
 
     @Test func removingTheCurrentHostFallsBackToLocal() {
         let app = AppModel.sample(connections: [.sample(), .sampleFailed()])
+        let w = window(app)
         let other = app.hosts[1].id
-        app.hostID = other
-        app.open(threadID: "thread-1")
+        w.hostID = other
+        w.open(threadID: "thread-1")
 
         app.removeHost(other)
 
-        #expect(app.hostID == HostConfig.local.id)
-        #expect(app.threadID == nil)
-        #expect(app.connection?.host.id == HostConfig.local.id)
+        #expect(w.hostID == HostConfig.local.id)
+        #expect(w.threadID == nil)
+        #expect(w.connection?.host.id == HostConfig.local.id)
     }
 
-    @Test func aStoredHostThatIsGoneFallsBackToLocal() {
-        let app = AppModel(defaults: isolatedDefaults())
+    @Test func aHostThatIsGoneFallsBackToLocal() {
+        let w = window(AppModel(defaults: isolatedDefaults()))
 
-        app.hostID = UUID()
+        w.hostID = UUID()
 
-        #expect(app.hostID == HostConfig.local.id)
+        #expect(w.hostID == HostConfig.local.id)
+    }
+
+    /// Two windows are two selections: each shows its own chat and inspector.
+    @Test func windowsKeepTheirOwnSelection() {
+        let app = AppModel.sample()
+        let a = window(app), b = window(app)
+        let chats = app.connection(app.lastHostID)?.chats ?? []
+        #expect(chats.count >= 2)
+
+        a.open(threadID: chats[0].id)
+        b.open(threadID: chats[1].id)
+        b.showInspector = true
+
+        #expect(a.selectedThread === chats[0])
+        #expect(b.selectedThread === chats[1])
+        #expect(!a.showInspector)
+    }
+
+    /// A chat shown in two windows stays loaded until the last one moves off it.
+    @Test func aChatIsLetGoOnlyWhenNoWindowShowsIt() {
+        let app = AppModel.sample()
+        let a = window(app), b = window(app)
+        a.open(threadID: "shared")
+        b.open(threadID: "shared")
+        #expect(a.selectedThread === b.selectedThread)
+
+        a.newChat()
+        #expect(app.isShown(b.selectedThread))
+        b.close()
+        #expect(!app.isShown(a.connection?.thread("shared")))
+    }
+
+    @Test func aNewWindowOpensWhereTheLastOneWas() {
+        let app = AppModel.sample()
+        let a = window(app)
+        a.open(threadID: "thread-1")
+        a.openInspector(on: .mcp)
+
+        let b = window(app)
+
+        #expect(b.threadID == "thread-1")
+        #expect(b.isInspecting(.mcp))
+        // A window opened on a target starts there instead.
+        let c = window(app, target: WindowTarget(hostID: app.lastHostID))
+        #expect(c.threadID == nil)
+    }
+
+    @Test func theLastChatReopensAfterRelaunch() {
+        let defaults = isolatedDefaults()
+        let app = AppModel.sample(connections: [.sample(), .sampleFailed()], defaults: defaults)
+        let w = window(app)
+        let other = app.hosts[1].id
+        w.hostID = other
+        w.open(threadID: "thread-9")
+        w.showInspector = true
+        w.inspectorPane = .mcp
+
+        let restored = window(AppModel(defaults: defaults))
+
+        #expect(restored.hostID == other)
+        #expect(restored.threadID == "thread-9")
+        #expect(restored.isInspecting(.mcp))
+    }
+
+    @Test func draftsArePerChatAndSurviveRelaunch() {
+        let defaults = isolatedDefaults()
+        let app = AppModel(defaults: defaults)
+        app.setDraft("half a thought", for: "a")
+        app.setDraft("another", for: "b")
+        app.setDraft("   ", for: "b")
+
+        let restored = AppModel(defaults: defaults)
+
+        #expect(restored.draft(for: "a") == "half a thought")
+        // Whitespace alone isn't a draft.
+        #expect(restored.draft(for: "b") == "")
     }
 
     @Test func defaultsRoundTripWithoutUsingStandardDefaults() {
         let defaults = isolatedDefaults()
-        // Sample connections: a second host without connecting to anything.
         let app = AppModel.sample(connections: [.sample(), .sampleFailed()], defaults: defaults)
-        let other = app.hosts[1].id
         app.defaultModel = "sonnet"
         app.defaultEffort = "high"
         app.defaultPermissionMode = "plan"
         app.transcriptWidth = .wide
-        app.showInspector = true
-        app.inspectorPane = .mcp
         app.sidebarGrouping = .directory
-        app.hostID = other
 
         let restored = AppModel(defaults: defaults)
 
@@ -134,10 +222,7 @@ struct AppModelTests {
         #expect(restored.defaultEffort == "high")
         #expect(restored.defaultPermissionMode == "plan")
         #expect(restored.transcriptWidth == .wide)
-        #expect(restored.showInspector)
-        #expect(restored.inspectorPane == .mcp)
         #expect(restored.sidebarGrouping == .directory)
-        #expect(restored.hostID == other)
     }
 
     @Test func aStoreWrittenBeforeTheseKeysExistedStillDecodes() {
@@ -151,34 +236,35 @@ struct AppModelTests {
 
         #expect(app.defaultModel == "opus")
         #expect(app.transcriptWidth == .medium)
-        #expect(!app.showInspector)
-        #expect(app.inspectorPane == .tasks)
+        #expect(!app.lastShowInspector)
+        #expect(app.lastInspectorPane == .tasks)
         #expect(app.sidebarGrouping == .date)
-        #expect(app.hostID == HostConfig.local.id)
+        #expect(app.lastHostID == HostConfig.local.id)
     }
 
     @Test func aPaneShortcutShowsItsPaneAndOpensTheInspector() {
-        let app = AppModel(defaults: isolatedDefaults())
-        app.openInspector(on: .session)
-        #expect(app.isInspecting(.session))
-        app.openInspector(on: .session)
-        #expect(app.isInspecting(.session))
-        app.showInspector = false
+        let w = window(AppModel(defaults: isolatedDefaults()))
+        w.openInspector(on: .session)
+        #expect(w.isInspecting(.session))
+        w.openInspector(on: .session)
+        #expect(w.isInspecting(.session))
+        w.showInspector = false
         // The pane is kept, so ⌥⌘I reopens where the inspector was.
-        #expect(app.inspectorPane == .session)
+        #expect(w.inspectorPane == .session)
     }
 
     @Test func newChatUsesTheConfiguredDefaults() {
         let app = AppModel(defaults: isolatedDefaults())
+        let w = window(app)
         app.defaultModel = "sonnet"
         app.defaultEffort = "high"
         app.defaultPermissionMode = "plan"
 
-        app.newChat()
+        w.newChat()
 
-        #expect(app.draftModel == "sonnet")
-        #expect(app.draftEffort == .high)
-        #expect(app.draftPermissionMode == .plan)
+        #expect(w.draftModel == "sonnet")
+        #expect(w.draftEffort == .high)
+        #expect(w.draftPermissionMode == .plan)
     }
 }
 

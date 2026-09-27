@@ -33,24 +33,24 @@ struct SessionSettings {
 
     /// The New Chat draft, carried into `startThread`. Without a connection there is no catalog
     /// and nothing to set, so the menus stay on screen disabled.
-    init(draft app: AppModel, connection: HostConnection?) {
+    init(draft window: WindowModel, connection: HostConnection?) {
         // Resolved against the catalog here too: it usually lands after `newChat()` seeded the draft.
-        model = Binding(get: { connection?.models.concreteValue(for: app.draftModel ?? app.defaultModel) ?? app.draftModel },
-                        set: { app.draftModel = $0 })
-        effort = Binding(get: { app.draftEffort }, set: { app.draftEffort = $0 })
-        permissionMode = Binding(get: { app.draftPermissionMode }, set: { app.draftPermissionMode = $0 })
-        fastMode = Binding(get: { app.draftFastMode }, set: { app.draftFastMode = $0 })
+        model = Binding(get: { connection?.models.concreteValue(for: window.draftModel ?? window.app.defaultModel) ?? window.draftModel },
+                        set: { window.draftModel = $0 })
+        effort = Binding(get: { window.draftEffort }, set: { window.draftEffort = $0 })
+        permissionMode = Binding(get: { window.draftPermissionMode }, set: { window.draftPermissionMode = $0 })
+        fastMode = Binding(get: { window.draftFastMode }, set: { window.draftFastMode = $0 })
         models = connection?.models ?? []
         fastModeDisabledReason = nil
         isEnabled = connection != nil
     }
 
     /// The one place that decides which of the two the toolbar is driving.
-    static func current(_ app: AppModel) -> SessionSettings {
-        if let thread = app.selectedThread, let connection = app.connection {
+    static func current(_ window: WindowModel) -> SessionSettings {
+        if let thread = window.selectedThread, let connection = window.connection {
             return SessionSettings(thread: thread, connection: connection)
         }
-        return SessionSettings(draft: app, connection: app.connection)
+        return SessionSettings(draft: window, connection: window.connection)
     }
 
     /// The catalog entry behind the current selection — the catalog's own default while the chat
@@ -76,10 +76,10 @@ struct SessionSettings {
 /// Resolves the session settings in its own body rather than in `RootView`'s, so what they read —
 /// the chat's model, effort and mode, the catalog — invalidates this toolbar item, not the shell.
 struct ToolbarSessionControl<Control: View>: View {
-    let app: AppModel
+    let window: WindowModel
     let control: (SessionSettings) -> Control
 
-    var body: some View { control(.current(app)) }
+    var body: some View { control(.current(window)) }
 }
 
 /// The chat's three settings as one toolbar item, so they share one glass capsule the way Xcode's
@@ -114,7 +114,7 @@ struct ModelMenu: View {
         // Toolbar items are icon-only by default; this is the one that has to say a name.
         .labelStyle(.titleAndIcon)
         .disabled(!settings.isEnabled)
-        .help("Model: \(settings.modelLabel)")
+        .help("Choose the model that answers")
         .accessibilityLabel("Model")
         .accessibilityValue(settings.modelLabel)
     }
@@ -138,7 +138,7 @@ struct EffortMenu: View {
         }
         .labelStyle(.iconOnly)
         .disabled(!settings.isEnabled)
-        .help("Effort: \(value.label)")
+        .help("Choose how long Claude thinks before answering")
         .accessibilityLabel("Effort")
         .accessibilityValue(value.label)
     }
@@ -167,7 +167,7 @@ struct PermissionsMenu: View {
         }
         .labelStyle(.iconOnly)
         .disabled(!settings.isEnabled)
-        .help("Permissions: \(mode.longLabel)")
+        .help("Choose what Claude can do without asking")
         .accessibilityLabel("Permissions")
         .accessibilityValue(mode.longLabel)
     }
@@ -228,24 +228,34 @@ struct PermissionsPicker: View {
     }
 }
 
-/// The Chat menu: the open chat's settings, or the New Chat draft's, for a hidden or customized
-/// toolbar.
+/// The Chat menu, for the frontmost window: the open chat's settings, or the New Chat draft's,
+/// for a hidden or customized toolbar, then what can be done to the chat itself. With no window
+/// open every item is still listed, dimmed.
 public struct ChatCommands: View {
-    let app: AppModel
+    @FocusedValue(\.window) private var window
 
-    public init(app: AppModel) {
-        self.app = app
-    }
+    public init() {}
 
     public var body: some View {
-        let settings = SessionSettings.current(app)
-        Group {
-            ModelPicker(settings: settings)
-            FastModeToggle(settings: settings)
-            EffortPicker(settings: settings)
-            PermissionsPicker(settings: settings)
+        if let window {
+            let settings = SessionSettings.current(window)
+            Group {
+                ModelPicker(settings: settings)
+                FastModeToggle(settings: settings)
+                EffortPicker(settings: settings)
+                PermissionsPicker(settings: settings)
+            }
+            .disabled(!settings.isEnabled)
+            Divider()
+            ChatActionItems(window: window, thread: window.selectedThread)
+        } else {
+            Group {
+                ForEach(["Model", "Fast Mode", "Effort", "Permissions"], id: \.self) { Button($0) {} }
+                Divider()
+                ForEach(["Open in New Window", "Rename…", "Duplicate", "Show in Finder", "Delete…"], id: \.self) { Button($0) {} }
+            }
+            .disabled(true)
         }
-        .disabled(!settings.isEnabled)
     }
 }
 
@@ -260,8 +270,8 @@ private func previewSettings(thread: ThreadModel, connection: HostConnection = .
 @MainActor
 private func previewDraftSettings(connected: Bool = true) -> SessionSettings {
     let connection: HostConnection = connected ? .sample() : .sampleDisconnected()
-    let app = AppModel.sample(connections: [connection])
-    return SessionSettings(draft: app, connection: connected ? connection : nil)
+    let window = WindowModel.sample(.sample(connections: [connection]))
+    return SessionSettings(draft: window, connection: connected ? connection : nil)
 }
 
 /// Declared the way `RootView` declares them, so a preview shows the real glass shape and spacing

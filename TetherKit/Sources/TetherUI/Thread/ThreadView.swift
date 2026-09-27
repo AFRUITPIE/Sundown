@@ -9,13 +9,10 @@ struct ThreadView: View {
 
     var body: some View {
         TranscriptView(thread: thread, connection: connection)
-            // Controls float over the transcript on glass; content scrolls underneath with a soft edge.
+            // Controls float over the transcript on glass; content scrolls underneath with the system edge effect.
             .safeAreaBar(edge: .bottom) {
                 BottomBar(thread: thread, connection: connection)
             }
-            .scrollEdgeEffectStyle(.soft, for: .bottom)
-            // The same soft edge under the toolbar.
-            .scrollEdgeEffectStyle(.soft, for: .top)
             .task(id: thread.id) { await connection.open(thread) }
     }
 }

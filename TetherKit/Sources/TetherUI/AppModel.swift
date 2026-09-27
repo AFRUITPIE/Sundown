@@ -43,64 +43,23 @@ public enum InspectorPane: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// App-wide state: configured hosts, their live connections, and what the window is showing.
+/// App-wide state: configured hosts, their live connections, preferences, and each chat's unsent
+/// draft. What a window shows is its own `WindowModel`; the most recently used window's state is
+/// remembered here, so a new window or the next launch starts from it.
 @MainActor
 @Observable
 public final class AppModel {
     public private(set) var hosts: [HostConfig] = []
     public private(set) var connections: [UUID: HostConnection] = [:]
 
-    /// The host the sidebar is showing (persisted). Changing it starts a new chat there.
-    public var hostID: UUID = HostConfig.local.id {
-        didSet {
-            guard hostID != oldValue else { return }
-            // A stored host can disappear between launches; this Mac is always configured.
-            if connections[hostID] == nil && !hosts.contains(where: { $0.id == hostID }) {
-                hostID = HostConfig.local.id
-            }
-            threadID = nil
-            seedDraft()
-            save()
-        }
-    }
-
-    /// The chat on screen, or nil for New Chat.
-    /// Resolved here rather than in a view body: resolving can create the thread's model.
-    public var threadID: String? { didSet { resolveSelection() } }
-    public private(set) var selectedThread: ThreadModel?
-    /// Which host `selectedThread` came from, so it is left on the right connection.
-    private var selectedThreadHost: UUID?
-
-    /// Whether the trailing inspector is shown (persisted).
-    public var showInspector = false { didSet { save() } }
-
-    /// The pane the inspector shows, kept while it is closed (persisted).
-    public var inspectorPane: InspectorPane = .tasks { didSet { save() } }
-
-    /// True when the inspector is open on `pane`.
-    public func isInspecting(_ pane: InspectorPane) -> Bool { showInspector && inspectorPane == pane }
-
-    /// Shows `pane`, opening the inspector if it is closed.
-    public func openInspector(on pane: InspectorPane) {
-        if inspectorPane != pane { inspectorPane = pane }
-        if !showInspector { showInspector = true }
-    }
-
+    /// The most recently used window's host, chat and inspector (persisted).
+    public private(set) var lastHostID: UUID = HostConfig.local.id
+    public private(set) var lastThreadID: String?
+    public private(set) var lastShowInspector = false
+    public private(set) var lastInspectorPane: InspectorPane = .tasks
 
     /// How the sidebar groups chats (persisted).
     public var sidebarGrouping: SidebarGrouping = .date { didSet { save() } }
-
-    /// The New Chat screen's session controls, reset to the defaults by `newChat()`.
-    public var draftModel: String?
-    public var draftEffort: EffortLevel?
-    public var draftPermissionMode: PermissionMode = .default
-    /// Carried into `startThread`; off unless the user asks for it on this chat.
-    public var draftFastMode = false
-    /// The New Chat folder: the host's most recent project until one is chosen, nil before the
-    /// projects arrive.
-    public var draftDirectory: String?
-    /// Why the New Chat draft couldn't start, cleared with the draft.
-    var draftError: String?
 
     /// How wide the transcript may get (persisted).
     public var transcriptWidth: TranscriptWidth = .narrow { didSet { save() } }
@@ -110,37 +69,31 @@ public final class AppModel {
     public var defaultEffort: String? { didSet { save() } }
     public var defaultPermissionMode: String = "default" { didSet { save() } }
 
+    /// Each chat's unsent composer text, by thread id (persisted), so switching chats, closing a
+    /// window or quitting doesn't lose it.
+    public private(set) var drafts: [String: String] = [:]
+
     private let defaults: UserDefaults
     private static let hostsKey = "tether.hosts.v1"
+    private static let draftsKey = "tether.drafts.v1"
     /// `didSet` runs while `load()` restores values; saving then would write half-restored state.
     private var isLoading = false
+    private var connectedAll = false
+    /// How many windows show each thread: a followed thread is let go only when none does.
+    @ObservationIgnored private var viewers: [ObjectIdentifier: Int] = [:]
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         load()
         for h in hosts { connections[h.id] = HostConnection(host: h) }
-        seedDraft()
     }
 
     public func connection(_ id: UUID) -> HostConnection? { connections[id] }
 
-    /// The host the sidebar is showing.
-    public var host: HostConfig? { hosts.first { $0.id == hostID } }
-
-    /// The window's subtitle: the chat's folder name, or the New Chat folder's; the full path is in
-    /// the Session pane, or the folder pop-up on New Chat. Prefixed with the host when there is
-    /// more than one, since nothing else in the window names it.
-    public var subtitle: String {
-        let folder = selectedThread.map { $0.cwd } ?? draftDirectory
-        let name = folder.map { ($0 as NSString).lastPathComponent } ?? ""
-        guard hosts.count > 1, let host = host?.name else { return name }
-        return name.isEmpty ? host : "\(host) · \(name)"
-    }
-
-    /// The connection for the host the sidebar is showing.
-    public var connection: HostConnection? { connections[hostID] }
-
+    /// Connects every host once, however many windows open.
     public func connectAll() {
+        guard !connectedAll else { return }
+        connectedAll = true
         for c in connections.values { Task { await c.connect() } }
     }
 
@@ -159,52 +112,71 @@ public final class AppModel {
         save()
     }
 
+    /// Windows showing the host fall back to this Mac.
     public func removeHost(_ id: UUID) {
         guard id != HostConfig.local.id else { return }
         hosts.removeAll { $0.id == id }
         if let c = connections.removeValue(forKey: id) { Task { await c.disconnect() } }
-        // Falls back to this Mac; the `didSet` clears the chat and reseeds the draft.
-        if hostID == id { hostID = HostConfig.local.id }
+        if lastHostID == id { lastHostID = HostConfig.local.id; lastThreadID = nil }
+        for window in openWindows { window.hostRemoved(id) }
         save()
     }
 
-    // MARK: selection helpers
+    // MARK: windows
 
-    /// Start composing a new chat on the host the sidebar is showing.
-    public func newChat() {
-        threadID = nil
-        seedDraft()
+    private struct WeakWindow { weak var window: WindowModel? }
+    @ObservationIgnored private var windowRefs: [WeakWindow] = []
+
+    /// The windows on screen.
+    public var openWindows: [WindowModel] { windowRefs.compactMap(\.window) }
+
+    func register(_ window: WindowModel) {
+        windowRefs.removeAll { $0.window == nil || $0.window === window }
+        windowRefs.append(WeakWindow(window: window))
     }
 
-    /// Show a chat, optionally switching host first (the debug launch hook does).
-    public func open(threadID id: String, on host: UUID? = nil) {
-        if let host, host != hostID { hostID = host }
-        threadID = id
+    func unregister(_ window: WindowModel) {
+        windowRefs.removeAll { $0.window == nil || $0.window === window }
     }
 
-    private func seedDraft() {
-        // Always a concrete model: the Settings default, else the catalog's.
-        draftModel = defaultModel ?? connections[hostID]?.models.defaultValue
-        draftEffort = defaultEffort.map(EffortLevel.init(rawValue:))
-        draftPermissionMode = PermissionMode(rawValue: defaultPermissionMode)
-        draftFastMode = false
-        draftDirectory = connections[hostID]?.projects.first?.cwd
-        draftError = nil
+    /// A window changed what it shows: the next window, and the next launch, start from it.
+    func remember(_ window: WindowModel) {
+        lastHostID = window.hostID
+        lastThreadID = window.threadID
+        lastShowInspector = window.showInspector
+        lastInspectorPane = window.inspectorPane
+        save()
     }
 
-    private func resolveSelection() {
-        let previous = selectedThread
-        let previousHost = selectedThreadHost
-        if let id = threadID, let c = connections[hostID] {
-            selectedThread = c.thread(id)
-            selectedThreadHost = hostID
-        } else {
-            selectedThread = nil
-            selectedThreadHost = nil
-        }
-        if let previous, previous !== selectedThread, let previousHost {
-            connections[previousHost]?.leave(previous)
-        }
+    /// A window started showing `thread`.
+    func retain(_ thread: ThreadModel?) {
+        guard let thread else { return }
+        viewers[ObjectIdentifier(thread), default: 0] += 1
+    }
+
+    /// Whether any window shows `thread`.
+    func isShown(_ thread: ThreadModel?) -> Bool {
+        thread.map { (viewers[ObjectIdentifier($0)] ?? 0) > 0 } ?? false
+    }
+
+    /// A window stopped showing `thread`; once no window does, its connection lets it go.
+    func release(_ thread: ThreadModel?, on host: UUID?) {
+        guard let thread, let host else { return }
+        let key = ObjectIdentifier(thread)
+        let count = (viewers[key] ?? 1) - 1
+        if count > 0 { viewers[key] = count; return }
+        viewers[key] = nil
+        connections[host]?.leave(thread)
+    }
+
+    // MARK: drafts
+
+    public func draft(for threadID: String) -> String { drafts[threadID] ?? "" }
+
+    public func setDraft(_ text: String, for threadID: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { drafts[threadID] = nil } else { drafts[threadID] = text }
+        if let data = try? JSONEncoder().encode(drafts) { defaults.set(data, forKey: Self.draftsKey) }
     }
 
     // MARK: persistence
@@ -220,6 +192,7 @@ public final class AppModel {
         var inspectorPane: String?
         var hostID: UUID?
         var sidebarGrouping: String?
+        var threadID: String?
     }
 
     private func load() {
@@ -228,23 +201,28 @@ public final class AppModel {
         let stored = defaults.data(forKey: Self.hostsKey).flatMap { try? JSONDecoder().decode(Stored.self, from: $0) }
         hosts = stored?.hosts ?? []
         if !hosts.contains(where: { $0.id == HostConfig.local.id }) { hosts.insert(.local, at: 0) }
+        drafts = defaults.data(forKey: Self.draftsKey).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
         guard let s = stored else { return }
         defaultModel = s.defaultModel
         defaultEffort = s.defaultEffort
         defaultPermissionMode = s.defaultPermissionMode ?? "default"
         transcriptWidth = s.transcriptWidth.flatMap(TranscriptWidth.init(rawValue:)) ?? .narrow
-        showInspector = s.showInspector ?? false
-        inspectorPane = s.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
+        lastShowInspector = s.showInspector ?? false
+        lastInspectorPane = s.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
         sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
-        // After `hosts`: the setter validates against it.
-        hostID = s.hostID ?? HostConfig.local.id
+        // A remembered host can disappear between launches; this Mac is always configured.
+        if let id = s.hostID, hosts.contains(where: { $0.id == id }) {
+            lastHostID = id
+            lastThreadID = s.threadID
+        }
     }
 
     private func save() {
         guard !isLoading else { return }
         let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
-                       showInspector: showInspector, inspectorPane: inspectorPane.rawValue, hostID: hostID, sidebarGrouping: sidebarGrouping.rawValue)
+                       showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue, hostID: lastHostID,
+                       sidebarGrouping: sidebarGrouping.rawValue, threadID: lastThreadID)
         if let data = try? JSONEncoder().encode(s) { defaults.set(data, forKey: Self.hostsKey) }
     }
 }
@@ -261,8 +239,15 @@ extension AppModel {
             UITestFixture.connection(failFirstConnect: failFirst, pendingPermission: pendingPermission, performance: performance),
             UITestFixture.connection(host: ssh)
         ])
-        app.open(threadID: UITestFixture.threadID)
+        // The first window opens on the fixture's chat.
+        app.lastThreadID = UITestFixture.threadID
         return app
+    }
+
+    /// The first window opens on `threadID` (the `TETHER_OPEN_THREAD` launch hook).
+    public func openOnLaunch(threadID: String, on host: UUID) {
+        lastHostID = host
+        lastThreadID = threadID
     }
 
     /// Pre-seeded hosts and connections for `#Preview`s and tests, off persistence and the network.
@@ -270,8 +255,8 @@ extension AppModel {
         let app = AppModel(defaults: defaults ?? UserDefaults(suiteName: "tether.preview.\(UUID().uuidString)") ?? .standard)
         app.hosts = connections.map(\.host)
         app.connections = Dictionary(uniqueKeysWithValues: connections.map { ($0.id, $0) })
-        app.hostID = connections.first?.id ?? HostConfig.local.id
-        app.newChat()
+        app.lastHostID = connections.first?.id ?? HostConfig.local.id
+        app.lastThreadID = nil
         return app
     }
 }

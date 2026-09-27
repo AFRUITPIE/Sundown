@@ -12,6 +12,8 @@ struct Composer: View {
     let connection: HostConnection
     let cwd: String?
     var thread: ThreadModel?
+    /// Where the unsent text is kept between visits: the chat's id, or New Chat's per host.
+    var draftKey: String?
     var placeholder = "Ask Claude…"
     /// A server request is waiting: the draft stays, but it has to be answered before sending.
     var awaitingAnswer = false
@@ -19,6 +21,7 @@ struct Composer: View {
     let submit: ([UserInput]) async -> Void
 
     @Environment(\.composerDraft) private var composerDraft
+    @Environment(\.composerDrafts) private var drafts
     @State private var text = ""
     @State private var images: [Attachment] = []
     @State private var commands: [SlashCommand] = []
@@ -80,7 +83,7 @@ struct Composer: View {
                 .buttonStyle(.glass)
                 .controlSize(.small)
                 .font(.callout)
-                .help("Use this suggestion")
+                .help("Put this suggestion in the message field")
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             field
@@ -116,7 +119,7 @@ struct Composer: View {
                         .buttonBorderShape(.circle)
                         .tint(.red)
                         .keyboardShortcut(".", modifiers: .command)
-                        .help("Stop (⌘.)")
+                        .help("Stop the current turn")
                 } else {
                     Button("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up", action: send)
                         .accessibilityIdentifier("composer.send")
@@ -140,12 +143,16 @@ struct Composer: View {
         .onPasteCommand(of: [.png, .tiff, .jpeg], perform: { _ = drop($0) })
         .onAppear {
             focused = true
+            if text.isEmpty, let draftKey { text = drafts.text(for: draftKey) }
             #if DEBUG
             // Previews only: the field's text is otherwise private state.
             if text.isEmpty, !composerDraft.isEmpty { text = composerDraft }
             #endif
         }
-        .onChange(of: text) { refreshSuggestions() }
+        .onChange(of: text) {
+            refreshSuggestions()
+            if let draftKey { drafts.set(text, for: draftKey) }
+        }
         .task(id: cwd) {
             commands = await connection.commands(cwd: cwd, thread: thread)
             refreshSuggestions()
@@ -166,7 +173,7 @@ struct Composer: View {
 
     private var sendHelp: String {
         if awaitingAnswer { return "Answer the request above first" }
-        return thread?.isRunning == true ? "Add to the running turn" : "Send"
+        return thread?.isRunning == true ? "Add your message to the current turn" : "Send your message"
     }
 
     private var attachments: some View {

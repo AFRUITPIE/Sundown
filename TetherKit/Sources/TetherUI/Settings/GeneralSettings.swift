@@ -29,10 +29,10 @@ struct GeneralSettings: View {
 
     // MARK: new-chat defaults
 
-    /// The catalog of the host the window is on, falling back to this Mac's: the names are the
-    /// CLI's, so any connected host can supply them.
+    /// The catalog of the most recently used window's host, falling back to this Mac's: the names
+    /// are the CLI's, so any connected host can supply them.
     private var models: [ModelInfo] {
-        let current = app.connection?.models ?? []
+        let current = app.connection(app.lastHostID)?.models ?? []
         return current.isEmpty ? (app.connection(HostConfig.local.id)?.models ?? []) : current
     }
 
