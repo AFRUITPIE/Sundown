@@ -276,4 +276,14 @@ final class WindowAndChatUITests: XCTestCase {
         row("Performance chat 1", in: sidebar(app)).doubleClick()
         XCTAssertTrue(waitForWindowTitles(app, ["Performance chat 1", "Performance chat 1"]))
     }
+
+    /// Host ▸ Show Connection Log opens the log in a window of its own.
+    @MainActor
+    func testConnectionLogIsAWindow() {
+        let app = launch()
+        XCTAssertTrue(waitForWindowTitles(app, ["Fixture Chat"]))
+        app.menuBars.menuBarItems["Host"].click()
+        app.menuBars.menuItems["Show Connection Log"].click()
+        XCTAssertTrue(waitForWindowTitles(app, ["Fixture Chat", "Connection Log"]))
+    }
 }

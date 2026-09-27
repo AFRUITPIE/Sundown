@@ -56,6 +56,11 @@ struct TetherApp: App {
             // View ▸ Show Toolbar / Customize Toolbar…, for the identified toolbar in RootView.
             ToolbarCommands()
         }
+        // One per host, kept open beside a chat to follow a reconnect.
+        WindowGroup("Connection Log", id: ConnectionLogWindow.id, for: UUID.self) { $hostID in
+            ConnectionLogWindow(app: app, hostID: hostID)
+        }
+        .defaultSize(width: 620, height: 400)
         // The Settings view supplies the split window's minimum size.
         Settings { SettingsView(app: app) }
         // Off unless Settings ▸ Notifications turns it on.

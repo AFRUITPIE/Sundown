@@ -8,7 +8,6 @@ struct HostDetail: View {
     let connection: HostConnection?
     let update: (HostConfig) -> Void
     @State private var editingEnvironment = false
-    @State private var showingLog = false
 
     var body: some View {
         Form {
@@ -38,9 +37,6 @@ struct HostDetail: View {
                 updated.env = environment
                 update(updated)
             }
-        }
-        .sheet(isPresented: $showingLog) {
-            ConnectionLogSheet(host: host.name, lines: connection?.log ?? [])
         }
     }
 
@@ -101,7 +97,7 @@ struct HostDetail: View {
             }
             if connection != nil {
                 LabeledContent("Connection Log") {
-                    Button("Show…") { showingLog = true }
+                    ShowConnectionLogButton(hostID: host.id, title: "Show…")
                 }
             }
         }

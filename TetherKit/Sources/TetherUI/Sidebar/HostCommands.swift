@@ -29,6 +29,7 @@ public struct HostCommands: View {
         Divider()
         if let connection = window?.connection ?? app.connection(app.lastHostID) {
             ConnectButton(connection: connection)
+            ShowConnectionLogButton(hostID: connection.id)
         }
         Button("Manage Hosts…") {
             settingsPane = SettingsDestination.hosts.storedValue
