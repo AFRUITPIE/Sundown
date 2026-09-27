@@ -53,7 +53,7 @@ struct TurnEditsView: View {
                     .buttonStyle(.borderless)
                     .controlSize(.small)
                     .scaledFont(.callout)
-                    .help("Put these files back as they were before this turn’s message")
+                    .help("Restore Files")
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }

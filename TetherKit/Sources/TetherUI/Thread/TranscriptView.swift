@@ -87,7 +87,7 @@ struct TranscriptView: View {
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
                     .controlSize(.large)
-                    .help("Scroll to the newest message")
+                    .help("Scroll to Bottom")
                     .padding(.bottom, 8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }

@@ -106,7 +106,7 @@ struct ChangesPane: View {
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await refresh() } }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
-                .help("Read the changes again")
+                .help("Refresh")
         }
         .font(.callout)
         .monospacedDigit()
@@ -115,7 +115,7 @@ struct ChangesPane: View {
     private var actions: some View {
         HStack {
             Button("Ask Claude to Review") { send("/review") }
-                .help("Ask Claude to review these changes")
+                .help("Ask Claude to Review")
             Spacer()
             Button(comments.count < 2 ? "Send Comment" : "Send \(comments.count) Comments") {
                 let lines = comments.map { "- `\($0.path):\($0.line)` — \($0.text)" }
@@ -292,7 +292,7 @@ private struct LineRow: View {
         .contextMenu {
             if let number { Button("Comment on Line \(number)…") { comment(number) } }
         }
-        .help("Click to comment on this line")
+        .help("Comment")
     }
 
     private var sign: String {

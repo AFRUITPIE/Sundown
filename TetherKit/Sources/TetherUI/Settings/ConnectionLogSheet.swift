@@ -52,7 +52,7 @@ struct ConnectionLogView: View {
                 NSPasteboard.general.setString(text, forType: .string)
             }
             .disabled(lines.isEmpty)
-            .help("Copy the whole log")
+            .help("Copy Log")
         }
         .frame(minWidth: 480, minHeight: 280)
         .accessibilityLabel("Connection Log for \(host)")

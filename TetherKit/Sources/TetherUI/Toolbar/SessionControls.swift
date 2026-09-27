@@ -192,7 +192,7 @@ struct ModelMenu: View {
         // Toolbar items are icon-only by default; this is the one that has to say a name.
         .labelStyle(.titleAndIcon)
         .disabled(!settings.isEnabled)
-        .help("Choose the model that answers")
+        .help("Model")
         .accessibilityLabel("Model")
         .accessibilityValue(settings.modelLabel)
     }
@@ -216,7 +216,7 @@ struct EffortMenu: View {
         }
         .labelStyle(.iconOnly)
         .disabled(!settings.isEnabled)
-        .help("Choose how long Claude thinks before answering")
+        .help("Effort")
         .accessibilityLabel("Effort")
         .accessibilityValue(value.label)
     }
@@ -245,7 +245,7 @@ struct PermissionsMenu: View {
         }
         .labelStyle(.iconOnly)
         .disabled(!settings.isEnabled)
-        .help("Choose what Claude can do without asking")
+        .help("Permissions")
         .accessibilityLabel("Permissions")
         .accessibilityValue(mode.longLabel)
     }

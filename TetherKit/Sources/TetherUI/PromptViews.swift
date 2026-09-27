@@ -65,7 +65,7 @@ struct PermissionPrompt: View {
             detail
             if let r = params.decisionReason { Text(r).scaledFont(.caption).foregroundStyle(.secondary) }
             if showingDeny {
-                TextField("Tell Claude what to do instead (optional)", text: $denyMessage, axis: .vertical)
+                TextField("What to Do Instead (Optional)", text: $denyMessage, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(deny)
             }
@@ -215,7 +215,7 @@ struct PlanPrompt: View {
                 MarkdownView(text: params.plan).frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: 280)
-            TextField("Feedback to keep planning (optional)", text: $feedback, axis: .vertical)
+            TextField("Feedback (Optional)", text: $feedback, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
             HStack {
                 Button("Keep planning") { respond(["decision": "reject", "feedback": .string(feedback)]) }

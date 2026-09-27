@@ -129,7 +129,7 @@ struct Composer: View {
                 .buttonStyle(.glass)
                 .controlSize(.small)
                 .scaledFont(.callout)
-                .help("Put this suggestion in the message field")
+                .help("Use Suggestion")
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if let status {
@@ -249,7 +249,7 @@ struct Composer: View {
     }
 
     private var textField: some View {
-        TextField(thread?.isRunning == true ? "Send a message while Claude works…" : placeholder, text: $text, axis: .vertical)
+        TextField(thread?.isRunning == true ? "Queue a message…" : placeholder, text: $text, axis: .vertical)
             .accessibilityIdentifier("composer.input")
             .textFieldStyle(.plain)
             .lineLimit(1...12)
@@ -292,7 +292,7 @@ struct Composer: View {
                 .modifier(RoundAction())
                 .tint(.red)
                 .keyboardShortcut(".", modifiers: .command)
-                .help("Stop the current turn")
+                .help("Stop")
         } else {
             Button("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up", action: send)
                 .accessibilityIdentifier("composer.send")
@@ -393,7 +393,7 @@ struct Composer: View {
         .menuIndicator(.hidden)
         .menuStyle(.button)
         .buttonStyle(.plain)
-        .help("Attach files, mention one, or use a command")
+        .help("Add")
         .accessibilityIdentifier("composer.add")
     }
 

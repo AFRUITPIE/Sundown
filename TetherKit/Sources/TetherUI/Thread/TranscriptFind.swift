@@ -87,9 +87,9 @@ struct FindBar: View {
                 .accessibilityIdentifier("find.status")
             ControlGroup {
                 Button("Previous", systemImage: "chevron.left") { find.previous() }
-                    .help("Show the previous match")
+                    .help("Previous Match")
                 Button("Next", systemImage: "chevron.right") { find.next() }
-                    .help("Show the next match")
+                    .help("Next Match")
             }
             .labelStyle(.iconOnly)
             .disabled(find.matches.isEmpty)
