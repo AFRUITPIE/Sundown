@@ -202,10 +202,29 @@ struct UserMessageView: View {
         }
     }
 
+    /// Who a message not typed here came from, in words rather than the SDK's kind.
+    static func originLabel(_ origin: String?) -> String {
+        switch origin {
+        case "peer": "From Another Session"
+        case "channel": "From a Channel"
+        case "coordinator", "teamLead", "team-lead": "From the Team Lead"
+        case nil: "From Claude Code"
+        case let other?: "From \(other.humanized)"
+        }
+    }
+
+    static func originSymbol(_ origin: String?) -> String {
+        switch origin {
+        case "peer": "bubble.left.and.bubble.right"
+        case "channel": "dot.radiowaves.left.and.right"
+        default: "gearshape"
+        }
+    }
+
     private func parts(alignment: HorizontalAlignment) -> some View {
         VStack(alignment: alignment, spacing: 6) {
             if message.synthetic == true {
-                Label(message.origin ?? "system", systemImage: "gearshape")
+                Label(Self.originLabel(message.origin), systemImage: Self.originSymbol(message.origin))
                     .scaledFont(.caption2).foregroundStyle(.secondary)
             }
             ForEach(Array(message.content.enumerated()), id: \.offset) { _, part in
