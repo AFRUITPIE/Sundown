@@ -82,6 +82,16 @@ public final class WindowModel {
     /// The chat Rename… or Delete… is acting on, from the Chat menu or a sidebar row's context menu.
     public private(set) var renaming: ThreadModel?
     public var deleting: ThreadModel?
+    /// A worktree to offer removing, once the chat that worked in it is archived or deleted; and
+    /// whether that offer is the second, for one with uncommitted changes.
+    var worktreeToRemove: (path: String, dirty: Bool)?
+
+    /// After archiving or deleting `thread`: if it worked in a worktree Tether made, offer to remove it.
+    func offerWorktreeRemoval(for thread: ThreadModel) {
+        guard let cwd = thread.cwd, cwd.contains("/.claude/worktrees/") else { return }
+        worktreeToRemove = (cwd, false)
+    }
+
     /// Restore Code to Here…: the prompt whose files are being put back, and what that changes.
     var restoring: Restore?
 

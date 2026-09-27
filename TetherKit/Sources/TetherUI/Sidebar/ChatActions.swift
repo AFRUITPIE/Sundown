@@ -34,6 +34,7 @@ struct ChatActionItems: View {
             let archiving = !thread.isArchived
             if archiving, window.selectedThread === thread { window.newChat() }
             Task { await connection.setArchived(thread, archiving) }
+            if archiving { window.offerWorktreeRemoval(for: thread) }
         }
         Divider()
         item("Delete…", enabled: thread != nil) { window.deleting = thread }
@@ -71,6 +72,16 @@ struct ChatActionAlerts: ViewModifier {
                 Button("Cancel", role: .cancel) { window.deleting = nil }
             } message: {
                 Text("Its transcript is removed from \(window.host?.name ?? "the host"). This can’t be undone.")
+            }
+            .alert(window.worktreeToRemove?.dirty == true ? "The Worktree Has Uncommitted Changes" : "Remove Its Worktree?",
+                   isPresented: Binding(get: { window.worktreeToRemove != nil }, set: { if !$0 { window.worktreeToRemove = nil } })) {
+                Button(window.worktreeToRemove?.dirty == true ? "Remove Anyway" : "Remove Worktree") { removeWorktree() }
+                Button("Keep", role: .cancel) { window.worktreeToRemove = nil }
+            } message: {
+                let name = ((window.worktreeToRemove?.path ?? "") as NSString).lastPathComponent
+                Text(window.worktreeToRemove?.dirty == true
+                     ? "Removing \(name) discards the changes in it that weren’t committed."
+                     : "The chat worked in \(name), a worktree of its own. Removing it deletes the folder and its branch.")
             }
             .alert(restoreTitle, isPresented: Binding(get: { window.restoring != nil }, set: { if !$0 { window.restoring = nil } })) {
                 restoreActions()
@@ -127,6 +138,19 @@ struct ChatActionAlerts: ViewModifier {
         }
     }
 
+    private func removeWorktree() {
+        guard let target = window.worktreeToRemove, let connection = window.connection else { return }
+        window.worktreeToRemove = nil
+        Task {
+            do {
+                try await connection.removeWorktree(target.path, force: target.dirty)
+            } catch let error where !target.dirty && "\(error)".contains("uncommitted") {
+                // Uncommitted changes: asked again, plainly, before they're discarded.
+                window.worktreeToRemove = (target.path, true)
+            } catch {}
+        }
+    }
+
     private var deleteTitle: String {
         "Delete “\(window.deleting?.title ?? "Chat")”?"
     }
@@ -142,6 +166,7 @@ struct ChatActionAlerts: ViewModifier {
         // Every window showing it moves to New Chat first, so none is left on a deleted chat.
         for other in window.app.openWindows where other.selectedThread === thread { other.newChat() }
         Task { await connection.delete(thread) }
+        window.offerWorktreeRemoval(for: thread)
     }
 }
 

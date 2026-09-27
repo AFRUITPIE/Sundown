@@ -617,6 +617,13 @@ public final class HostConnection: Identifiable {
         return WorkingChanges(branch: status.branch, files: files.sorted { $0.path < $1.path })
     }
 
+    /// Removes a worktree a chat started in, and its branch. Throws when it has uncommitted changes,
+    /// unless `force`.
+    public func removeWorktree(_ path: String, force: Bool) async throws {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        _ = try await client.call(Methods.GitRemoveWorktree.self, .init(path: path, force: force))
+    }
+
     // MARK: scheduled tasks
 
     /// The daemon's scheduled tasks on this host.
