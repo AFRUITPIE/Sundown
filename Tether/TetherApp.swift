@@ -56,6 +56,11 @@ struct TetherApp: App {
             // View ▸ Show Toolbar / Customize Toolbar…, for the identified toolbar in RootView.
             ToolbarCommands()
         }
+        // A host's Claude Code plugins.
+        WindowGroup("Plugins", id: PluginsWindow.id, for: UUID.self) { $hostID in
+            PluginsWindow(app: app, hostID: hostID)
+        }
+        .defaultSize(width: 640, height: 520)
         // A host's scheduled tasks, run by its daemon.
         WindowGroup("Scheduled Tasks", id: ScheduledTasksWindow.id, for: UUID.self) { $hostID in
             ScheduledTasksWindow(app: app, hostID: hostID)

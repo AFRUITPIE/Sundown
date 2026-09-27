@@ -634,6 +634,30 @@ public final class HostConnection: Identifiable {
         _ = try await client.call(Methods.GitRemoveWorktree.self, .init(path: path, force: force))
     }
 
+    // MARK: plugins
+
+    /// Installed plugins, and the ones the host's marketplaces offer. `cwd` adds a project's.
+    public func plugins(cwd: String?) async throws -> PluginCatalog {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        let r = try await client.call(Methods.PluginList.self, .init(cwd: cwd))
+        return PluginCatalog(installed: r.installed.compactMap(InstalledPlugin.init), available: r.available.compactMap(AvailablePlugin.init))
+    }
+
+    public func installPlugin(_ id: String, scope: PluginInstallParams.Scope, cwd: String?) async throws {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        _ = try await client.call(Methods.PluginInstall.self, .init(pluginId: id, scope: scope, cwd: cwd))
+    }
+
+    public func uninstallPlugin(_ plugin: InstalledPlugin, cwd: String?) async throws {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        _ = try await client.call(Methods.PluginUninstall.self, .init(pluginId: plugin.id, scope: plugin.scope, cwd: cwd))
+    }
+
+    public func setPlugin(_ plugin: InstalledPlugin, enabled: Bool, cwd: String?) async throws {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        _ = try await client.call(Methods.PluginSetEnabled.self, .init(pluginId: plugin.id, enabled: enabled, scope: plugin.scope, cwd: cwd))
+    }
+
     // MARK: scheduled tasks
 
     /// The daemon's scheduled tasks on this host.
@@ -703,6 +727,52 @@ public struct NewThreadOptions: Sendable {
         self.permissionMode = permissionMode
         self.fastMode = fastMode
         self.worktree = worktree
+    }
+}
+
+public struct PluginCatalog: Sendable, Equatable {
+    public let installed: [InstalledPlugin]
+    public let available: [AvailablePlugin]
+
+    public init(installed: [InstalledPlugin], available: [AvailablePlugin]) {
+        self.installed = installed
+        self.available = available
+    }
+}
+
+/// A plugin as `claude plugin list --json` reports it: `name@marketplace`, where it's installed, on or off.
+public struct InstalledPlugin: Identifiable, Sendable, Equatable {
+    public let id: String
+    public let version: String?
+    public let scope: String?
+    public let enabled: Bool
+    public var name: String { String(id.split(separator: "@").first ?? Substring(id)) }
+    public var marketplace: String? { id.split(separator: "@").dropFirst().first.map(String.init) }
+
+    public init?(_ json: JSONValue) {
+        guard let id = json["id"]?.stringValue else { return nil }
+        self.id = id
+        version = json["version"]?.stringValue
+        scope = json["scope"]?.stringValue
+        enabled = json["enabled"]?.boolValue ?? true
+    }
+}
+
+/// A plugin a marketplace offers.
+public struct AvailablePlugin: Identifiable, Sendable, Equatable {
+    public let id: String
+    public let name: String
+    public let description: String
+    public let marketplace: String?
+    public let installCount: Int?
+
+    public init?(_ json: JSONValue) {
+        guard let id = json["pluginId"]?.stringValue else { return nil }
+        self.id = id
+        name = json["name"]?.stringValue ?? id
+        description = json["description"]?.stringValue ?? ""
+        marketplace = json["marketplaceName"]?.stringValue
+        installCount = json["installCount"]?.intValue
     }
 }
 

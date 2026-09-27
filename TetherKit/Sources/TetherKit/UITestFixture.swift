@@ -100,6 +100,7 @@ private actor FixtureScript {
     /// How many times Restore Code has run.
     private var rewound = 0
     private var schedules: [ScheduledTask] = []
+    private var installedPlugins: [String] = []
 
     init(pendingPermission: Bool, performance: Bool) {
         self.pendingPermission = pendingPermission
@@ -207,6 +208,17 @@ private actor FixtureScript {
             if performance { return performanceTurn(threadID: id, input: params["input"]) }
             return .init(value: .result(json(TurnStartResult(turnId: "fixture-turn", messageId: "fixture-message", queued: false))),
                          notifications: turnNotifications(threadID: id, input: params["input"]))
+        case "plugin/list":
+            let installed: [JSONValue] = installedPlugins.map { ["id": .string($0), "version": "1.0.0", "scope": "user", "enabled": true] }
+            let available: [JSONValue] = [["pluginId": "fixture-lint@fixture-market", "name": "fixture-lint",
+                                           "description": "Lint the fixture's files.", "marketplaceName": "fixture-market", "installCount": 42]]
+            return .init(value: .result(["installed": .array(installed), "available": .array(available)]))
+        case "plugin/install":
+            if let id = params["pluginId"]?.stringValue { installedPlugins.append(id) }
+            return .init(value: .result([:]))
+        case "plugin/uninstall":
+            installedPlugins.removeAll { $0 == params["pluginId"]?.stringValue }
+            return .init(value: .result([:]))
         case "thread/sideQuestion":
             let q = params["question"]?.stringValue ?? ""
             return .init(value: .result(["answer": .string("A side answer to “\(q)”.")]))

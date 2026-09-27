@@ -305,4 +305,21 @@ final class WindowAndChatUITests: XCTestCase {
         visibleButton(app, "Delete").click()
         XCTAssertTrue(window.staticTexts["No Scheduled Tasks"].waitForExistence(timeout: 5))
     }
+
+    /// Host ▸ Plugins… lists what's installed and available; installing moves a plugin across.
+    @MainActor
+    func testPluginsCanBeInstalled() {
+        let app = launch()
+        XCTAssertTrue(waitForWindowTitles(app, ["Fixture Chat"]))
+        app.menuBars.menuBarItems["Host"].click()
+        app.menuBars.menuItems["Plugins…"].click()
+        XCTAssertTrue(waitForWindowTitles(app, ["Fixture Chat", "Plugins"]))
+        XCTAssertTrue(app.staticTexts["fixture-lint"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["None"].exists, "nothing installed yet")
+
+        app.menuButtons["Install"].firstMatch.click()
+        visibleMenuItem(app, "For Me").click()
+
+        XCTAssertTrue(app.staticTexts["fixture-market · v1.0.0 · For Me"].waitForExistence(timeout: 5))
+    }
 }
