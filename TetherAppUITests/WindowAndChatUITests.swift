@@ -229,10 +229,13 @@ final class WindowAndChatUITests: XCTestCase {
         XCTAssertTrue(waitForWindowTitles(app, ["Performance chat 1"]))
     }
 
-    /// ⇧⌘M steps the permission mode, as Shift-Tab does in the CLI.
+    /// ⇧⌘M steps the permission mode, as Shift-Tab does in the CLI. On New Chat, where the
+    /// mode is the draft's and changes without a round trip to the fixture.
     @MainActor
     func testShiftCommandMStepsThePermissionMode() {
         let app = launch()
+        app.typeKey("n", modifierFlags: .command)
+        XCTAssertTrue(waitForWindowTitles(app, ["New Chat"]))
         let permissions = app.windows.firstMatch.toolbars.menuButtons["Permissions"]
         XCTAssertTrue(permissions.waitForExistence(timeout: 5))
         let before = permissions.value as? String
