@@ -15,6 +15,8 @@ public struct SettingsView: View {
             List(selection: selection) {
                 Label("General", systemImage: "gearshape")
                     .tag(SettingsDestination.general)
+                Label("Appearance", systemImage: "paintbrush")
+                    .tag(SettingsDestination.appearance)
                 Label("Hosts", systemImage: "network")
                     .tag(SettingsDestination.hosts)
             }
@@ -24,6 +26,7 @@ public struct SettingsView: View {
             Group {
                 switch SettingsDestination(storedValue: storedSelection) {
                 case .general: GeneralSettings(app: app)
+                case .appearance: AppearanceSettings(app: app)
                 case .hosts: HostsSettings(app: app)
                 }
             }
@@ -44,11 +47,13 @@ public struct SettingsView: View {
 /// has ("chats", "newChats", "host:<uuid>"); each one lands on the pane that absorbed it.
 enum SettingsDestination: Hashable {
     case general
+    case appearance
     case hosts
 
     init(storedValue: String) {
         switch storedValue {
         case "hosts": self = .hosts
+        case "appearance": self = .appearance
         default: self = storedValue.hasPrefix("host:") ? .hosts : .general
         }
     }
@@ -56,6 +61,7 @@ enum SettingsDestination: Hashable {
     var storedValue: String {
         switch self {
         case .general: "general"
+        case .appearance: "appearance"
         case .hosts: "hosts"
         }
     }
@@ -63,6 +69,7 @@ enum SettingsDestination: Hashable {
     var title: String {
         switch self {
         case .general: "General"
+        case .appearance: "Appearance"
         case .hosts: "Hosts"
         }
     }

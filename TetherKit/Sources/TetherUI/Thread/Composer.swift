@@ -3,7 +3,7 @@ import TetherKit
 import TetherProtocol
 import UniformTypeIdentifiers
 
-/// Prompt field: native multi-line TextField (Return sends, ⌥Return adds a line) with native
+/// Prompt field: native multi-line TextField (Return or ⌘Return sends, per Settings) with native
 /// input suggestions for `/` commands and `@` file mentions, image attachments, and send-while-running.
 ///
 /// The only thread properties it reads are `promptSuggestion` and `isRunning`, both of which change
@@ -22,6 +22,7 @@ struct Composer: View {
 
     @Environment(\.composerDraft) private var composerDraft
     @Environment(\.composerDrafts) private var drafts
+    @Environment(\.appearance) private var appearance
     @State private var text = ""
     @State private var images: [Attachment] = []
     @State private var commands: [SlashCommand] = []
@@ -77,7 +78,7 @@ struct Composer: View {
     var body: some View {
         // Above the field, not in it: it's an offer, not text you've written.
         VStack(alignment: .leading, spacing: 8) {
-            if let s = thread?.promptSuggestion, text.isEmpty {
+            if appearance.promptSuggestions, let s = thread?.promptSuggestion, text.isEmpty {
                 Button { text = s } label: {
                     Label(s, systemImage: "sparkles").lineLimit(1)
                 }
@@ -92,19 +93,25 @@ struct Composer: View {
         .animation(.snappy, value: thread?.promptSuggestion)
     }
 
-    /// Laid out like Messages: a round Add button outside the field, and the field a capsule that
-    /// grows with its text, with a round Send — or Stop — at its trailing end.
+    /// As Settings ▸ Appearance ▸ Composer lays it out. Messages: a round Add button outside the
+    /// field, and the field a capsule that grows with its text, with a round Send — or Stop — at its
+    /// trailing end. Inline: Add inside the field at its leading end. Minimal: no Add at all;
+    /// attaching is by dropping or pasting.
     private var field: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            Button("Add Images or Files", systemImage: "plus") { choosingFiles = true }
-                .labelStyle(.iconOnly)
-                .fontWeight(.medium)
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .controlSize(.extraLarge)
-                .help("Attach images, or mention files for Claude to read")
-                .accessibilityIdentifier("composer.add")
+            if appearance.composerLayout == .messages {
+                addButton
+                    .buttonStyle(.glass)
+                    .controlSize(.extraLarge)
+            }
             HStack(alignment: .bottom, spacing: 8) {
+                if appearance.composerLayout == .inline {
+                    // Inside the glass: a plain control, not glass on glass.
+                    addButton
+                        .buttonStyle(.borderless)
+                        .controlSize(.large)
+                        .padding(.bottom, 4)
+                }
                 VStack(alignment: .leading, spacing: 8) {
                     if !images.isEmpty { attachments }
                     TextField(thread?.isRunning == true ? "Send a message while Claude works…" : placeholder, text: $text, axis: .vertical)
@@ -112,7 +119,8 @@ struct Composer: View {
                         .textFieldStyle(.plain)
                         .lineLimit(1...12)
                         .focused($focused)
-                        .onSubmit(send)
+                        .onSubmit { if appearance.sendShortcut == .returnKey { send() } }
+                        .onKeyPress(.return, phases: .down, action: returnPressed)
                         .textInputSuggestions(suggestions) { s in
                             Label {
                                 Text(s.title)
@@ -128,7 +136,7 @@ struct Composer: View {
                 }
                 sendOrStop
             }
-            .padding(.leading, 16)
+            .padding(.leading, appearance.composerLayout == .inline ? 8 : 16)
             .padding(.trailing, 4)
             .padding(.vertical, 4)
             // A capsule at one line; the same corner radius as the text grows makes it a rounded
@@ -232,6 +240,37 @@ struct Composer: View {
 
     private func refreshSuggestions() {
         suggestions = Self.matchingSuggestions(for: text, commands: commands, fileMatches: fileMatches)
+    }
+
+    private var addButton: some View {
+        Button("Add Images or Files", systemImage: "plus") { choosingFiles = true }
+            .labelStyle(.iconOnly)
+            .fontWeight(.medium)
+            .buttonBorderShape(.circle)
+            .help("Attach images, or mention files for Claude to read")
+            .accessibilityIdentifier("composer.add")
+    }
+
+    /// Return and its modifiers, as Settings ▸ Appearance ▸ Send With has them: Return sends and
+    /// Shift- or Option-Return starts a line, or Command-Return sends and Return starts a line.
+    private func returnPressed(_ press: KeyPress) -> KeyPress.Result {
+        let newLine = { NSApp.sendAction(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), to: nil, from: nil) }
+        switch appearance.sendShortcut {
+        case .returnKey:
+            // Plain Return reaches `onSubmit`; Option-Return is the field's own new line.
+            guard press.modifiers.contains(.shift) else { return .ignored }
+            newLine()
+            return .handled
+        case .commandReturn:
+            if press.modifiers.contains(.command) {
+                send()
+            } else if !press.modifiers.contains(.option) {
+                newLine()
+            } else {
+                return .ignored
+            }
+            return .handled
+        }
     }
 
     private func send() {

@@ -6,6 +6,7 @@ struct MarkdownView: View {
     let text: String
     /// Parses once per text change rather than once per layout pass.
     @State private var cache = MarkdownCache()
+    @Environment(\.appearance) private var appearance
 
     enum Block: Hashable {
         case code(lang: String, body: String)
@@ -25,13 +26,15 @@ struct MarkdownView: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(blocks.indices, id: \.self) { i in
                 MarkdownBlockView(rendered: blocks[i],
-                                  topPadding: i == 0 ? 0 : Self.spacing(after: blocks[i - 1].block, before: blocks[i].block),
-                                  isEnd: i == blocks.count - 1, arrives: arriving)
+                                  topPadding: i == 0 ? 0 : Self.spacing(after: blocks[i - 1].block, before: blocks[i].block) * appearance.density.blockScale,
+                                  isEnd: appearance.fadeInText && i == blocks.count - 1, arrives: arriving)
                     .equatable()
             }
         }
         .lineSpacing(3)
         .textSelection(.enabled)
+        .scaledFont(.body)
+        .environment(\.contentFontDesign, appearance.replyFont.design)
     }
 
     /// One parsed block and its inline text, parsed once. `id` changes only when the block is parsed
@@ -373,6 +376,7 @@ struct CodeBlock: View {
     var streams = false
     var arrives = false
     @State private var expanded = false
+    @Environment(\.appearance) private var appearance
 
     @ViewBuilder private var codeText: some View {
         if streams {
@@ -380,6 +384,14 @@ struct CodeBlock: View {
         } else {
             Text(verbatim: code)
         }
+    }
+
+    private func styled(_ text: some View) -> some View {
+        text
+            .scaledFont(.callout, design: .monospaced)
+            .lineLimit(expanded ? nil : lineLimit)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var lineCount: Int { code.reduce(1) { $1 == "\n" ? $0 + 1 : $0 } }
@@ -401,13 +413,17 @@ struct CodeBlock: View {
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
             }
-            .scaledFont(.caption)
+            .scaledFont(.caption, design: .default)
             .foregroundStyle(.secondary)
-            codeText
-                .scaledFont(.callout, design: .monospaced)
-                .lineLimit(expanded ? nil : lineLimit)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if appearance.wrapCode {
+                styled(codeText)
+            } else {
+                // Unwrapped, a long line scrolls sideways: its own width, not the column's.
+                ScrollView(.horizontal) {
+                    styled(codeText.fixedSize(horizontal: true, vertical: false))
+                }
+                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+            }
         }
         .padding(10)
         .background(.fill.quinary, in: .rect(cornerRadius: 8))

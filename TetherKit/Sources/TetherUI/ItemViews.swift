@@ -22,11 +22,11 @@ struct ItemView: View {
         switch item {
         case .userMessage(let m):
             UserMessageView(message: m)
-                .messageMenu(id: m.id, text: m.plainText, isMarkdown: false)
+                .messageMenu(id: m.id, text: m.plainText, isMarkdown: false, sentAt: m.createdAt)
         case .agentMessage(let m):
             MarkdownView(text: m.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .messageMenu(id: m.id, text: m.text, isMarkdown: true)
+                .messageMenu(id: m.id, text: m.text, isMarkdown: true, sentAt: m.createdAt)
         // Reasoning never renders; subagent items come through here too.
         case .reasoning: EmptyView()
         case .toolCall(let t): ToolCallView(call: t, thread: thread)
@@ -56,45 +56,69 @@ struct ItemView: View {
 
 /// What can be done with a message: copy it, or branch the chat from it (Fork from Here). In its
 /// context menu, and — since right-clicking the words themselves gives the text's own menu, and a
-/// context menu shouldn't be the only way to a command — in a small bar that appears on hover.
-/// VoiceOver gets the same as actions.
+/// context menu shouldn't be the only way to a command — in a small bar that appears on hover,
+/// unless Settings ▸ Appearance keeps them to the menu. VoiceOver gets the same as actions. When it
+/// was sent shows beside it, in the bar or always, as Settings ▸ Appearance ▸ Timestamps says.
 private struct MessageMenu: ViewModifier {
     let id: String
     /// The message as it arrived: plain for a prompt, Markdown for a reply.
     let text: String
     let isMarkdown: Bool
+    /// Milliseconds since 1970.
+    let sentAt: Double
     @Environment(\.forkChat) private var forkChat
+    @Environment(\.appearance) private var appearance
     @State private var hovering = false
 
+    /// A prompt in a bubble sits at the trailing edge; everything else at the leading one.
+    private var trailing: Bool { !isMarkdown && appearance.promptStyle == .bubble }
+    private var barShowsActions: Bool { appearance.messageActions == .onHover }
+    private var barShowsTime: Bool { appearance.timestamps == .onHover }
+
     func body(content: Content) -> some View {
-        content
-            // The blank beside a short line is the message too, so right-clicking there works.
-            .contentShape(.rect)
-            .contextMenu {
-                Button("Copy", action: copyText)
-                if isMarkdown { Button("Copy as Markdown") { copy(text) } }
-                Divider()
-                Button("Fork from Here") { forkChat(id) }
+        VStack(alignment: trailing ? .trailing : .leading, spacing: 4) {
+            content
+            if appearance.timestamps == .always {
+                time.frame(maxWidth: .infinity, alignment: trailing ? .trailing : .leading)
             }
-            .overlay(alignment: .topTrailing) {
-                if hovering { actions.offset(y: -14) }
-            }
-            // After the overlay, so moving onto the bar doesn't hide it.
-            .onHover { hovering = $0 }
-            .accessibilityAction(named: "Copy", copyText)
-            .accessibilityAction(named: "Fork from Here") { forkChat(id) }
+        }
+        // The blank beside a short line is the message too, so right-clicking there works.
+        .contentShape(.rect)
+        .contextMenu {
+            Button("Copy", action: copyText)
+            if isMarkdown { Button("Copy as Markdown") { copy(text) } }
+            Divider()
+            Button("Fork from Here") { forkChat(id) }
+        }
+        .overlay(alignment: trailing ? .topLeading : .topTrailing) {
+            if hovering, barShowsActions || barShowsTime { bar.offset(y: -14) }
+        }
+        // After the overlay, so moving onto the bar doesn't hide it.
+        .onHover { hovering = $0 }
+        .accessibilityAction(named: "Copy", copyText)
+        .accessibilityAction(named: "Fork from Here") { forkChat(id) }
     }
 
-    private var actions: some View {
+    private var time: some View {
+        Text(Format.messageTime(msSinceEpoch: sentAt))
+            .scaledFont(.caption, design: .default)
+            .foregroundStyle(.tertiary)
+            .accessibilityIdentifier("message.time")
+    }
+
+    private var bar: some View {
         HStack(spacing: 2) {
-            Button("Copy", systemImage: "doc.on.doc", action: copyText)
-                .help(isMarkdown ? "Copy this reply as text" : "Copy this message")
-            Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
-                .help("Start a new chat with the conversation up to here")
+            if barShowsTime { time.padding(.horizontal, 4) }
+            if barShowsActions {
+                Button("Copy", systemImage: "doc.on.doc", action: copyText)
+                    .help(isMarkdown ? "Copy this reply as text" : "Copy this message")
+                Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
+                    .help("Start a new chat with the conversation up to here")
+            }
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
-        .scaledFont(.callout)
+        .scaledFont(.callout, design: .default)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .glassEffect(in: .capsule)
@@ -110,8 +134,8 @@ private struct MessageMenu: ViewModifier {
 }
 
 extension View {
-    func messageMenu(id: String, text: String, isMarkdown: Bool) -> some View {
-        modifier(MessageMenu(id: id, text: text, isMarkdown: isMarkdown))
+    func messageMenu(id: String, text: String, isMarkdown: Bool, sentAt: Double) -> some View {
+        modifier(MessageMenu(id: id, text: text, isMarkdown: isMarkdown, sentAt: sentAt))
     }
 }
 
@@ -145,42 +169,62 @@ extension EnvironmentValues {
 struct UserMessageView: View {
     let message: Item.UserMessage
     @State private var images = MessageImageCache()
+    @Environment(\.appearance) private var appearance
 
     var body: some View {
-        HStack {
-            Spacer(minLength: 60)
-            VStack(alignment: .trailing, spacing: 6) {
-                if message.synthetic == true {
-                    Label(message.origin ?? "system", systemImage: "gearshape")
-                        .scaledFont(.caption2).foregroundStyle(.secondary)
+        switch appearance.promptStyle {
+        case .bubble:
+            HStack {
+                Spacer(minLength: 60)
+                parts(alignment: .trailing)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(message.synthetic == true ? AnyShapeStyle(.quaternary.opacity(0.4)) : AnyShapeStyle(.quaternary),
+                                in: RoundedRectangle(cornerRadius: 12))
+            }
+        case .plain:
+            // The column's full width, marked as yours by a bar at the leading edge.
+            parts(alignment: .leading)
+                .fontWeight(.medium)
+                .padding(.leading, 12)
+                .padding(.vertical, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(message.synthetic == true ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.tint))
+                        .frame(width: 3)
                 }
-                ForEach(Array(message.content.enumerated()), id: \.offset) { _, part in
-                    switch part {
-                    case .text(let t):
-                        Text(t.text)
-                            .textSelection(.enabled)
-                            .lineLimit(message.synthetic == true ? 6 : nil)
-                    case .image(let img):
-                        if let ns = images.image(for: img.data) {
-                            Image(nsImage: ns).resizable().scaledToFit().frame(maxWidth: 240, maxHeight: 180)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                        }
-                    case .fileRef(let f):
-                        Label(f.path, systemImage: "doc").scaledFont(.callout)
-                    case .unknown:
-                        EmptyView()
+        }
+    }
+
+    private func parts(alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 6) {
+            if message.synthetic == true {
+                Label(message.origin ?? "system", systemImage: "gearshape")
+                    .scaledFont(.caption2).foregroundStyle(.secondary)
+            }
+            ForEach(Array(message.content.enumerated()), id: \.offset) { _, part in
+                switch part {
+                case .text(let t):
+                    Text(t.text)
+                        .textSelection(.enabled)
+                        .lineLimit(message.synthetic == true ? 6 : nil)
+                case .image(let img):
+                    if let ns = images.image(for: img.data) {
+                        Image(nsImage: ns).resizable().scaledToFit().frame(maxWidth: 240, maxHeight: 180)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
-                }
-                if message.queued == true {
-                    Text("Sent while running").scaledFont(.caption2).foregroundStyle(.secondary)
+                case .fileRef(let f):
+                    Label(f.path, systemImage: "doc").scaledFont(.callout)
+                case .unknown:
+                    EmptyView()
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(message.synthetic == true ? AnyShapeStyle(.quaternary.opacity(0.4)) : AnyShapeStyle(.quaternary),
-                        in: RoundedRectangle(cornerRadius: 12))
-            .foregroundStyle(message.synthetic == true ? .secondary : .primary)
+            if message.queued == true {
+                Text("Sent while running").scaledFont(.caption2).foregroundStyle(.secondary)
+            }
         }
+        .foregroundStyle(message.synthetic == true ? .secondary : .primary)
     }
 }
 

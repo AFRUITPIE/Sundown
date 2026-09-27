@@ -126,6 +126,14 @@ enum Format {
         return f
     }()
 
+    /// When a message was sent: the time today, the day and time before that.
+    static func messageTime(msSinceEpoch: Double) -> String {
+        let date = Date(timeIntervalSince1970: msSinceEpoch / 1000)
+        return Calendar.current.isDateInToday(date)
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+    }
+
     @MainActor
     static func relative(msSinceEpoch: Double) -> String {
         relativeFormatter.localizedString(for: Date(timeIntervalSince1970: msSinceEpoch / 1000), relativeTo: .now)
@@ -289,6 +297,9 @@ enum TextScale {
 
     static func bigger(than scale: CGFloat) -> CGFloat? { steps.first { $0 > scale + 0.001 } }
     static func smaller(than scale: CGFloat) -> CGFloat? { steps.last { $0 < scale - 0.001 } }
+
+    /// "100%", as Settings lists a step.
+    static func label(_ scale: CGFloat) -> String { "\(Int((scale * 100).rounded()))%" }
 }
 
 extension Font.TextStyle {
@@ -320,10 +331,13 @@ extension Font.TextStyle {
 private struct ScaledFont: ViewModifier {
     let style: Font.TextStyle
     let weight: Font.Weight?
-    let design: Font.Design
+    let explicitDesign: Font.Design?
     @Environment(\.textScale) private var scale
+    /// A reply's font (Settings ▸ Appearance ▸ Reply Font) comes down as the design.
+    @Environment(\.contentFontDesign) private var inheritedDesign
 
     func body(content: Content) -> some View {
+        let design = explicitDesign ?? inheritedDesign ?? .default
         if abs(scale - 1) < 0.001 {
             content.font(.system(style, design: design, weight: weight))
         } else {
@@ -332,10 +346,15 @@ private struct ScaledFont: ViewModifier {
     }
 }
 
+extension EnvironmentValues {
+    /// The design `scaledFont` uses where none is given: a reply's font.
+    @Entry var contentFontDesign: Font.Design?
+}
+
 extension View {
     /// For content the reader resizes with View ▸ Bigger and Smaller — the transcript, prompts and
     /// the composer — not for controls and chrome.
-    func scaledFont(_ style: Font.TextStyle, weight: Font.Weight? = nil, design: Font.Design = .default) -> some View {
-        modifier(ScaledFont(style: style, weight: weight, design: design))
+    func scaledFont(_ style: Font.TextStyle, weight: Font.Weight? = nil, design: Font.Design? = nil) -> some View {
+        modifier(ScaledFont(style: style, weight: weight, explicitDesign: design))
     }
 }

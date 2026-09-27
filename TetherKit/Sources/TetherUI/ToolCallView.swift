@@ -9,6 +9,7 @@ struct ToolCallView: View {
     let thread: ThreadModel
     @State private var expanded = false
     @Environment(\.inspectSubagent) private var inspectSubagent
+    @Environment(\.appearance) private var appearance
 
     private var input: JSONValue { call.input }
 
@@ -32,50 +33,98 @@ struct ToolCallView: View {
                     .padding(10)
                     .background(.fill.quinary, in: .rect(cornerRadius: 8))
                     .padding(.top, 6)
-                    .padding(.leading, 12)
+                    .padding(.leading, ToolRowLayout.detailInset(appearance))
             }
         }
+        // Settings ▸ Appearance ▸ Open Failed Calls: a call that went wrong shows why at once.
+        .onAppear(perform: openIfFailed)
+        .onChange(of: call.status) { openIfFailed() }
+        .onChange(of: appearance.expandFailures) { openIfFailed() }
+    }
+
+    private func openIfFailed() {
+        guard appearance.expandFailures, call.status == .failed || call.status == .denied, !expanded else { return }
+        expanded = true
     }
 
     private var alwaysShowBody: Bool {
         call.kind == .todoWrite
     }
 
+    /// Chevron, status and icon on the sides Settings ▸ Appearance puts them. A finished call has
+    /// no status glyph, just its words.
     private var header: some View {
         HStack(spacing: 8) {
-            // A call that went wrong says so where the eye starts; a finished call has no glyph,
-            // just its words. A running one's spinner is at the trailing end, with its time.
-            statusGlyph
+            if appearance.chevronSide == .leading {
+                // A subagent opens in the inspector instead: its space is kept so titles line up.
+                DisclosureIndicator(expanded: expanded).opacity(call.kind == .subagent ? 0 : 1)
+            }
+            // Leading, a slot of its own even when empty, so every title starts in the same place.
+            if appearance.statusSide == .leading { Color.clear.frame(width: 16, height: 1).overlay { status } }
+            if appearance.toolIcons {
+                Image(systemName: symbol).foregroundStyle(accentColor).frame(width: 16).accessibilityHidden(true)
+            }
             Text(title).foregroundStyle(.secondary)
             if !subtitle.isEmpty {
                 Text(subtitle).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            if let s = call.elapsedSeconds, call.status == .running {
+            if appearance.showElapsed, let s = call.elapsedSeconds, call.status == .running {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
-            if call.status == .pending || call.status == .running {
-                // Hidden, or the whole row reads as a progress indicator rather than a button;
-                // its value says it's running instead.
-                ProgressView().controlSize(.small).accessibilityHidden(true)
-            }
-            // A subagent opens in the inspector instead of expanding here.
+            if appearance.statusSide == .trailing { status }
             if call.kind == .subagent {
                 Image(systemName: "sidebar.trailing").scaledFont(.caption2).foregroundStyle(.tertiary)
-            } else {
+            } else if appearance.chevronSide == .trailing {
                 DisclosureIndicator(expanded: expanded)
             }
         }
         .scaledFont(.callout)
     }
 
-    /// A glyph only when there's something to notice.
-    @ViewBuilder private var statusGlyph: some View {
+    /// A spinner while it runs, a glyph when it went wrong, and nothing once it's done.
+    @ViewBuilder private var status: some View {
         switch call.status {
+        case .pending, .running:
+            // Hidden, or the whole row reads as a progress indicator rather than a button; its
+            // value says it's running instead.
+            ProgressView().controlSize(.small).accessibilityHidden(true)
         case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red).scaledFont(.caption)
         case .denied: Image(systemName: "hand.raised.fill").foregroundStyle(.orange).scaledFont(.caption)
         case .interrupted: Image(systemName: "stop.fill").foregroundStyle(.tertiary).scaledFont(.caption2)
         default: EmptyView()
+        }
+    }
+
+    /// With Settings ▸ Appearance ▸ Show Icons, what kind of work the call is.
+    private var symbol: String {
+        switch call.kind {
+        case .bash: return "terminal"
+        case .fileRead: return "doc.text"
+        case .fileWrite: return "doc.badge.plus"
+        case .fileEdit, .notebookEdit: return "pencil"
+        case .grep, .glob: return "magnifyingglass"
+        case .webFetch: return "globe"
+        case .webSearch: return "safari"
+        case .mcp: return "puzzlepiece.extension"
+        case .subagent: return "person.2"
+        case .todoWrite, .task: return "checklist"
+        case .askUserQuestion: return "questionmark.bubble"
+        case .exitPlanMode, .enterPlanMode: return "list.bullet.clipboard"
+        case .skill: return "sparkles"
+        case .monitor: return "waveform.path.ecg"
+        case .schedule: return "clock"
+        case .worktree: return "arrow.triangle.branch"
+        default: return "wrench.and.screwdriver"
+        }
+    }
+
+    private var accentColor: Color {
+        switch call.status {
+        case .failed: return .red
+        case .denied: return .orange
+        case .running, .pending: return .blue
+        default: return .secondary
         }
     }
 
@@ -230,10 +279,22 @@ struct DisclosureIndicator: View {
     }
 }
 
+/// Where a tool row's detail starts: under its title, past whatever leads the row.
+enum ToolRowLayout {
+    static func detailInset(_ appearance: Appearance) -> CGFloat {
+        var inset: CGFloat = 0
+        if appearance.chevronSide == .leading { inset += 18 }
+        if appearance.statusSide == .leading { inset += 24 }
+        if appearance.toolIcons { inset += 24 }
+        return max(inset, 12)
+    }
+}
+
 struct ToolCallGroupView: View {
     let calls: [Item.ToolCall]
     let thread: ThreadModel
     @State private var expanded: Bool
+    @Environment(\.appearance) private var appearance
 
     init(calls: [Item.ToolCall], thread: ThreadModel, initiallyExpanded: Bool = false) {
         self.calls = calls
@@ -247,9 +308,14 @@ struct ToolCallGroupView: View {
                 withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
+                    if appearance.chevronSide == .leading { DisclosureIndicator(expanded: expanded) }
+                    if appearance.statusSide == .leading { Color.clear.frame(width: 16, height: 1) }
+                    if appearance.toolIcons {
+                        Image(systemName: "square.stack").foregroundStyle(.secondary).frame(width: 16).accessibilityHidden(true)
+                    }
                     Text("Used \(calls.count) tools").foregroundStyle(.secondary)
                     Spacer(minLength: 8)
-                    DisclosureIndicator(expanded: expanded)
+                    if appearance.chevronSide == .trailing { DisclosureIndicator(expanded: expanded) }
                 }
                 .scaledFont(.callout)
                 .contentShape(Rectangle())
@@ -260,7 +326,7 @@ struct ToolCallGroupView: View {
                     ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
                 }
                 // The group's calls indented under it.
-                .padding(.leading, 12)
+                .padding(.leading, ToolRowLayout.detailInset(appearance))
             }
         }
     }
@@ -467,6 +533,27 @@ private func sampleFinishedRun() -> [Item.ToolCall] {
     ToolCallGroupView(calls: sampleFinishedRun(), thread: .sampleIdleChat(), initiallyExpanded: true)
         .padding(20)
         .frame(width: 560)
+}
+
+/// Settings ▸ Appearance's other tool-call choices: icons, and chevron and status leading.
+#Preview("Tool calls (icons, leading)") {
+    var appearance = Appearance()
+    appearance.toolIcons = true
+    appearance.chevronSide = .leading
+    appearance.statusSide = .leading
+    appearance.expandFailures = true
+    return VStack(alignment: .leading, spacing: 10) {
+        ToolCallGroupView(calls: sampleFinishedRun(), thread: .sampleIdleChat())
+        ToolCallView(call: .sample(name: "Bash", kind: .bash, input: ["command": "swift test", "description": "Run the test suite"],
+                                    status: .running, elapsedSeconds: 4, secondsAgo: 4), thread: .sampleIdleChat())
+        ToolCallView(call: .sample(name: "Edit", kind: .fileEdit, input: ["file_path": "/tmp/a.swift", "old_string": "a", "new_string": "b"],
+                                    status: .failed, outputText: "String to replace not found in file.", secondsAgo: 2), thread: .sampleIdleChat())
+        ToolCallView(call: .sample(name: "Read", kind: .fileRead, input: ["file_path": "/tmp/b.swift"], status: .completed, secondsAgo: 1),
+                     thread: .sampleIdleChat())
+    }
+    .environment(\.appearance, appearance)
+    .padding(20)
+    .frame(width: 560)
 }
 
 #Preview("Running call beside a finished group") {

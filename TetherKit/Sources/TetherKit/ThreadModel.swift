@@ -65,6 +65,7 @@ public final class ThreadModel: Identifiable {
     public private(set) var itemsVersion = 0
     @ObservationIgnored private var cachedTopLevel: (version: Int, items: [Item])?
     @ObservationIgnored private var cachedRows: (version: Int, rows: [TranscriptRow])?
+    @ObservationIgnored private var cachedUngroupedRows: (version: Int, rows: [TranscriptRow])?
     @ObservationIgnored private var cachedChildren: (version: Int, byParent: [String: [Item]])?
     /// When items started live, as opposed to arriving with history, for the rows that fade in.
     /// Unobserved: a row reads it once, when it appears.
@@ -404,6 +405,16 @@ public final class ThreadModel: Identifiable {
         if let c = cachedRows, c.version == itemsVersion { return c.rows }
         let rows = foldTranscriptRows(topLevelItems)
         cachedRows = (itemsVersion, rows)
+        return rows
+    }
+
+    /// `rows`, or with every tool call on a row of its own when `grouped` is false (Settings ▸
+    /// Appearance ▸ Group Finished Calls).
+    public func rows(grouped: Bool) -> [TranscriptRow] {
+        if grouped { return rows }
+        if let c = cachedUngroupedRows, c.version == itemsVersion { return c.rows }
+        let rows = foldTranscriptRows(topLevelItems, grouping: false)
+        cachedUngroupedRows = (itemsVersion, rows)
         return rows
     }
 

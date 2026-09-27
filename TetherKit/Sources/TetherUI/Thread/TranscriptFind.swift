@@ -123,10 +123,11 @@ struct FindBar: View {
 struct FindBarHost: View {
     let thread: ThreadModel
     @Environment(\.transcriptFind) private var find
+    @Environment(\.appearance) private var appearance
 
     var body: some View {
         if let find, find.isPresented {
-            FindBar(find: find, rows: thread.rows)
+            FindBar(find: find, rows: thread.rows(grouped: appearance.groupToolCalls))
         }
     }
 }

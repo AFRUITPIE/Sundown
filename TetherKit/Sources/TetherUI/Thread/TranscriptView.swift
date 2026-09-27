@@ -16,6 +16,7 @@ struct TranscriptView: View {
     @State private var glide = Glide()
     @Environment(\.transcriptFind) private var find
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.appearance) private var appearance
 
     var body: some View {
         ScrollView {
@@ -119,7 +120,7 @@ extension TranscriptView {
             return
         }
         let growth = new.content - old.content
-        guard growth > 0, growth < 160, !reduceMotion else { return }
+        guard growth > 0, growth < 160, !reduceMotion, appearance.followMotion == .glide else { return }
         glide = Glide(distance: growth, count: glide.count + 1)
     }
 }
@@ -129,9 +130,10 @@ extension TranscriptView {
 private struct TranscriptContent: View {
     let thread: ThreadModel
     let connection: HostConnection?
+    @Environment(\.appearance) private var appearance
 
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: 14) {
+        LazyVStack(alignment: .leading, spacing: appearance.density.rowSpacing) {
             if !thread.historyLoaded {
                 TranscriptUnavailable(thread: thread, connection: connection)
             }
@@ -140,7 +142,7 @@ private struct TranscriptContent: View {
             }
             // One plain view per row, identified by the ForEach alone: a `switch` or `.id()` here
             // adds a node to every row, and the lazy stack walks every row on each layout pass.
-            ForEach(thread.rows, id: \.id) { row in
+            ForEach(thread.rows(grouped: appearance.groupToolCalls), id: \.id) { row in
                 TranscriptRowView(row: row, thread: thread)
             }
             TranscriptTail(thread: thread)
@@ -185,6 +187,7 @@ private struct OlderHistoryTrigger: View {
 struct TranscriptRowView: View, Equatable {
     let row: TranscriptRow
     let thread: ThreadModel
+    @Environment(\.appearance) private var appearance
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
         guard a.thread === b.thread else { return false }
@@ -200,7 +203,7 @@ struct TranscriptRowView: View, Equatable {
             switch row {
             case .item(let item):
                 LiveItemView(box: thread.box(for: item), thread: thread)
-                    .modifier(FadesIn(isNew: thread.justStarted(item.id)))
+                    .modifier(FadesIn(isNew: appearance.fadeInRows && thread.justStarted(item.id)))
             case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread)
             }
         }
@@ -310,10 +313,11 @@ struct TranscriptPlaceholder<Actions: View>: View {
 /// A `Group` rather than a stack, so that with neither of them the enclosing spacing collapses too.
 struct TranscriptTail: View {
     let thread: ThreadModel
+    @Environment(\.appearance) private var appearance
 
     var body: some View {
         Group {
-            if thread.isThinking { ThinkingLine() }
+            if thread.isThinking, appearance.showThinking { ThinkingLine() }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
                 TurnOutcome(status: turn.status, error: turn.result?.errors?.first)

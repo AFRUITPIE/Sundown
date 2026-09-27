@@ -160,6 +160,8 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertTrue(sidebar.staticTexts["General"].waitForExistence(timeout: 10))
         sidebar.staticTexts["General"].click()
         XCTAssertTrue(app.staticTexts["New Chats"].waitForExistence(timeout: 10))
+        sidebar.staticTexts["Appearance"].click()
+        XCTAssertTrue(app.radioButtons["Wide"].waitForExistence(timeout: 10))
         app.radioButtons["Wide"].click()
         XCTAssertEqual((app.radioButtons["Wide"].value as? NSNumber)?.intValue, 1)
         app.radioButtons["Narrow"].click()

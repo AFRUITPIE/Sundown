@@ -27,7 +27,7 @@ public enum TranscriptRow: Sendable {
 /// Reasoning items are dropped here rather than rendered: the model's internal monologue competes
 /// with its actual answer. `ThreadModel` still keeps them, and `ThreadModel.isThinking` drives the
 /// one line that marks the wait before a reply starts.
-public func foldTranscriptRows(_ items: [Item]) -> [TranscriptRow] {
+public func foldTranscriptRows(_ items: [Item], grouping: Bool = true) -> [TranscriptRow] {
     var rows: [TranscriptRow] = []
     var run: [Item.ToolCall] = []
 
@@ -43,7 +43,7 @@ public func foldTranscriptRows(_ items: [Item]) -> [TranscriptRow] {
     for item in items {
         if case .reasoning = item {
             continue
-        } else if case .toolCall(let call) = item, isGroupable(call) {
+        } else if grouping, case .toolCall(let call) = item, isGroupable(call) {
             run.append(call)
         } else {
             flushRun()

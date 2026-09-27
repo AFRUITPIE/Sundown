@@ -2,7 +2,7 @@ import SwiftUI
 import TetherKit
 import TetherProtocol
 
-/// What a new chat starts with, and how the window looks. Every row here is a pop-up or a
+/// What a new chat starts with. Every row here is a pop-up or a
 /// segmented control with the same words and symbols the toolbar uses for the same value.
 struct GeneralSettings: View {
     @Bindable var app: AppModel
@@ -13,15 +13,6 @@ struct GeneralSettings: View {
                 modelRow
                 effortRow
                 permissionsRow
-            }
-            Section("Appearance") {
-                Picker("Transcript Width", selection: $app.transcriptWidth) {
-                    ForEach(TranscriptWidth.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                Picker("Group Chats By", selection: $app.sidebarGrouping) {
-                    ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
-                }
             }
         }
         .formStyle(.grouped)

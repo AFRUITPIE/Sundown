@@ -27,6 +27,12 @@ struct TranscriptRowsTests {
         #expect(calls.map(\.id) == ["t1", "t2", "t3"])
     }
 
+    /// Settings ▸ Appearance ▸ Group Finished Calls off: every call on a row of its own.
+    @Test func withoutGroupingEveryCallIsItsOwnRow() {
+        let rows = foldTranscriptRows([message("m1"), call("t1"), call("t2"), call("t3"), message("m2")], grouping: false)
+        #expect(rows.map(\.id) == ["m1", "t1", "t2", "t3", "m2"])
+    }
+
     @Test func runningCallBreaksTheGroup() {
         let rows = foldTranscriptRows([call("t1"), call("t2", status: .running), call("t3")])
         // t1 alone, t2 alone (running), t3 alone — none of these runs has 2+ members.

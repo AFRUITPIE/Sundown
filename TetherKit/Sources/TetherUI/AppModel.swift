@@ -67,6 +67,14 @@ public final class AppModel {
     /// The transcript and composer's text size, 1 being the system's (persisted).
     public var textScale: CGFloat = 1 { didSet { save() } }
 
+    /// Settings ▸ Appearance (persisted under a key of its own).
+    public var appearance = Appearance() {
+        didSet {
+            guard !isLoading, appearance != oldValue, let data = try? JSONEncoder().encode(appearance) else { return }
+            defaults.set(data, forKey: Self.appearanceKey)
+        }
+    }
+
     /// Defaults for new threads, per app (persisted).
     public var defaultModel: String? { didSet { save() } }
     public var defaultEffort: String? { didSet { save() } }
@@ -79,6 +87,7 @@ public final class AppModel {
     private let defaults: UserDefaults
     private static let hostsKey = "tether.hosts.v1"
     private static let draftsKey = "tether.drafts.v1"
+    private static let appearanceKey = "tether.appearance.v1"
     /// `didSet` runs while `load()` restores values; saving then would write half-restored state.
     private var isLoading = false
     private var connectedAll = false
@@ -206,6 +215,7 @@ public final class AppModel {
         hosts = stored?.hosts ?? []
         if !hosts.contains(where: { $0.id == HostConfig.local.id }) { hosts.insert(.local, at: 0) }
         drafts = defaults.data(forKey: Self.draftsKey).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        appearance = defaults.data(forKey: Self.appearanceKey).flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
         guard let s = stored else { return }
         defaultModel = s.defaultModel
         defaultEffort = s.defaultEffort
