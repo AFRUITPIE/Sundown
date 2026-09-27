@@ -234,9 +234,13 @@ public final class AppModel {
     /// for every change of selection.
     private var writtenEnv: [UUID: [String: String]] = [:]
 
-    public init(defaults: UserDefaults = .standard) {
+    public convenience init(defaults: UserDefaults = .standard) {
+        self.init(defaults: defaults, secrets: defaults === UserDefaults.standard ? KeychainSecrets() : DefaultsSecrets(defaults))
+    }
+
+    init(defaults: UserDefaults, secrets: SecretStore) {
         self.defaults = defaults
-        self.secrets = defaults === UserDefaults.standard ? KeychainSecrets() : DefaultsSecrets(defaults)
+        self.secrets = secrets
         load()
         for h in hosts { connections[h.id] = HostConnection(host: h) }
         for c in connections.values { c.offersSessionTools = appearance.sessionTools }
@@ -437,11 +441,17 @@ public final class AppModel {
     private func save() {
         guard !isLoading else { return }
         for host in hosts where writtenEnv[host.id] ?? [:] != host.env {
-            secrets.write(host.env.isEmpty ? nil : try? JSONEncoder().encode(host.env), for: host.id.uuidString)
-            writtenEnv[host.id] = host.env
+            if secrets.write(host.env.isEmpty ? nil : try? JSONEncoder().encode(host.env), for: host.id.uuidString) {
+                writtenEnv[host.id] = host.env
+            }
         }
-        // The defaults file keeps everything but the values.
-        let hosts = hosts.map { host in var h = host; h.env = [:]; return h }
+        // The defaults file keeps everything but the values, unless the Keychain refused them: then
+        // they stay inline, as a store from before the Keychain has them, until a save gets them there.
+        let hosts = hosts.map { host in
+            var h = host
+            if writtenEnv[host.id] ?? [:] == host.env { h.env = [:] }
+            return h
+        }
         let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
                        showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue, hostID: lastHostID,
