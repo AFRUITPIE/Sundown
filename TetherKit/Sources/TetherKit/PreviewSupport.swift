@@ -400,6 +400,26 @@ extension ThreadModel {
                                      outputText: "error: cannot find 'inspectorMinimum' in scope\n  --> RootView.swift:67:21", secondsAgo: 860))
         first.append(.sampleAgentMessage("The build caught a name I got wrong. Fixing it.", secondsAgo: 850))
         first.append(.sampleToolCall(name: "Edit", kind: .fileEdit, input: edit, status: .completed, secondsAgo: 840))
+        first.append(.sampleToolCall(name: "Edit", kind: .fileEdit, input: [
+            "file_path": .string(root + "RootView.swift"),
+            "old_string": "    private var minWidth: CGFloat? {\n        guard showInspector else { return 740 }\n        return inspectorSettled ? 1000 : nil\n    }",
+            "new_string": "    private var minWidth: CGFloat? {\n        guard showInspector else { return InspectorWidth.windowMinimum }\n        return inspectorSettled ? InspectorWidth.windowMinimum + InspectorWidth.column : nil\n    }",
+        ], status: .completed, secondsAgo: 835))
+        first.append(.sampleToolCall(name: "Write", kind: .fileWrite, input: [
+            "file_path": .string(root + "Inspector/InspectorWidth.swift"),
+            "content": "import CoreGraphics\n\n/// The widths the window's minimum is made of.\nenum InspectorWidth {\n    static let windowMinimum: CGFloat = 740\n    static let column: CGFloat = 260\n}\n",
+        ], status: .completed, secondsAgo: 830))
+        first.append(.sampleToolCall(name: "MultiEdit", kind: .fileEdit, input: [
+            "file_path": .string(root + "Inspector/InspectorView.swift"),
+            "edits": [
+                ["old_string": ".inspectorColumnWidth(min: 260, ideal: 300, max: 420)",
+                 "new_string": ".inspectorColumnWidth(min: InspectorWidth.column, ideal: 300, max: 420)"],
+            ],
+        ], status: .completed, secondsAgo: 825))
+        // Failed, so it changed nothing and isn't counted.
+        first.append(.sampleToolCall(name: "Edit", kind: .fileEdit, input: [
+            "file_path": .string(root + "Thread/TranscriptView.swift"), "old_string": "minWidth", "new_string": "minimumWidth",
+        ], status: .failed, outputText: "<tool_use_error>String to replace not found in file.</tool_use_error>", secondsAgo: 820))
         first.append(.sampleToolCall(name: "Bash", kind: .bash, input: build, status: .completed, outputText: "Build complete!", secondsAgo: 800))
         first.append(.sampleAgentMessage("Opening the inspector raised the window's minimum width from 740 to 1000 halfway through its animation, so AppKit resized the window while the split view was still laying out. The minimum now stays at 740.", secondsAgo: 690))
         var second: [Item] = [.sampleUserMessage("Does anything else change the width while it opens?", secondsAgo: 300)]
@@ -409,6 +429,36 @@ extension ThreadModel {
         second.append(.sampleAgentMessage("Only the column width itself, which is fixed at 260. The transcript re-measures its rows when its width changes, but it keeps its place.", secondsAgo: 270))
         return sample(title: "Smooth out the inspector resize", items: first + second,
                       turns: [.sample(secondsAgo: 690), .sample(secondsAgo: 270)])
+    }
+
+    /// A chat picked up over more than a week, for its date separators: a prompt eight days ago,
+    /// three days ago, yesterday, and a few hours ago, then a follow-up minutes after that reply,
+    /// which gets none.
+    public static func sampleDatedChat() -> ThreadModel {
+        let day: Double = 86_400
+        let root = "/Users/hayden/Code/tether-app/TetherKit/Sources/TetherUI/"
+        let items: [Item] = [
+            .sampleUserMessage("Sketch how the transcript could mark where a chat picks up after a break.", secondsAgo: 8 * day),
+            .sampleAgentMessage("Messages puts the date above the first message after an hour's gap, and above every day change. The same rule suits a transcript.", secondsAgo: 8 * day - 40),
+            .sampleUserMessage("Let's do it. Start with the decision, and test it.", secondsAgo: 3 * day),
+            .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptView.swift")],
+                            status: .completed, secondsAgo: 3 * day - 20),
+            .sampleToolCall(name: "Edit", kind: .fileEdit, input: [
+                "file_path": .string(root + "Thread/TranscriptView.swift"),
+                "old_string": "TranscriptRowView(row: row, thread: thread)",
+                "new_string": "TranscriptRowView(row: row, thread: thread)\n    // Dates come in as rows of their own.",
+            ], status: .completed, secondsAgo: 3 * day - 30),
+            .sampleAgentMessage("The decision is a pure function over the prompts' times, with tests for a day change and for an hour's gap.", secondsAgo: 3 * day - 60),
+            .sampleUserMessage("Does it use the reader's locale?", secondsAgo: day),
+            .sampleAgentMessage("Yes: the day and time come from the locale's own formats, and Today and Yesterday from its relative names.", secondsAgo: day - 20),
+            .sampleUserMessage("Ship it.", secondsAgo: 3 * 3_600),
+            .sampleAgentMessage("Committed.", secondsAgo: 3 * 3_600 - 30),
+            .sampleUserMessage("One more thing: does a follow-up a few minutes later get one too?", secondsAgo: 3 * 3_600 - 300),
+            .sampleAgentMessage("No. It's the same stretch of the chat, so it goes on without a date.", secondsAgo: 3 * 3_600 - 320),
+        ]
+        return sample(title: "Date separators", items: items,
+                      turns: [.sample(secondsAgo: 8 * day - 40), .sample(secondsAgo: 3 * day - 60), .sample(secondsAgo: day - 20),
+                              .sample(secondsAgo: 3 * 3_600 - 30), .sample(secondsAgo: 3 * 3_600 - 320)])
     }
 
     /// A thread waiting on a permission decision — `pending.first` replaces the composer.

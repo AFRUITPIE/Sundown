@@ -69,8 +69,16 @@ public final class ThreadModel: Identifiable {
     public private(set) var itemsVersion = 0
     @ObservationIgnored private var cachedTopLevel: (version: Int, items: [Item])?
     @ObservationIgnored private var cachedRows: (version: Int, rows: [TranscriptRow])?
-    /// The other foldings' rows, each for the items and running state it was folded from.
+    /// The rows as each folding shows them, dates and edits included, each for the items and
+    /// running state it was made from.
     @ObservationIgnored private var cachedFoldedRows: [TranscriptFolding: (version: Int, running: Bool, rows: [TranscriptRow])] = [:]
+    /// What goes between turns, the same for every folding: the prompts that get a date, and each
+    /// finished turn's edits.
+    @ObservationIgnored private var cachedDecorations: (version: Int, running: Bool, dates: [String: Double], edits: [String: TurnEdits])?
+    /// Each finished edit call's changes, by call id: counting a change diffs its old and new text,
+    /// and a finished call's input never changes, so the earlier turns aren't diffed again every
+    /// time the running one adds an item.
+    @ObservationIgnored private var fileChanges: [String: [FileChange]] = [:]
     @ObservationIgnored private var cachedChildren: (version: Int, byParent: [String: [Item]])?
     /// When items started live, as opposed to arriving with history, for the rows that fade in.
     /// Unobserved: a row reads it once, when it appears.
@@ -204,6 +212,7 @@ public final class ThreadModel: Identifiable {
 
     /// Drops the transcript so the next open reads it afresh.
     func unload() {
+        fileChanges = [:]
         storage = []
         turns = []
         tasks = [:]
@@ -474,15 +483,36 @@ public final class ThreadModel: Identifiable {
         return rows
     }
 
-    /// The rows folded as Settings ▸ Advanced ▸ Tool Calls says; `rows` for `.summarized`.
-    /// Worked For also depends on whether the last turn is still running.
+    /// The transcript as it is drawn: the rows folded as Settings ▸ Advanced ▸ Tool Calls says, with
+    /// the date above a prompt after a break and the files each finished turn edited after it. The
+    /// edits, and Worked For's folding, depend on whether the last turn is still running.
     public func rows(_ folding: TranscriptFolding) -> [TranscriptRow] {
-        if folding == .summarized { return rows }
-        let running = folding == .workedFor && isRunning
+        let running = isRunning
         if let c = cachedFoldedRows[folding], c.version == itemsVersion, c.running == running { return c.rows }
-        let rows = foldTranscriptRows(topLevelItems, folding: folding, lastTurnRunning: running)
+        let folded = folding == .summarized
+            ? rows
+            : foldTranscriptRows(topLevelItems, folding: folding, lastTurnRunning: folding == .workedFor && running)
+        let between = decorations(running: running)
+        let rows = decorateTranscriptRows(folded, dates: between.dates, edits: between.edits)
         cachedFoldedRows[folding] = (itemsVersion, running, rows)
         return rows
+    }
+
+    private func decorations(running: Bool) -> (dates: [String: Double], edits: [String: TurnEdits]) {
+        if let c = cachedDecorations, c.version == itemsVersion, c.running == running { return (c.dates, c.edits) }
+        // The prompts' dates don't depend on the running turn; kept across its start and end.
+        let dates = cachedDecorations.flatMap { $0.version == itemsVersion ? $0.dates : nil }
+            ?? DateSeparators.prompts(in: topLevelItems)
+        let edits = turnEdits(in: items, lastTurnRunning: running) { self.changes(of: $0) }
+        cachedDecorations = (itemsVersion, running, dates, edits)
+        return (dates, edits)
+    }
+
+    private func changes(of call: Item.ToolCall) -> [FileChange] {
+        if let known = fileChanges[call.id] { return known }
+        let changes = FileChange.changes(of: call)
+        if call.status != .running, call.status != .pending { fileChanges[call.id] = changes }
+        return changes
     }
 
     /// Subagent and workflow runs, as the Tasks inspector lists them: every subagent tool call,

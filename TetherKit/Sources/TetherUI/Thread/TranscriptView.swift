@@ -195,6 +195,8 @@ struct TranscriptRowView: View, Equatable {
         // The same turn's work, as long as it holds the same rows; each item reads its own box.
         case (.turnWork(let x, let xs, let xd), .turnWork(let y, let ys, let yd)):
             return x == y && xd == yd && xs.map(\.id) == ys.map(\.id)
+        case (.turnEdits(let x), .turnEdits(let y)): return x == y
+        case (.dateSeparator(let x, let xs), .dateSeparator(let y, let ys)): return x == y && xs == ys
         default: return false
         }
     }
@@ -207,6 +209,8 @@ struct TranscriptRowView: View, Equatable {
                     .modifier(FadesIn(isNew: thread.justStarted(item.id)))
             case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread)
             case .turnWork(_, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread)
+            case .turnEdits(let edits): TurnEditsView(edits: edits, cwd: thread.cwd)
+            case .dateSeparator(_, let ms): DateSeparatorView(ms: ms)
             }
         }
         .modifier(FindHighlight(id: row.id))

@@ -1,7 +1,9 @@
+import Foundation
 import TetherProtocol
 
 /// One row in the rendered transcript: a single item, a run of consecutive finished tool calls
-/// collapsed into one quiet summary line, or a finished turn's work folded behind its last reply.
+/// collapsed into one quiet summary line, a finished turn's work folded behind its last reply, the
+/// files a finished turn edited, or the date above a prompt.
 public indirect enum TranscriptRow: Sendable, Equatable {
     case item(Item)
     case toolGroup([Item.ToolCall])
@@ -9,6 +11,10 @@ public indirect enum TranscriptRow: Sendable, Equatable {
     /// (Settings ▸ Advanced ▸ Tool Calls ▸ Worked For). `durationMs` runs from the prompt to that
     /// message, when both are known.
     case turnWork(id: String, rows: [TranscriptRow], durationMs: Double?)
+    /// The files a finished turn edited, after its last row.
+    case turnEdits(TurnEdits)
+    /// When a prompt was sent, above it, where the chat picks up after a break (`DateSeparators`).
+    case dateSeparator(promptID: String, ms: Double)
 
     public var id: String {
         switch self {
@@ -17,6 +23,8 @@ public indirect enum TranscriptRow: Sendable, Equatable {
         // which they don't — items only ever append or mutate in place.
         case .toolGroup(let calls): return "group-\(calls.first?.id ?? "")"
         case .turnWork(let id, _, _): return id
+        case .turnEdits(let edits): return "edits-\(edits.promptID)"
+        case .dateSeparator(let promptID, _): return "date-\(promptID)"
         }
     }
 }
@@ -118,6 +126,66 @@ private func isGroupable(_ call: Item.ToolCall) -> Bool {
     call.status != .running && call.status != .pending && call.kind != .todoWrite && call.kind != .subagent
 }
 
+/// Folded rows with what goes between turns: a date above each prompt in `dates` (by prompt id,
+/// from `DateSeparators.prompts`), and each turn's edits in `edits` (from `turnEdits`) after the
+/// turn's last row, before the next prompt's date.
+public func decorateTranscriptRows(_ rows: [TranscriptRow], dates: [String: Double], edits: [String: TurnEdits]) -> [TranscriptRow] {
+    guard !dates.isEmpty || !edits.isEmpty else { return rows }
+    var out: [TranscriptRow] = []
+    out.reserveCapacity(rows.count + dates.count + edits.count)
+    var turn: String?
+    func endTurn() {
+        if let turn, let e = edits[turn] { out.append(.turnEdits(e)) }
+    }
+    for row in rows {
+        if case .item(.userMessage(let m)) = row, m.parentToolUseId == nil {
+            endTurn()
+            if let ms = dates[m.id] { out.append(.dateSeparator(promptID: m.id, ms: ms)) }
+            turn = m.id
+        }
+        out.append(row)
+    }
+    endTurn()
+    return out
+}
+
+/// Where the transcript marks the time, as Messages does: above a prompt that follows a break.
+public enum DateSeparators {
+    /// A break is longer than this since the last thing in the chat.
+    public static let gap: Double = 60 * 60 * 1000
+
+    /// Whether a prompt sent at `time` (ms since 1970) gets the date above it: the first prompt
+    /// shown, a prompt on a different day from the one before it, or one sent more than an hour
+    /// after whatever came before it.
+    public static func needsSeparator(at time: Double, previousPrompt: Double?, previousItem: Double?,
+                                      calendar: Calendar = .current) -> Bool {
+        guard let previousPrompt else { return true }
+        let date = Date(timeIntervalSince1970: time / 1000)
+        if !calendar.isDate(date, inSameDayAs: Date(timeIntervalSince1970: previousPrompt / 1000)) { return true }
+        return time - (previousItem ?? previousPrompt) > gap
+    }
+
+    /// The prompts among the chat's top-level items that get a date above them, with when each
+    /// was sent. An item with no time (0) neither gets one nor counts as what came before.
+    public static func prompts(in items: [Item], calendar: Calendar = .current) -> [String: Double] {
+        var out: [String: Double] = [:]
+        var previousPrompt: Double?
+        var previousItem: Double?
+        for item in items where item.parentToolUseId == nil {
+            let time = item.createdAt
+            guard time > 0 else { continue }
+            if case .userMessage(let m) = item {
+                if needsSeparator(at: time, previousPrompt: previousPrompt, previousItem: previousItem, calendar: calendar) {
+                    out[m.id] = time
+                }
+                previousPrompt = time
+            }
+            previousItem = max(previousItem ?? 0, time)
+        }
+        return out
+    }
+}
+
 // MARK: find
 
 extension TranscriptRow {
@@ -128,6 +196,8 @@ extension TranscriptRow {
         case .item(let item): return item.searchText
         case .toolGroup(let calls): return calls.map { Item.toolCall($0).searchText }.joined(separator: "\n")
         case .turnWork(_, let rows, _): return rows.map(\.searchText).joined(separator: "\n")
+        // Their files are in the calls, which match already.
+        case .turnEdits, .dateSeparator: return ""
         }
     }
 
