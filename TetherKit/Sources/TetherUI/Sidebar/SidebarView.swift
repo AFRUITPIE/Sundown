@@ -43,6 +43,13 @@ struct SidebarView: View {
             openWindow(value: WindowTarget(hostID: window.hostID, threadID: id))
         }
         .overlay { emptyState(isEmpty: sections.isEmpty) }
+        // A folder dragged from Finder onto the list starts a new chat in it.
+        .dropDestination(for: URL.self) { urls, _ in
+            guard window.connection?.host.isLocal == true, let folder = urls.first(where: \.hasDirectoryPath) else { return false }
+            window.newChat()
+            window.draftDirectory = folder.path
+            return true
+        }
     }
 
     // MARK: rows

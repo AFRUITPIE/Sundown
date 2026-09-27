@@ -49,6 +49,12 @@ struct NewChatView: View {
             }
             // `AppModel` seeds the folder with the host's first project; these fill it when the
             // projects arrived after that.
+            // A folder dragged from Finder is where the chat starts; this Mac's folders only.
+            .dropDestination(for: URL.self) { urls, _ in
+                guard connection?.host.isLocal == true, let folder = urls.first(where: \.hasDirectoryPath) else { return false }
+                choose(folder.path)
+                return true
+            }
             .onAppear { useFirstProjectIfUnset() }
             .onChange(of: connection?.projects.first?.cwd) { useFirstProjectIfUnset() }
     }

@@ -418,6 +418,8 @@ struct CodeBlock: View {
             }
             .scaledFont(.caption, design: .default)
             .foregroundStyle(.secondary)
+            // The header drags the code out, as text; the code itself stays selectable.
+            .draggable(code)
             if appearance.wrapCode {
                 styled(codeText)
             } else {
