@@ -208,6 +208,9 @@ extension EnvironmentValues {
         get { self[InspectSubagentKey.self] }
         set { self[InspectSubagentKey.self] = newValue }
     }
+
+    /// The row id of the turn's work a row is shown inside, for Find in Chat.
+    @Entry var findFold: String?
 }
 
 enum SubagentLifecycle {
@@ -266,13 +269,16 @@ private struct FailureCount: View {
 struct ToolCallGroupView: View {
     let calls: [Item.ToolCall]
     let thread: ThreadModel
+    /// The transcript row's id, so Find in Chat opens the group when it's the current match.
+    var rowID: String?
     @State private var expanded: Bool
 
     private var failures: Int { calls.count { $0.status == .failed } }
 
-    init(calls: [Item.ToolCall], thread: ThreadModel, initiallyExpanded: Bool = false) {
+    init(calls: [Item.ToolCall], thread: ThreadModel, rowID: String? = nil, initiallyExpanded: Bool = false) {
         self.calls = calls
         self.thread = thread
+        self.rowID = rowID
         self._expanded = State(initialValue: initiallyExpanded)
     }
 
@@ -295,6 +301,8 @@ struct ToolCallGroupView: View {
                 ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
             }
         }
+        .modifier(OpensForFind(rowID: rowID, expanded: $expanded,
+                               matches: { TranscriptRow.toolGroup(calls).matches($0) }))
     }
 }
 
@@ -305,6 +313,8 @@ struct TurnWorkView: View {
     let rows: [TranscriptRow]
     let durationMs: Double?
     let thread: ThreadModel
+    /// The transcript row's id, so Find in Chat opens the work when it's the current match.
+    var rowID: String?
     @State private var expanded = false
 
     /// Calls in the work that failed, in runs or on their own.
@@ -340,7 +350,36 @@ struct TurnWorkView: View {
             .buttonStyle(.plain)
             if expanded {
                 ForEach(rows, id: \.id) { TranscriptRowView(row: $0, thread: thread) }
+                    // A run of calls in here that holds the match opens too.
+                    .environment(\.findFold, rowID)
             }
+        }
+        .modifier(OpensForFind(rowID: rowID, expanded: $expanded))
+    }
+}
+
+/// Opens a folded row (a run of calls, a turn's work) when Find in Chat makes it the current match,
+/// so what matched is on screen and not behind the fold. Find searches exactly the rows the
+/// transcript shows, so a match inside a turn's work is the work's row; a run of calls inside it
+/// that holds the match opens with it.
+private struct OpensForFind: ViewModifier {
+    let rowID: String?
+    @Binding var expanded: Bool
+    /// Whether the row's contents match a query, for a run of calls inside a turn's work.
+    var matches: ((String) -> Bool)?
+    @Environment(\.transcriptFind) private var find
+    @Environment(\.findFold) private var fold
+
+    private var isCurrent: Bool {
+        guard let find, let current = find.current else { return false }
+        if current == rowID { return true }
+        return fold != nil && current == fold && matches?(find.query) == true
+    }
+
+    func body(content: Content) -> some View {
+        content.onChange(of: isCurrent, initial: true) { _, isCurrent in
+            guard isCurrent, !expanded else { return }
+            withAnimation(.snappy(duration: 0.15)) { expanded = true }
         }
     }
 }
@@ -570,6 +609,34 @@ private func sampleFinishedRun() -> [Item.ToolCall] {
     }
     .padding(20)
     .frame(width: 560)
+}
+
+/// Worked For, with Find in Chat's current match inside the first turn's work: the fold opens.
+#Preview("Worked For (opened by a Find match)") {
+    FindOpensWorkPreview()
+}
+
+private struct FindOpensWorkPreview: View {
+    let thread = ThreadModel.sampleWorkChat()
+    let find = TranscriptFind()
+
+    var body: some View {
+        let rows = thread.rows(.workedFor)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(rows, id: \.id) { TranscriptRowView(row: $0, thread: thread) }
+            }
+            .padding(20)
+        }
+        .environment(\.transcriptFind, find)
+        // Opened at once, so the snapshot shows where it ends up.
+        .transaction { $0.animation = nil }
+        .task {
+            find.query = "inspectorMinimum"
+            find.update(rows: rows)
+        }
+        .frame(width: 640, height: 720)
+    }
 }
 
 #Preview("Todo list (standalone)") {

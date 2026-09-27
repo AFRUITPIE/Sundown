@@ -50,6 +50,25 @@ struct TranscriptFindTests {
         #expect(find.matches.count == 4)
     }
 
+    /// Find searches the rows the transcript shows: with Worked For, a match inside a finished turn's
+    /// folded work is the fold row, which the transcript can scroll to and open.
+    @Test func aMatchInsideWorkedForIsItsFoldRow() {
+        let thread = ThreadModel.sample(items: [
+            .sampleUserMessage("Why does the reducer drop deltas?", secondsAgo: 30),
+            .sampleToolCall(name: "Bash", kind: .bash, input: ["command": "rg -n coalesce Sources"], status: .completed,
+                            outputText: "HostConnection.swift", secondsAgo: 20),
+            .sampleAgentMessage("They're coalesced per frame.", secondsAgo: 10),
+        ])
+        let shown = thread.rows(Appearance.ToolCallDisplay.workedFor.folding)
+        let find = TranscriptFind()
+        find.query = "coalesce"
+        find.update(rows: shown)
+        let fold = shown.first { if case .turnWork = $0 { true } else { false } }
+        #expect(fold != nil)
+        #expect(find.matches == [fold?.id, shown.last?.id].compactMap { $0 })
+        #expect(Set(find.matches).isSubset(of: shown.map(\.id)))
+    }
+
     @Test func switchingChatsEndsTheSearch() {
         let w = WindowModel.sample()
         w.find.show(query: "reducer")
