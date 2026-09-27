@@ -142,7 +142,7 @@ final class AppearanceUITests: XCTestCase {
     func testComposerLayouts() {
         let app = launch()
         waitForLongChat(app)
-        let add = mainWindow(app).buttons["composer.add"]
+        let add = mainWindow(app).descendants(matching: .any)["composer.add"].firstMatch
         let input = mainWindow(app).descendants(matching: .any)["composer.input"]
         XCTAssertTrue(add.exists)
         let outside = input.frame.minX - add.frame.maxX
