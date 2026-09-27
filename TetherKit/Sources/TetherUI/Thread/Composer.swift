@@ -37,6 +37,8 @@ struct Composer: View {
     @State private var choosingFiles = false
     /// The last text put here from outside the field (`ComposerDrafts.delivery`), so each is applied once.
     @State private var appliedDelivery: UUID?
+    /// The text Esc closed the suggestion list on: it stays closed until the text changes.
+    @State private var suggestionsClosedFor: String?
     @FocusState private var focused: Bool
 
     /// Something going with the message besides its text.
@@ -91,6 +93,15 @@ struct Composer: View {
             }
         }
         return []
+    }
+
+    /// What Esc does in the field: close the `/` or `@` list first, then stop a running turn, and
+    /// otherwise whatever the field does with it.
+    enum EscapeAction: Equatable { case closeSuggestions, stop, ignore }
+
+    nonisolated static func escapeAction(suggestionsShowing: Bool, canStop: Bool) -> EscapeAction {
+        if suggestionsShowing { return .closeSuggestions }
+        return canStop ? .stop : .ignore
     }
 
     private var mentionQuery: String? {
@@ -158,6 +169,7 @@ struct Composer: View {
             #endif
         }
         .onChange(of: text) {
+            suggestionsClosedFor = nil
             refreshSuggestions()
             if let draftKey { drafts.set(text, for: draftKey) }
         }
@@ -235,11 +247,21 @@ struct Composer: View {
             .focused($focused)
             .onSubmit { if appearance.sendShortcut == .returnKey { send() } }
             .onKeyPress(.return, phases: .down, action: returnPressed)
-            // Esc stops Claude, as in the CLI; with nothing running it's the field's own.
+            // Esc closes the suggestion list if it's open, and otherwise stops Claude, as in the
+            // CLI; with nothing running it's the field's own.
             .onKeyPress(.escape) {
-                guard thread?.isRunning == true, let onStop else { return .ignored }
-                onStop()
-                return .handled
+                switch Self.escapeAction(suggestionsShowing: !suggestions.isEmpty,
+                                         canStop: thread?.isRunning == true && onStop != nil) {
+                case .closeSuggestions:
+                    suggestionsClosedFor = text
+                    suggestions = []
+                    return .handled
+                case .stop:
+                    onStop?()
+                    return .handled
+                case .ignore:
+                    return .ignored
+                }
             }
             .textInputSuggestions(suggestions) { s in
                 Label {
@@ -328,7 +350,8 @@ struct Composer: View {
     }
 
     private func refreshSuggestions() {
-        suggestions = Self.matchingSuggestions(for: text, commands: commands, fileMatches: fileMatches)
+        suggestions = text == suggestionsClosedFor ? []
+            : Self.matchingSuggestions(for: text, commands: commands, fileMatches: fileMatches)
     }
 
     /// The + menu, as the desktop app has it: attach, mention a file, or browse the commands
