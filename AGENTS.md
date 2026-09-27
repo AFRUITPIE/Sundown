@@ -81,6 +81,7 @@ The daemon, not the app, owns live Claude queries. Closing or disconnecting the 
 - A view takes the narrowest model it needs, and each inspector pane is its own view, so a delta redraws at most the transcript and the open pane.
 - State that changes every frame of a resize or an animation (the transcript's scroll position) lives in a view whose body holds no rows: `TranscriptView` owns the scroll state and `TranscriptContent` the rows. Environment values are compared by value, so one that holds a closure is `Equatable` by its owner (`InspectSubagentAction`); a new closure on every shell update redrew every tool call.
 - Persisted preferences are plain stored properties on `AppModel` saved through `Stored`. No `@AppStorage` inside an `@Observable`.
+- Composer drafts (`AppModel.drafts`) are not observed and are written a second after typing pauses (and on quit): observed, every keystroke redrew every composer in every window. A composer reads its draft when it appears; text put in from outside (Shortcuts' Start a Chat) goes through `deliverDraft`, a token each composer showing that key applies once.
 
 ## UI and HIG decisions
 
