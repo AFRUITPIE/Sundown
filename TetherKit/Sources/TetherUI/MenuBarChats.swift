@@ -2,7 +2,11 @@ import AppKit
 import SwiftUI
 import TetherKit
 
-/// The menu bar extra's menu (Settings ▸ Notifications ▸ Show Chats in the Menu Bar): the chats
+/// Not in the app for now: a `MenuBarExtra` scene, even one not inserted, kept SwiftUI updating its
+/// label in a loop from launch (first through an `isInserted` binding on the app model, then in
+/// `MenuBarExtraHost.requestUpdate`), pinning the main thread before any window opened.
+///
+/// The menu bar extra's menu: the chats
 /// waiting on you, then those Claude is working in, each opening its chat, then New Chat.
 public struct MenuBarChats: View {
     let app: AppModel

@@ -59,7 +59,8 @@ struct TetherApp: App {
         HostWindows(app: app)
         // The Settings view supplies the split window's minimum size.
         Settings { SettingsView(app: app) }
-        MenuBarScene(app: app)
+        // No menu bar extra for now: declared at all, even hidden, it kept SwiftUI updating its label
+        // in a loop from launch (see `MenuBarChats`).
     }
 }
 
@@ -84,21 +85,5 @@ private struct HostWindows: Scene {
             ConnectionLogWindow(app: app, hostID: hostID)
         }
         .defaultSize(width: 620, height: 400)
-    }
-}
-
-/// Chats waiting or working, in the menu bar; off unless Settings ▸ Notifications turns it on.
-private struct MenuBarScene: Scene {
-    let app: AppModel
-    /// Plain defaults, not the app model: see `AlertPreferences.menuBarExtraKey`.
-    @AppStorage(AlertPreferences.menuBarExtraKey) private var shown = false
-
-    var body: some Scene {
-        MenuBarExtra(isInserted: $shown) {
-            MenuBarChats(app: app)
-        } label: {
-            MenuBarLabel(app: app)
-        }
-        .menuBarExtraStyle(.menu)
     }
 }
