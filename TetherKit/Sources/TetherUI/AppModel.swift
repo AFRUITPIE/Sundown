@@ -466,18 +466,23 @@ public final class AppModel {
 extension AppModel {
     /// The launched XCTest app uses the real UI and reducer with only in-process transports.
     public static func uiTestFixture() -> AppModel {
-        let failFirst = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "connect-failure"
+        let failedConnects = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "connect-failure" ? 2 : 0
         let pendingPermission = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "permission"
         let performance = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "performance"
         let ssh = HostConfig(name: "Fixture SSH", kind: .ssh(destination: "fixture.invalid"))
         // A fresh store each launch, unless a test that relaunches names one to keep.
         let suite = ProcessInfo.processInfo.environment["TETHER_UI_TEST_DEFAULTS"]
         let app = sample(connections: [
-            UITestFixture.connection(failFirstConnect: failFirst, pendingPermission: pendingPermission, performance: performance),
+            UITestFixture.connection(failedConnects: failedConnects, pendingPermission: pendingPermission, performance: performance),
             UITestFixture.connection(host: ssh)
         ], defaults: suite.flatMap(UserDefaults.init(suiteName:)))
         // The first window opens on the fixture's chat, or where the kept store says it was.
         if app.lastThreadID == nil { app.lastThreadID = UITestFixture.threadID }
+        // Settings a test starts from, as the JSON Settings stores.
+        if let json = ProcessInfo.processInfo.environment["TETHER_UI_TEST_APPEARANCE"],
+           let appearance = try? JSONDecoder().decode(Appearance.self, from: Data(json.utf8)) {
+            app.appearance = appearance
+        }
         return app
     }
 

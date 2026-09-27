@@ -32,12 +32,23 @@ struct PromptNavigationTests {
     }
 
     /// Pressed again, it goes on from the prompt it went to, even with the row above it on screen.
-    @Test func goesOnFromTheLastPromptWhileItsOnScreen() {
+    @Test func goesOnFromTheLastPrompt() {
         let visible: Set = ["m1", "p2", "m2"]
         #expect(PromptNavigation.target(.next, rows: rows, visible: visible, lastTarget: "p2") == "p3")
         #expect(PromptNavigation.target(.previous, rows: rows, visible: visible, lastTarget: "p2") == "date-p1")
-        // Scrolled away from it, the topmost row on screen counts instead.
-        #expect(PromptNavigation.target(.next, rows: rows, visible: ["m3"], lastTarget: "p2") == nil)
+    }
+
+    /// Pressed again before the scroll to the last one has landed, it still goes on from there
+    /// rather than going back to the same prompt.
+    @Test func goesOnBeforeTheScrollLands() {
+        #expect(PromptNavigation.target(.previous, rows: rows, visible: ["m3"], lastTarget: "p2") == "date-p1")
+        #expect(PromptNavigation.target(.next, rows: rows, visible: ["m1"], lastTarget: "p2") == "p3")
+    }
+
+    /// An older page can take away the date gone to; the prompt under it stands in.
+    @Test func goesOnFromAPromptWhoseDateWent() {
+        let undated = rows.filter { $0.id != "date-p1" }
+        #expect(PromptNavigation.target(.next, rows: undated, visible: ["m3"], lastTarget: "date-p1") == "p2")
     }
 
     @Test func nothingBeyondTheEnds() {

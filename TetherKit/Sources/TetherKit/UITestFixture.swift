@@ -7,12 +7,14 @@ import TetherProtocol
 public enum UITestFixture {
     public static let threadID = "fixture-thread"
 
+    /// `failedConnects` attempts fail before one succeeds: two keep the status card up for a few
+    /// seconds of retries, long enough to press its Reconnect.
     @MainActor
-    public static func connection(host: HostConfig = .local, failFirstConnect: Bool = false,
+    public static func connection(host: HostConfig = .local, failedConnects: Int = 0,
                                   pendingPermission: Bool = false, performance: Bool = false) -> HostConnection {
         let attempts = FixtureAttempts()
         return HostConnection(host: host, transportProvider: { _ in
-            if failFirstConnect, await attempts.next() == 1 {
+            if await attempts.next() <= failedConnects {
                 throw TransportError.launchFailed("Fixture connection unavailable")
             }
             return FixtureTransport(pendingPermission: pendingPermission, performance: performance)

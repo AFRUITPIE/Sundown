@@ -350,6 +350,7 @@ struct TurnWorkView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("transcript.turnWork")
             if expanded {
                 ForEach(rows, id: \.id) { TranscriptRowView(row: $0, thread: thread) }
                     // A run of calls in here that holds the match opens too.

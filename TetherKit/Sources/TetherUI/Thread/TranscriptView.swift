@@ -60,6 +60,7 @@ struct TranscriptView: View {
         // Find Next and Previous bring the match into view; the reader has left the end to read it.
         .onChange(of: find?.step) {
             guard let id = find?.current else { return }
+            onScreen.lastPrompt = nil
             followsEnd = false
             withAnimation { position.scrollTo(id: id, anchor: .center) }
         }
@@ -70,6 +71,9 @@ struct TranscriptView: View {
             follow(from: $0, to: $1)
         }
         .onScrollPhaseChange { old, new, context in
+            // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
+            // Previous or Next last went to.
+            if new == .interacting { onScreen.lastPrompt = nil }
             guard new == .idle, old == .interacting || old == .decelerating else { return }
             let g = context.geometry
             followsEnd = g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 24
@@ -80,6 +84,7 @@ struct TranscriptView: View {
             ZStack {
                 if !followsEnd {
                     Button("Jump to Latest", systemImage: "arrow.down") {
+                        onScreen.lastPrompt = nil
                         followsEnd = true
                         withAnimation { position.scrollTo(edge: .bottom) }
                     }
@@ -106,26 +111,54 @@ extension TranscriptView {
     }
 
     /// Which rows are on screen, and the prompt Previous or Next Prompt last went to, which the next
-    /// press goes on from while it's still in view.
+    /// press goes on from until the reader scrolls.
     final class OnScreenRows {
         var ids: Set<String> = []
         var lastPrompt: String?
     }
 
     /// Brings the prompt before or after the reader's place to the top; past the last one, Next goes
-    /// to the end. The reader has left the end to read it, as with Find.
+    /// to the end. The reader has left the end to read it, as with Find. Before the first prompt
+    /// held, Previous loads older pages until one has a prompt: only the latest page is loaded when
+    /// a chat opens, and Previous stopped there.
     private func goToPrompt() {
         guard let navigator = promptNavigator else { return }
-        let rows = thread.rows(appearance.toolCalls.folding)
-        if let id = PromptNavigation.target(navigator.direction, rows: rows, visible: onScreen.ids, lastTarget: onScreen.lastPrompt) {
-            onScreen.lastPrompt = id
-            followsEnd = false
-            withAnimation { position.scrollTo(id: id, anchor: .top) }
-        } else if navigator.direction == .next {
+        let direction = navigator.direction
+        if let id = promptTarget(direction) {
+            show(prompt: id)
+        } else if direction == .next {
             onScreen.lastPrompt = nil
             followsEnd = true
             withAnimation { position.scrollTo(edge: .bottom) }
+        } else if thread.hasMoreHistory, let connection {
+            Task {
+                // Not for ever: a page that fails to load stays not loaded.
+                var waits = 0
+                while promptTarget(.previous) == nil, thread.hasMoreHistory, waits < 50 {
+                    let count = thread.items.count
+                    await connection.loadOlderHistory(thread)
+                    // The spinner at the top may be loading the same page; wait for it.
+                    if thread.items.count == count {
+                        waits += 1
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                }
+                // After the scroll that keeps the reader in place as a page goes in above them.
+                try? await Task.sleep(for: .milliseconds(50))
+                if let id = promptTarget(.previous) { show(prompt: id) }
+            }
         }
+    }
+
+    private func promptTarget(_ direction: PromptNavigation.Direction) -> String? {
+        PromptNavigation.target(direction, rows: thread.rows(appearance.toolCalls.folding),
+                                visible: onScreen.ids, lastTarget: onScreen.lastPrompt)
+    }
+
+    private func show(prompt id: String) {
+        onScreen.lastPrompt = id
+        followsEnd = false
+        withAnimation { position.scrollTo(id: id, anchor: .top) }
     }
 
     /// A distance the content is drawn below where it is, easing back to nothing.

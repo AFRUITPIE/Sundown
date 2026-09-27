@@ -41,6 +41,7 @@ struct TurnEditsView: View {
             }
             .buttonStyle(.plain)
             .accessibilityValue(LineCounts.description(added: edits.added, removed: edits.removed))
+            .accessibilityIdentifier("transcript.edits")
             if expanded {
                 ForEach(edits.files) { file in
                     EditedFileRow(file: file, cwd: cwd, isOpen: openFiles.contains(file.path)) {
@@ -87,6 +88,7 @@ private struct EditedFileRow: View {
             .help(file.path.abbreviatingHome)
             .accessibilityLabel(file.path.lastPathComponent)
             .accessibilityValue(LineCounts.description(added: file.added, removed: file.removed))
+            .accessibilityIdentifier("transcript.editedFile")
             .contextMenu {
                 if hostIsLocal {
                     Button(editor.openTitle) { editor.open(file.path) }

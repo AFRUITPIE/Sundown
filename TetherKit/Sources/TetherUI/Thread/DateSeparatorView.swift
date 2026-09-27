@@ -18,6 +18,7 @@ struct DateSeparatorView: View {
             .padding(.top, 8)
             // A heading, so VoiceOver's rotor moves through the chat by when it happened.
             .accessibilityAddTraits(.isHeader)
+            .accessibilityIdentifier("transcript.date")
     }
 }
 

@@ -205,14 +205,18 @@ public enum PromptNavigation {
         return out
     }
 
-    /// The prompt before or after where the reader is: the prompt last gone to while it's still on
-    /// screen, otherwise the topmost row on screen. With nothing on screen, Previous goes to the last
-    /// prompt. Nil when there's none that way.
+    /// The prompt before or after where the reader is: `lastTarget`, the prompt last gone to, until
+    /// the reader scrolls for themselves (the caller forgets it then), otherwise the topmost row on
+    /// screen. Not whether it's on screen yet: pressed again quickly, the scroll to it hasn't landed,
+    /// and each press went back to the same prompt. A date gone to can go when an older page puts
+    /// the prompt before it on the same day; its prompt stands in. With nothing on screen, Previous
+    /// goes to the last prompt. Nil when there's none that way.
     public static func target(_ direction: Direction, rows: [TranscriptRow], visible: Set<String>,
                               lastTarget: String? = nil) -> String? {
         let targets = targets(in: rows)
-        let anchor: Int? = if let lastTarget, visible.contains(lastTarget),
-                              let i = rows.firstIndex(where: { $0.id == lastTarget }) {
+        let anchor: Int? = if let lastTarget,
+                              let i = rows.firstIndex(where: { $0.id == lastTarget })
+                                  ?? rows.firstIndex(where: { TranscriptRow.dateSeparator(promptID: $0.id, ms: 0).id == lastTarget }) {
             i
         } else {
             rows.firstIndex { visible.contains($0.id) }
