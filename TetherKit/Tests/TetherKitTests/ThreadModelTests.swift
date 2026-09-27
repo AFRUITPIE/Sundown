@@ -259,6 +259,44 @@ struct ThreadModelTests {
 
         #expect(thread.itemsVersion == itemsVersion)
     }
+
+    /// Only the reply being streamed into fades its text in: from its start until it completes or
+    /// its turn ends, and never a subagent's words. Its deltas don't change which reply it is.
+    @Test func theStreamingReplyIsTheOneBeingStreamedInto() {
+        let thread = ThreadModel(id: threadID)
+        thread.apply(started(userMessage("Go"), seq: 1))
+        thread.apply(.turnStarted(.init(threadId: threadID, seq: 2, turn: .init(id: "t1", status: .inProgress, startedAt: 0))))
+        thread.apply(started(reply("", id: "s1", parent: "toolu_1"), seq: 3))
+        #expect(thread.streamingReplyID == nil)
+        thread.apply(started(reply(""), seq: 4))
+        #expect(thread.streamingReplyID == "a1")
+
+        let observed = Invalidation()
+        withObservationTracking { _ = thread.streamingReplyID } onChange: { observed.happened = true }
+        for (offset, delta) in ["It ", "works."].enumerated() {
+            thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 5 + offset, itemId: "a1", delta: delta)))
+        }
+        #expect(!observed.happened)
+
+        thread.apply(.itemCompleted(.init(threadId: threadID, seq: 7, item: reply("It works."))))
+        #expect(thread.streamingReplyID == nil)
+
+        thread.apply(started(reply("", id: "a2"), seq: 8))
+        #expect(thread.streamingReplyID == "a2")
+        thread.apply(.turnCompleted(.init(threadId: threadID, seq: 9, turn: .init(id: "t1", status: .interrupted, startedAt: 0))))
+        #expect(thread.streamingReplyID == nil)
+    }
+
+    /// A chat opened partway through a reply: it came with history, and streams from its next delta.
+    @Test func aReplyFromHistoryStreamsFromItsNextDelta() {
+        let thread = ThreadModel(id: threadID)
+        thread.loadHistory(items: [userMessage("Go"), reply("Half")], turns: [], seq: 2)
+        #expect(thread.streamingReplyID == nil)
+        thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 3, itemId: "a1", delta: " done")))
+        #expect(thread.streamingReplyID == "a1")
+        thread.unload()
+        #expect(thread.streamingReplyID == nil)
+    }
 }
 
 /// Observation's `onChange` is `@Sendable`, so the flag it sets needs a reference to live in.

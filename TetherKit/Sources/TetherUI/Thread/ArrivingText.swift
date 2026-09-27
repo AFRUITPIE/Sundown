@@ -4,7 +4,8 @@ import SwiftUI
 /// moment, so a reply's words appear rather than pop. Opacity only, with no movement, so it suits
 /// Reduce Motion as it is.
 ///
-/// Only the block at the end of a streaming reply uses it, since only it grows, and it redraws per
+/// Only the last block of the reply being streamed into uses it (`ThreadModel.streamingReplyID`),
+/// since only it grows; every settled reply, and every code block, is plain text. It redraws per
 /// frame only while something is still fading.
 struct ArrivingText: View {
     let text: AttributedString
@@ -63,16 +64,24 @@ final class Arrivals {
         pieces.removeAll { $0.at + FadeInRenderer.duration <= now }
         guard let first = pieces.first else { return Text(text) }
 
+        // Pieces are in order, so each boundary is found from the one before it: one walk over the
+        // text, not one from its start per piece.
         let chars = text.characters
+        var cursor = chars.startIndex
+        var cursorOffset = 0
         func index(_ offset: Int) -> AttributedString.Index {
-            chars.index(chars.startIndex, offsetBy: min(offset, count))
+            let target = min(offset, count)
+            cursor = chars.index(cursor, offsetBy: target - cursorOffset)
+            cursorOffset = target
+            return cursor
         }
-        var result = Text(AttributedString(text[text.startIndex..<index(first.start)]))
+        var start = index(first.start)
+        var result = Text(AttributedString(text[text.startIndex..<start]))
         for (i, piece) in pieces.enumerated() {
-            let end = i + 1 < pieces.count ? pieces[i + 1].start : count
-            let part = Text(AttributedString(text[index(piece.start)..<index(end)]))
-                .customAttribute(Arrival(at: piece.at))
+            let end = index(i + 1 < pieces.count ? pieces[i + 1].start : count)
+            let part = Text(AttributedString(text[start..<end])).customAttribute(Arrival(at: piece.at))
             result = Text("\(result)\(part)")
+            start = end
         }
         return result
     }

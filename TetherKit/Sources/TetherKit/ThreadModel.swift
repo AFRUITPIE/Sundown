@@ -89,6 +89,12 @@ public final class ThreadModel: Identifiable {
     /// The item `replyPreview` came from, so an older reply arriving later doesn't replace it.
     @ObservationIgnored private var replyPreviewItemID: String?
 
+    /// The top-level reply being streamed into right now, if any: from its first live text until it
+    /// completes, or its turn ends. Only this reply's text fades in as it arrives. Stored, and
+    /// changed at most a couple of times per reply, so the rows that compare against it redraw
+    /// then and not per delta.
+    public private(set) var streamingReplyID: String?
+
     public init(id: String, summary: ThreadSummary? = nil) {
         self.id = id
         self.summary = summary
@@ -196,6 +202,7 @@ public final class ThreadModel: Identifiable {
         }
         boxes = next
         itemsVersion &+= 1
+        if let id = streamingReplyID, index[id] == nil { setStreamingReply(nil) }
         refreshTaskEntries()
         refreshTitle()
         // Unloading leaves the preview as it was: the reply hasn't changed, only been let go.
@@ -235,16 +242,27 @@ public final class ThreadModel: Identifiable {
         case .threadClosed:
             status = .closed
             settleTasks()
+            setStreamingReply(nil)
         case .turnStarted(let e):
             upsertTurn(e.turn)
             promptSuggestion = nil
-        case .turnCompleted(let e): upsertTurn(e.turn)
+        case .turnCompleted(let e):
+            upsertTurn(e.turn)
+            setStreamingReply(nil)
         case .itemStarted(let e):
             if index[e.item.id] == nil { noteStarted(e.item.id) }
             upsert(e.item)
+            if case .agentMessage(let m) = e.item, m.parentToolUseId == nil { setStreamingReply(m.id) }
         case .itemUpdated(let e): upsert(e.item)
-        case .itemCompleted(let e): upsert(e.item)
+        case .itemCompleted(let e):
+            upsert(e.item)
+            if e.item.id == streamingReplyID { setStreamingReply(nil) }
         case .itemAgentMessageDelta(let e):
+            // A reply that started before this client was watching streams too.
+            if e.itemId != streamingReplyID, let i = index[e.itemId],
+               case .agentMessage(let m) = storage[i], m.parentToolUseId == nil {
+                setStreamingReply(e.itemId)
+            }
             mutate(e.itemId) { if case .agentMessage(var m) = $0 { m.text += e.delta; $0 = .agentMessage(m) } }
         case .itemReasoningDelta(let e):
             mutate(e.itemId) { if case .reasoning(var m) = $0 { m.text += e.delta; $0 = .reasoning(m) } }
@@ -423,6 +441,10 @@ public final class ThreadModel: Identifiable {
         boxes[id]?.item = storage[i]
         if wasEmpty != storage[i].isEmptyMessage { itemsVersion &+= 1 }
         if storage[i].isSubagentCall { refreshTaskEntries() }
+    }
+
+    private func setStreamingReply(_ id: String?) {
+        if streamingReplyID != id { streamingReplyID = id }
     }
 
     /// The item's box, for a row that renders it. Every held item has one; an item from elsewhere

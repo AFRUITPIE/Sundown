@@ -24,7 +24,8 @@ struct ItemView: View {
             UserMessageView(message: m)
                 .messageMenu(id: m.id, text: m.plainText, isMarkdown: false, sentAt: m.createdAt)
         case .agentMessage(let m):
-            MarkdownView(text: m.text)
+            // Only the reply being streamed into fades its new text in; every other reply is settled.
+            MarkdownView(text: m.text, streams: thread.streamingReplyID == m.id)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .messageMenu(id: m.id, text: m.text, isMarkdown: true, sentAt: m.createdAt)
         // Reasoning never renders; subagent items come through here too.
