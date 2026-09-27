@@ -338,7 +338,7 @@ struct Composer: View {
     /// Return and its modifiers, as Settings ▸ Appearance ▸ Send With has them: Return sends and
     /// Shift- or Option-Return starts a line, or Command-Return sends and Return starts a line.
     private func returnPressed(_ press: KeyPress) -> KeyPress.Result {
-        let newLine = { NSApp.sendAction(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), to: nil, from: nil) }
+        let newLine = { _ = NSApp.sendAction(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), to: nil, from: nil) }
         switch appearance.sendShortcut {
         case .returnKey:
             // Plain Return reaches `onSubmit`; Option-Return is the field's own new line.
