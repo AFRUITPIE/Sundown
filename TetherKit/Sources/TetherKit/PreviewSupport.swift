@@ -623,9 +623,9 @@ extension HostConnection {
     }
 
     /// A host whose last connection attempt failed.
-    public static func sampleFailed() -> HostConnection {
+    public static func sampleFailed(reason: String = "Connection refused") -> HostConnection {
         let connection = HostConnection(host: .init(name: "staging", kind: .ssh(destination: "staging")))
-        connection.previewSeed(state: .failed("Connection refused"))
+        connection.previewSeed(state: .failed(reason))
         return connection
     }
 }

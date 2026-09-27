@@ -257,34 +257,24 @@ private struct FindHighlight: ViewModifier {
     }
 }
 
-/// Stands in for the transcript before it arrives; a failure says so and offers a way out.
+/// Stands in for the transcript before it arrives; a failure says so and offers a way out. Nothing
+/// while the host isn't connected: the status card in the composer's place says that, once.
 /// Its own view so `connection.state` and `thread.lastError` are not read in the transcript's body.
 struct TranscriptUnavailable: View {
     let thread: ThreadModel
     var connection: HostConnection?
 
     var body: some View {
-        if let error = thread.lastError {
+        if let connection, connection.state != .connected {
+            EmptyView()
+        } else if let error = thread.lastError {
             TranscriptPlaceholder("Couldn\u{2019}t Open This Chat", symbol: "exclamationmark.triangle", detail: error) {
                 if let connection { Button("Try Again") { Task { await connection.open(thread) } } }
             }
-        } else if case .failed(let message) = connection?.state {
-            TranscriptPlaceholder("Not Connected", symbol: "bolt.horizontal.circle", detail: message) {
-                if let connection { Button("Reconnect") { Task { await connection.reconnect() } } }
-            }
-        } else if case .disconnected = connection?.state {
-            TranscriptPlaceholder("Not Connected", symbol: "bolt.horizontal.circle", detail: nil) {
-                if let connection { Button("Connect") { Task { await connection.connect() } } }
-            }
         } else {
-            VStack(spacing: 8) {
-                ProgressView()
-                if case .connecting(let message) = connection?.state {
-                    Text(message).scaledFont(.callout).foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(40)
+            ProgressView()
+                .frame(maxWidth: .infinity)
+                .padding(40)
         }
     }
 }
@@ -368,13 +358,8 @@ struct TurnOutcome: View {
         .frame(width: 900, height: 760)
 }
 
-/// What stands in for a transcript that hasn't arrived: the host is down, …
-#Preview("TranscriptView (not connected)") {
-    TranscriptView(thread: .sampleUnloaded(), connection: .sampleDisconnected())
-        .frame(width: 900, height: 420)
-}
-
-/// … or the chat itself couldn't be opened.
+/// What stands in for a transcript that couldn't be opened. A host that's down is said by the
+/// status card instead ("Status card (chat not loaded)").
 #Preview("TranscriptView (open failed)") {
     TranscriptView(thread: .sampleUnloaded(lastError: "thread/read failed: no thread with that id"),
                    connection: .sample())
