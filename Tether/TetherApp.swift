@@ -56,6 +56,11 @@ struct TetherApp: App {
             // View ▸ Show Toolbar / Customize Toolbar…, for the identified toolbar in RootView.
             ToolbarCommands()
         }
+        // A host's scheduled tasks, run by its daemon.
+        WindowGroup("Scheduled Tasks", id: ScheduledTasksWindow.id, for: UUID.self) { $hostID in
+            ScheduledTasksWindow(app: app, hostID: hostID)
+        }
+        .defaultSize(width: 820, height: 560)
         // One per host, kept open beside a chat to follow a reconnect.
         WindowGroup("Connection Log", id: ConnectionLogWindow.id, for: UUID.self) { $hostID in
             ConnectionLogWindow(app: app, hostID: hostID)

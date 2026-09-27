@@ -286,4 +286,23 @@ final class WindowAndChatUITests: XCTestCase {
         app.menuBars.menuItems["Show Connection Log"].click()
         XCTAssertTrue(waitForWindowTitles(app, ["Fixture Chat", "Connection Log"]))
     }
+
+    /// Host ▸ Scheduled Tasks… lists the daemon's tasks; a new one appears, and can be deleted.
+    @MainActor
+    func testScheduledTasksCanBeAddedAndDeleted() {
+        let app = launch()
+        XCTAssertTrue(waitForWindowTitles(app, ["Fixture Chat"]))
+        app.menuBars.menuBarItems["Host"].click()
+        app.menuBars.menuItems["Scheduled Tasks…"].click()
+        XCTAssertTrue(waitForWindowTitles(app, ["Fixture Chat", "Scheduled Tasks"]))
+        let window = app.windows["Scheduled Tasks"].exists ? app.windows["Scheduled Tasks"] : app.windows.firstMatch
+        XCTAssertTrue(window.staticTexts["No Scheduled Tasks"].waitForExistence(timeout: 5))
+
+        window.toolbars.buttons["New Task"].click()
+        XCTAssertTrue(window.outlines.staticTexts["New Task"].waitForExistence(timeout: 5))
+
+        visibleButton(app, "Delete…").click()
+        visibleButton(app, "Delete").click()
+        XCTAssertTrue(window.staticTexts["No Scheduled Tasks"].waitForExistence(timeout: 5))
+    }
 }

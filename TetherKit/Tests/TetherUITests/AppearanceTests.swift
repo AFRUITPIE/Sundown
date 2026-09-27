@@ -123,3 +123,19 @@ struct ToolCallVisibilityTests {
         #expect(call("a", .running).isToolCall)
     }
 }
+
+@Suite
+struct ScheduledTaskTextTests {
+    private func task(_ cadence: ScheduleCadence, enabled: Bool = true, weekday: Int? = nil) -> ScheduledTask {
+        ScheduledTask(id: "t", name: "T", prompt: "p", cwd: "/", cadence: cadence, hour: 9, minute: 5, weekday: weekday, enabled: enabled)
+    }
+
+    @Test func aScheduleReadsAsASentence() {
+        let nine = ScheduledTaskText.time(hour: 9, minute: 5)
+        #expect(ScheduledTaskText.summary(task(.manual)) == "Only When Run")
+        #expect(ScheduledTaskText.summary(task(.hourly)) == "Every hour at :05")
+        #expect(ScheduledTaskText.summary(task(.weekdays)) == "Weekdays at \(nine)")
+        #expect(ScheduledTaskText.summary(task(.weekly, weekday: 6)) == "Fridays at \(nine)")
+        #expect(ScheduledTaskText.summary(task(.daily, enabled: false)) == "Off · Every day at \(nine)")
+    }
+}

@@ -617,6 +617,33 @@ public final class HostConnection: Identifiable {
         return WorkingChanges(branch: status.branch, files: files.sorted { $0.path < $1.path })
     }
 
+    // MARK: scheduled tasks
+
+    /// The daemon's scheduled tasks on this host.
+    public func scheduledTasks() async throws -> [ScheduledTask] {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        return try await client.call(Methods.ScheduleList.self, .init()).tasks
+    }
+
+    @discardableResult
+    public func saveScheduledTask(_ params: ScheduleSaveParams) async throws -> ScheduledTask {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        return try await client.call(Methods.ScheduleSave.self, params).task
+    }
+
+    public func deleteScheduledTask(_ id: String) async throws {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        _ = try await client.call(Methods.ScheduleDelete.self, .init(id: id))
+    }
+
+    /// Runs a task now; the chat it started, which the chat list shows once it's refreshed.
+    public func runScheduledTask(_ id: String) async throws -> String {
+        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        let threadID = try await client.call(Methods.ScheduleRun.self, .init(id: id)).threadId
+        await loadChats()
+        return threadID
+    }
+
     // MARK: MCP
 
     /// The chat's MCP servers as Claude Code reports them now; nil if it can't be asked.

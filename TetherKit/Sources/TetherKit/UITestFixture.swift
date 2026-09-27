@@ -99,6 +99,7 @@ private actor FixtureScript {
     private var forks: [String: String] = [:]
     /// How many times Restore Code has run.
     private var rewound = 0
+    private var schedules: [ScheduledTask] = []
 
     init(pendingPermission: Bool, performance: Bool) {
         self.pendingPermission = pendingPermission
@@ -206,6 +207,28 @@ private actor FixtureScript {
             if performance { return performanceTurn(threadID: id, input: params["input"]) }
             return .init(value: .result(json(TurnStartResult(turnId: "fixture-turn", messageId: "fixture-message", queued: false))),
                          notifications: turnNotifications(threadID: id, input: params["input"]))
+        case "schedule/list":
+            return .init(value: .result(json(ScheduleListResult(tasks: schedules))))
+        case "schedule/save":
+            guard let p = try? JSONDecoder().decode(ScheduleSaveParams.self, from: JSONEncoder().encode(params)) else {
+                return .init(value: .error("bad schedule"))
+            }
+            let task = ScheduledTask(id: p.id ?? "schedule-\(schedules.count + 1)", name: p.name, prompt: p.prompt, cwd: p.cwd,
+                                     model: p.model, permissionMode: p.permissionMode, cadence: p.cadence, hour: p.hour,
+                                     minute: p.minute, weekday: p.weekday, enabled: p.enabled,
+                                     nextRunAt: p.enabled && p.cadence != .manual ? 1_900_000_000_000 : nil)
+            if let i = schedules.firstIndex(where: { $0.id == task.id }) { schedules[i] = task } else { schedules.append(task) }
+            return .init(value: .result(json(ScheduleSaveResult(task: task))))
+        case "schedule/delete":
+            schedules.removeAll { $0.id == params["id"]?.stringValue }
+            return .init(value: .result([:]))
+        case "schedule/run":
+            let id = params["id"]?.stringValue ?? ""
+            if let i = schedules.firstIndex(where: { $0.id == id }) {
+                schedules[i].lastRunAt = 1_800_000_000_000
+                schedules[i].lastThreadId = UITestFixture.threadID
+            }
+            return .init(value: .result(["threadId": .string(UITestFixture.threadID)]))
         case "git/status":
             return .init(value: .result(["isRepo": true, "branch": "main", "files": [["status": "M", "path": "Sources/App.swift"]]]))
         case "git/diff":
