@@ -54,6 +54,8 @@ public final class ThreadModel: Identifiable {
     public private(set) var backgroundTaskIDs: Set<String> = []
     public private(set) var authStatus: ThreadAuthStatusNotification?
     public private(set) var apiRetry: ThreadApiRetryNotification?
+    /// The plan's usage limit as Claude Code last reported it (claude.ai subscriptions).
+    public private(set) var rateLimit: RateLimit?
     public private(set) var lastError: String?
     /// Settings chosen while the daemon hasn't loaded the thread, applied when it resumes.
     public private(set) var pendingSettings = PendingSettings()
@@ -244,6 +246,7 @@ public final class ThreadModel: Identifiable {
         case .threadPromptSuggestion(let e): promptSuggestion = e.suggestion
         case .threadAuthStatus(let e): authStatus = e
         case .threadApiRetry(let e): apiRetry = e
+        case .threadRateLimit(let e): rateLimit = RateLimit(e.info)
         case .serverRequestResolved(let e):
             // Answered by another client (or cancelled): release our side without replying.
             for p in pending where p.id == e.requestId { p.respond(nil) }
@@ -557,6 +560,39 @@ extension Item {
         case .error(let v): return v.createdAt
         case .notice(let v): return v.createdAt
         case .unknown(let v): return v["createdAt"]?.doubleValue ?? 0
+        }
+    }
+}
+
+/// A claude.ai plan's usage limit: how much of it is used, whether requests still go through, and
+/// when it resets.
+public struct RateLimit: Sendable, Equatable {
+    public enum Status: String, Sendable { case allowed, warning = "allowed_warning", rejected }
+    public let status: Status
+    /// 0 to 1.
+    public let utilization: Double?
+    public let resetsAt: Date?
+    /// "five_hour", "seven_day", …
+    public let kind: String?
+
+    public init(_ info: JSONValue) {
+        status = info["status"]?.stringValue.flatMap(Status.init(rawValue:)) ?? .allowed
+        let used = info["utilization"]?.doubleValue
+        // Reported as a fraction or a percentage depending on the CLI's version.
+        utilization = used.map { $0 > 1 ? $0 / 100 : $0 }
+        resetsAt = info["resetsAt"]?.doubleValue.map { Date(timeIntervalSince1970: $0 > 1e11 ? $0 / 1000 : $0) }
+        kind = info["rateLimitType"]?.stringValue
+    }
+
+    /// "5-hour limit", as a sentence names it.
+    public var name: String {
+        switch kind {
+        case "five_hour": "5-hour limit"
+        case "seven_day": "weekly limit"
+        case "seven_day_opus": "weekly Opus limit"
+        case "seven_day_sonnet": "weekly Sonnet limit"
+        case "overage", "seven_day_overage_included": "extra usage limit"
+        default: "usage limit"
         }
     }
 }

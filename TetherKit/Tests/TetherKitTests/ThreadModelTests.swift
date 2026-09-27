@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 import Testing
 import TetherProtocol
@@ -210,4 +211,17 @@ private final class Invalidation: @unchecked Sendable {
         let no = RewindResult(["canRewind": false, "error": "No checkpoint"])
         #expect(!no.canRewind && no.error == "No checkpoint" && no.files.isEmpty)
     }
+}
+
+@Test func aRateLimitReadsTheSDKsInfo() {
+    let warning = RateLimit(["status": "allowed_warning", "utilization": 0.85, "resetsAt": 1_790_500_000, "rateLimitType": "five_hour"])
+    #expect(warning.status == .warning)
+    #expect(warning.utilization == 0.85)
+    #expect(warning.resetsAt == Date(timeIntervalSince1970: 1_790_500_000))
+    #expect(warning.name == "5-hour limit")
+    // A percentage, and a reset in milliseconds, read the same.
+    let rejected = RateLimit(["status": "rejected", "utilization": 100, "resetsAt": 1_790_500_000_000, "rateLimitType": "seven_day"])
+    #expect(rejected.status == .rejected && rejected.utilization == 1)
+    #expect(rejected.resetsAt == Date(timeIntervalSince1970: 1_790_500_000))
+    #expect(rejected.name == "weekly limit")
 }

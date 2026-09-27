@@ -35,6 +35,21 @@ struct SessionPane: View {
                 Button("Refresh") { Task { await refresh() } }
                     .disabled(usage.isLoading)
             }
+            if let limit = thread.rateLimit {
+                Section("Plan Usage") {
+                    if let used = limit.utilization {
+                        Gauge(value: min(used, 1)) {
+                            Text(limit.name.capitalized)
+                        } currentValueLabel: {
+                            Text("\(Int((used * 100).rounded()))%")
+                        }
+                        .tint(limit.status == .allowed ? Color.accentColor : limit.status == .warning ? .orange : .red)
+                    }
+                    if let reset = limit.resetsAt {
+                        LabeledContent("Resets", value: reset.formatted(date: .abbreviated, time: .shortened))
+                    }
+                }
+            }
             Section("Cost") {
                 LabeledContent("Total", value: Format.cost(thread.totalCostUsd))
                 if let last = thread.turns.last?.result {

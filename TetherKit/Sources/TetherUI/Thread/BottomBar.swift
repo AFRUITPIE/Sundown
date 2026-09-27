@@ -66,6 +66,16 @@ struct StatusStrip: View {
         if let e = thread.lastError { out.append(e) }
         if let r = thread.apiRetry { out.append("Retrying API request (attempt \(r.attempt)/\(r.maxRetries))\(r.error.map { ": \($0)" } ?? "")") }
         if thread.activity == "compacting" { out.append("Compacting conversation…") }
+        if let limit = thread.rateLimit, limit.status != .allowed {
+            let reset = limit.resetsAt.map { " It resets \($0.formatted(date: .omitted, time: .shortened))." } ?? ""
+            switch limit.status {
+            case .rejected:
+                out.append("You’ve reached your \(limit.name).\(reset)")
+            default:
+                let used = limit.utilization.map { "\(Int(($0 * 100).rounded()))% of " } ?? "most of "
+                out.append("You’ve used \(used)your \(limit.name).\(reset)")
+            }
+        }
         return out
     }
 }
