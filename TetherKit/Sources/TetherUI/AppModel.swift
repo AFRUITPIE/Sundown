@@ -122,6 +122,7 @@ public final class AppModel {
     /// Starts notifications and the Dock badge. The app calls this; tests and previews don't, so
     /// nothing there reaches Notification Center.
     public func startAttention() {
+        Self.current = self
         guard attention == nil else { return }
         let uiTest = ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1"
         attention = AttentionCenter(app: self, deliversToSystem: !uiTest)
@@ -134,6 +135,28 @@ public final class AppModel {
     public func showChat(host: UUID, threadID: String) {
         startAttention()
         attention?.open(host: host, threadID: threadID)
+    }
+
+    /// The app's model, for what reaches it from outside a window: Shortcuts.
+    public private(set) static weak var current: AppModel?
+
+    /// Shortcuts' Start a Chat: New Chat on this Mac, in `folder` if given, with `prompt` in the
+    /// field — or sent, when `send` is set and there's a folder to start in.
+    public func startChat(folder: String?, prompt: String?, send: Bool) async {
+        showNewChat()
+        // A window that had to open appears on the next turn of the run loop.
+        for _ in 0..<20 where openWindows.isEmpty { try? await Task.sleep(for: .milliseconds(100)) }
+        guard let window = openWindows.first(where: \.isKey) ?? openWindows.first else { return }
+        if window.hostID != HostConfig.local.id { window.hostID = HostConfig.local.id }
+        window.newChat()
+        if let folder, !folder.isEmpty { window.draftDirectory = (folder as NSString).expandingTildeInPath }
+        let text = prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !text.isEmpty else { return }
+        if send, window.draftDirectory != nil {
+            await window.startDraftChat([.text(.init(text: text))])
+        } else {
+            setDraft(text, for: "new-chat:\(window.hostID)")
+        }
     }
 
     /// New Chat in the front window, or a new window if none is open.

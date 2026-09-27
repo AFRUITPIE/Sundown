@@ -222,6 +222,23 @@ extension FocusedValues {
 }
 
 extension WindowModel {
+    /// Starts the New Chat draft as a chat with `input` as its first message, and opens it.
+    func startDraftChat(_ input: [UserInput]) async {
+        guard let connection else { return }
+        guard let cwd = draftDirectory else { draftError = "Choose a folder first."; return }
+        draftError = nil
+        do {
+            let t = try await connection.startThread(cwd: cwd, input: input,
+                                                     options: .init(model: draftModel, effort: draftEffort,
+                                                                    permissionMode: draftPermissionMode, fastMode: draftFastMode))
+            open(threadID: t.id, on: connection.id)
+        } catch {
+            draftError = error.localizedDescription
+        }
+    }
+}
+
+extension WindowModel {
     /// The chat above or below this one in the sidebar's order (Chat ▸ Next Chat, ⌃⇥); from New
     /// Chat, the first. Wraps at the ends, as ⌃⇥ does between tabs.
     func adjacentChat(_ offset: Int) -> String? {

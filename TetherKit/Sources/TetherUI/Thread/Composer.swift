@@ -172,6 +172,10 @@ struct Composer: View {
             refreshSuggestions()
             if let draftKey { drafts.set(text, for: draftKey) }
         }
+        // A draft put there from outside the field — a Shortcut's prompt — shows up in it.
+        .onChange(of: draftKey.map { drafts.text(for: $0) } ?? "") { _, draft in
+            if !draft.isEmpty, draft != text { text = draft }
+        }
         .task(id: cwd) {
             commands = await connection.commands(cwd: cwd, thread: thread)
             refreshSuggestions()

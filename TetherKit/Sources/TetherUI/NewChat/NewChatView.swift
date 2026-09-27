@@ -101,16 +101,7 @@ struct NewChatView: View {
     }
 
     private func start(_ connection: HostConnection, _ input: [UserInput]) async {
-        guard let cwd = window.draftDirectory else { window.draftError = "Choose a folder first."; return }
-        window.draftError = nil
-        do {
-            let t = try await connection.startThread(cwd: cwd, input: input,
-                                                       options: .init(model: window.draftModel, effort: window.draftEffort,
-                                                                      permissionMode: window.draftPermissionMode, fastMode: window.draftFastMode))
-            window.open(threadID: t.id, on: connection.id)
-        } catch {
-            window.draftError = error.localizedDescription
-        }
+        await window.startDraftChat(input)
     }
 }
 
