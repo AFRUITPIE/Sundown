@@ -39,6 +39,8 @@ struct NewChatView: View {
                             Composer(connection: connection, cwd: window.draftDirectory,
                                      draftKey: "new-chat:\(window.hostID)",
                                      placeholder: window.draftDirectory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…",
+                                     // The draft's settings, which the first message starts the chat with.
+                                     sessionSettings: { SessionSettings(draft: window, connection: connection) },
                                      submit: { input in await start(connection, input) })
                         }
                     }

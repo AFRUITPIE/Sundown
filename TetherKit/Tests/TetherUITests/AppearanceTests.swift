@@ -17,10 +17,12 @@ struct AppearanceTests {
         app.appearance.toolCalls = .everyCall
         app.appearance.offerBypass = true
         app.appearance.sendShortcut = .commandReturn
+        app.appearance.sessionControls = .split
 
         let restored = AppModel(defaults: defaults).appearance
 
         #expect(restored.toolCalls == .everyCall)
+        #expect(restored.sessionControls == .split)
         #expect(restored.offerBypass)
         #expect(restored.sendShortcut == .commandReturn)
         #expect(restored.wrapCode)
@@ -34,6 +36,7 @@ struct AppearanceTests {
         let appearance = try JSONDecoder().decode(Appearance.self, from: Data(json.utf8))
 
         #expect(appearance.toolCalls == .summarized)
+        #expect(appearance.sessionControls == .toolbar)
         #expect(appearance.sendShortcut == .commandReturn)
         #expect(appearance.offerBypass)
         #expect(appearance.wrapCode)
@@ -43,12 +46,22 @@ struct AppearanceTests {
     @Test func restoringAdvancedKeepsGeneral() {
         var appearance = Appearance()
         appearance.toolCalls = .everyCall
+        appearance.sessionControls = .messageField
         appearance.worktreeByDefault = true
         #expect(!appearance.advancedIsDefault)
         appearance.restoreAdvanced()
         #expect(appearance.advancedIsDefault)
         #expect(appearance.toolCalls == .summarized)
+        #expect(appearance.sessionControls == .toolbar)
         #expect(appearance.worktreeByDefault)
+    }
+
+    /// Each placement puts every control somewhere: the toolbar, the field, or (Split) both.
+    @Test func eachPlacementShowsEveryControlOnce() {
+        typealias P = Appearance.SessionControlsPlacement
+        #expect(!P.toolbar.modelInField && !P.toolbar.permissionsInField)
+        #expect(P.split.modelInField && !P.split.permissionsInField)
+        #expect(P.messageField.modelInField && P.messageField.permissionsInField)
     }
 
     @Test func textSizeStepsReadAsPercentages() {

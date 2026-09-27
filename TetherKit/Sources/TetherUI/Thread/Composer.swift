@@ -20,6 +20,10 @@ struct Composer: View {
     var onStop: (() -> Void)?
     /// Beside Send inside the field: the chat's context ring.
     var accessory: AnyView?
+    /// The chat's (or the New Chat draft's) model, effort and permissions, for when Settings ▸
+    /// Advanced ▸ Session Controls puts them in the field. Resolved by `FieldSessionMenus`, never
+    /// here, so what they read doesn't redraw the field.
+    var sessionSettings: (@MainActor () -> SessionSettings)?
     let submit: ([UserInput]) async -> Void
 
     @Environment(\.composerDraft) private var composerDraft
@@ -120,41 +124,13 @@ struct Composer: View {
     private var field: some View {
         HStack(alignment: .bottom, spacing: 10) {
             addButton
-            HStack(alignment: .bottom, spacing: 8) {
-                VStack(alignment: .leading, spacing: 8) {
-                    if !images.isEmpty { attachments }
-                    TextField(thread?.isRunning == true ? "Send a message while Claude works…" : placeholder, text: $text, axis: .vertical)
-                        .accessibilityIdentifier("composer.input")
-                        .textFieldStyle(.plain)
-                        .lineLimit(1...12)
-                        .focused($focused)
-                        .onSubmit { if appearance.sendShortcut == .returnKey { send() } }
-                        .onKeyPress(.return, phases: .down, action: returnPressed)
-                        // Esc stops Claude, as in the CLI; with nothing running it's the field's own.
-                        .onKeyPress(.escape) {
-                            guard thread?.isRunning == true, let onStop else { return .ignored }
-                            onStop()
-                            return .handled
-                        }
-                        .textInputSuggestions(suggestions) { s in
-                            Label {
-                                Text(s.title)
-                                if let d = s.detail { Text(d) }
-                            } icon: {
-                                Image(systemName: s.symbol)
-                            }
-                            .textInputCompletion(s.completion)
-                        }
-                        // A line of text no taller than Send, so one line leaves the field as tall as
-                        // the + beside it and Send sits evenly inside.
-                        .padding(.vertical, 4)
+            Group {
+                if let sessionSettings, appearance.sessionControls.modelInField {
+                    twoRowField(sessionSettings)
+                } else {
+                    oneRowField
                 }
-                if let accessory { accessory }
-                sendOrStop
             }
-            .padding(.leading, 16)
-            .padding(.trailing, 4)
-            .padding(.vertical, 4)
             // A capsule at one line; the same corner radius as the text grows makes it a rounded
             // rectangle, the way Messages' field grows.
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
@@ -199,6 +175,72 @@ struct Composer: View {
             fileMatches = await connection.searchFiles(cwd: cwd, query: q)
             refreshSuggestions()
         }
+    }
+
+    /// The text, and Send beside it.
+    private var oneRowField: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
+                if !images.isEmpty { attachments }
+                textField
+                    // A line of text no taller than Send, so one line leaves the field as tall as
+                    // the + beside it and Send sits evenly inside.
+                    .padding(.vertical, 4)
+            }
+            if let accessory { accessory }
+            sendOrStop
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 4)
+        .padding(.vertical, 4)
+    }
+
+    /// Session controls in the field: the text on top, and under it the session menus at the
+    /// leading end and Send at the trailing end, level with the + beside the field.
+    private func twoRowField(_ settings: @escaping @MainActor () -> SessionSettings) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 8) {
+                if !images.isEmpty { attachments }
+                textField
+            }
+            .padding(.top, 10)
+            // The menus' labels line up with the text; their hover fill reaches past it.
+            .padding(.leading, FieldMenuButtonStyle.inset)
+            HStack(spacing: 8) {
+                FieldSessionMenus(resolve: settings)
+                Spacer(minLength: 0)
+                if let accessory { accessory }
+                sendOrStop
+            }
+        }
+        .padding(.leading, 16 - FieldMenuButtonStyle.inset)
+        .padding(.trailing, 4)
+        .padding(.bottom, 4)
+    }
+
+    private var textField: some View {
+        TextField(thread?.isRunning == true ? "Send a message while Claude works…" : placeholder, text: $text, axis: .vertical)
+            .accessibilityIdentifier("composer.input")
+            .textFieldStyle(.plain)
+            .lineLimit(1...12)
+            .focused($focused)
+            .onSubmit { if appearance.sendShortcut == .returnKey { send() } }
+            .onKeyPress(.return, phases: .down, action: returnPressed)
+            // Esc stops Claude, as in the CLI; with nothing running it's the field's own.
+            .onKeyPress(.escape) {
+                guard thread?.isRunning == true, let onStop else { return .ignored }
+                onStop()
+                return .handled
+            }
+            .textInputSuggestions(suggestions) { s in
+                Label {
+                    Text(s.title)
+                    if let d = s.detail { Text(d) }
+                } icon: {
+                    Image(systemName: s.symbol)
+                }
+                .textInputCompletion(s.completion)
+            }
     }
 
     /// Send, a round button inside the field's trailing end; Stop in its place while Claude works
@@ -441,6 +483,63 @@ struct Composer: View {
     GlassEffectContainer {
         Composer(connection: connection, cwd: nil, placeholder: "Choose a folder, then ask Claude…", submit: { _ in })
     }
+    .padding(20)
+    .frame(width: 560)
+}
+
+/// Settings ▸ Advanced ▸ Session Controls, one placement at a time: a chat at rest, a running turn
+/// (Stop), and New Chat's draft, each resolving its settings the way `BottomBar` and `NewChatView` do.
+@MainActor
+private func composerPlacements(_ placement: Appearance.SessionControlsPlacement) -> some View {
+    let connection = HostConnection.sample()
+    let idle = ThreadModel.sampleIdleChat()
+    let running = ThreadModel.sampleRunningTurn()
+    let window = WindowModel.sample(.sample(connections: [connection]))
+    var appearance = Appearance()
+    appearance.sessionControls = placement
+    return VStack(spacing: 20) {
+        GlassEffectContainer {
+            Composer(connection: connection, cwd: idle.cwd, thread: idle, onStop: {},
+                     sessionSettings: { SessionSettings(thread: idle, connection: connection) }, submit: { _ in })
+        }
+        GlassEffectContainer {
+            Composer(connection: connection, cwd: running.cwd, thread: running, onStop: {},
+                     sessionSettings: { SessionSettings(thread: running, connection: connection) }, submit: { _ in })
+        }
+        GlassEffectContainer {
+            Composer(connection: connection, cwd: nil, placeholder: "Choose a folder, then ask Claude…",
+                     sessionSettings: { SessionSettings(draft: window, connection: connection) }, submit: { _ in })
+        }
+    }
+    .environment(\.appearance, appearance)
+    .padding(20)
+    .frame(width: 560)
+}
+
+#Preview("Session controls: Toolbar") { composerPlacements(.toolbar) }
+#Preview("Session controls: Message Field") { composerPlacements(.messageField) }
+#Preview("Session controls: Split") { composerPlacements(.split) }
+
+#Preview("Session controls: Message Field (bigger text)") {
+    composerPlacements(.messageField)
+        .scaledFont(.body)
+        .environment(\.textScale, 1.5)
+}
+
+/// Bypass is still red in the field, and a request still to answer keeps the draft with Send off.
+#Preview("Session controls: Message Field (bypass, awaiting an answer)") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.sample(status: .requiresAction, model: "sonnet", effort: .max,
+                                    permissionMode: .bypassPermissions, pending: [.samplePermission()])
+    var appearance = Appearance()
+    appearance.sessionControls = .messageField
+    appearance.offerBypass = true
+    return GlassEffectContainer {
+        Composer(connection: connection, cwd: thread.cwd, thread: thread, awaitingAnswer: true, onStop: {},
+                 sessionSettings: { SessionSettings(thread: thread, connection: connection) }, submit: { _ in })
+    }
+    .environment(\.appearance, appearance)
+    .environment(\.composerDraft, "…and once that's done, run the package tests")
     .padding(20)
     .frame(width: 560)
 }

@@ -7,6 +7,11 @@ struct AdvancedSettings: View {
 
     var body: some View {
         Form {
+            Section("Window") {
+                Picker("Session Controls", selection: $app.appearance.sessionControls) {
+                    ForEach(Appearance.SessionControlsPlacement.allCases) { Text($0.label).tag($0) }
+                }
+            }
             Section("Transcript") {
                 Picker("Tool Calls", selection: $app.appearance.toolCalls) {
                     ForEach(Appearance.ToolCallDisplay.allCases) { Text($0.label).tag($0) }
@@ -26,6 +31,7 @@ extension Appearance {
     mutating func restoreAdvanced() {
         let d = Appearance()
         toolCalls = d.toolCalls
+        sessionControls = d.sessionControls
     }
 
     var advancedIsDefault: Bool {
