@@ -428,8 +428,11 @@ public final class HostConnection: Identifiable {
         if model.historyLoaded && !force { return }
         let r = try await client.call(Methods.ThreadRead.self, .init(
             threadId: model.id, cwd: model.cwd, limit: Self.initialHistoryLimit))
+        // Counted before the page goes in, so its first draw only looks them up. Events that land
+        // meanwhile are replayed by the subscription after `historySeq` below.
+        let changes = await FileChange.changes(ofCallsIn: r.items)
         if let s = r.summary { model.setSummary(s) }
-        model.loadHistory(items: r.items, turns: r.turns, seq: r.historySeq, hasMore: r.hasMore ?? false)
+        model.loadHistory(items: r.items, turns: r.turns, seq: r.historySeq, hasMore: r.hasMore ?? false, fileChanges: changes)
         if let seq = r.historySeq {
             // Loaded in the daemon: stream everything after the snapshot.
             let sub = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: seq))
@@ -602,7 +605,8 @@ public final class HostConnection: Identifiable {
         do {
             let r = try await client.call(Methods.ThreadRead.self, .init(
                 threadId: model.id, cwd: model.cwd, limit: Self.olderHistoryPageSize, before: oldest))
-            model.prependHistory(items: r.items, hasMore: r.hasMore ?? false)
+            let changes = await FileChange.changes(ofCallsIn: r.items)
+            model.prependHistory(items: r.items, hasMore: r.hasMore ?? false, fileChanges: changes)
         } catch {
             appendLog("Loading older history for \(model.id) failed: \(error.localizedDescription)")
         }

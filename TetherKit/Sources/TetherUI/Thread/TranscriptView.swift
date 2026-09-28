@@ -54,11 +54,12 @@ struct TranscriptView: View {
         }
         // An older page goes in above the reader, who stays on the row they were reading: the scroll
         // view kept the same offset from the top, which showed the page's first rows and left the
-        // spinner that asks for the next one on screen, so it never asked again.
-        .onChange(of: thread.rows.first?.id) { old, new in
-            guard let old, new != old else { return }
+        // spinner that asks for the next one on screen, so it never asked again. The page says which
+        // row that was; reading the rows here would redraw this view whenever they change.
+        .onChange(of: thread.pageAnchor) { _, anchor in
+            guard let anchor else { return }
             // Once the page's rows exist, on the next turn of the run loop.
-            Task { position.scrollTo(id: old, anchor: .top) }
+            Task { position.scrollTo(id: anchor.rowID, anchor: .top) }
         }
         // Find Next and Previous bring the match into view; the reader has left the end to read it.
         .onChange(of: find?.step) {
@@ -201,7 +202,8 @@ private struct TranscriptContent: View {
     @Environment(\.appearance) private var appearance
 
     var body: some View {
-        let rows = thread.rows(appearance.toolCalls.folding)
+        let folding = appearance.toolCalls.folding
+        let rows = thread.rows(folding)
         LazyVStack(alignment: .leading, spacing: 14) {
             if !thread.historyLoaded {
                 TranscriptUnavailable(thread: thread, connection: connection)
@@ -217,32 +219,15 @@ private struct TranscriptContent: View {
             TranscriptTail(thread: thread)
         }
         // VoiceOver's way from prompt to prompt, which reaches the ones the lazy stack hasn't built.
-        // On a container element, as a rotor has to be.
+        // On a container element, as a rotor has to be. Made with the rows, not from them per draw.
         .accessibilityElement(children: .contain)
-        .accessibilityRotor("Prompts", entries: Self.prompts(rows), entryID: \.id, entryLabel: \.label)
+        .accessibilityRotor("Prompts", entries: thread.prompts(folding), entryID: \.id, entryLabel: \.label)
         // Rows are scroll targets by their ids, so an older page can keep the reader where they were.
         .scrollTargetLayout()
         // The size every row's text starts from; View ▸ Bigger and Smaller change it.
         .scaledFont(.body)
         .padding(.vertical, 16)
         .readingColumn()
-    }
-}
-
-extension TranscriptContent {
-    struct PromptEntry: Identifiable {
-        let id: String
-        let label: String
-    }
-
-    /// The reader's own prompts, by their rows' ids, with their first words.
-    static func prompts(_ rows: [TranscriptRow]) -> [PromptEntry] {
-        rows.compactMap { row in
-            guard case .item(.userMessage(let m)) = row, m.synthetic != true else { return nil }
-            // The first words of its first text, not the whole prompt joined: a pasted log is long.
-            let first = m.content.lazy.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.first ?? ""
-            return PromptEntry(id: row.id, label: String(first.prefix(80)))
-        }
     }
 }
 
