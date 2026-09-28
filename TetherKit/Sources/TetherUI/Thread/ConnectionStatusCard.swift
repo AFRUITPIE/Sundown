@@ -70,7 +70,7 @@ struct ConnectionStatusCard: View {
         .padding(.trailing, 10)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        .glassEffect(.regular, in: .rect(cornerRadius: Layout.cardCornerRadius))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("composer.status")
     }

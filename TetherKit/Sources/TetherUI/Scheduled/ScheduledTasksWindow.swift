@@ -297,7 +297,8 @@ private struct ScheduledTaskEditor: View {
                     }
                 }
                 if let problem = error ?? task.lastError {
-                    Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.red).lineLimit(3)
+                    // Quiet, as errors are everywhere else: the next run may well go fine.
+                    Label(problem, systemImage: "exclamationmark.circle").foregroundStyle(.secondary).lineLimit(3)
                 }
                 HStack {
                     Button("Run Now") { run() }

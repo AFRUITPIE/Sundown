@@ -43,7 +43,8 @@ struct SessionPane: View {
                         } currentValueLabel: {
                             Text("\(Int((used * 100).rounded()))%")
                         }
-                        .tint(limit.status == .allowed ? Color.accentColor : limit.status == .warning ? .orange : .red)
+                        // The accent color until the limit is near.
+                        .tint(limit.status == .allowed ? nil : limit.status == .warning ? .orange : .red)
                     }
                     if let reset = limit.resetsAt {
                         LabeledContent("Resets", value: reset.formatted(date: .abbreviated, time: .shortened))

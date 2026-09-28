@@ -47,46 +47,61 @@ struct ToolCallView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                if call.kind == .subagent {
-                    inspectSubagent(call.id)
-                } else {
-                    withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
+        if call.kind == .subagent {
+            // A subagent opens in the inspector instead of here.
+            VStack(alignment: .leading, spacing: 2) {
+                Button { inspectSubagent(call.id) } label: {
+                    HStack(spacing: 8) {
+                        header
+                        Image(systemName: "sidebar.trailing").scaledFont(.caption2).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityValue(statusDescription)
+                .accessibilityIdentifier("transcript.toolCall")
+                reasonLine
+            }
+        } else if call.kind == .todoWrite {
+            // A checklist is always open.
+            VStack(alignment: .leading, spacing: 6) {
+                header
+                    .accessibilityElement(children: .combine)
+                    .accessibilityValue(statusDescription)
+                    .accessibilityIdentifier("transcript.toolCall")
+                reasonLine
+                detailBox
+            }
+        } else {
+            DisclosureGroup(isExpanded: $expanded) {
+                detailBox
             } label: {
-                header.contentShape(Rectangle())
+                header
             }
-            .buttonStyle(.plain)
-            .contextMenu { menu }
-            // The status glyph is inside the label, where VoiceOver doesn't read it.
-            .accessibilityValue(statusDescription)
-            .accessibilityIdentifier("transcript.toolCall")
-            .help(ToolCallText.fullObject(call) ?? "")
-            if let reason = ToolCallText.reason(call) {
-                Text(reason)
-                    .scaledFont(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
-                    .textSelection(.enabled)
-                    .padding(.top, 2)
-            }
-            if call.kind != .subagent, expanded || alwaysShowBody {
-                detail
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(.fill.quinary, in: .rect(cornerRadius: 8))
-                    .padding(.top, 6)
-            }
+            .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.toolCall", value: statusDescription,
+                                                            note: ToolCallText.reason(call)))
         }
     }
 
-    private var alwaysShowBody: Bool {
-        call.kind == .todoWrite
+    @ViewBuilder private var reasonLine: some View {
+        if let reason = ToolCallText.reason(call) {
+            Text(reason)
+                .scaledFont(.caption)
+                .foregroundStyle(.tertiary)
+                .lineLimit(2)
+                .textSelection(.enabled)
+        }
     }
 
-    /// Words first, and the status and the disclosure chevron at the trailing end. A finished call
-    /// has no status glyph.
+    private var detailBox: some View {
+        detail
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(.fill.quinary, in: .rect(cornerRadius: 8))
+    }
+
+    /// Words first, and the status at the trailing end (the chevron is the disclosure's). A finished
+    /// call has no status glyph. Its menu and full command or path are on the words.
     private var header: some View {
         HStack(spacing: 6) {
             Text(title).foregroundStyle(.secondary)
@@ -98,14 +113,10 @@ struct ToolCallView: View {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
             status
-            // A subagent opens in the inspector instead of expanding here; a checklist is always open.
-            if call.kind == .subagent {
-                Image(systemName: "sidebar.trailing").scaledFont(.caption2).foregroundStyle(.tertiary)
-            } else if !alwaysShowBody {
-                DisclosureIndicator(expanded: expanded)
-            }
         }
         .scaledFont(.callout)
+        .contextMenu { menu }
+        .help(ToolCallText.fullObject(call) ?? "")
     }
 
     /// A spinner while it runs, a glyph when it went wrong, and nothing once it's done.
@@ -234,6 +245,48 @@ enum SubagentLifecycle {
     }
 }
 
+/// A transcript row that opens, as a disclosure group: its words, the chevron at the trailing end,
+/// and what it holds beneath at the same leading edge, so nothing indents. VoiceOver hears whether
+/// it's open along with the row's own value (a call's status, a file's line counts).
+struct TranscriptDisclosureStyle: DisclosureGroupStyle {
+    /// Between the row and what it holds.
+    var spacing: CGFloat = 6
+    /// The row's accessibility identifier, for UI tests.
+    var identifier = "transcript.disclosure"
+    var value: String?
+    /// A line under the row whether it's open or not: why a call failed.
+    var note: String?
+
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            VStack(alignment: .leading, spacing: 2) {
+                Button {
+                    withAnimation(.snappy(duration: 0.15)) { configuration.isExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 8) {
+                        configuration.label
+                        DisclosureIndicator(expanded: configuration.isExpanded)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue([value, configuration.isExpanded ? "Expanded" : "Collapsed"].compactMap { $0 }.joined(separator: ", "))
+                .accessibilityIdentifier(identifier)
+                if let note {
+                    Text(note)
+                        .scaledFont(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+            }
+            if configuration.isExpanded {
+                configuration.content
+            }
+        }
+    }
+}
+
 /// The expand chevron at a row's trailing end: pointing to the trailing side while closed and down
 /// while open.
 struct DisclosureIndicator: View {
@@ -284,25 +337,19 @@ struct ToolCallGroupView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    Text(ToolCallText.summary(calls)).foregroundStyle(.secondary).lineLimit(1)
-                    Spacer(minLength: 8)
-                    FailureCount(failures)
-                    DisclosureIndicator(expanded: expanded)
-                }
-                .scaledFont(.callout)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("transcript.toolGroup")
-            if expanded {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
             }
+        } label: {
+            HStack(spacing: 8) {
+                Text(ToolCallText.summary(calls)).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 8)
+                FailureCount(failures)
+            }
+            .scaledFont(.callout)
         }
+        .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.toolGroup"))
         .modifier(OpensForFind(rowID: rowID, expanded: $expanded,
                                matches: { TranscriptRow.toolGroup(calls).matches($0) }))
     }
@@ -336,27 +383,21 @@ struct TurnWorkView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    Text(title).foregroundStyle(.secondary)
-                    Spacer(minLength: 8)
-                    FailureCount(failures)
-                    DisclosureIndicator(expanded: expanded)
-                }
-                .scaledFont(.callout)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("transcript.turnWork")
-            if expanded {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 10) {
                 ForEach(rows, id: \.id) { TranscriptRowView(row: $0, thread: thread) }
                     // A run of calls in here that holds the match opens too.
                     .environment(\.findFold, rowID)
             }
+        } label: {
+            HStack(spacing: 8) {
+                Text(title).foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                FailureCount(failures)
+            }
+            .scaledFont(.callout)
         }
+        .disclosureGroupStyle(TranscriptDisclosureStyle(spacing: 10, identifier: "transcript.turnWork"))
         .modifier(OpensForFind(rowID: rowID, expanded: $expanded))
     }
 }

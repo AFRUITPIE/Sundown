@@ -212,7 +212,7 @@ struct MarkdownBlockView: View, Equatable {
                 }
             }
             .padding(8)
-            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            .background(.fill.quinary, in: .rect(cornerRadius: 6))
         }
     }
 }

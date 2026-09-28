@@ -31,7 +31,7 @@ struct BottomBar: View {
                 Composer(connection: connection, cwd: thread.cwd, thread: thread, draftKey: thread.id,
                          awaitingAnswer: pending != nil, onStop: {
                     Task { await connection.interrupt(thread) }
-                }, accessory: AnyView(ContextRing(thread: thread, connection: connection)),
+                },
                 submit: { input in
                     await connection.send(thread, input: input)
                 }, onFocusChange: { composerFocused = $0 })
@@ -94,13 +94,21 @@ extension EnvironmentValues {
     @Entry var startSuggestedTask = StartSuggestedTaskAction(owner: nil) { _, _ in }
 }
 
+/// What's going on that the transcript doesn't say: an error, a retry, compacting, a plan limit
+/// near or reached, sign-in output. Information, not a control, so on the bar's material rather
+/// than glass.
 struct StatusStrip: View {
     let thread: ThreadModel
-    /// Moved on when the plan's limit resets, so what the strip says about it goes away then.
-    @State private var now = Date.now
 
     var body: some View {
-        let parts = messages
+        // Drawn again when the plan's limit resets, so what it says about the limit goes then.
+        TimelineView(.explicit(thread.rateLimit?.resetsAt.map { [$0.addingTimeInterval(1)] } ?? [])) { context in
+            strip(now: context.date)
+        }
+    }
+
+    @ViewBuilder private func strip(now: Date) -> some View {
+        let parts = messages(now: now)
         let auth = thread.authStatus.flatMap { $0.isAuthenticating || $0.error != nil ? $0 : nil }
         if !parts.isEmpty || auth != nil {
             VStack(alignment: .leading, spacing: 4) {
@@ -113,20 +121,14 @@ struct StatusStrip: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassEffect(in: .rect(cornerRadius: 18))
-            .task(id: thread.rateLimit?.resetsAt) {
-                now = .now
-                guard let reset = thread.rateLimit?.resetsAt, reset > now else { return }
-                try? await Task.sleep(for: .seconds(reset.timeIntervalSince(now) + 1))
-                if !Task.isCancelled { now = .now }
-            }
+            .background(.bar, in: .rect(cornerRadius: Layout.cardCornerRadius))
         }
     }
 
-    private var messages: [String] {
+    private func messages(now: Date) -> [String] {
         var out: [String] = []
         if let e = thread.lastError { out.append(e) }
-        if let r = thread.apiRetry { out.append("Retrying API request (attempt \(r.attempt)/\(r.maxRetries))\(r.error.map { ": \($0)" } ?? "")") }
+        if let r = thread.apiRetry { out.append("Retrying API request (attempt \(r.attempt.formatted()) of \(r.maxRetries.formatted()))\(r.error.map { ": \($0)" } ?? "")") }
         if thread.activity == "compacting" { out.append("Compacting conversation…") }
         if let warning = thread.rateLimit?.warning(now: now) { out.append(warning) }
         return out

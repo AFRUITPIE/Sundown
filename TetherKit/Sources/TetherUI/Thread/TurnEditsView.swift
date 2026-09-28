@@ -24,29 +24,12 @@ struct TurnEditsView: View {
     private var title: LocalizedStringKey { "Edited ^[\(edits.files.count) file](inflect: true)" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation(.snappy(duration: 0.15)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    Text(title).foregroundStyle(.secondary)
-                    LineCounts(added: edits.added, removed: edits.removed)
-                    Spacer(minLength: 8)
-                    DisclosureIndicator(expanded: expanded)
-                }
-                .scaledFont(.callout)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityValue(LineCounts.description(added: edits.added, removed: edits.removed))
-            .accessibilityIdentifier("transcript.edits")
-            if expanded {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(edits.files) { file in
-                    EditedFileRow(file: file, cwd: cwd, isOpen: openFiles.contains(file.path)) {
-                        withAnimation(.snappy(duration: 0.15)) {
-                            if openFiles.remove(file.path) == nil { openFiles.insert(file.path) }
-                        }
-                    }
+                    EditedFileRow(file: file, cwd: cwd, isOpen: Binding(
+                        get: { openFiles.contains(file.path) },
+                        set: { open in if open { openFiles.insert(file.path) } else { openFiles.remove(file.path) } }))
                 }
                 Button("Restore Files…") { restoreCode(edits.promptID) }
                     .buttonStyle(.borderless)
@@ -55,7 +38,16 @@ struct TurnEditsView: View {
                     .help("Restore Files")
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
+        } label: {
+            HStack(spacing: 8) {
+                Text(title).foregroundStyle(.secondary)
+                LineCounts(added: edits.added, removed: edits.removed)
+                Spacer(minLength: 8)
+            }
+            .scaledFont(.callout)
         }
+        .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.edits",
+                                                        value: LineCounts.description(added: edits.added, removed: edits.removed)))
     }
 }
 
@@ -64,29 +56,26 @@ struct TurnEditsView: View {
 private struct EditedFileRow: View {
     let file: TurnEdits.File
     let cwd: String?
-    let isOpen: Bool
-    let toggle: () -> Void
+    @Binding var isOpen: Bool
     @Environment(\.hostIsLocal) private var hostIsLocal
     @Environment(\.openFilesWith) private var editor
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button(action: toggle) {
-                HStack(spacing: 6) {
-                    Text(file.path.lastPathComponent).foregroundStyle(.secondary)
-                    Text(folder).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
-                    Spacer(minLength: 8)
-                    LineCounts(added: file.added, removed: file.removed)
-                    DisclosureIndicator(expanded: isOpen)
+        DisclosureGroup(isExpanded: $isOpen) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(file.changes.enumerated()), id: \.offset) { _, change in
+                    DiffView(old: change.old, new: change.new)
                 }
-                .scaledFont(.callout)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+        } label: {
+            HStack(spacing: 6) {
+                Text(file.path.lastPathComponent).foregroundStyle(.secondary)
+                Text(folder).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
+                Spacer(minLength: 8)
+                LineCounts(added: file.added, removed: file.removed)
+            }
+            .scaledFont(.callout)
             .help(file.path.abbreviatingHome)
-            .accessibilityLabel(file.path.lastPathComponent)
-            .accessibilityValue(LineCounts.description(added: file.added, removed: file.removed))
-            .accessibilityIdentifier("transcript.editedFile")
             .contextMenu {
                 if hostIsLocal {
                     Button(editor.openTitle) { editor.open(file.path) }
@@ -98,12 +87,9 @@ private struct EditedFileRow: View {
                     NSPasteboard.general.setString(file.path, forType: .string)
                 }
             }
-            if isOpen {
-                ForEach(Array(file.changes.enumerated()), id: \.offset) { _, change in
-                    DiffView(old: change.old, new: change.new)
-                }
-            }
         }
+        .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.editedFile",
+                                                        value: LineCounts.description(added: file.added, removed: file.removed)))
     }
 
     /// The file's folder within the chat's, or from the home folder when it's elsewhere; nothing

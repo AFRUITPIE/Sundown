@@ -66,7 +66,7 @@ struct HostsSettings: View {
             .labelStyle(.iconOnly)
         }
         .padding()
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(.windowBackground)
     }
 
     private var hostSelection: Binding<UUID> {

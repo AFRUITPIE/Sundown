@@ -45,7 +45,9 @@ struct PromptCard<Content: View>: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular.tint(tint.opacity(0.12)), in: .rect(cornerRadius: 24))
+        .glassEffect(.regular.tint(tint.opacity(0.12)), in: .rect(cornerRadius: Layout.cardCornerRadius))
+        // Comes out of the glass around it, and goes back into it, as it's asked and answered.
+        .glassEffectTransition(.materialize)
     }
 }
 

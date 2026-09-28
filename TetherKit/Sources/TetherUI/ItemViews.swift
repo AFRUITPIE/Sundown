@@ -240,8 +240,8 @@ struct UserMessageView: View {
             parts(alignment: .trailing)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(message.synthetic == true ? AnyShapeStyle(.quaternary.opacity(0.4)) : AnyShapeStyle(.quaternary),
-                            in: RoundedRectangle(cornerRadius: 12))
+                .background(message.synthetic == true ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(.fill),
+                            in: .rect(cornerRadius: 12))
                 // Drawn, not laid out: the row takes its place at once, so the transcript's scroll
                 // to its end isn't disturbed.
                 .scaleEffect(arrived ? 1 : 0.6, anchor: .bottomTrailing)

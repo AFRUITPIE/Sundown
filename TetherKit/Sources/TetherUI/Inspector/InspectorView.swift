@@ -205,8 +205,8 @@ struct InspectorCard: View {
         InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
             .frame(width: 320)
             .frame(maxHeight: .infinity)
-            .clipShape(.rect(cornerRadius: 18))
-            .glassEffect(in: .rect(cornerRadius: 18))
+            .clipShape(.rect(cornerRadius: Layout.cardCornerRadius))
+            .glassEffect(in: .rect(cornerRadius: Layout.cardCornerRadius))
             .padding(12)
     }
 }

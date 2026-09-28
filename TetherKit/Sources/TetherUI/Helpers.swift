@@ -85,6 +85,9 @@ struct ComposerDrafts: Equatable {
 
 enum Layout {
     static let gutter: CGFloat = 28
+    /// The corners every card shares (the message field, prompt and status cards, the inspector
+    /// card), so shapes stacked together read as one family.
+    static let cardCornerRadius: CGFloat = 22
 }
 
 extension View {

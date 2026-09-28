@@ -20,8 +20,6 @@ struct Composer: View {
     /// A server request is waiting: the draft stays, but it has to be answered before sending.
     var awaitingAnswer = false
     var onStop: (() -> Void)?
-    /// Beside Send inside the field: the chat's context ring.
-    var accessory: AnyView?
     let submit: ([UserInput]) async -> Void
     /// Told when the message field gains or loses focus.
     var onFocusChange: ((Bool) -> Void)?
@@ -43,6 +41,9 @@ struct Composer: View {
     /// The text Esc closed the suggestion list on: it stays closed until the text changes.
     @State private var suggestionsClosedFor: String?
     @FocusState private var focused: Bool
+    @Namespace private var glass
+
+    private enum GlassID: Hashable { case field }
 
     /// Something going with the message besides its text.
     struct Attachment: Identifiable {
@@ -131,10 +132,12 @@ struct Composer: View {
                 .controlSize(.small)
                 .scaledFont(.callout)
                 .help("Use Suggestion")
+                .glassEffectTransition(.materialize)
                 .transition(.moving(.opacity.combined(with: .move(edge: .bottom)), reduceMotion: reduceMotion))
             }
             if let status {
                 ConnectionStatusCard(status: status, connection: connection)
+                    .glassEffectID(GlassID.field, in: glass)
             } else {
                 field
             }
@@ -145,16 +148,19 @@ struct Composer: View {
     /// Laid out like Messages: a round + outside the field, and the field a capsule that grows with
     /// its text, with a round Send — or Stop — at its trailing end.
     private var field: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            addButton
-            oneRowField
-            // A capsule at one line; the same corner radius as the text grows makes it a rounded
-            // rectangle, the way Messages' field grows.
-            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
-        }
         // Under a prompt card the composer is still there and still typable, just clearly not the
-        // thing being asked of you.
-        .opacity(awaitingAnswer ? 0.7 : 1)
+        // thing being asked of you: its contents dim, under the glass rather than over it.
+        let dim = awaitingAnswer ? 0.7 : 1
+        return HStack(alignment: .bottom, spacing: 10) {
+            addButton.opacity(dim)
+            oneRowField
+                .opacity(dim)
+                // A capsule at one line; the same corner radius as the text grows makes it a rounded
+                // rectangle, the way Messages' field grows.
+                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
+                // The status card morphs into the field when the host connects, and back.
+                .glassEffectID(GlassID.field, in: glass)
+        }
         .onDrop(of: [.image, .fileURL], isTargeted: nil, perform: drop)
         .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             for url in (try? result.get()) ?? [] { add(file: url) }
@@ -216,7 +222,6 @@ struct Composer: View {
                 if !images.isEmpty { attachments }
                 textField
             }
-            if let accessory { accessory }
             sendOrStop
         }
         .padding(.leading, 16)
