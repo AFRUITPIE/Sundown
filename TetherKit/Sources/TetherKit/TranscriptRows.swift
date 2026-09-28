@@ -249,7 +249,13 @@ extension TranscriptRow {
 
     /// Whether the row matches `query`, case- and diacritic-insensitively.
     public func matches(_ query: String) -> Bool {
-        !query.isEmpty && searchText.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        !query.isEmpty && Self.text(searchText, matches: query)
+    }
+
+    /// Whether `text`, a row's `searchText`, holds `query` as `matches` compares them, for a caller
+    /// that keeps rows' search text rather than making it again for every query.
+    public static func text(_ text: String, matches query: String) -> Bool {
+        !query.isEmpty && text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
     }
 }
 
