@@ -183,8 +183,11 @@ private actor FixtureScript {
             ))))
         case "thread/subscribe":
             let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
+            // The performance scenario's other chats aren't live in the daemon, as most of a real
+            // host's aren't: they're followed, let go when left, and read again when reopened.
+            let status: ThreadStatus = id.hasPrefix("perf-chat-") ? .notLoaded : .idle
             var reply = Reply(value: .result(json(ThreadSubscribeResult(
-                thread: .init(threadId: id, status: .idle, cwd: "/tmp/tether-fixture", lastSeq: nextSequence),
+                thread: .init(threadId: id, status: status, cwd: "/tmp/tether-fixture", lastSeq: nextSequence),
                 replayed: 0, gap: false
             ))))
             if id == UITestFixture.threadID, pendingPermission, !sentPermission {
@@ -272,8 +275,9 @@ private actor FixtureScript {
         }
     }
 
-    /// A prompt in the performance scenario gets a long working reply: the prompt and "running" at
-    /// once, then tool calls and Markdown streamed a few characters a frame, then "idle".
+    /// A prompt in the performance scenario gets a long working reply: the turn, the prompt and
+    /// "running" at once, then tool calls and Markdown streamed a few characters a frame, then the
+    /// turn's end and "idle", in the order a real host sends them.
     private func performanceTurn(threadID: String, input: JSONValue?) -> Reply {
         nextMessage += 1
         let turn = nextMessage
@@ -281,14 +285,19 @@ private actor FixtureScript {
         let user = Item.userMessage(.init(id: "perf-sent-\(turn)", createdAt: 1_900_000_000_000 + Double(turn * 1000),
                                           content: [.text(.init(text: text))]))
         var reply = Reply(value: .result(json(TurnStartResult(turnId: "perf-turn-\(turn)", messageId: "perf-message-\(turn)", queued: false))))
+        let started = Turn(id: "perf-turn-\(turn)", status: .inProgress, startedAt: 1_900_000_000_000 + Double(turn * 1000))
+        var completed = started
+        completed.status = .completed
         reply.notifications = [
-            ("item/started", json(ItemStartedNotification(threadId: threadID, seq: nextSequence + 1, item: user))),
-            ("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(nextSequence + 2)), "status": "running"]),
+            ("turn/started", json(TurnStartedNotification(threadId: threadID, seq: nextSequence + 1, turn: started))),
+            ("item/started", json(ItemStartedNotification(threadId: threadID, seq: nextSequence + 2, item: user))),
+            ("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(nextSequence + 3)), "status": "running"]),
         ]
-        reply.stream = PerformanceTranscript.reply(threadID: threadID, firstSeq: nextSequence + 3, turn: turn)
-        let last = nextSequence + 3 + reply.stream.count
-        reply.stream.append(("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(last)), "status": "idle"]))
-        nextSequence = last
+        reply.stream = PerformanceTranscript.reply(threadID: threadID, firstSeq: nextSequence + 4, turn: turn)
+        let last = nextSequence + 4 + reply.stream.count
+        reply.stream.append(("turn/completed", json(TurnCompletedNotification(threadId: threadID, seq: last, turn: completed))))
+        reply.stream.append(("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(last + 1)), "status": "idle"]))
+        nextSequence = last + 1
         return reply
     }
 
