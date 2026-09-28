@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import SwiftUI
+import Synchronization
 import TetherKit
 import TetherProtocol
 
@@ -231,6 +232,8 @@ public final class AppModel {
     /// `didSet` runs while `load()` restores values; saving then would write half-restored state.
     private var isLoading = false
     private var connectedAll = false
+    /// Hosts no window showed when the app connected, connected once those that did are up.
+    @ObservationIgnored private(set) var waitingHosts: Set<UUID> = []
     /// What each defaults key was last written with, or read as, so the same bytes aren't written again.
     @ObservationIgnored private var written: [String: Data] = [:]
 
@@ -290,11 +293,45 @@ public final class AppModel {
         return c
     }
 
-    /// Connects every host once, however many windows open.
+    /// Connects every host once, however many windows open. The hosts windows show go first: the
+    /// restored chat's history waited behind every other host's SSH login. The rest follow once
+    /// those are up and have loaded their chats, or after a few seconds, or as soon as a window
+    /// shows one.
     public func connectAll() {
         guard !connectedAll else { return }
         connectedAll = true
-        for c in connections.values { Task { await c.connect() } }
+        var shown = Set(openWindows.map(\.hostID))
+        shown.insert(lastHostID)
+        if let launchChat { shown.insert(launchChat.host) }
+        waitingHosts = Set(connections.keys).subtracting(shown)
+        let first = shown.compactMap { connections[$0] }.map { c in Task { await c.connect() } }
+        guard !waitingHosts.isEmpty else { return }
+        Task { [weak self] in
+            await Self.finished(first, orAfter: .seconds(5))
+            self?.connectWaitingHosts()
+        }
+    }
+
+    /// The hosts that were left to wait.
+    private func connectWaitingHosts() {
+        let waiting = waitingHosts
+        waitingHosts = []
+        for id in waiting { if let c = connections[id] { Task { await c.connect() } } }
+    }
+
+    /// A window shows `id`: it doesn't wait for the others.
+    private func connectIfWaiting(_ id: UUID) {
+        guard waitingHosts.remove(id) != nil, let c = connections[id] else { return }
+        Task { await c.connect() }
+    }
+
+    /// Returns when every task has, or after `limit`, whichever is first.
+    private static func finished(_ tasks: [Task<Void, Never>], orAfter limit: Duration) async {
+        let once = ResumeOnce()
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            Task { for t in tasks { await t.value }; if once.claim() { done.resume() } }
+            Task { try? await Task.sleep(for: limit); if once.claim() { done.resume() } }
+        }
     }
 
     /// Hosts that dropped are tried again now, their backoff started over: the Mac woke.
@@ -333,6 +370,7 @@ public final class AppModel {
         secrets.write(nil, for: id.uuidString)
         writtenEnv[id] = nil
         unreadEnvironment.remove(id)
+        waitingHosts.remove(id)
         pinnedChats[id] = nil
         if let c = connections.removeValue(forKey: id) { Task { await c.disconnect() } }
         if lastHostID == id { lastHostID = HostConfig.local.id; lastThreadID = nil }
@@ -373,6 +411,7 @@ public final class AppModel {
         windowRefs.removeAll { $0.window == nil || $0.window === window }
         windowRefs.append(WeakWindow(window: window))
         windowStarted()
+        connectIfWaiting(window.hostID)
     }
 
     func unregister(_ window: WindowModel) {
@@ -386,6 +425,7 @@ public final class AppModel {
         lastShowInspector = window.showInspector
         lastInspectorPane = window.inspectorPane
         saveWindow()
+        connectIfWaiting(window.hostID)
     }
 
     /// A window started showing `thread`.
@@ -604,6 +644,12 @@ public final class AppModel {
         written[key] = data
         defaults.set(data, forKey: key)
     }
+}
+
+/// Resumes a continuation once, whichever of its callers comes first.
+private final class ResumeOnce: Sendable {
+    private let done = Mutex(false)
+    func claim() -> Bool { done.withLock { if $0 { return false }; $0 = true; return true } }
 }
 
 extension AppModel {

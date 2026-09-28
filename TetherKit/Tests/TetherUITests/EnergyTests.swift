@@ -174,6 +174,38 @@ struct KeychainReadTests {
     }
 }
 
+@MainActor
+@Suite
+struct ConnectOrderTests {
+    /// The hosts windows show connect first; the rest once those are up, or as soon as a window
+    /// shows one.
+    @Test func shownHostsConnectFirst() async throws {
+        let ssh = HostConfig(name: "Fixture SSH", kind: .ssh(destination: "fixture.invalid"))
+        let local = UITestFixture.connection(), remote = UITestFixture.connection(host: ssh)
+        let app = AppModel.sample(connections: [local, remote])
+        let w = WindowModel(app: app, target: WindowTarget(hostID: local.id))
+        w.start()
+
+        app.connectAll()
+        #expect(app.waitingHosts == [remote.id])
+        try await eventually { local.state == .connected && remote.state == .connected }
+        #expect(app.waitingHosts.isEmpty)
+    }
+
+    @Test func aWindowShowingAWaitingHostConnectsIt() async throws {
+        let ssh = HostConfig(name: "Fixture SSH", kind: .ssh(destination: "fixture.invalid"))
+        let local = UITestFixture.connection(), remote = UITestFixture.connection(host: ssh)
+        let app = AppModel.sample(connections: [local, remote])
+        let w = WindowModel(app: app, target: WindowTarget(hostID: local.id))
+        w.start()
+        app.connectAll()
+
+        w.hostID = remote.id
+        #expect(app.waitingHosts.isEmpty)
+        try await eventually { remote.state == .connected }
+    }
+}
+
 @Suite
 struct ReducedEffectsTests {
     @Test func energySavingHeatAndTheBackgroundReduceEffects() {
@@ -183,6 +215,15 @@ struct ReducedEffectsTests {
         #expect(ReducedEffects.reduces(lowPower: false, thermal: .serious, appIsActive: true))
         #expect(ReducedEffects.reduces(lowPower: false, thermal: .critical, appIsActive: true))
         #expect(ReducedEffects.reduces(lowPower: false, thermal: .nominal, appIsActive: false))
+    }
+}
+
+@MainActor
+private func eventually(_ condition: @MainActor () -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(3)
+    while !condition() {
+        if ContinuousClock.now > deadline { Issue.record("timed out"); return }
+        try await Task.sleep(for: .milliseconds(10))
     }
 }
 
