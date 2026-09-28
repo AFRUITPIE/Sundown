@@ -34,6 +34,11 @@ struct Composer: View {
     @State private var text = ""
     @State private var images: [Attachment] = []
     @State private var commands: [SlashCommand] = []
+    /// Whether `commands` is this folder's or chat's list, rather than nothing asked for yet.
+    @State private var commandsLoaded = false
+    /// Someone looked for a command (a typed "/", the + menu): the list is asked for then, not
+    /// when the chat is shown, since the host starts a Claude Code process in the folder to answer.
+    @State private var commandsWanted = false
     @State private var fileMatches: [String] = []
     @State private var suggestions: [Suggestion] = []
     @State private var choosingFiles = false
@@ -226,6 +231,7 @@ struct Composer: View {
         }
         .onChange(of: text) {
             suggestionsClosedFor = nil
+            if text.hasPrefix("/") { requestCommands() }
             refreshSuggestions()
             if let draftKey { drafts.set(text, for: draftKey) }
         }
@@ -236,8 +242,21 @@ struct Composer: View {
             appliedDelivery = delivery.id
             text = delivery.text
         }
-        .task(id: cwd) {
-            commands = await connection.commands(cwd: cwd, thread: thread)
+        // Only a list already fetched: asking is for when someone looks for a command.
+        .onChange(of: cwd, initial: true) {
+            let cached = connection.cachedCommands(cwd: cwd, thread: thread)
+            commands = cached ?? []
+            commandsLoaded = cached != nil
+            commandsWanted = false
+            refreshSuggestions()
+        }
+        .task(id: commandsWanted) {
+            guard commandsWanted else { return }
+            let list = await connection.commands(cwd: cwd, thread: thread)
+            guard !Task.isCancelled else { return }
+            commands = list
+            commandsLoaded = connection.cachedCommands(cwd: cwd, thread: thread) != nil
+            commandsWanted = false
             refreshSuggestions()
         }
         // Keyed on the query so a slow reply can't overwrite a newer one.
@@ -355,6 +374,19 @@ struct Composer: View {
         return thread?.isRunning == true ? "Add your message to the current turn" : "Send your message"
     }
 
+    /// The commands for this folder or chat, from what's been fetched, or asked for if there's
+    /// nothing (or the list went stale when a turn ended).
+    private func requestCommands() {
+        if let cached = connection.cachedCommands(cwd: cwd, thread: thread) {
+            if !commandsLoaded || cached != commands {
+                commands = cached
+                commandsLoaded = true
+            }
+        } else if !commandsWanted {
+            commandsWanted = true
+        }
+    }
+
     private func refreshSuggestions() {
         suggestions = text == suggestionsClosedFor ? []
             : Self.matchingSuggestions(for: text, commands: commands, fileMatches: fileMatches)
@@ -375,8 +407,13 @@ struct Composer: View {
                         Text(command.description)
                     }
                 }
+                if !commandsLoaded {
+                    // Asked for as the pointer reaches +; this stands in until they arrive.
+                    Text("Loading…")
+                        .onAppear { requestCommands() }
+                }
             }
-            .disabled(offered.isEmpty)
+            .disabled(commandsLoaded && offered.isEmpty)
         } label: {
             // Glass on the label itself: on macOS 27 the glass button style draws a flat circle on
             // a `Menu`, not glass. As tall as the field beside it at one line.
@@ -391,6 +428,8 @@ struct Composer: View {
         .menuIndicator(.hidden)
         .menuStyle(.button)
         .buttonStyle(.plain)
+        // About to open the menu, whose Commands are asked for only now.
+        .onHover { if $0 { requestCommands() } }
         .help("Add")
         .accessibilityIdentifier("composer.add")
     }

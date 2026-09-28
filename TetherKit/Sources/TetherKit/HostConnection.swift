@@ -30,7 +30,15 @@ public final class HostConnection: Identifiable {
     private var threads: [String: ThreadModel] = [:]
     private var client: RPCClient?
     private var notificationTask: Task<Void, Never>?
-    private var reconnectAttempt = 0
+    /// Failed attempts in a row, for `ReconnectBackoff`.
+    @ObservationIgnored private(set) var reconnectAttempt = 0
+    /// The wait before the next attempt, cancelled by one that starts sooner.
+    @ObservationIgnored private var reconnectTask: Task<Void, Never>?
+    /// Whether the last failure is worth trying again: a protocol mismatch isn't, until one side
+    /// is updated.
+    @ObservationIgnored private var retryable = true
+    /// Nil for the test seam, whose hosts don't wait for the network.
+    @ObservationIgnored private let network: NetworkPath?
     private var wantsConnection = false
     private var subscribed = Set<String>()
     /// Threads a view has asked to open, whether or not we were connected at the time.
@@ -46,14 +54,26 @@ public final class HostConnection: Identifiable {
         self.host = host
         self.id = host.id
         self.transportProvider = nil
+        self.network = .shared
+        observeTurns()
+        NetworkPath.shared.watch(self)
     }
 
-    /// Test seam for reconnect/replay coverage.
-    init(host: HostConfig, transportProvider: @escaping TransportProvider) {
+    /// Test seam for reconnect/replay coverage. `network` is the path a test drives; without one
+    /// the host never waits for the network.
+    init(host: HostConfig, network: NetworkPath? = nil, transportProvider: @escaping TransportProvider) {
         self.host = host
         self.id = host.id
         self.transportProvider = transportProvider
+        self.network = network
+        observeTurns()
+        network?.watch(self)
     }
+
+    /// Reads the host's environment values the first time it connects: they're in the Keychain,
+    /// which isn't asked at launch, and only `initialize` needs them. Called once; nil when there's
+    /// nothing to read.
+    @ObservationIgnored public var loadEnvironment: (@MainActor () async -> [String: String]?)?
 
     public func update(host: HostConfig) {
         let needsReconnect = host.kind != self.host.kind || host.env != self.host.env || host.serverCommand != self.host.serverCommand
@@ -92,6 +112,10 @@ public final class HostConnection: Identifiable {
             if ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1", transportProvider == nil {
                 throw TransportError.launchFailed("UI test host has no fixture transport")
             }
+            if let load = loadEnvironment {
+                loadEnvironment = nil
+                if let env = await load() { host.env = env }
+            }
             let transport: any Transport
             if let transportProvider {
                 transport = try await transportProvider(host)
@@ -119,13 +143,17 @@ public final class HostConnection: Identifiable {
             if initResult.protocolVersion < Self.minServerProtocol {
                 throw Incompatible(message: "\(host.name) runs Tether \(initResult.serverInfo.version), which is too old for this app. Update the server there.")
             }
+            // The same daemon still running: what it said about models, the account and projects
+            // still holds, and asking again started a Claude Code process for models and account.
+            let sameDaemon = serverInfo.map { Self.isSameDaemon($0, initResult) } ?? false
             serverInfo = initResult
             appendLog("Connected: \(initResult.host.hostname), claude \(initResult.claude.version) at \(initResult.claude.path)")
             state = .connected
             reconnectAttempt = 0
+            forgetCommands()
             await resubscribeAll()
             await openRequestedThreads()
-            await refreshCatalog()
+            await refreshCatalog(full: !sameDaemon || models.isEmpty)
         } catch {
             var error = error
             if let e = error as? RPCError, e.code == RPCError.incompatibleProtocol {
@@ -133,10 +161,19 @@ public final class HostConnection: Identifiable {
             }
             appendLog("Connection failed: \(error.localizedDescription)")
             await tearDown()
+            // The server may be gone from the host since it was checked: check again next time.
+            HostBootstrapper.forgetInstall(on: host)
             state = .failed(error.localizedDescription)
             // Trying again can't fix a protocol mismatch; one side has to be updated first.
-            if !(error is Incompatible) { scheduleReconnect() }
+            retryable = !(error is Incompatible)
+            if retryable { scheduleReconnect() }
         }
+    }
+
+    /// Whether `new` is the daemon `old` described, still running: same host, process and version.
+    static func isSameDaemon(_ old: InitializeResult, _ new: InitializeResult) -> Bool {
+        old.host.hostname == new.host.hostname && old.host.pid == new.host.pid
+            && old.serverInfo.version == new.serverInfo.version
     }
 
     /// The oldest server protocol this app talks to.
@@ -150,14 +187,37 @@ public final class HostConnection: Identifiable {
 
     public func disconnect() async {
         wantsConnection = false
+        reconnectTask?.cancel()
+        reconnectTask = nil
         await tearDown()
         state = .disconnected
     }
 
+    /// Asked for: the backoff starts over.
     public func reconnect() async {
+        reconnectAttempt = 0
         await disconnect()
         await connect()
     }
+
+    /// Tries a dropped connection again now, with the backoff started over: the Mac woke, or
+    /// someone asked. Nothing for a connection that's up, under way, or not wanted.
+    public func retryNow() {
+        reconnectAttempt = 0
+        guard wantsConnection, retryable, case .failed = state else { return }
+        if needsNetwork, network?.isSatisfied == false { return }
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in await self?.connect() }
+    }
+
+    /// The network came back, or moved to another interface: an SSH host is worth trying again.
+    func networkChanged() {
+        guard needsNetwork else { return }
+        retryNow()
+    }
+
+    /// Only an SSH host needs the network; this Mac's daemon is a process away.
+    private var needsNetwork: Bool { host.sshDestination != nil }
 
     /// Only for the client that closed: a `reconnect()` can have replaced it by the time this runs.
     private func connectionLost(_ closed: RPCClient, _ error: any Error) {
@@ -183,13 +243,23 @@ public final class HostConnection: Identifiable {
         for t in threads.values { t.clearPending() }
     }
 
+    /// Tries again after `ReconnectBackoff`'s wait, or, for an SSH host while the Mac is off the
+    /// network, once the network is back (`networkChanged`) rather than on a timer.
     private func scheduleReconnect() {
         guard wantsConnection else { return }
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        if needsNetwork, network?.isSatisfied == false {
+            appendLog("Waiting for the network")
+            return
+        }
         reconnectAttempt += 1
-        let delay = min(30.0, pow(2.0, Double(min(reconnectAttempt, 5))))
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(delay))
-            guard let self, self.wantsConnection else { return }
+        let delay = ReconnectBackoff.delay(afterFailures: reconnectAttempt, jitter: .random(in: 0..<1))
+        appendLog("Trying again in \(delay.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
+        reconnectTask = Task { [weak self] in
+            // Some slack, so the wake can share one with other timers.
+            try? await Task.sleep(for: delay, tolerance: delay / 10)
+            guard !Task.isCancelled, let self, self.wantsConnection else { return }
             if case .failed = self.state { await self.connect() }
         }
     }
@@ -298,24 +368,31 @@ public final class HostConnection: Identifiable {
     }
 
     /// After reconnecting, catch every open thread up from its last seen seq (the daemon kept running).
+    /// All at once rather than one after another: each is a round trip, over SSH a slow one.
     private func resubscribeAll() async {
         guard let client else { return }
-        for model in threads.values where model.historyLoaded {
-            do {
-                let r = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: model.lastSeq))
-                if r.gap || r.thread.lastSeq < model.lastSeq {
-                    // Server restarted or buffer overflowed: reload the transcript.
-                    try await loadHistory(model, force: true)
-                } else {
-                    model.setInfo(r.thread)
-                }
-                subscribed.insert(model.id)
-            } catch let e as RPCError where e.code == RPCError.threadNotLoaded {
-                // Thread was unloaded (idle eviction / daemon restart); it resumes on next send.
-                model.setError(nil)
-            } catch {
-                appendLog("Resubscribe \(model.id) failed: \(error.localizedDescription)")
+        await withTaskGroup(of: Void.self) { group in
+            for model in threads.values where model.historyLoaded {
+                group.addTask { await self.resubscribe(model, client) }
             }
+        }
+    }
+
+    private func resubscribe(_ model: ThreadModel, _ client: RPCClient) async {
+        do {
+            let r = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: model.lastSeq))
+            if r.gap || r.thread.lastSeq < model.lastSeq {
+                // Server restarted or buffer overflowed: reload the transcript.
+                try await loadHistory(model, force: true)
+            } else {
+                model.setInfo(r.thread)
+            }
+            subscribed.insert(model.id)
+        } catch let e as RPCError where e.code == RPCError.threadNotLoaded {
+            // Thread was unloaded (idle eviction / daemon restart); it resumes on next send.
+            model.setError(nil)
+        } catch {
+            appendLog("Resubscribe \(model.id) failed: \(error.localizedDescription)")
         }
     }
 
@@ -346,8 +423,16 @@ public final class HostConnection: Identifiable {
 
     // MARK: catalog
 
-    public func refreshCatalog() async {
+    /// Projects, chats, models and the account. Not `full` (back on the same daemon), only the chats:
+    /// models and the account start a Claude Code process to ask, and listing projects reads every
+    /// session on the host. Folders new since are taken from the chats instead.
+    public func refreshCatalog(full: Bool = true) async {
         guard let client else { return }
+        guard full else {
+            await loadChats()
+            addProjectsFromChats()
+            return
+        }
         async let projectsR = client.call(Methods.ProjectList.self, .init(limit: 200))
         async let modelsR = client.call(Methods.ModelList.self, .init())
         async let accountR = client.call(Methods.AccountRead.self, .init())
@@ -355,6 +440,18 @@ public final class HostConnection: Identifiable {
         await loadChats()
         if let m = try? await modelsR { models = m.models }
         if let a = try? await accountR { account = a.account }
+    }
+
+    /// Folders of chats started while this app was away, most recent first with the rest.
+    private func addProjectsFromChats() {
+        var known = Set(projects.map(\.cwd))
+        var added: [ProjectListResult.Project] = []
+        for chat in chats {
+            guard let cwd = chat.cwd, known.insert(cwd).inserted else { continue }
+            added.append(.init(cwd: cwd, lastActivity: chat.summary?.updatedAt ?? 0, threadCount: 1))
+        }
+        guard !added.isEmpty else { return }
+        projects = (projects + added).sorted { $0.lastActivity > $1.lastActivity }
     }
 
     /// The host's chats, most recent first: the list the host has now, which drops chats deleted
@@ -647,10 +744,26 @@ public final class HostConnection: Identifiable {
         subscribed.remove(model.id)
     }
 
+    /// What asking for an older page came to, so a caller asking again knows whether to.
+    public enum OlderHistoryOutcome: Sendable, Equatable {
+        /// A page went in above the items held.
+        case loaded
+        /// Nothing older to load.
+        case complete
+        /// A page is already on its way.
+        case busy
+        /// Not connected: nothing to ask until the host is back.
+        case unavailable
+        /// The host couldn't send it; asking again at once would likely fail the same way.
+        case failed
+    }
+
     /// Fetch the page before the items already held, one page at a time.
-    public func loadOlderHistory(_ model: ThreadModel) async {
-        guard let client, model.hasMoreHistory, !model.loadingOlder else { return }
-        guard let oldest = model.items.first?.id else { return }
+    @discardableResult
+    public func loadOlderHistory(_ model: ThreadModel) async -> OlderHistoryOutcome {
+        guard model.hasMoreHistory, let oldest = model.items.first?.id else { return .complete }
+        guard !model.loadingOlder else { return .busy }
+        guard let client else { return .unavailable }
         model.loadingOlder = true
         defer { model.loadingOlder = false }
         do {
@@ -658,11 +771,13 @@ public final class HostConnection: Identifiable {
                 threadId: model.id, cwd: model.cwd, limit: Self.olderHistoryPageSize, before: oldest))
             let changes = await FileChange.changes(ofCallsIn: r.items)
             // Only onto what it was asked before: a chat trimmed or let go meanwhile would be left
-            // with a gap between the page and what it now holds.
-            guard model.itemIndex(of: oldest) == 0 else { return }
+            // with a gap between the page and what it now holds. Asked again, from what it holds.
+            guard model.itemIndex(of: oldest) == 0 else { return .busy }
             model.prependHistory(items: r.items, hasMore: r.hasMore ?? false, fileChanges: changes)
+            return .loaded
         } catch {
             appendLog("Loading older history for \(model.id) failed: \(error.localizedDescription)")
+            return .failed
         }
     }
 
@@ -678,10 +793,87 @@ public final class HostConnection: Identifiable {
         subscribed.contains(model.id) && !model.isFollowed
     }
 
-    /// Slash commands for a directory, narrowed to a thread's own set when it is loaded.
+    // MARK: slash commands
+
+    /// What a command list is for: a loaded thread's own set, or a directory's.
+    private enum CommandScope: Hashable {
+        case thread(String)
+        case folder(String?)
+    }
+
+    /// Command lists already fetched. The daemon answers `command/list` for a directory by starting
+    /// a Claude Code process there and keeping it for minutes, so a list is asked for only when
+    /// someone looks for a command, and kept: until the thread's turn ends (a turn can add one), the
+    /// connection is made again, or plugins change (`forgetCommands`).
+    @ObservationIgnored private var commandLists: [CommandScope: [SlashCommand]] = [:]
+    @ObservationIgnored private var commandFetches: [CommandScope: Task<[SlashCommand]?, Never>] = [:]
+    /// Bumped whenever the lists are let go, so a fetch under way then isn't kept.
+    @ObservationIgnored private var commandGeneration = 0
+    @ObservationIgnored private var turnObserver: (any NSObjectProtocol)?
+
+    private func commandScope(cwd: String?, thread: ThreadModel?) -> CommandScope {
+        if let thread, isLoaded(thread) { return .thread(thread.id) }
+        return .folder(cwd ?? thread?.cwd)
+    }
+
+    /// The commands already fetched for a directory, or a loaded thread's own; nil if they haven't
+    /// been. Asks the host nothing.
+    public func cachedCommands(cwd: String?, thread: ThreadModel? = nil) -> [SlashCommand]? {
+        commandLists[commandScope(cwd: cwd, thread: thread)]
+    }
+
+    /// Slash commands for a directory, narrowed to a thread's own set when it is loaded: the ones
+    /// already fetched, or fetched now (once, however many ask at the same time).
     public func commands(cwd: String?, thread: ThreadModel? = nil) async -> [SlashCommand] {
-        let threadId = thread.flatMap { isLoaded($0) ? $0.id : nil }
-        return (try? await client?.call(Methods.CommandList.self, .init(cwd: cwd ?? thread?.cwd, threadId: threadId)).commands) ?? []
+        let scope = commandScope(cwd: cwd, thread: thread)
+        if let list = commandLists[scope] { return list }
+        if let fetch = commandFetches[scope] { return await fetch.value ?? [] }
+        guard let client else { return [] }
+        let generation = commandGeneration
+        let threadId: String? = if case .thread(let id) = scope { id } else { nil }
+        let params = CommandListParams(cwd: cwd ?? thread?.cwd, threadId: threadId)
+        let fetch = Task { [weak self] () -> [SlashCommand]? in
+            let commands = try? await client.call(Methods.CommandList.self, params).commands
+            if let self, self.commandGeneration == generation {
+                self.commandFetches[scope] = nil
+                // A failure isn't kept: the next look asks again.
+                if let commands { self.commandLists[scope] = commands }
+            }
+            return commands
+        }
+        commandFetches[scope] = fetch
+        return await fetch.value ?? []
+    }
+
+    /// Lets every command list go, so the next look asks again: plugins changed, or the connection
+    /// was made again.
+    public func forgetCommands() {
+        commandGeneration += 1
+        commandLists.removeAll()
+        commandFetches.removeAll()
+    }
+
+    /// A finished turn can have added commands (a plugin installed, a file in .claude/commands).
+    private func forgetCommands(after threadID: String) {
+        let cwd = threads[threadID]?.cwd
+        guard commandLists[.thread(threadID)] != nil || commandLists[.folder(cwd)] != nil else { return }
+        commandGeneration += 1
+        commandLists[.thread(threadID)] = nil
+        commandLists[.folder(cwd)] = nil
+        commandFetches.removeAll()
+    }
+
+    /// Told of each turn that ends by `apply`'s own announcement, which the app's notifications
+    /// use too. Delivered on the posting thread, the main one.
+    private func observeTurns() {
+        turnObserver = NotificationCenter.default.addObserver(forName: .tetherTurnFinished, object: self, queue: nil) { [weak self] note in
+            guard let id = note.userInfo?["threadId"] as? String else { return }
+            MainActor.assumeIsolated { self?.forgetCommands(after: id) }
+        }
+    }
+
+    isolated deinit {
+        if let turnObserver { NotificationCenter.default.removeObserver(turnObserver) }
     }
 
     public func searchFiles(cwd: String, query: String) async -> [String] {
@@ -758,16 +950,19 @@ public final class HostConnection: Identifiable {
     public func installPlugin(_ id: String, scope: PluginInstallParams.Scope, cwd: String?) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         _ = try await client.call(Methods.PluginInstall.self, .init(pluginId: id, scope: scope, cwd: cwd))
+        forgetCommands()
     }
 
     public func uninstallPlugin(_ plugin: InstalledPlugin, cwd: String?) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         _ = try await client.call(Methods.PluginUninstall.self, .init(pluginId: plugin.id, scope: plugin.scope.map { .init(rawValue: $0) }, cwd: cwd))
+        forgetCommands()
     }
 
     public func setPlugin(_ plugin: InstalledPlugin, enabled: Bool, cwd: String?) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         _ = try await client.call(Methods.PluginSetEnabled.self, .init(pluginId: plugin.id, enabled: enabled, scope: plugin.scope.map { .init(rawValue: $0) }, cwd: cwd))
+        forgetCommands()
     }
 
     // MARK: scheduled tasks

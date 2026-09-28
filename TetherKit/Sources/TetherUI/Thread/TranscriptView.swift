@@ -21,6 +21,7 @@ struct TranscriptView: View {
     @Environment(\.promptNavigator) private var promptNavigator
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reducesEffects) private var reducesEffects
 
     var body: some View {
         ScrollView {
@@ -177,7 +178,8 @@ extension TranscriptView {
     /// there, which moves the transcript up a whole line at once when a streamed reply wraps; so
     /// the content is drawn that line lower and eased back up, and the new line glides into view.
     /// Drawing only, no layout. Not for a resize, whose rows all re-measure, or a jump bigger than
-    /// a few lines, or with Reduce Motion.
+    /// a few lines, or with Reduce Motion, or while the Mac saves energy (`reducesEffects`): each
+    /// glide is a keyframe animation run every frame.
     ///
     /// Switching the anchor off for this instead (and scrolling to the end by hand) made every frame
     /// of a resize slower, and switching it during layout made AppKit throw.
@@ -189,7 +191,7 @@ extension TranscriptView {
             return
         }
         let growth = new.content - old.content
-        guard growth > 0, growth < Glide.limit, !reduceMotion else { return }
+        guard growth > 0, growth < Glide.limit, !reduceMotion, !reducesEffects else { return }
         glide = Glide(distance: growth, count: glide.count + 1)
     }
 }
@@ -232,12 +234,22 @@ private struct TranscriptContent: View {
 }
 
 /// Asks for the previous page while the top of the transcript is on screen, one page at a time.
+/// Not while the host is down, and after a failure it waits longer each time before asking again,
+/// then stops: every 300 ms it asked a host that couldn't answer. Scrolling the top away and back,
+/// or the host coming back, starts it over.
 private struct OlderHistoryTrigger: View {
     let thread: ThreadModel
     let connection: HostConnection?
     @State private var visible = false
 
+    /// What the asking depends on: a change of either starts it over.
+    private struct Asking: Equatable {
+        let visible: Bool
+        let connected: Bool
+    }
+
     var body: some View {
+        let connected = connection?.state == .connected
         ProgressView("Loading Earlier Messages")
             .labelsHidden()
             .controlSize(.small)
@@ -247,10 +259,21 @@ private struct OlderHistoryTrigger: View {
             // A page goes in above the reader and normally takes the spinner off screen, which ends
             // this. One short enough to leave it showing changes no visibility, so after a moment for
             // the scroll to settle the next page is asked for here.
-            .task(id: visible) {
-                while visible, thread.hasMoreHistory, !Task.isCancelled {
-                    await connection?.loadOlderHistory(thread)
-                    try? await Task.sleep(for: .milliseconds(300))
+            .task(id: Asking(visible: visible, connected: connected)) {
+                var failures = 0
+                while visible, connected, thread.hasMoreHistory, let connection, !Task.isCancelled {
+                    switch await connection.loadOlderHistory(thread) {
+                    case .loaded, .busy:
+                        failures = 0
+                        try? await Task.sleep(for: .milliseconds(300))
+                    case .failed:
+                        failures += 1
+                        // 2, 4 and 8 s, then not until something changes.
+                        guard failures <= 3 else { return }
+                        try? await Task.sleep(for: .seconds(1 << failures))
+                    case .unavailable, .complete:
+                        return
+                    }
                 }
             }
     }
@@ -403,11 +426,13 @@ struct TranscriptTail: View {
 }
 
 /// Marks the wait before a turn has anything to show. From the thread's status, so it works
-/// with thinking off or redacted.
+/// with thinking off or redacted. Its dots pulse, but not while the Mac saves energy.
 struct ThinkingLine: View {
+    @Environment(\.reducesEffects) private var reducesEffects
+
     var body: some View {
         Label("Thinking…", systemImage: "ellipsis")
-            .symbolEffect(.variableColor.iterative, options: .repeating)
+            .symbolEffect(.variableColor.iterative, options: .repeating, isActive: !reducesEffects)
             .scaledFont(.callout)
             .foregroundStyle(.secondary)
             // The model's changes carry no animation, so the transition brings its own.

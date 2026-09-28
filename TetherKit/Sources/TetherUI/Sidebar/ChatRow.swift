@@ -35,10 +35,12 @@ struct ChatRow: View {
     }
 }
 
-/// Claude working in the chat, or waiting on you; nothing otherwise.
+/// Claude working in the chat, or waiting on you; nothing otherwise. The working glyph turns,
+/// except under Reduce Motion or while the Mac saves energy: every running chat's turned every frame.
 struct ChatStatusGlyph: View {
     let thread: ThreadModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reducesEffects) private var reducesEffects
 
     var body: some View {
         if thread.isRunning {
@@ -48,7 +50,7 @@ struct ChatStatusGlyph: View {
                 // Swaps as the chat starts waiting on you, and comes and goes with the turn.
                 .contentTransition(.symbolEffect(.replace))
                 .transition(.symbolEffect)
-                .symbolEffect(.rotate, isActive: thread.status == .running && !reduceMotion)
+                .symbolEffect(.rotate, isActive: thread.status == .running && !reduceMotion && !reducesEffects)
                 // Said, not only drawn: the glyph and its color are all a row has for it.
                 .accessibilityLabel(needsYou ? "Needs You" : "Running")
         }

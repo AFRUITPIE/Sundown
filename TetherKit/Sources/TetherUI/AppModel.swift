@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import SwiftUI
+import Synchronization
 import TetherKit
 import TetherProtocol
 
@@ -191,8 +192,20 @@ public final class AppModel {
     /// Each chat's unsent composer text, by thread id (persisted), so switching chats, closing a
     /// window or quitting doesn't lose it. Not observed: it changes on every keystroke, and a
     /// composer reads it only when it appears. Text put in a field from outside goes through
-    /// `draftDeliveries` instead.
-    @ObservationIgnored public private(set) var drafts: [String: String] = [:]
+    /// `draftDeliveries` instead. Read from the store the first time a composer asks (the file is
+    /// read ahead off the main thread as the app starts).
+    private var drafts: [String: String] {
+        get {
+            if let loadedDrafts { return loadedDrafts }
+            let drafts = loadDrafts()
+            loadedDrafts = drafts
+            return drafts
+        }
+        set { loadedDrafts = newValue }
+    }
+    @ObservationIgnored private var loadedDrafts: [String: String]?
+    /// Changed since last written: a quit with nothing typed writes nothing.
+    @ObservationIgnored private var draftsChanged = false
 
     /// A draft put in a composer from outside it (Shortcuts' Start a Chat), by draft key. Each
     /// composer showing that key applies a new one once, by its id; observed, and changed only by a
@@ -207,16 +220,27 @@ public final class AppModel {
     /// The pending write of `drafts`: made once typing pauses, not per keystroke.
     @ObservationIgnored private var draftsSave: Task<Void, Never>?
     @ObservationIgnored private var terminationObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
 
     private let defaults: UserDefaults
-    private let draftStore: DraftStore
+    private let draftQueue: DraftQueue
     private static let hostsKey = "tether.hosts.v1"
+    private static let windowKey = "tether.window.v1"
     private static let draftsKey = "tether.drafts.v1"
     private static let appearanceKey = "tether.appearance.v1"
     private static let alertsKey = "tether.alerts.v1"
     /// `didSet` runs while `load()` restores values; saving then would write half-restored state.
     private var isLoading = false
     private var connectedAll = false
+    /// Hosts no window showed when the app connected, connected once those that did are up.
+    @ObservationIgnored private(set) var waitingHosts: Set<UUID> = []
+    /// What each defaults key was last written with, or read as, so the same bytes aren't written again.
+    @ObservationIgnored private var written: [String: Data] = [:]
+
+    /// Whether decorative motion is left out to save energy (`ReducedEffects`), put in the
+    /// environment beside the settings.
+    public var reducesEffects: Bool { effects.isOn }
+    private let effects = ReducedEffects()
     /// How many windows show each thread: a followed thread is let go only when none does.
     @ObservationIgnored private var viewers: [ObjectIdentifier: Int] = [:]
 
@@ -226,6 +250,12 @@ public final class AppModel {
     /// What each host's environment was when last written, so saving doesn't touch the Keychain
     /// for every change of selection.
     private var writtenEnv: [UUID: [String: String]] = [:]
+    /// Hosts whose values are in the Keychain and not read yet: each is read, off the main thread,
+    /// just before its host connects (`loadEnvironment`), rather than every host's at launch.
+    @ObservationIgnored private var unreadEnvironment: Set<UUID> = []
+    /// Whether the store said which hosts have values. One from an older build didn't, so each host
+    /// is read once and the next save says.
+    @ObservationIgnored private var environmentRecorded = true
 
     public convenience init(defaults: UserDefaults = .standard) {
         let standard = defaults === UserDefaults.standard
@@ -236,30 +266,82 @@ public final class AppModel {
     init(defaults: UserDefaults, secrets: SecretStore, draftStore: DraftStore? = nil) {
         self.defaults = defaults
         self.secrets = secrets
-        self.draftStore = draftStore ?? DefaultsDrafts(defaults: defaults, key: Self.draftsKey)
+        self.draftQueue = DraftQueue(store: draftStore ?? DefaultsDrafts(defaults: defaults, key: Self.draftsKey))
         load()
-        for h in hosts { connections[h.id] = HostConnection(host: h) }
-        for c in connections.values { c.offersSessionTools = appearance.sessionTools }
+        for h in hosts { connections[h.id] = makeConnection(h) }
         // A draft typed just before quitting is written then.
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.saveDrafts() }
         }
+        // A host that dropped while the Mac slept is tried again at once, not at the end of a wait
+        // that may have grown long.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.retryConnections() }
+        }
     }
 
     public func connection(_ id: UUID) -> HostConnection? { connections[id] }
 
-    /// Connects every host once, however many windows open.
+    private func makeConnection(_ h: HostConfig) -> HostConnection {
+        let c = HostConnection(host: h)
+        c.offersSessionTools = appearance.sessionTools
+        if unreadEnvironment.contains(h.id) {
+            c.loadEnvironment = { [weak self] in await self?.loadEnvironment(for: h.id) }
+        }
+        return c
+    }
+
+    /// Connects every host once, however many windows open. The hosts windows show go first: the
+    /// restored chat's history waited behind every other host's SSH login. The rest follow once
+    /// those are up and have loaded their chats, or after a few seconds, or as soon as a window
+    /// shows one.
     public func connectAll() {
         guard !connectedAll else { return }
         connectedAll = true
-        for c in connections.values { Task { await c.connect() } }
+        var shown = Set(openWindows.map(\.hostID))
+        shown.insert(lastHostID)
+        if let launchChat { shown.insert(launchChat.host) }
+        waitingHosts = Set(connections.keys).subtracting(shown)
+        let first = shown.compactMap { connections[$0] }.map { c in Task { await c.connect() } }
+        guard !waitingHosts.isEmpty else { return }
+        Task { [weak self] in
+            await Self.finished(first, orAfter: .seconds(5))
+            self?.connectWaitingHosts()
+        }
+    }
+
+    /// The hosts that were left to wait.
+    private func connectWaitingHosts() {
+        let waiting = waitingHosts
+        waitingHosts = []
+        for id in waiting { if let c = connections[id] { Task { await c.connect() } } }
+    }
+
+    /// A window shows `id`: it doesn't wait for the others.
+    private func connectIfWaiting(_ id: UUID) {
+        guard waitingHosts.remove(id) != nil, let c = connections[id] else { return }
+        Task { await c.connect() }
+    }
+
+    /// Returns when every task has, or after `limit`, whichever is first.
+    private static func finished(_ tasks: [Task<Void, Never>], orAfter limit: Duration) async {
+        let once = ResumeOnce()
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            Task { for t in tasks { await t.value }; if once.claim() { done.resume() } }
+            Task { try? await Task.sleep(for: limit); if once.claim() { done.resume() } }
+        }
+    }
+
+    /// Hosts that dropped are tried again now, their backoff started over: the Mac woke.
+    func retryConnections() {
+        for c in connections.values { c.retryNow() }
     }
 
     public func addHost(_ h: HostConfig) {
         hosts.append(h)
-        let c = HostConnection(host: h)
-        c.offersSessionTools = appearance.sessionTools
+        let c = makeConnection(h)
         connections[h.id] = c
         save()
         Task { await c.connect() }
@@ -267,6 +349,15 @@ public final class AppModel {
 
     public func updateHost(_ h: HostConfig) {
         guard let i = hosts.firstIndex(where: { $0.id == h.id }) else { return }
+        var h = h
+        if unreadEnvironment.remove(h.id) != nil {
+            // Changed before its values were read, so Settings didn't show them: kept under what
+            // was typed rather than lost.
+            let stored = readEnvironment(secrets.read(h.id.uuidString))
+            writtenEnv[h.id] = stored
+            h.env = stored.merging(h.env) { _, typed in typed }
+            connections[h.id]?.loadEnvironment = nil
+        }
         hosts[i] = h
         connections[h.id]?.update(host: h)
         save()
@@ -278,11 +369,34 @@ public final class AppModel {
         hosts.removeAll { $0.id == id }
         secrets.write(nil, for: id.uuidString)
         writtenEnv[id] = nil
+        unreadEnvironment.remove(id)
+        waitingHosts.remove(id)
         pinnedChats[id] = nil
         if let c = connections.removeValue(forKey: id) { Task { await c.disconnect() } }
         if lastHostID == id { lastHostID = HostConfig.local.id; lastThreadID = nil }
         for window in openWindows { window.hostRemoved(id) }
         save()
+        saveWindow()
+    }
+
+    /// `id`'s environment values: read from the Keychain, off the main thread, the first time
+    /// they're asked for, which is just before the host connects.
+    func loadEnvironment(for id: UUID) async -> [String: String] {
+        guard unreadEnvironment.contains(id) else { return hosts.first { $0.id == id }?.env ?? [:] }
+        let secrets = secrets
+        let data = await Task.detached(priority: .userInitiated) { secrets.read(id.uuidString) }.value
+        // Read meanwhile, by a change in Settings.
+        guard unreadEnvironment.remove(id) != nil else { return hosts.first { $0.id == id }?.env ?? [:] }
+        let env = readEnvironment(data)
+        writtenEnv[id] = env
+        if let i = hosts.firstIndex(where: { $0.id == id }) { hosts[i].env = env }
+        // Record which hosts have values, for a store that didn't say or was wrong.
+        if !environmentRecorded || env.isEmpty { save() }
+        return env
+    }
+
+    private func readEnvironment(_ data: Data?) -> [String: String] {
+        data.flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
     }
 
     // MARK: windows
@@ -297,6 +411,7 @@ public final class AppModel {
         windowRefs.removeAll { $0.window == nil || $0.window === window }
         windowRefs.append(WeakWindow(window: window))
         windowStarted()
+        connectIfWaiting(window.hostID)
     }
 
     func unregister(_ window: WindowModel) {
@@ -309,7 +424,8 @@ public final class AppModel {
         lastThreadID = window.threadID
         lastShowInspector = window.showInspector
         lastInspectorPane = window.inspectorPane
-        save()
+        saveWindow()
+        connectIfWaiting(window.hostID)
     }
 
     /// A window started showing `thread`.
@@ -344,11 +460,12 @@ public final class AppModel {
         let next = trimmed.isEmpty ? nil : text
         guard drafts[threadID] != next else { return }
         drafts[threadID] = next
+        draftsChanged = true
         draftsSave?.cancel()
         draftsSave = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
-            self?.saveDrafts()
+            self?.writeDrafts()
         }
     }
 
@@ -358,17 +475,44 @@ public final class AppModel {
         draftDeliveries[key] = DraftDelivery(text: text)
     }
 
-    /// Writes the drafts now rather than when typing pauses.
+    /// Writes the drafts in the background, if they changed: encoded and written off the main
+    /// thread, after any write before it.
+    private func writeDrafts() {
+        draftsSave?.cancel()
+        draftsSave = nil
+        guard draftsChanged, let loadedDrafts else { return }
+        draftsChanged = false
+        draftQueue.write(loadedDrafts)
+    }
+
+    /// Writes the drafts now, rather than when typing pauses, and waits: at quit. Nothing if they
+    /// haven't changed since they were last written.
     public func saveDrafts() {
         draftsSave?.cancel()
         draftsSave = nil
-        draftStore.write(drafts)
+        guard let loadedDrafts, draftsChanged || draftQueue.lastWriteFailed else { return }
+        draftsChanged = !draftQueue.writeAndWait(loadedDrafts)
     }
+
+    /// Returns once the drafts' background writes so far are done.
+    func waitForDraftWrites() { draftQueue.waitForWrites() }
 
     /// A deleted chat's draft goes with it.
     public func forgetDraft(for threadID: String) {
         guard drafts.removeValue(forKey: threadID) != nil else { return }
-        saveDrafts()
+        draftsChanged = true
+        writeDrafts()
+    }
+
+    /// The store's drafts, and any the defaults file kept before drafts had a file of their own,
+    /// which move to it, once.
+    private func loadDrafts() -> [String: String] {
+        var drafts = draftQueue.read()
+        guard !(draftQueue.store is DefaultsDrafts), let old = defaults.data(forKey: Self.draftsKey) else { return drafts }
+        let legacy = (try? JSONDecoder().decode([String: String].self, from: old)) ?? [:]
+        drafts.merge(legacy) { current, _ in current }
+        if draftQueue.writeAndWait(drafts) { defaults.removeObject(forKey: Self.draftsKey) }
+        return drafts
     }
 
     // MARK: persistence
@@ -380,6 +524,7 @@ public final class AppModel {
         var defaultEffort: String?
         var defaultPermissionMode: String?
         var transcriptWidth: String?
+        /// Where the last window was: in `LastWindow` now, read from here once.
         var showInspector: Bool?
         var inspectorPane: String?
         var hostID: UUID?
@@ -389,49 +534,75 @@ public final class AppModel {
         var sidebarFilter: String?
         /// By host id.
         var pinnedChats: [String: [String]]?
+        /// The hosts whose environment values are in the Keychain. Nil in a store from before it
+        /// was kept, which has every host's read once.
+        var environmentHosts: [String]?
     }
+
+    /// Where the most recently used window was, under a key of its own: it changes with every chat
+    /// switch and inspector change, and with the rest it wrote the hosts, pins and preferences again
+    /// each time.
+    private struct LastWindow: Codable {
+        var hostID: UUID?
+        var threadID: String?
+        var showInspector: Bool?
+        var inspectorPane: String?
+    }
+
+    /// Sorted keys, so the same values are the same bytes and an unchanged save writes nothing.
+    private static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return encoder
+    }()
 
     private func load() {
         isLoading = true
         defer { isLoading = false }
-        let stored = defaults.data(forKey: Self.hostsKey).flatMap { try? JSONDecoder().decode(Stored.self, from: $0) }
+        let storedData = defaults.data(forKey: Self.hostsKey)
+        written[Self.hostsKey] = storedData
+        let stored = storedData.flatMap { try? JSONDecoder().decode(Stored.self, from: $0) }
         hosts = stored?.hosts ?? []
         if !hosts.contains(where: { $0.id == HostConfig.local.id }) { hosts.insert(.local, at: 0) }
-        for i in hosts.indices {
-            // A store from before the Keychain kept them has them inline; they move on the next save.
-            guard hosts[i].env.isEmpty else { continue }
-            if let data = secrets.read(hosts[i].id.uuidString),
-               let env = try? JSONDecoder().decode([String: String].self, from: data) {
-                hosts[i].env = env
-                writtenEnv[hosts[i].id] = env
-            }
-        }
-        drafts = draftStore.read()
-        // Drafts kept in the defaults file before they had one of their own move to it, once.
-        if !(draftStore is DefaultsDrafts), let old = defaults.data(forKey: Self.draftsKey) {
-            let legacy = (try? JSONDecoder().decode([String: String].self, from: old)) ?? [:]
-            drafts.merge(legacy) { current, _ in current }
-            if draftStore.write(drafts) { defaults.removeObject(forKey: Self.draftsKey) }
+        // Values are read from the Keychain just before their host connects, and only for a host
+        // that has some. A store from before the Keychain kept them has them inline; they move on
+        // the next save.
+        let withValues = stored?.environmentHosts.map { Set($0.compactMap(UUID.init(uuidString:))) }
+        environmentRecorded = withValues != nil
+        for host in hosts where host.env.isEmpty && withValues?.contains(host.id) != false {
+            unreadEnvironment.insert(host.id)
         }
         appearance = defaults.data(forKey: Self.appearanceKey).flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
         alerts = defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode(AlertPreferences.self, from: $0) } ?? AlertPreferences()
-        guard let s = stored else { return }
-        defaultModel = s.defaultModel
-        defaultEffort = s.defaultEffort
-        defaultPermissionMode = s.defaultPermissionMode ?? "default"
-        transcriptWidth = s.transcriptWidth.flatMap(TranscriptWidth.init(rawValue:)) ?? .narrow
-        lastShowInspector = s.showInspector ?? false
-        lastInspectorPane = s.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
-        sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
-        textScale = s.textScale.map { CGFloat($0) } ?? 1
-        sidebarFilter = s.sidebarFilter.flatMap(SidebarFilter.init(rawValue:)) ?? .all
-        for (host, ids) in s.pinnedChats ?? [:] {
-            if let id = UUID(uuidString: host), !ids.isEmpty { pinnedChats[id] = Set(ids) }
+        if let s = stored {
+            defaultModel = s.defaultModel
+            defaultEffort = s.defaultEffort
+            defaultPermissionMode = s.defaultPermissionMode ?? "default"
+            transcriptWidth = s.transcriptWidth.flatMap(TranscriptWidth.init(rawValue:)) ?? .narrow
+            sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
+            textScale = s.textScale.map { CGFloat($0) } ?? 1
+            sidebarFilter = s.sidebarFilter.flatMap(SidebarFilter.init(rawValue:)) ?? .all
+            for (host, ids) in s.pinnedChats ?? [:] {
+                if let id = UUID(uuidString: host), !ids.isEmpty { pinnedChats[id] = Set(ids) }
+            }
         }
+        let windowData = defaults.data(forKey: Self.windowKey)
+        written[Self.windowKey] = windowData
+        let window = windowData.flatMap { try? JSONDecoder().decode(LastWindow.self, from: $0) }
+            // Kept with the rest by an older build: taken from there, once.
+            ?? stored.map { LastWindow(hostID: $0.hostID, threadID: $0.threadID, showInspector: $0.showInspector, inspectorPane: $0.inspectorPane) }
+        lastShowInspector = window?.showInspector ?? false
+        lastInspectorPane = window?.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
         // A remembered host can disappear between launches; this Mac is always configured.
-        if let id = s.hostID, hosts.contains(where: { $0.id == id }) {
+        if let id = window?.hostID, hosts.contains(where: { $0.id == id }) {
             lastHostID = id
-            lastThreadID = s.threadID
+            lastThreadID = window?.threadID
+        }
+        // Moved to its own key now, not when a window next changes: an older build's fields go
+        // with the next save of the rest.
+        if windowData == nil, stored?.hostID != nil {
+            isLoading = false
+            saveWindow()
         }
     }
 
@@ -449,14 +620,36 @@ public final class AppModel {
             if writtenEnv[host.id] ?? [:] == host.env { h.env = [:] }
             return h
         }
+        let inKeychain = self.hosts.filter { unreadEnvironment.contains($0.id) || !(writtenEnv[$0.id] ?? [:]).isEmpty }
         let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
-                       showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue, hostID: lastHostID,
-                       sidebarGrouping: sidebarGrouping.rawValue, threadID: lastThreadID, textScale: Double(textScale),
+                       sidebarGrouping: sidebarGrouping.rawValue, textScale: Double(textScale),
                        sidebarFilter: sidebarFilter.rawValue,
-                       pinnedChats: Dictionary(uniqueKeysWithValues: pinnedChats.map { ($0.key.uuidString, $0.value.sorted()) }))
-        if let data = try? JSONEncoder().encode(s) { defaults.set(data, forKey: Self.hostsKey) }
+                       pinnedChats: Dictionary(uniqueKeysWithValues: pinnedChats.map { ($0.key.uuidString, $0.value.sorted()) }),
+                       environmentHosts: inKeychain.map(\.id.uuidString))
+        write(try? Self.encoder.encode(s), forKey: Self.hostsKey)
+        environmentRecorded = true
     }
+
+    private func saveWindow() {
+        guard !isLoading else { return }
+        let window = LastWindow(hostID: lastHostID, threadID: lastThreadID,
+                                showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue)
+        write(try? Self.encoder.encode(window), forKey: Self.windowKey)
+    }
+
+    /// Writes `data` under `key` unless it's what the key already holds.
+    private func write(_ data: Data?, forKey key: String) {
+        guard let data, data != written[key] else { return }
+        written[key] = data
+        defaults.set(data, forKey: key)
+    }
+}
+
+/// Resumes a continuation once, whichever of its callers comes first.
+private final class ResumeOnce: Sendable {
+    private let done = Mutex(false)
+    func claim() -> Bool { done.withLock { if $0 { return false }; $0 = true; return true } }
 }
 
 extension AppModel {
@@ -504,6 +697,9 @@ extension AppModel {
             app.lastHostID = connections.first?.id ?? HostConfig.local.id
             app.lastThreadID = nil
         }
+        // A kept store has these hosts, as adding them in Settings would, so the last window's
+        // host is still there on relaunch.
+        if defaults != nil { app.save() }
         return app
     }
 }

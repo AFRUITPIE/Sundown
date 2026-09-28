@@ -101,8 +101,9 @@ struct SidebarFilterTests {
 struct HostSecretsTests {
     private func defaults() -> UserDefaults { UserDefaults(suiteName: "tether.tests.\(UUID().uuidString)")! }
 
-    /// A host's environment values are kept apart from the defaults file's hosts, and come back.
-    @Test func environmentValuesAreKeptApartAndRestored() throws {
+    /// A host's environment values are kept apart from the defaults file's hosts, and come back
+    /// when the host connects.
+    @Test func environmentValuesAreKeptApartAndRestored() async throws {
         let store = defaults()
         let app = AppModel(defaults: store)
         var host = HostConfig(name: "build-box", kind: .ssh(destination: "build-box"))
@@ -112,11 +113,12 @@ struct HostSecretsTests {
         let raw = try #require(store.data(forKey: "tether.hosts.v1"))
         #expect(!String(decoding: raw, as: UTF8.self).contains("sk-test"))
         let restored = AppModel(defaults: store)
+        #expect(await restored.loadEnvironment(for: host.id) == ["ANTHROPIC_API_KEY": "sk-test"])
         #expect(restored.hosts.first { $0.id == host.id }?.env == ["ANTHROPIC_API_KEY": "sk-test"])
     }
 
     /// A store from before keeps its values inline; the next save moves them out.
-    @Test func inlineValuesMoveOnTheNextSave() throws {
+    @Test func inlineValuesMoveOnTheNextSave() async throws {
         let store = defaults()
         let id = UUID()
         let old = #"{"hosts":[{"id":"\#(id.uuidString)","name":"box","kind":{"ssh":{"destination":"box"}},"env":{"AWS_PROFILE":"dev"}}]}"#
@@ -127,12 +129,12 @@ struct HostSecretsTests {
         app.transcriptWidth = .wide
         let raw = try #require(store.data(forKey: "tether.hosts.v1"))
         #expect(!String(decoding: raw, as: UTF8.self).contains("AWS_PROFILE"))
-        #expect(AppModel(defaults: store).hosts.first { $0.id == id }?.env == ["AWS_PROFILE": "dev"])
+        #expect(await AppModel(defaults: store).loadEnvironment(for: id) == ["AWS_PROFILE": "dev"])
     }
 
     /// A Keychain that refuses the values leaves them in the defaults file rather than nowhere; the
     /// first save the Keychain takes them on moves them out.
-    @Test func valuesStayInlineUntilTheKeychainTakesThem() throws {
+    @Test func valuesStayInlineUntilTheKeychainTakesThem() async throws {
         let store = defaults()
         let id = UUID()
         let old = #"{"hosts":[{"id":"\#(id.uuidString)","name":"box","kind":{"ssh":{"destination":"box"}},"env":{"AWS_PROFILE":"dev"}}]}"#
@@ -149,12 +151,12 @@ struct HostSecretsTests {
         app.transcriptWidth = .medium
         raw = try #require(store.data(forKey: "tether.hosts.v1"))
         #expect(!String(decoding: raw, as: UTF8.self).contains("AWS_PROFILE"))
-        #expect(AppModel(defaults: store, secrets: keychain).hosts.first { $0.id == id }?.env == ["AWS_PROFILE": "dev"])
+        #expect(await AppModel(defaults: store, secrets: keychain).loadEnvironment(for: id) == ["AWS_PROFILE": "dev"])
     }
 }
 
-/// A secret store that refuses writes until told not to.
-private final class RefusingSecrets: SecretStore {
+/// A secret store that refuses writes until told not to. Used from one test at a time.
+private final class RefusingSecrets: SecretStore, @unchecked Sendable {
     var refuses = true
     private var values: [String: Data] = [:]
 
