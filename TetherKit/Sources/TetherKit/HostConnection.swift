@@ -293,7 +293,7 @@ public final class HostConnection: Identifiable {
             try? await Task.sleep(for: .seconds(2))
             guard let self, !Task.isCancelled else { return }
             self.chatsRefreshTask = nil
-            await self.loadChats()
+            await self.afterTurn()
         }
     }
 
@@ -357,19 +357,38 @@ public final class HostConnection: Identifiable {
         if let a = try? await accountR { account = a.account }
     }
 
+    /// The host's chats, most recent first: the list the host has now, which drops chats deleted
+    /// elsewhere or past the limit.
     public func loadChats(limit: Int = 200) async {
+        await loadChats(limit: limit, recentOnly: false)
+    }
+
+    /// How many chats the refresh after a turn asks for: the ones that just changed are the latest.
+    static let recentChatsLimit = 5
+
+    /// After a turn: the few most recent chats, for Claude's names for them and their new order,
+    /// merged into the list held rather than fetching all of it again.
+    func refreshRecentChats() async {
+        await loadChats(limit: Self.recentChatsLimit, recentOnly: true)
+    }
+
+    private func loadChats(limit: Int, recentOnly: Bool) async {
         guard let client else { return }
         do {
             let r = try await client.call(Methods.ThreadList.self, .init(limit: limit))
-            var list: [ThreadModel] = []
-            for s in r.threads {
+            var listed: [ThreadModel] = []
+            var ids = Set<String>()
+            for s in r.threads where ids.insert(s.threadId).inserted {
                 let m = thread(s.threadId)
                 m.setSummary(s)
-                list.append(m)
+                listed.append(m)
             }
-            // Keep live chats that are not persisted yet (no first message on disk).
-            for m in chats where !list.contains(where: { $0 === m }) { list.insert(m, at: 0) }
-            chats = list
+            // Live chats that are not persisted yet (no first message on disk), on top.
+            var next = chats.filter { $0.summary == nil && !ids.contains($0.id) } + listed
+            // Only the most recent came back: the rest keep their places below them.
+            if recentOnly { next += chats.filter { $0.summary != nil && !ids.contains($0.id) } }
+            // The sidebar regroups whenever this is set.
+            if !next.elementsEqual(chats, by: ===) { chats = next }
         } catch {
             appendLog("thread/list failed: \(error.localizedDescription)")
         }
@@ -401,14 +420,39 @@ public final class HostConnection: Identifiable {
 
     /// The thread is no longer on screen. A followed one is let go: the daemon keeps a file watcher
     /// and the whole parsed transcript for each, and reopening reads it afresh. A live thread stays
-    /// subscribed, which is cheap and keeps its sidebar status current.
+    /// subscribed, which is cheap, keeps its sidebar status current and its place in the stream,
+    /// but keeps only its last page once nothing is going on in it (`trimIfOffScreen`); a running
+    /// one is trimmed after its turn. One with no stream at all (read from disk alone, or its query
+    /// closed) is let go like a followed one.
     /// Synchronous so a quick reselect can't open the thread before this unloads it.
     public func leave(_ model: ThreadModel) {
         openRequested.remove(model.id)
-        guard model.isFollowed, subscribed.contains(model.id), let client else { return }
-        subscribed.remove(model.id)
-        model.unload()
-        Task { _ = try? await client.call(Methods.ThreadUnsubscribe.self, .init(threadId: model.id)) }
+        // While disconnected nothing is subscribed; what's live is resubscribed on reconnecting,
+        // and trimmed after a turn from then on.
+        guard let client else { return }
+        if !subscribed.contains(model.id) {
+            if model.historyLoaded, !model.isRunning, model.pending.isEmpty { model.unload() }
+        } else if model.isFollowed {
+            subscribed.remove(model.id)
+            model.unload()
+            Task { _ = try? await client.call(Methods.ThreadUnsubscribe.self, .init(threadId: model.id)) }
+        } else {
+            trimIfOffScreen(model)
+        }
+    }
+
+    /// A chat no window shows, idle and with nothing waiting, keeps only its last page: a chat
+    /// Claude ran this launch otherwise kept every item and page it ever had for the app's life.
+    private func trimIfOffScreen(_ model: ThreadModel) {
+        guard !openRequested.contains(model.id), model.historyLoaded, !model.isRunning, model.pending.isEmpty else { return }
+        model.trim(toLast: Self.initialHistoryLimit)
+    }
+
+    /// A couple of seconds after a turn ends: Claude's name for a session only appears in
+    /// thread/list, and the chats no window shows let go of what the turn added.
+    func afterTurn() async {
+        for model in threads.values where subscribed.contains(model.id) { trimIfOffScreen(model) }
+        await refreshRecentChats()
     }
 
     private func loadRequestedThread(_ model: ThreadModel) async {
@@ -432,8 +476,11 @@ public final class HostConnection: Identifiable {
         if model.historyLoaded && !force { return }
         let r = try await client.call(Methods.ThreadRead.self, .init(
             threadId: model.id, cwd: model.cwd, limit: Self.initialHistoryLimit))
+        // Counted before the page goes in, so its first draw only looks them up. Events that land
+        // meanwhile are replayed by the subscription after `historySeq` below.
+        let changes = await FileChange.changes(ofCallsIn: r.items)
         if let s = r.summary { model.setSummary(s) }
-        model.loadHistory(items: r.items, turns: r.turns, seq: r.historySeq, hasMore: r.hasMore ?? false)
+        model.loadHistory(items: r.items, turns: r.turns, seq: r.historySeq, hasMore: r.hasMore ?? false, fileChanges: changes)
         if let seq = r.historySeq {
             // Loaded in the daemon: stream everything after the snapshot.
             let sub = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: seq))
@@ -609,7 +656,11 @@ public final class HostConnection: Identifiable {
         do {
             let r = try await client.call(Methods.ThreadRead.self, .init(
                 threadId: model.id, cwd: model.cwd, limit: Self.olderHistoryPageSize, before: oldest))
-            model.prependHistory(items: r.items, hasMore: r.hasMore ?? false)
+            let changes = await FileChange.changes(ofCallsIn: r.items)
+            // Only onto what it was asked before: a chat trimmed or let go meanwhile would be left
+            // with a gap between the page and what it now holds.
+            guard model.itemIndex(of: oldest) == 0 else { return }
+            model.prependHistory(items: r.items, hasMore: r.hasMore ?? false, fileChanges: changes)
         } catch {
             appendLog("Loading older history for \(model.id) failed: \(error.localizedDescription)")
         }

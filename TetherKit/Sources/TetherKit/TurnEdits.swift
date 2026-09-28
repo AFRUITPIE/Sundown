@@ -99,6 +99,24 @@ public struct FileChange: Sendable, Hashable {
             return []
         }
     }
+
+    /// `changes(of:)` for each call among `items` that has any to count, by call id, worked out off
+    /// the main actor: counting an edit's lines diffs its old and new text, and a page of long
+    /// edits made that noticeable work for the first draw of a chat.
+    @concurrent
+    public static func changes(ofCallsIn items: [Item]) async -> [String: [FileChange]] {
+        var out: [String: [FileChange]] = [:]
+        for case .toolCall(let call) in items where call.changesFiles { out[call.id] = changes(of: call) }
+        return out
+    }
+}
+
+extension Item.ToolCall {
+    /// A finished edit, the only kind of call `FileChange.changes(of:)` finds anything in.
+    var changesFiles: Bool {
+        guard status == .completed, isError != true else { return false }
+        return kind == .fileEdit || kind == .fileWrite || kind == .notebookEdit
+    }
 }
 
 /// What a finished turn's edits changed, file by file, from the calls' own inputs rather than the

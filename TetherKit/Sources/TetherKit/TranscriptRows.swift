@@ -168,21 +168,75 @@ public enum DateSeparators {
     /// The prompts among the chat's top-level items that get a date above them, with when each
     /// was sent. An item with no time (0) neither gets one nor counts as what came before.
     public static func prompts(in items: [Item], calendar: Calendar = .current) -> [String: Double] {
-        var out: [String: Double] = [:]
+        var carry = Carry()
+        return prompts(in: items, after: &carry, calendar: calendar)
+    }
+
+    /// What the items so far leave for the prompts after them: when the last prompt was sent, and
+    /// the latest time before now.
+    public struct Carry: Sendable, Equatable {
         var previousPrompt: Double?
         var previousItem: Double?
+        public init() {}
+    }
+
+    /// The same for items that follow others, so a chat's dates can be worked out a turn at a time:
+    /// `carry` says what came before them, and is left saying what they end with.
+    public static func prompts(in items: some Sequence<Item>, after carry: inout Carry,
+                               calendar: Calendar = .current) -> [String: Double] {
+        var out: [String: Double] = [:]
         for item in items where item.parentToolUseId == nil {
             let time = item.createdAt
             guard time > 0 else { continue }
             if case .userMessage(let m) = item {
-                if needsSeparator(at: time, previousPrompt: previousPrompt, previousItem: previousItem, calendar: calendar) {
+                if needsSeparator(at: time, previousPrompt: carry.previousPrompt, previousItem: carry.previousItem, calendar: calendar) {
                     out[m.id] = time
                 }
-                previousPrompt = time
+                carry.previousPrompt = time
             }
-            previousItem = max(previousItem ?? 0, time)
+            carry.previousItem = max(carry.previousItem ?? 0, time)
         }
         return out
+    }
+}
+
+/// One turn's rows as drawn: `items` run from a prompt of the chat's own up to the next one, or
+/// are what comes before the first prompt held. The same as that turn's part of folding and
+/// decorating the whole transcript at once, which cuts at the same places: a prompt ends any run of
+/// tool calls, starts a Worked For turn and a turn's edits. `running` is for the chat's last turn
+/// while it runs, and `dates` carries the date separators from one turn to the next.
+func transcriptRows(ofTurn items: ArraySlice<Item>, folding: TranscriptFolding, running: Bool,
+                    dates: inout DateSeparators.Carry, changes: (Item.ToolCall) -> [FileChange]) -> [TranscriptRow] {
+    let top = items.filter { $0.parentToolUseId == nil }
+    let folded = foldTranscriptRows(top, folding: folding, lastTurnRunning: folding == .workedFor && running)
+    let promptDates = DateSeparators.prompts(in: top, after: &dates)
+    var edits: [String: TurnEdits] = [:]
+    // A subagent's edits count too, so they're read from every item of the turn, not only the top.
+    if !running, case .userMessage(let prompt)? = items.first, prompt.parentToolUseId == nil,
+       let e = TurnEdits.summarize(promptID: prompt.id, items.dropFirst(), changes: changes) {
+        edits[prompt.id] = e
+    }
+    return decorateTranscriptRows(folded, dates: promptDates, edits: edits)
+}
+
+/// One of the reader's own prompts, for VoiceOver's Prompts rotor: its row's id and its first words.
+public struct TranscriptPrompt: Identifiable, Sendable, Equatable {
+    public let id: String
+    public let label: String
+
+    public init(id: String, label: String) {
+        self.id = id
+        self.label = label
+    }
+
+    /// The reader's own prompts among `rows`, each with the first words of its first text, not
+    /// the whole prompt joined: a pasted log is long.
+    public static func list(in rows: some Sequence<TranscriptRow>) -> [TranscriptPrompt] {
+        rows.compactMap { row in
+            guard case .item(.userMessage(let m)) = row, m.synthetic != true else { return nil }
+            let first = m.content.lazy.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.first ?? ""
+            return TranscriptPrompt(id: row.id, label: String(first.prefix(80)))
+        }
     }
 }
 
