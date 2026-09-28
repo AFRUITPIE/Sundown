@@ -99,7 +99,7 @@ final class AppearanceUITests: XCTestCase {
     func testEveryCallUnfoldsFinishedCalls() {
         let app = launch()
         waitForLongChat(app)
-        let groups = mainWindow(app).buttons.matching(identifier: "transcript.toolGroup")
+        let groups = mainWindow(app).disclosureTriangles.matching(identifier: "transcript.toolGroup")
         XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 5))
 
         let settings = openSettings(app, "Advanced")

@@ -143,7 +143,8 @@ final class ComposerAndMessageUITests: XCTestCase {
         input.typeText("Keep going")
         app.buttons["composer.send"].click()
 
-        let running = app.windows.firstMatch.buttons.matching(NSPredicate(format: "value == 'Running'")).firstMatch
+        // A disclosure triangle's value is whether it's open: the status follows the row's words.
+        let running = app.windows.firstMatch.disclosureTriangles.matching(NSPredicate(format: "label ENDSWITH 'Running'")).firstMatch
         XCTAssertTrue(running.waitForExistence(timeout: 10))
         XCTAssertTrue(running.waitForNonExistence(timeout: 10))
     }
@@ -179,13 +180,17 @@ final class ComposerAndMessageUITests: XCTestCase {
         app.typeKey("4", modifierFlags: [.command, .option])
         XCTAssertTrue(app.staticTexts["App.swift"].waitForExistence(timeout: 10))
 
-        let changed = app.staticTexts["let greeting = \"Hello, Tether\""].firstMatch
-        XCTAssertTrue(changed.exists)
+        // Each line is a button, its text the value; the comment is written in a popover beside it.
+        let changed = app.buttons.matching(NSPredicate(format: "value == %@", "let greeting = \"Hello, Tether\"")).firstMatch
+        XCTAssertTrue(changed.waitForExistence(timeout: 5))
         changed.click()
-        let field = app.sheets.firstMatch.textFields.firstMatch
+        let popover = app.popovers.firstMatch
+        XCTAssertTrue(popover.waitForExistence(timeout: 5))
+        let field = popover.descendants(matching: .any).matching(NSPredicate(format: "elementType == %d OR elementType == %d",
+            XCUIElement.ElementType.textField.rawValue, XCUIElement.ElementType.textView.rawValue)).firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.typeText("Use the app's name from its bundle")
-        windowButton(app, "Add").click()
+        popover.buttons["Add"].click()
 
         let send = windowButton(app, "Send Comment")
         XCTAssertTrue(send.isEnabled)

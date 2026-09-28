@@ -87,8 +87,9 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Fixture Chat"].waitForExistence(timeout: 15))
         app.buttons["New Chat"].click()
         let toolbar = app.toolbars.firstMatch
-        let effort = toolbar.menuButtons["Effort"]
-        let permissions = toolbar.menuButtons["Permissions"]
+        // Each says its choice after its name ("Permissions, Don't Ask").
+        let effort = toolbar.menuButtons.matching(NSPredicate(format: "label BEGINSWITH 'Effort'")).firstMatch
+        let permissions = toolbar.menuButtons.matching(NSPredicate(format: "label BEGINSWITH 'Permissions'")).firstMatch
         XCTAssertTrue(permissions.waitForExistence(timeout: 5))
         let before = (effort.frame, permissions.frame)
 
@@ -96,7 +97,7 @@ final class TetherAppUITests: XCTestCase {
         choose("Don't Ask", in: "Permissions", app: app)
         choose("Max", in: "Effort", app: app)
 
-        XCTAssertEqual(permissions.value as? String, "Don't Ask")
+        XCTAssertEqual(permissions.label, "Permissions, Don't Ask")
         XCTAssertEqual(effort.frame, before.0)
         XCTAssertEqual(permissions.frame, before.1)
     }
@@ -239,15 +240,20 @@ final class TetherAppUITests: XCTestCase {
     func testScrollingUpLoadsOlderMessages() {
         let app = launch(scenario: "performance")
         XCTAssertTrue(app.staticTexts["Section 29: tightening the renderer"].firstMatch.waitForExistence(timeout: 20))
-        // Several pages back: each turn is about twenty items, a page fifty.
-        let older = app.staticTexts["Section 12: tightening the renderer"].firstMatch
+        // Several pages back: each turn is about twenty items, a page fifty. The earliest section on
+        // screen, since a scroll can carry the reader past any one of them as pages go in above.
+        func earliestSection() -> Int? {
+            app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH 'Section '")).allElementsBoundByIndex.compactMap { text in
+                (text.value as? String)?.dropFirst("Section ".count).split(separator: ":").first.flatMap { Int($0) }
+            }.min()
+        }
         // A point in the transcript: a heading leaves the lazy stack once it scrolls away.
         let transcript = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
-        for _ in 0..<30 where !older.exists {
+        for _ in 0..<30 where (earliestSection() ?? .max) > 12 {
             transcript.scroll(byDeltaX: 0, deltaY: 4000)
-            _ = older.waitForExistence(timeout: 1)
+            Thread.sleep(forTimeInterval: 1)
         }
-        XCTAssertTrue(older.exists)
+        XCTAssertLessThanOrEqual(earliestSection() ?? .max, 12)
     }
 
     /// The jump button is offered once the reader scrolls away from the end, and takes them back.

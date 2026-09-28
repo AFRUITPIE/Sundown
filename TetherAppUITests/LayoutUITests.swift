@@ -99,7 +99,8 @@ final class LayoutUITests: XCTestCase {
         waitForLongChat(app)
         let toolbar = mainWindow(app).toolbars.element(boundBy: 0)
         for menu in ["Model", "Effort", "Permissions"] {
-            XCTAssertTrue(toolbar.menuButtons[menu].waitForExistence(timeout: 5), "no \(menu) menu in the toolbar")
+            let button = toolbar.menuButtons.matching(NSPredicate(format: "label BEGINSWITH %@", menu)).firstMatch
+            XCTAssertTrue(button.waitForExistence(timeout: 5), "no \(menu) menu in the toolbar")
         }
     }
 
@@ -110,13 +111,13 @@ final class LayoutUITests: XCTestCase {
     func testWorkedForFoldsFinishedTurns() {
         let app = launch(appearance: #"{"toolCalls":"workedFor"}"#)
         waitForLongChat(app)
-        let folds = app.buttons.matching(identifier: "transcript.turnWork")
+        let folds = app.disclosureTriangles.matching(identifier: "transcript.turnWork")
         XCTAssertTrue(folds.firstMatch.waitForExistence(timeout: 5))
         guard let fold = folds.allElementsBoundByIndex.last(where: { $0.isHittable }) else {
             return XCTFail("no Worked For line on screen")
         }
         XCTAssertTrue(fold.label.hasPrefix("Worked"))
-        let calls = app.buttons.matching(NSPredicate(format: "identifier IN %@", ["transcript.toolCall", "transcript.toolGroup"]))
+        let calls = app.disclosureTriangles.matching(NSPredicate(format: "identifier IN %@", ["transcript.toolCall", "transcript.toolGroup"]))
         let before = calls.count
         fold.click()
         let deadline = Date().addingTimeInterval(5)
@@ -129,14 +130,14 @@ final class LayoutUITests: XCTestCase {
     func testEditedFilesRowListsTheTurnsFiles() {
         let app = launch()
         waitForLongChat(app)
-        let rows = app.buttons.matching(identifier: "transcript.edits")
+        let rows = app.disclosureTriangles.matching(identifier: "transcript.edits")
         XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5))
         guard let row = rows.allElementsBoundByIndex.last(where: { $0.isHittable }) else {
             return XCTFail("no edited-files row on screen")
         }
         XCTAssertTrue(row.label.hasPrefix("Edited"))
         row.click()
-        let file = app.buttons.matching(identifier: "transcript.editedFile").firstMatch
+        let file = app.disclosureTriangles.matching(identifier: "transcript.editedFile").firstMatch
         XCTAssertTrue(file.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Restore Files…"].exists)
     }
@@ -144,9 +145,9 @@ final class LayoutUITests: XCTestCase {
     /// Prompts are dated, as in Messages.
     @MainActor
     func testPromptsAreDated() {
-        let app = launch()
-        waitForLongChat(app)
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "transcript.date").firstMatch.exists)
+        // The short chat: the long one's first prompt, the one dated, is pages above its end.
+        let app = launch(scenario: nil)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "transcript.date").firstMatch.waitForExistence(timeout: 15))
     }
 
     /// Chat ▸ Previous Prompt (⌥⌘↑) brings the prompt above the reader's place to the top, one at a
