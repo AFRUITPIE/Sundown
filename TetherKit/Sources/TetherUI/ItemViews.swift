@@ -34,7 +34,8 @@ struct ItemView: View {
         case .compaction(let c):
             HStack {
                 VStack { Divider() }
-                Label("Conversation compacted" + (c.preTokens.map { " · \(Format.tokens($0)) tokens" } ?? ""), systemImage: "arrow.down.right.and.arrow.up.left")
+                Label(c.preTokens.map { "Conversation compacted · \(Format.tokens($0)) tokens" } ?? "Conversation compacted",
+                      systemImage: "arrow.down.right.and.arrow.up.left")
                     .scaledFont(.caption).foregroundStyle(.secondary).fixedSize()
                 VStack { Divider() }
             }

@@ -171,6 +171,17 @@ private final class RefusingSecrets: SecretStore {
 
 @Suite
 struct ScheduledTaskTextTests {
+    /// Written in the reader's language: "42s", "3h 5m", "12.3K", "$0.42", "$0.0042".
+    @Test func numbersAreFormattedForTheLocale() {
+        let separator = Locale.current.decimalSeparator ?? "."
+        func places(_ s: String) -> Int { s.components(separatedBy: separator).last?.filter(\.isNumber).count ?? 0 }
+        #expect(Format.duration(3 * 3600 + 5 * 60 + 9).split(separator: " ").count == 2)
+        #expect(Format.tokens(950) == 950.formatted())
+        #expect(Format.tokens(12_300) != 12_300.formatted())
+        #expect(places(Format.cost(1.5)) == 2)
+        #expect(places(Format.cost(0.0042)) == 4)
+    }
+
     private func task(_ cadence: ScheduleCadence, enabled: Bool = true, weekday: Int? = nil) -> ScheduledTask {
         ScheduledTask(id: "t", name: "T", prompt: "p", cwd: "/", cadence: cadence, hour: 9, minute: 5, weekday: weekday, enabled: enabled)
     }
@@ -180,7 +191,8 @@ struct ScheduledTaskTextTests {
         #expect(ScheduledTaskText.summary(task(.manual)) == "Only When Run")
         #expect(ScheduledTaskText.summary(task(.hourly)) == "Every hour at :05")
         #expect(ScheduledTaskText.summary(task(.weekdays)) == "Weekdays at \(nine)")
-        #expect(ScheduledTaskText.summary(task(.weekly, weekday: 6)) == "Fridays at \(nine)")
+        let friday = Calendar.current.weekdaySymbols[5]
+        #expect(ScheduledTaskText.summary(task(.weekly, weekday: 6)) == "Every \(friday) at \(nine)")
         #expect(ScheduledTaskText.summary(task(.daily, enabled: false)) == "Off · Every day at \(nine)")
     }
 }

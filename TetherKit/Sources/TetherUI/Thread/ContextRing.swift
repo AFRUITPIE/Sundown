@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import TetherKit
 import TetherProtocol
@@ -30,22 +31,19 @@ struct ContextRing: View {
         Group {
             if let used, used.limit > 0 {
                 Button { showPane(.session) } label: {
-                    ZStack {
-                        Circle().stroke(.quaternary, lineWidth: 2.5)
-                        Circle()
-                            .trim(from: 0, to: fraction)
-                            .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
-                    }
-                    .frame(width: 16, height: 16)
-                    .padding(4)
-                    .contentShape(.rect)
+                    // A gauge, which VoiceOver reads as Context and how full, drawn as a thin ring:
+                    // the system's circular styles are a widget's size, or a pie that drops the tint.
+                    Gauge(value: fraction) { Text("Context") }
+                        .gaugeStyle(RingGaugeStyle(tint: tint))
+                        // Wider to click, never taller than Send beside it.
+                        .padding(.horizontal, 4)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                // Level with Send, which sits on the text's baseline: a symbol's center is half a
+                // cap height above the baseline, and so is the ring's.
+                .alignmentGuide(.lastTextBaseline) { $0[VerticalAlignment.center] + Self.symbolCenterHeight }
                 .help("Context: \(Format.tokens(used.tokens)) of \(Format.tokens(used.limit)) tokens (\(Int(fraction * 100))%)")
-                .accessibilityLabel("Context")
-                .accessibilityValue("\(Int(fraction * 100)) percent full")
-                .padding(.bottom, 3)
             }
         }
         // Once per finished turn: the context only settles when a turn ends.
@@ -58,6 +56,26 @@ struct ContextRing: View {
     }
 
     private struct Key: Equatable { let thread: String; let turn: String?; let loaded: Bool }
+
+    /// How far above the baseline Send's symbol is centered: half the body font's cap height.
+    private static let symbolCenterHeight = NSFont.preferredFont(forTextStyle: .body).capHeight / 2
+}
+
+/// A gauge as a thin ring, filled clockwise from the top, the size of a small symbol.
+struct RingGaugeStyle: GaugeStyle {
+    let tint: Color
+    @ScaledMetric(relativeTo: .body) private var size = 16
+
+    func makeBody(configuration: Configuration) -> some View {
+        ZStack {
+            Circle().stroke(.quaternary, lineWidth: 2.5)
+            Circle()
+                .trim(from: 0, to: configuration.value)
+                .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: size, height: size)
+    }
 }
 
 /// Opens the window's inspector on a pane, from views that don't hold the window. Compared by

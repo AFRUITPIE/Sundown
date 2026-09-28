@@ -259,6 +259,8 @@ struct ElicitationPrompt: View {
     let params: ElicitationRequestParams
     let respond: (JSONValue) -> Void
     @State private var values: [String: String] = [:]
+    /// Number and integer fields, as numbers: typed in the reader's locale, sent as JSON numbers.
+    @State private var numbers: [String: Double] = [:]
 
     private var fields: [(key: String, schema: JSONValue)] {
         (params.requestedSchema?["properties"]?.objectValue ?? [:]).sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
@@ -284,7 +286,8 @@ struct ElicitationPrompt: View {
                     for f in fields {
                         let v = values[f.key, default: ""]
                         switch f.schema.string("type") {
-                        case "number", "integer": content[f.key] = Double(v).map { .number($0) } ?? .string(v)
+                        case "number": content[f.key] = numbers[f.key].map { .number($0) }
+                        case "integer": content[f.key] = numbers[f.key].map { .number($0.rounded()) }
                         case "boolean": content[f.key] = .bool(["true", "yes", "1"].contains(v.lowercased()))
                         default: content[f.key] = .string(v)
                         }
@@ -300,6 +303,7 @@ struct ElicitationPrompt: View {
         .onAppear {
             for f in fields where values[f.key] == nil {
                 values[f.key] = f.schema.string("type") == "boolean" ? "false" : (f.schema["default"]?.stringValue ?? "")
+                if numbers[f.key] == nil { numbers[f.key] = f.schema["default"]?.doubleValue }
             }
         }
     }
@@ -310,7 +314,11 @@ struct ElicitationPrompt: View {
     }
 
     private var complete: Bool {
-        required.allSatisfy { !values[$0, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        required.allSatisfy { key in
+            let type = fields.first { $0.key == key }?.schema.string("type")
+            if type == "number" || type == "integer" { return numbers[key] != nil }
+            return !values[key, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     /// The control that matches the declared type.
@@ -322,7 +330,8 @@ struct ElicitationPrompt: View {
             Toggle(title, isOn: Binding(get: { values[f.key] == "true" },
                                         set: { values[f.key] = $0 ? "true" : "false" }))
         case "number", "integer":
-            TextField(title, text: text, prompt: Text("Number"))
+            TextField(title, value: Binding(get: { numbers[f.key] }, set: { numbers[f.key] = $0 }),
+                      format: .number, prompt: Text("Number"))
                 .textFieldStyle(.roundedBorder)
                 .monospacedDigit()
         default:

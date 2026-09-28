@@ -50,6 +50,8 @@ struct EnvironmentVariablesSheet: View {
                 }
             }
             .tableStyle(.inset)
+            // Names and values are code, not prose.
+            .autocorrectionDisabled()
             .alternatingRowBackgrounds()
             Divider()
             HStack(spacing: 0) {

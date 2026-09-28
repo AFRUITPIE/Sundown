@@ -25,6 +25,7 @@ struct HostDetail: View {
                         updated.kind = .ssh(destination: value)
                         update(updated)
                     }
+                    .autocorrectionDisabled()
                 }
             }
             connectionSection
@@ -87,6 +88,7 @@ struct HostDetail: View {
                 }
                 .labelsHidden()
                 .font(.body.monospaced())
+                .autocorrectionDisabled()
             }
             LabeledContent("Environment Variables") {
                 HStack(spacing: 10) {

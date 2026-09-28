@@ -153,7 +153,8 @@ public struct ScheduledTasksWindow: View {
 
 /// How a task's schedule reads: "Every weekday at 9:00 AM".
 enum ScheduledTaskText {
-    static let weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    /// Sunday first, as `ScheduledTask.weekday` counts them, in the reader's language.
+    static var weekdays: [String] { Calendar.current.weekdaySymbols }
 
     static func time(hour: Int, minute: Int) -> String {
         let date = Calendar.current.date(from: DateComponents(hour: hour, minute: minute)) ?? .now
@@ -164,10 +165,10 @@ enum ScheduledTaskText {
         let when: String
         switch task.cadence {
         case .manual: when = "Only When Run"
-        case .hourly: when = "Every hour at :\(String(format: "%02d", task.minute))"
+        case .hourly: when = "Every hour at :\(task.minute.formatted(.number.precision(.integerLength(2))))"
         case .daily: when = "Every day at \(time(hour: task.hour, minute: task.minute))"
         case .weekdays: when = "Weekdays at \(time(hour: task.hour, minute: task.minute))"
-        case .weekly: when = "\(weekdays[((task.weekday ?? 2) - 1) % 7])s at \(time(hour: task.hour, minute: task.minute))"
+        case .weekly: when = "Every \(weekdays[((task.weekday ?? 2) - 1) % 7]) at \(time(hour: task.hour, minute: task.minute))"
         default: when = task.cadence.rawValue.humanized
         }
         return task.enabled || task.cadence == .manual ? when : "Off · \(when)"

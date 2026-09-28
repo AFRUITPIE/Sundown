@@ -21,9 +21,7 @@ struct TurnEditsView: View {
         _openFiles = State(initialValue: openFiles)
     }
 
-    private var title: String {
-        edits.files.count == 1 ? "Edited 1 file" : "Edited \(edits.files.count) files"
-    }
+    private var title: LocalizedStringKey { "Edited ^[\(edits.files.count) file](inflect: true)" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

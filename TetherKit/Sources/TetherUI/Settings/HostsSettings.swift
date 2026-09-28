@@ -93,14 +93,16 @@ struct HostStatusLabel: View {
     let state: HostConnection.State
 
     var body: some View {
-        HStack(spacing: 6) {
+        Label {
+            Text(state.detailLabel)
+        } icon: {
             if case .connecting = state {
                 ProgressView().controlSize(.small)
             } else {
                 Image(systemName: state.symbol).foregroundStyle(state.tint)
             }
-            Text(state.detailLabel)
         }
+        .labelStyle(.titleAndIcon)
         .help(state.help)
         .accessibilityLabel(state.help)
     }

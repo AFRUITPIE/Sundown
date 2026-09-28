@@ -117,19 +117,15 @@ struct NewChatView: View {
         HStack(spacing: 16) {
             folderMenu(connection)
             if let branch = git?.branch {
-                // Spaced like the menus' labels beside it, which a plain Label isn't.
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.triangle.branch")
-                    Text(branch)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                .foregroundStyle(.secondary)
-                .help("Branch")
-                // One element that reads as "Branch main": a group's value doesn't reach accessibility.
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Branch \(branch)")
-                .accessibilityIdentifier("newChat.branch")
+                Label(branch, systemImage: "arrow.triangle.branch")
+                    // Spaced like the menus' labels beside it.
+                    .labelIconToTitleSpacing(4)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(.secondary)
+                    .help("Branch")
+                    .accessibilityLabel("Branch \(branch)")
+                    .accessibilityIdentifier("newChat.branch")
             }
             workInMenu
         }

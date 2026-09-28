@@ -109,19 +109,22 @@ private struct ReadingColumn: ViewModifier {
     }
 }
 
+/// Numbers as the reader's locale writes them.
 enum Format {
+    /// "$0.42", or four places below a cent, where two would say nothing.
     static func cost(_ usd: Double) -> String {
-        usd < 0.01 ? String(format: "$%.4f", usd) : String(format: "$%.2f", usd)
+        usd.formatted(.currency(code: "USD").precision(.fractionLength(usd < 0.01 ? 4 : 2)))
     }
 
+    /// "42s", "3m 12s", "1h 5m": the two largest units.
     static func duration(_ seconds: Double) -> String {
-        if seconds < 60 { return String(format: "%.0fs", seconds) }
-        if seconds < 3600 { return String(format: "%dm %02ds", Int(seconds) / 60, Int(seconds) % 60) }
-        return String(format: "%dh %02dm", Int(seconds) / 3600, Int(seconds) % 3600 / 60)
+        Duration.seconds(seconds.rounded())
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow, maximumUnitCount: 2))
     }
 
+    /// "950", "12.3K", "1.2M".
     static func tokens(_ n: Double) -> String {
-        n >= 1_000_000 ? String(format: "%.1fM", n / 1_000_000) : n >= 1000 ? String(format: "%.1fk", n / 1000) : String(Int(n))
+        n.formatted(.number.notation(.compactName).precision(.fractionLength(0...1)))
     }
 
     /// When a message was sent: the time today, the day and time before that.
@@ -315,44 +318,15 @@ enum TextScale {
     static func label(_ scale: CGFloat) -> String { "\(Int((scale * 100).rounded()))%" }
 }
 
-extension Font.TextStyle {
-    /// The macOS point size of each text style (Typography ▸ macOS built-in text styles).
-    var macPointSize: CGFloat {
-        switch self {
-        case .largeTitle: 26
-        case .title: 22
-        case .title2: 17
-        case .title3: 15
-        case .callout: 12
-        case .subheadline: 11
-        case .footnote, .caption, .caption2: 10
-        default: 13
-        }
-    }
-
-    var macWeight: Font.Weight {
-        switch self {
-        case .headline: .bold
-        case .caption2: .medium
-        default: .regular
-        }
-    }
-}
-
-/// A text style at the reader's chosen size: the system style itself at 100%, and the same size,
-/// weight and design scaled otherwise.
+/// A text style at the reader's chosen size: the system style, scaled, so it keeps the style's
+/// weight, leading and tracking at every size.
 private struct ScaledFont: ViewModifier {
     let style: Font.TextStyle
     let weight: Font.Weight?
     let explicitDesign: Font.Design?
     @Environment(\.textScale) private var scale
     func body(content: Content) -> some View {
-        let design = explicitDesign ?? .default
-        if abs(scale - 1) < 0.001 {
-            content.font(.system(style, design: design, weight: weight))
-        } else {
-            content.font(.system(size: (style.macPointSize * scale).rounded(), weight: weight ?? style.macWeight, design: design))
-        }
+        content.font(.system(style, design: explicitDesign ?? .default, weight: weight).scaled(by: scale))
     }
 }
 
