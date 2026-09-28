@@ -51,18 +51,8 @@ struct HostDetail: View {
                         // The state is the row's point; the button gives way to it.
                         HostStatusLabel(state: connection.state)
                             .layoutPriority(1)
-                        if case .needsNode(let need) = connection.state, let copy = need.copy {
-                            Button(need.installTitle) { Task { await connection.copyServer(copy) } }
-                                .disabled(connection.isCopying)
-                        }
                         ConnectButton(connection: connection)
                     }
-                }
-                if let server = connection.serverInfo {
-                    LabeledContent("Tether", value: server.serverInfo.version)
-                }
-                if case .npx(let node) = connection.runner, host.serverCommand?.isEmpty ?? true {
-                    LabeledContent("Node.js", value: node)
                 }
                 if let server = connection.serverInfo {
                     LabeledContent("Machine", value: "\(server.host.hostname) · \(platformName(server.host.platform)) \(server.host.arch)")
@@ -204,11 +194,4 @@ enum HostField {
     return HostDetail(host: connection.host, connection: connection) { _ in }
         .frame(width: 472, height: 440)
 }
-/// A host without Node.js: Install Tether beside Connect, and what to do in the footer.
-#Preview("Host without Node.js") {
-    let connection = HostConnection.sampleNeedsNode()
-    return HostDetail(host: connection.host, connection: connection) { _ in }
-        .frame(width: 520, height: 420)
-}
-
 #endif

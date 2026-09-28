@@ -117,7 +117,6 @@ extension HostConnection.State {
         case .connected: "Connected"
         case .connecting: "Connecting"
         case .failed, .disconnected: "Not Connected"
-        case .needsNode: "Needs Node.js"
         }
     }
 
@@ -133,27 +132,21 @@ extension HostConnection.State {
         case .connecting: "ellipsis.circle"
         case .failed: "exclamationmark.triangle"
         case .disconnected: "bolt.horizontal.circle"
-        case .needsNode: "shippingbox"
         }
     }
 
     var tint: Color {
         switch self {
         case .connected: .green
-        case .failed, .needsNode: .orange
+        case .failed: .orange
         default: .secondary
         }
     }
 
     /// Why the last attempt failed — the only part of a state the user can act on.
     var failureMessage: String? {
-        switch self {
-        case .failed(let message): return message
-        case .needsNode(let need):
-            let detail = need.detail(host: "this host")
-            return detail.prefix(1).uppercased() + detail.dropFirst()
-        default: return nil
-        }
+        if case .failed(let message) = self { return message }
+        return nil
     }
 
     var help: String {

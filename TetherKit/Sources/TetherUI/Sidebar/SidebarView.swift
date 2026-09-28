@@ -196,7 +196,7 @@ struct SidebarView: View {
             switch connection.state {
             case .connecting(let message):
                 ContentUnavailableView { ProgressView() } description: { Text(message) }
-            case .failed, .disconnected, .needsNode:
+            case .failed, .disconnected:
                 NotConnectedView(connection: connection)
             case .connected:
                 if search.isEmpty, app.sidebarFilter != .all {
@@ -247,6 +247,7 @@ struct ChatRenameField: View {
 /// Empty while the host is connected or connecting.
 struct NotConnectedView: View {
     let connection: HostConnection
+
     var body: some View {
         switch connection.state {
         case .failed(let message):
@@ -262,18 +263,6 @@ struct NotConnectedView: View {
                 Label("Not Connected", systemImage: "bolt.horizontal.circle")
             } actions: {
                 Button("Connect") { Task { await connection.connect() } }
-            }
-        case .needsNode(let need):
-            ContentUnavailableView {
-                Label(need.title, systemImage: "shippingbox")
-            } description: {
-                Text(need.detail(host: connection.host.name))
-            } actions: {
-                if let copy = need.copy {
-                    Button(need.installTitle) { Task { await connection.copyServer(copy) } }
-                        .disabled(connection.isCopying)
-                }
-                Button("Check Again") { Task { await connection.connect() } }
             }
         case .connecting, .connected:
             EmptyView()
@@ -372,12 +361,6 @@ private func pinningSample(_ app: AppModel = .sample()) -> AppModel {
 
 #Preview("Sidebar (host disconnected)") {
     sidebarPreview(.sample(connections: [.sampleDisconnected()]))
-}
-
-/// A host without Node.js: Install Tether, and Check Again.
-#Preview("Sidebar (host without Node.js)") {
-    let host = HostConnection.sampleNeedsNode()
-    return sidebarPreview(.sample(connections: [.sample(), host]), host: host.id)
 }
 
 #Preview("Sidebar (no search results)") {

@@ -1,5 +1,4 @@
 import Foundation
-import Synchronization
 import TetherProtocol
 
 /// A process-free JSON-RPC server for XCTest UI runs. In every build, inert unless the app is
@@ -12,57 +11,14 @@ public enum UITestFixture {
     /// seconds of retries, long enough to press its Reconnect.
     @MainActor
     public static func connection(host: HostConfig = .local, failedConnects: Int = 0,
-                                  pendingPermission: Bool = false, performance: Bool = false,
-                                  server: FixtureServer.Scenario? = nil) -> HostConnection {
+                                  pendingPermission: Bool = false, performance: Bool = false) -> HostConnection {
         let attempts = FixtureAttempts()
-        return HostConnection(host: host, provisioner: server.map(FixtureServer.init), transportProvider: { _ in
+        return HostConnection(host: host, transportProvider: { _ in
             if await attempts.next() <= failedConnects {
                 throw TransportError.launchFailed("Fixture connection unavailable")
             }
             return FixtureTransport(pendingPermission: pendingPermission, performance: performance)
         })
-    }
-}
-
-/// A fixture host without Node.js 18 or later, as the UI tests need it: none, an older one, or a
-/// copy of the server that fails. Copying takes a moment and says so, as a real host does.
-public final class FixtureServer: ServerProvisioning {
-    public enum Scenario: String, Sendable {
-        case nodeMissing = "node-missing"
-        case nodeOutdated = "node-outdated"
-        case copyFails = "copy-failed"
-    }
-
-    private let scenario: Scenario
-    private let copied = Mutex(false)
-
-    init(_ scenario: Scenario) {
-        self.scenario = scenario
-    }
-
-    public func probe(_ host: HostConfig) async throws -> ServerProbe {
-        let copied = copied.withLock { $0 }
-            ? InstalledServer(version: ServerRelease.version, protocolVersion: tetherProtocolVersion, minClientProtocol: 1) : nil
-        return ServerProbe(platform: "darwin-arm64", node: scenario == .nodeOutdated ? "16.20.2" : nil, copied: copied)
-    }
-
-    public var checksums: [String: String] { ["darwin-arm64": String(repeating: "0", count: 64)] }
-
-    public func copy(_ copy: ServerCopy, to host: HostConfig, progress: @escaping @Sendable (String) -> Void) async throws {
-        progress("Downloading Tether \(copy.version) for \(copy.platform)")
-        try await Task.sleep(for: .milliseconds(400))
-        if scenario == .copyFails {
-            throw HostBootstrapper.BootstrapError.download("Couldn’t download tether-\(copy.version)-\(copy.platform) (404).")
-        }
-        progress("Checking it")
-        try await Task.sleep(for: .milliseconds(200))
-        copied.withLock { $0 = true }
-        progress("Installed Tether \(copy.version)")
-    }
-
-    /// Unused: the fixture's transport stands in for the process.
-    public func connectCommand(for host: HostConfig, runner: ServerRunner?) -> (executable: String, arguments: [String]) {
-        ("/usr/bin/false", [])
     }
 }
 

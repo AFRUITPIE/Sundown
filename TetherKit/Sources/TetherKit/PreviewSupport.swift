@@ -618,13 +618,12 @@ extension HostConnection {
             state: .connected,
             client: RPCClient(transport: PreviewTransport()),
             serverInfo: .init(
-                serverInfo: .init(name: "tether-server", version: ServerRelease.version),
+                serverInfo: .init(name: "tether-server", version: "0.4.0"),
                 protocolVersion: tetherProtocolVersion,
                 host: .init(hostname: "build-box.local", platform: "linux", arch: "x86_64", home: "/home/hayden", pid: 812, mode: .daemon),
                 claude: .init(path: "/usr/local/bin/claude", version: "2.1.4")),
             account: .init(tokenSource: "env", apiProvider: "bedrock"),
-            models: ModelInfo.sampleCatalog,
-            runner: .npx(node: "22.12.0"))
+            models: ModelInfo.sampleCatalog)
         return connection
     }
 
@@ -639,15 +638,6 @@ extension HostConnection {
     public static func sampleFailed(reason: String = "Connection refused") -> HostConnection {
         let connection = HostConnection(host: .init(name: "staging", kind: .ssh(destination: "staging")))
         connection.previewSeed(state: .failed(reason))
-        return connection
-    }
-
-    /// A host without Node.js 18 or later (`found`, when it has an older one), whose copy may have
-    /// failed, or which has no build to copy.
-    public static func sampleNeedsNode(found: String? = nil, canCopy: Bool = true, failure: String? = nil) -> HostConnection {
-        let connection = HostConnection(host: .init(name: "claude-box", kind: .ssh(destination: "claude-box")))
-        let copy = canCopy ? ServerCopy(platform: "linux-x64", failure: failure) : nil
-        connection.previewSeed(state: .needsNode(NodeNeeded(found: found, copy: copy)))
         return connection
     }
 }
