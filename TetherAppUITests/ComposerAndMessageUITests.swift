@@ -192,9 +192,12 @@ final class ComposerAndMessageUITests: XCTestCase {
         field.typeText("Use the app's name from its bundle")
         popover.buttons["Add"].click()
 
-        let send = windowButton(app, "Send Comment")
+        let send = app.windows.firstMatch.buttons["Send Comment"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
         XCTAssertTrue(send.isEnabled)
-        send.click()
+        // By its leading edge: on CI's 1024-point screen the window, with the inspector open, is
+        // wider than the screen, and the button's middle is off it.
+        send.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)).click()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value CONTAINS 'Sources/App.swift:2' OR label CONTAINS 'Sources/App.swift:2'")).firstMatch.waitForExistence(timeout: 10))
     }
 

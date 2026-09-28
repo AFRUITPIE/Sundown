@@ -98,8 +98,12 @@ final class TetherAppUITests: XCTestCase {
         choose("Max", in: "Effort", app: app)
 
         XCTAssertEqual(permissions.label, "Permissions, Don't Ask")
-        XCTAssertEqual(effort.frame, before.0)
-        XCTAssertEqual(permissions.frame, before.1)
+        // Within a point: AppKit rounds each segment of the toolbar's control group to the pixel
+        // grid by where its visible symbol sits, though the label reserves the same width for all.
+        for (after, was) in [(effort.frame, before.0), (permissions.frame, before.1)] {
+            XCTAssertEqual(after.minX, was.minX, accuracy: 1)
+            XCTAssertEqual(after.width, was.width, accuracy: 1)
+        }
     }
 
     /// Every toolbar control is also in the menu bar.

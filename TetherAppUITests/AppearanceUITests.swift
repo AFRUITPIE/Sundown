@@ -107,7 +107,13 @@ final class AppearanceUITests: XCTestCase {
         XCTAssertTrue(groups.firstMatch.waitForNonExistence(timeout: 5))
 
         choose(settings, "Tool Calls", "Summarized")
-        XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 5))
+        // Only rows the transcript has built are there to find, and a short window may hold none
+        // of the folds: look further up.
+        let transcript = mainWindow(app).coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
+        for _ in 0..<10 where !groups.firstMatch.waitForExistence(timeout: 1) {
+            transcript.scroll(byDeltaX: 0, deltaY: 600)
+        }
+        XCTAssertTrue(groups.firstMatch.exists)
     }
 
     /// With Send With set to Command-Return, Return starts a new line and Command-Return sends.
