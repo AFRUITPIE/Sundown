@@ -26,16 +26,24 @@ public actor RPCClient {
     /// decodes into its own type.
     private var pending: [Int: CheckedContinuation<Data, any Error>] = [:]
     private var readTask: Task<Void, Never>?
-    private let notificationsContinuation: AsyncStream<ServerNotification>.Continuation
-    public nonisolated let notifications: AsyncStream<ServerNotification>
+    private let notificationsContinuation: AsyncStream<[ServerNotification]>.Continuation
+    /// Notifications in the order they came, a batch at a time: streamed output waits up to
+    /// `batchInterval` for the rest of its frame, and anything else goes at once, with whatever came
+    /// before it. A streamed reply wakes its reader once a frame rather than once a token.
+    public nonisolated let notifications: AsyncStream<[ServerNotification]>
+    private var batch: [ServerNotification] = []
+    private var batchFlush: Task<Void, Never>?
     private var serverRequestHandler: ServerRequestHandler?
     private var closeHandler: (@Sendable (any Error) -> Void)?
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private static let emptyObject = Data("{}".utf8)
+    /// How long streamed output waits for more: about a frame.
+    private let batchInterval: Duration
 
-    public init(transport: any Transport) {
+    public init(transport: any Transport, batchInterval: Duration = .milliseconds(16)) {
         self.transport = transport
+        self.batchInterval = batchInterval
         (notifications, notificationsContinuation) = AsyncStream.makeStream(bufferingPolicy: .unbounded)
     }
 
@@ -62,6 +70,7 @@ public actor RPCClient {
     private func finish(error: any Error) {
         for (_, c) in pending { c.resume(throwing: error) }
         pending.removeAll()
+        flushBatch()
         notificationsContinuation.finish()
         closeHandler?(error)
         closeHandler = nil
@@ -115,12 +124,15 @@ public actor RPCClient {
             if let id = message.id.flatMap({ try? decoder.decode(JSONValue.self, from: $0) }), !id.isNull {
                 // Server → client request (approval, question, …): answer asynchronously.
                 let params = message.params ?? Self.emptyObject
+                flushBatch()
                 Task { await self.answer(id: id, method: method, params: params) }
             } else if let notification = notification(method, params: message.params) {
-                notificationsContinuation.yield(notification)
+                deliver(notification)
             }
         } else if let id = message.id.flatMap({ try? decoder.decode(JSONValue.self, from: $0) })?.intValue,
                   let cont = pending.removeValue(forKey: id) {
+            // The caller sees what came before its answer.
+            flushBatch()
             if let err = message.error.flatMap({ try? decoder.decode([String: JSONValue].self, from: $0) }) {
                 cont.resume(throwing: RPCError(code: err["code"]?.intValue ?? -1, message: err["message"]?.stringValue ?? "error"))
             } else {
@@ -137,6 +149,27 @@ public actor RPCClient {
         return (try? decoder.decode(JSONValue.self, from: params)).map { .unknown(method: method, params: $0) }
     }
 
+    private func deliver(_ notification: ServerNotification) {
+        batch.append(notification)
+        if !notification.isStreamed {
+            flushBatch()
+        } else if batchFlush == nil {
+            batchFlush = Task { [weak self, batchInterval] in
+                try? await Task.sleep(for: batchInterval)
+                guard !Task.isCancelled else { return }
+                await self?.flushBatch()
+            }
+        }
+    }
+
+    private func flushBatch() {
+        batchFlush?.cancel()
+        batchFlush = nil
+        guard !batch.isEmpty else { return }
+        notificationsContinuation.yield(batch)
+        batch = []
+    }
+
     private func answer(id: JSONValue, method: String, params: Data) async {
         let request = (try? ServerRequest(method: method, params: params, decoder: decoder))
             ?? .unknown(method: method, params: (try? decoder.decode(JSONValue.self, from: params)) ?? .null)
@@ -145,6 +178,17 @@ public actor RPCClient {
         guard let result else { return }
         let msg: JSONValue = ["id": id, "result": result]
         if let line = try? encoder.encode(msg) { try? await transport.send(line) }
+    }
+}
+
+extension ServerNotification {
+    /// Output streamed as it happens (text by the token, a running tool's clock), which can wait
+    /// for the rest of its frame.
+    var isStreamed: Bool {
+        switch self {
+        case .itemAgentMessageDelta, .itemReasoningDelta, .itemToolCallInputDelta, .itemToolCallProgress: true
+        default: false
+        }
     }
 }
 

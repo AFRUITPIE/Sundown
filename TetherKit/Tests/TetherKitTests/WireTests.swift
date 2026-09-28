@@ -203,6 +203,188 @@ struct RPCClientTests {
         #expect(answers.allSatisfy { $0["result"]?["behavior"]?.stringValue == "allow" && $0["method"] == nil })
         await client.close()
     }
+
+    /// Streamed output waits for its frame; anything else goes at once and takes it along, in order.
+    @Test func streamedOutputWaitsAndAnythingElseTakesItAlong() async throws {
+        let transport = WireTransport { _, _ in nil }
+        // Longer than the test: only something other than streamed output sends a batch.
+        let client = RPCClient(transport: transport, batchInterval: .seconds(60))
+        for line in [
+            delta(seq: 2, "Hel"), delta(seq: 3, "lo"),
+            #"{"method":"thread/status/changed","params":{"threadId":"t","seq":4,"status":"idle"}}"#,
+            delta(seq: 5, "!"),
+            #"{"method":"item/toolCall/progress","params":{"threadId":"t","seq":6,"itemId":"c","toolName":"Bash","elapsedSeconds":2}}"#,
+            #"{"method":"something/new","params":{"threadId":"t","seq":7}}"#,
+        ] { transport.emit(line) }
+        await client.start()
+
+        var batches: [[ServerNotification]] = []
+        for await batch in client.notifications {
+            batches.append(batch)
+            if batches.count == 2 { break }
+        }
+        #expect(batches.map { $0.map(\.seq) } == [[2, 3, 4], [5, 6, 7]])
+        guard case .unknown(let method, let params) = batches.last?.last else {
+            Issue.record("expected an unknown notification, got \(batches)")
+            return
+        }
+        #expect(method == "something/new")
+        #expect(params["threadId"]?.stringValue == "t")
+        await client.close()
+    }
+
+    @Test func streamedOutputGoesOnItsOwnAfterAFrame() async throws {
+        let transport = WireTransport { _, _ in nil }
+        let client = RPCClient(transport: transport, batchInterval: .milliseconds(5))
+        transport.emit(delta(seq: 2, "Hi"))
+        await client.start()
+
+        let batch = await firstBatch(client.notifications, within: .seconds(2))
+        #expect(batch?.map(\.seq) == [2])
+        await client.close()
+    }
+
+    /// A caller, or a prompt, sees everything the daemon sent before it.
+    @Test func aResponseOrARequestTakesTheOutputBeforeItAlong() async throws {
+        let transport = WireTransport { method, _ in method == "thread/list" ? ["threads": []] : nil }
+        let client = RPCClient(transport: transport, batchInterval: .seconds(60))
+        await client.setServerRequestHandler { _ in nil }
+        await client.start()
+        let notifications = client.notifications
+
+        transport.emit(delta(seq: 2, "a"))
+        _ = try await client.call(Methods.ThreadList.self, .init())
+        #expect(await firstBatch(notifications, within: .seconds(2))?.map(\.seq) == [2])
+
+        transport.emit(delta(seq: 3, "b"))
+        transport.emit(#"{"id":"r","method":"question/request","params":{"threadId":"t","requestId":"r","questions":[]}}"#)
+        #expect(await firstBatch(notifications, within: .seconds(2))?.map(\.seq) == [3])
+        await client.close()
+    }
+
+    private func delta(seq: Int, _ text: String) -> String {
+        #"{"method":"item/agentMessage/delta","params":{"threadId":"t","seq":\#(seq),"itemId":"a","delta":"\#(text)"}}"#
+    }
+
+    private func firstBatch(_ stream: AsyncStream<[ServerNotification]>, within limit: Duration) async -> [ServerNotification]? {
+        await withTaskGroup(of: [ServerNotification]?.self) { group in
+            group.addTask {
+                var batches = stream.makeAsyncIterator()
+                return await batches.next()
+            }
+            group.addTask {
+                try? await Task.sleep(for: limit)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+}
+
+/// A batch's text deltas for one reply go in as one; nothing else moves.
+@MainActor
+@Suite
+struct DeltaJoiningTests {
+    private func delta(_ thread: String = "t", item: String = "a", seq: Int, _ text: String) -> ServerNotification {
+        .itemAgentMessageDelta(.init(threadId: thread, seq: seq, itemId: item, delta: text))
+    }
+
+    private func status(_ thread: String = "t", seq: Int, _ status: ThreadStatus) -> ServerNotification {
+        .threadStatusChanged(.init(threadId: thread, seq: seq, status: status))
+    }
+
+    @Test func runsGatherOneReplysDeltasUntilSomethingElseForItsChat() {
+        let batch = [
+            delta(seq: 1, "a"), delta(seq: 2, "b"), delta("other", seq: 1, "x"), delta(seq: 3, "c"),
+            status(seq: 4, .idle), delta(seq: 5, "d"), delta(item: "z", seq: 6, "e"), delta(seq: 7, "f"),
+            delta("other", seq: 2, "y"),
+        ]
+        let runs = HostConnection.textRuns(in: batch).map { $0.map { "\($0.threadId!):\($0.seq!)" } }
+        #expect(runs == [["t:1", "t:2", "t:3"], ["other:1", "other:2"], ["t:4"], ["t:5"], ["t:6"], ["t:7"]])
+    }
+
+    @Test func joiningKeepsTheOrderAndTheLastSeq() throws {
+        let deltas = (1...4).map { ItemAgentMessageDeltaNotification(threadId: "t", seq: $0 + 10, itemId: "a", delta: "\($0)") }
+        let joined = try #require(HostConnection.joining(deltas, after: 10))
+        #expect(joined.delta == "1234")
+        #expect(joined.seq == 14)
+        #expect(joined.itemId == "a")
+        // Those it has already seen are left out, as one at a time would.
+        #expect(HostConnection.joining(deltas, after: 12)?.delta == "34")
+        #expect(HostConnection.joining(deltas, after: 14) == nil)
+        #expect(HostConnection.joining(deltas, after: 0)?.delta == "1234")
+        let unordered = [11, 9, 12].map { ItemAgentMessageDeltaNotification(threadId: "t", seq: $0, itemId: "a", delta: "\($0)") }
+        #expect(HostConnection.joining(unordered, after: 0)?.delta == "1112")
+    }
+
+    /// Applied as a batch, the reply ends as it would have one notification at a time.
+    @Test func aBatchEndsAsOneAtATimeWould() {
+        let batch = [
+            .itemStarted(.init(threadId: "t", seq: 1, item: .agentMessage(.init(id: "a", createdAt: 1, text: "")))),
+            delta(seq: 2, "Hel"), delta(seq: 3, "lo"), delta("other", seq: 1, "?"), delta(seq: 4, " you"),
+            .itemUpdated(.init(threadId: "t", seq: 5, item: .agentMessage(.init(id: "a", createdAt: 1, text: "Hi")))),
+            delta(seq: 6, " there"), status(seq: 7, .running), delta(seq: 8, "!"),
+            // A replay's overlap is dropped, as ever.
+            delta(seq: 8, "!"),
+        ]
+        let batched = HostConnection(host: HostConfig(name: "wire", kind: .local))
+        batched.route(batch)
+        let single = HostConnection(host: HostConfig(name: "wire", kind: .local))
+        for n in batch { single.route([n]) }
+
+        for connection in [batched, single] {
+            let thread = connection.thread("t")
+            #expect(text(of: "a", in: thread) == "Hi there!")
+            #expect(thread.lastSeq == 8)
+            #expect(thread.status == .running)
+            #expect(thread.streamingReplyID == "a")
+            #expect(text(of: "a", in: thread) == textInBox(of: "a", in: thread))
+        }
+    }
+
+    private func text(of id: String, in thread: ThreadModel) -> String? {
+        for case .agentMessage(let m) in thread.items where m.id == id { return m.text }
+        return nil
+    }
+
+    private func textInBox(of id: String, in thread: ThreadModel) -> String? {
+        guard let item = thread.items.first(where: { $0.id == id }), case .agentMessage(let m) = thread.box(for: item).item else { return nil }
+        return m.text
+    }
+}
+
+/// A long reply streamed a token at a time grows in place, in the transcript and in its box, rather
+/// than being copied whole for each token.
+@MainActor
+@Suite
+struct StreamedTextTests {
+    @Test func aReplyGrowsInPlace() throws {
+        let thread = ThreadModel(id: "t")
+        thread.loadHistory(items: [.agentMessage(.init(id: "a", createdAt: 1, text: String(repeating: "x", count: 100_000)))],
+                           turns: [], seq: 1)
+        var storage: [UInt] = [], box: [UInt] = []
+        let deltas = 2_000
+        for i in 0..<deltas {
+            thread.apply(.itemAgentMessageDelta(.init(threadId: "t", seq: i + 2, itemId: "a", delta: "0123456789")))
+            try storage.append(#require(address(of: thread.items[0])))
+            try box.append(#require(address(of: thread.box(for: thread.items[0]).item)))
+        }
+        // Copied, the text is somewhere else after every delta: the copy is made while the old one
+        // is still held. Grown in place, it moves only when it outgrows its capacity.
+        func moves(_ addresses: [UInt]) -> Int { zip(addresses, addresses.dropFirst()).count { $0 != $1 } }
+        #expect(moves(storage) < 20)
+        #expect(moves(box) < 20)
+        let text: String? = if case .agentMessage(let m) = thread.items[0] { m.text } else { nil }
+        #expect(text?.utf8.count == 100_000 + 10 * deltas)
+        #expect(thread.lastSeq == deltas + 1)
+    }
+
+    private func address(of item: Item) -> UInt? {
+        guard case .agentMessage(let m) = item else { return nil }
+        return m.text.utf8.withContiguousStorageIfAvailable { UInt(bitPattern: $0.baseAddress) } ?? nil
+    }
 }
 
 /// A host's connection over the wire: what it asks the daemon for, and what it makes of what comes back.

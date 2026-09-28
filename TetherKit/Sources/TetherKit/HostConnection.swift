@@ -35,8 +35,6 @@ public final class HostConnection: Identifiable {
     private var subscribed = Set<String>()
     /// Threads a view has asked to open, whether or not we were connected at the time.
     private var openRequested = Set<String>()
-    private var bufferedDeltas: [ServerNotification] = []
-    private var deltaFlushTask: Task<Void, Never>?
     private var chatsRefreshTask: Task<Void, Never>?
     @ObservationIgnored private let transportProvider: TransportProvider?
 
@@ -179,11 +177,8 @@ public final class HostConnection: Identifiable {
     private func detach() {
         client = nil
         subscribed.removeAll()
-        deltaFlushTask?.cancel()
-        deltaFlushTask = nil
         chatsRefreshTask?.cancel()
         chatsRefreshTask = nil
-        bufferedDeltas.removeAll()
         notificationTask?.cancel()
         for t in threads.values { t.clearPending() }
     }
@@ -212,24 +207,63 @@ public final class HostConnection: Identifiable {
         notificationTask?.cancel()
         let stream = client.notifications
         notificationTask = Task { [weak self] in
-            for await n in stream {
+            // A batch at a time, a frame's worth of streamed output at most (`RPCClient.notifications`).
+            for await batch in stream {
                 guard let self else { return }
-                self.route(n)
+                self.route(batch)
             }
         }
     }
 
-    private func route(_ n: ServerNotification) {
-        guard n.threadId != nil else { return }
-        switch n {
-        case .itemAgentMessageDelta, .itemReasoningDelta, .itemToolCallProgress:
-            // Per-token; batched into one update per frame.
-            bufferedDeltas.append(n)
-            scheduleDeltaFlush()
-        default:
-            flushDeltas() // anything else has to see the deltas that came before it
-            apply(n)
+    /// A batch, in order. A reply's text deltas go in as one, where nothing else for its chat comes
+    /// between them: its text grows once per batch, and its row updates once.
+    func route(_ batch: [ServerNotification]) {
+        for run in Self.textRuns(in: batch) {
+            guard run.count > 1 else {
+                apply(run[0])
+                continue
+            }
+            let deltas = run.compactMap { n -> ItemAgentMessageDeltaNotification? in
+                if case .itemAgentMessageDelta(let d) = n { d } else { nil }
+            }
+            if let joined = Self.joining(deltas, after: thread(deltas[0].threadId).lastSeq) {
+                apply(.itemAgentMessageDelta(joined))
+            }
         }
+    }
+
+    /// The batch in order, each notification on its own, except that a reply's text deltas are
+    /// gathered at the first one's place for as long as nothing else for their chat comes between
+    /// them. Other chats' notifications don't order against them: each chat is applied on its own.
+    nonisolated static func textRuns(in batch: [ServerNotification]) -> [[ServerNotification]] {
+        var runs: [[ServerNotification]] = []
+        var gathered = [Bool](repeating: false, count: batch.count)
+        for i in batch.indices where !gathered[i] {
+            var run = [batch[i]]
+            if case .itemAgentMessageDelta(let first) = batch[i] {
+                for j in batch.indices.dropFirst(i + 1) where !gathered[j] && batch[j].threadId == first.threadId {
+                    guard case .itemAgentMessageDelta(let next) = batch[j], next.itemId == first.itemId else { break }
+                    run.append(batch[j])
+                    gathered[j] = true
+                }
+            }
+            runs.append(run)
+        }
+        return runs
+    }
+
+    /// One reply's deltas as one: their text in order and the last seq, leaving out any at or
+    /// below the chat's `lastSeq` as `ThreadModel.apply` would one at a time. Nil when none is new.
+    nonisolated static func joining(_ deltas: [ItemAgentMessageDeltaNotification], after lastSeq: Int) -> ItemAgentMessageDeltaNotification? {
+        var seen = lastSeq
+        var fresh: [ItemAgentMessageDeltaNotification] = []
+        for d in deltas where seen == 0 || d.seq > seen {
+            fresh.append(d)
+            seen = d.seq
+        }
+        guard var joined = fresh.last else { return nil }
+        joined.delta = fresh.count == 1 ? joined.delta : fresh.map(\.delta).joined()
+        return joined
     }
 
     private func apply(_ n: ServerNotification) {
@@ -261,25 +295,6 @@ public final class HostConnection: Identifiable {
             self.chatsRefreshTask = nil
             await self.loadChats()
         }
-    }
-
-    private func scheduleDeltaFlush() {
-        guard deltaFlushTask == nil else { return }
-        deltaFlushTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(16))
-            guard let self, !Task.isCancelled else { return }
-            self.deltaFlushTask = nil
-            self.flushDeltas()
-        }
-    }
-
-    private func flushDeltas() {
-        deltaFlushTask?.cancel()
-        deltaFlushTask = nil
-        guard !bufferedDeltas.isEmpty else { return }
-        let deltas = bufferedDeltas
-        bufferedDeltas.removeAll(keepingCapacity: true)
-        for delta in deltas { apply(delta) }
     }
 
     /// After reconnecting, catch every open thread up from its last seen seq (the daemon kept running).
