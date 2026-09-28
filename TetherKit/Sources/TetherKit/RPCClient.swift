@@ -72,6 +72,8 @@ public actor RPCClient {
     // MARK: requests
 
     public func call<M: TetherMethod>(_ method: M.Type, _ params: M.Params) async throws -> M.Result {
+        let signpost = Signposts.rpc(M.name)
+        defer { signpost.end() }
         let data = try await rawCall(M.name, params: try encoder.encode(params))
         return try decoder.decode(M.Result.self, from: data)
     }
