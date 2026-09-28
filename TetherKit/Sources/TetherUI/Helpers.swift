@@ -359,6 +359,7 @@ extension Scene {
             .environment(\.textScale, app.textScale)
             .environment(\.openFilesWith, app.appearance.openFilesWith)
             .environment(\.readingWidth, app.transcriptWidth.points)
+            .environment(\.reducesEffects, app.reducesEffects)
     }
 }
 
@@ -369,6 +370,7 @@ extension View {
             .environment(\.textScale, app.textScale)
             .environment(\.openFilesWith, app.appearance.openFilesWith)
             .environment(\.readingWidth, app.transcriptWidth.points)
+            .environment(\.reducesEffects, app.reducesEffects)
     }
 }
 

@@ -21,6 +21,7 @@ struct TranscriptView: View {
     @Environment(\.promptNavigator) private var promptNavigator
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reducesEffects) private var reducesEffects
 
     var body: some View {
         ScrollView {
@@ -176,7 +177,8 @@ extension TranscriptView {
     /// there, which moves the transcript up a whole line at once when a streamed reply wraps; so
     /// the content is drawn that line lower and eased back up, and the new line glides into view.
     /// Drawing only, no layout. Not for a resize, whose rows all re-measure, or a jump bigger than
-    /// a few lines, or with Reduce Motion.
+    /// a few lines, or with Reduce Motion, or while the Mac saves energy (`reducesEffects`): each
+    /// glide is a keyframe animation run every frame.
     ///
     /// Switching the anchor off for this instead (and scrolling to the end by hand) made every frame
     /// of a resize slower, and switching it during layout made AppKit throw.
@@ -188,7 +190,7 @@ extension TranscriptView {
             return
         }
         let growth = new.content - old.content
-        guard growth > 0, growth < Glide.limit, !reduceMotion else { return }
+        guard growth > 0, growth < Glide.limit, !reduceMotion, !reducesEffects else { return }
         glide = Glide(distance: growth, count: glide.count + 1)
     }
 }
@@ -439,11 +441,13 @@ struct TranscriptTail: View {
 }
 
 /// Marks the wait before a turn has anything to show. From the thread's status, so it works
-/// with thinking off or redacted.
+/// with thinking off or redacted. Its dots pulse, but not while the Mac saves energy.
 struct ThinkingLine: View {
+    @Environment(\.reducesEffects) private var reducesEffects
+
     var body: some View {
         Label("Thinking…", systemImage: "ellipsis")
-            .symbolEffect(.variableColor.iterative, options: .repeating)
+            .symbolEffect(.variableColor.iterative, options: .repeating, isActive: !reducesEffects)
             .scaledFont(.callout)
             .foregroundStyle(.secondary)
             // The model's changes carry no animation, so the transition brings its own.

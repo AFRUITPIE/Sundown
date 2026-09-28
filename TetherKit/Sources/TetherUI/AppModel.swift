@@ -218,6 +218,11 @@ public final class AppModel {
     /// `didSet` runs while `load()` restores values; saving then would write half-restored state.
     private var isLoading = false
     private var connectedAll = false
+
+    /// Whether decorative motion is left out to save energy (`ReducedEffects`), put in the
+    /// environment beside the settings.
+    public var reducesEffects: Bool { effects.isOn }
+    private let effects = ReducedEffects()
     /// How many windows show each thread: a followed thread is let go only when none does.
     @ObservationIgnored private var viewers: [ObjectIdentifier: Int] = [:]
 
