@@ -1,105 +1,254 @@
 import SwiftUI
 import TetherKit
 
-public struct RootView: View {
-    @Bindable var app: AppModel
-    @State private var inspectedTaskID: String?
-    /// Whether the inspector has finished opening; see `minWidth`.
-    @State private var inspectorSettled = true
+/// One window: creates its `WindowModel` once, starts it when the window appears and lets its chat
+/// go when the window closes, and hands it to the menu bar while the window is frontmost. Keeps the
+/// scene's value on what the window shows, and its inspector in scene storage, so the system
+/// restores each window as it was.
+public struct WindowRoot: View {
+    @State private var window: WindowModel
+    @Binding private var target: WindowTarget
+    @SceneStorage("showInspector") private var storedShowInspector: Bool?
+    @SceneStorage("inspectorPane") private var storedInspectorPane: InspectorPane?
+    @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.undoManager) private var undoManager
 
-    public init(app: AppModel) {
-        self.app = app
+    public init(app: AppModel, target: Binding<WindowTarget>) {
+        _target = target
+        // Side-effect free until `start()`, so a discarded instance leaves nothing behind.
+        _window = State(initialValue: WindowModel(app: app, target: target.wrappedValue))
     }
 
     public var body: some View {
+        RootView(window: window)
+            .focusedSceneValue(\.window, window)
+            .onAppear {
+                let restored = storedShowInspector.map { ($0, storedInspectorPane ?? .tasks) }
+                window.start(inspector: restored)
+                // Kept from the start, so a window never restores another window's inspector.
+                storedShowInspector = window.showInspector
+                storedInspectorPane = window.inspectorPane
+            }
+            // The window's own, so Edit ▸ Undo takes back an archive, a pin or a rename made in it.
+            .onChange(of: undoManager, initial: true) { window.undoManager = undoManager }
+            .onChange(of: window.hostID) { target = window.target(keeping: target.id) }
+            .onChange(of: window.threadID) { target = window.target(keeping: target.id) }
+            // Not initial: `start()` reads the stored values first.
+            .onChange(of: window.showInspector) { storedShowInspector = window.showInspector }
+            .onChange(of: window.inspectorPane) { storedInspectorPane = window.inspectorPane }
+            // A chat's link: this window if it shows the chat, else any. New Chat's link always
+            // opens a window of its own, so it never takes over the chat or draft of one in use.
+            .handlesExternalEvents(preferring: TetherLink.preference(host: window.hostID, thread: window.threadID),
+                                   allowing: [TetherLink.chatPrefix])
+            .onOpenURL { url in
+                guard let link = TetherLink(url) else { return }
+                Task { await window.handle(link) }
+            }
+            .onDisappear { window.close() }
+            .onChange(of: appearsActive, initial: true) { window.isKey = appearsActive }
+    }
+}
+
+public struct RootView: View {
+    let window: WindowModel
+
+    public init(window: WindowModel) {
+        self.window = window
+    }
+
+    private var app: AppModel { window.app }
+
+    public var body: some View {
+        splitView
+        // Reaches the inspector too, whose task list shows subagents the same way.
+        .environment(\.inspectSubagent, InspectSubagentAction(owner: window) { toolUseId in
+            window.inspectedTaskID = toolUseId
+            window.openInspector(on: .tasks)
+        })
+        .environment(\.restoreCode, ForkChatAction(owner: window) { window.restoreCode(before: $0) })
+        .environment(\.startSuggestedTask, StartSuggestedTaskAction(owner: window) { window.startSuggestedTask($0, from: $1) })
+        .environment(\.openChat, OpenChatAction(owner: window, resolve: { id in
+            // A desktop session's id carries a prefix ("local_…"); Claude Code's own is the rest.
+            let bare = id.split(separator: "_", maxSplits: 1).last.map(String.init) ?? id
+            return window.connection?.chats.first { $0.id == id || $0.id == bare }?.id
+        }, open: { window.open(threadID: $0) }))
+        .environment(\.forkChat, ForkChatAction(owner: window) { messageID in
+            guard let thread = window.selectedThread, let connection = window.connection else { return }
+            Task { if let fork = await connection.fork(thread, at: messageID) { window.open(threadID: fork.id) } }
+        })
+        .environment(\.hostIsLocal, window.connection?.host.isLocal == true)
+        .environment(\.transcriptFind, window.find)
+        .environment(\.promptNavigator, window.prompts)
+        .environment(\.composerDrafts, ComposerDrafts(app: app))
+        .chatActionAlerts(window)
+        .task { app.connectAll() }
+    }
+
+    private var splitView: some View {
         // No columnVisibility binding: writing it on every sidebar toggle rebuilt the toolbar mid-animation.
         NavigationSplitView {
-            SidebarView(app: app)
+            SidebarView(window: window)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
-            DetailView(app: app)
+            DetailView(window: window)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
-                .navigationTitle(app.selectedThread?.title ?? "New Chat")
-                .navigationSubtitle(app.subtitle)
+                .navigationTitle(window.selectedThread?.title ?? "New Chat")
+                .navigationSubtitle(window.subtitle)
                 // Identified, so View ▸ Customize Toolbar… can rearrange these and the window
                 // remembers the arrangement. Every item is still declared unconditionally.
                 .toolbar(id: "main") {
-                    ToolbarItem(id: "newChat", placement: .navigation) { NewChatButton(app: app) }
+                    ToolbarItem(id: "newChat", placement: .navigation) { NewChatButton(window: window) }
+                        .visibilityPriority(.high)
+                    // The last to go to the » menu when the window is narrow; the title gives way first.
                     ToolbarItem(id: "session", placement: .primaryAction) {
-                        ToolbarSessionControl(app: app, control: SessionMenus.init(settings:))
+                        ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
+                    .visibilityPriority(.high)
                     // Keeps the chat's settings apart from the inspector button beside them.
                     ToolbarSpacer(.fixed, placement: .primaryAction)
                 }
         }
+        // The sidebar at its usual width and room for every toolbar item (280 + 520), on the split
+        // view itself, inside the inspector: the inspector's column adds its own width to it, so
+        // the window widens only when the chat would get narrower than this, and shrinks back to
+        // it. Not a minimum on the detail column: SwiftUI counts the inspector's width twice
+        // there, so opening it set the window 600 pt past the closed minimum and held it; nor a
+        // minimum that changes as the inspector opens, which widened the window every time.
+        .frame(minWidth: 800, minHeight: 400)
         // Attached to the split view, so it is full height and present on every screen.
-        .inspector(isPresented: $app.showInspector) {
-            InspectorView(app: app, selectedTaskID: $inspectedTaskID)
+        .modifier(InspectorColumn(window: window))
+    }
+}
+
+/// SwiftUI's inspector on the split view, full height, with its button in its own toolbar over
+/// the column, so it never tints. The pane tabs are in the pane, not the toolbar: there, every
+/// change of tab made AppKit lay the whole toolbar out again.
+private struct InspectorColumn: ViewModifier {
+    @Bindable var window: WindowModel
+
+    func body(content: Content) -> some View {
+        content.inspector(isPresented: $window.showInspector) {
+            InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
                 .toolbar {
                     ToolbarSpacer(.flexible)
-                    ToolbarItem { InspectorToggle(app: app) }
+                    ToolbarItem { InspectorToggle(window: window) }
                 }
         }
-        // Reaches the inspector too, whose task list shows subagents the same way.
-        .environment(\.inspectSubagent, InspectSubagentAction(owner: app) { toolUseId in
-            inspectedTaskID = toolUseId
-            app.openInspector(on: .tasks)
-        })
-        .environment(\.readingWidth, app.transcriptWidth.points)
-        .frame(minWidth: minWidth, minHeight: 400)
-        .onChange(of: app.showInspector) { _, shown in
-            inspectorSettled = false
-            guard shown else { return }
-            Task {
-                try? await Task.sleep(for: .milliseconds(400))
-                if app.showInspector { inspectorSettled = true }
-            }
-        }
-        .task { app.connectAll() }
-    }
-
-    /// The columns' minimums (sidebar 220, detail 520, inspector 260). While the inspector opens
-    /// there is none: AppKit then grows a narrow window along with the inspector's animation,
-    /// where a minimum raised at the same moment jumps it wider first. Once open, the minimum
-    /// replaces the one AppKit leaves behind, which is the window's whole width at that point.
-    private var minWidth: CGFloat? {
-        guard app.showInspector else { return 740 }
-        return inspectorSettled ? 1000 : nil
     }
 }
 
 /// The selected chat, or the New Chat screen. One container, so the detail column is never torn down.
 struct DetailView: View {
-    @Bindable var app: AppModel
+    let window: WindowModel
 
     var body: some View {
         // The column's root keeps one identity. When the root itself changed (the branch, or the
         // chat's `.id`), the column's toolbar items were torn down and rebuilt, fading in on every switch.
         ZStack {
-            if let thread = app.selectedThread, let connection = app.connection {
+            if let thread = window.selectedThread, let connection = window.connection {
                 // The only `.id()` in the shell: a different chat gets its own composer draft and scroll position.
                 ThreadView(thread: thread, connection: connection)
                     .id(thread.id)
             } else {
-                NewChatView(app: app)
+                NewChatView(window: window)
             }
         }
     }
 }
 
 struct NewChatButton: View {
-    let app: AppModel
+    let window: WindowModel
 
     var body: some View {
-        Button {
-            app.newChat()
-        } label: {
-            Image(systemName: "square.and.pencil")
+        // Titled, for the toolbar's Icon and Text mode and its Customize palette.
+        Button("New Chat", systemImage: "square.and.pencil") { window.newChat() }
+            .help("New Chat")
+    }
+}
+
+/// File ▸ New Chat and New Window. New Chat acts on the frontmost window, opening one if there is
+/// none; the first window opened this launch shows the last chat, and later ones New Chat.
+public struct FileCommands: View {
+    let app: AppModel
+    @FocusedValue(\.window) private var window
+    @Environment(\.openWindow) private var openWindow
+
+    public init(app: AppModel) {
+        self.app = app
+    }
+
+    public var body: some View {
+        Button("New Chat") {
+            if let window { window.newChat() } else { openWindow(value: app.newWindowTarget()) }
         }
-        .accessibilityLabel("New Chat")
-        .help("New Chat (⌘N)")
+        .keyboardShortcut("n")
+        Button("New Window") { openWindow(value: app.newWindowTarget()) }
+            .keyboardShortcut("n", modifiers: [.command, .option])
+    }
+}
+
+/// Edit ▸ Find, for the frontmost window's chat: Find… opens the bar over the transcript, and Find
+/// Next and Previous step through what it matched, dimmed on New Chat, where there's nothing to
+/// find; and Search Chats, the sidebar's field.
+public struct FindCommands: View {
+    @FocusedValue(\.window) private var window
+
+    public init() {}
+
+    public var body: some View {
+        let find = window?.selectedThread == nil ? nil : window?.find
+        Menu("Find") {
+            Group {
+                Button("Find…") { find?.show() }
+                    .keyboardShortcut("f")
+                Button("Find Next") { if find?.isPresented == true { find?.next() } else { find?.show() } }
+                    .keyboardShortcut("g")
+                Button("Find Previous") { if find?.isPresented == true { find?.previous() } else { find?.show() } }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+            }
+            .disabled(find == nil)
+            Divider()
+            // The sidebar's search field, as Mail's Mailbox Search is ⌥⌘F.
+            Button("Search Chats") { window?.searchingChats = true }
+                .keyboardShortcut("f", modifiers: [.command, .option])
+                .disabled(window == nil)
+        }
+    }
+}
+
+/// The Help menu: Tether's own documentation, then Claude Code's, which covers what the chats run.
+public struct HelpCommands: View {
+    @Environment(\.openURL) private var openURL
+
+    public init() {}
+
+    public var body: some View {
+        Button("Tether Help") { openURL(URL(string: "https://github.com/AFRUITPIE/tether-app#readme")!) }
+            .keyboardShortcut("?")
+        Button("Claude Code Documentation") { openURL(URL(string: "https://code.claude.com/docs/en/overview")!) }
+    }
+}
+
+/// View ▸ Bigger, Smaller and Actual Size, for the transcript and composer's text.
+public struct TextSizeCommands: View {
+    let app: AppModel
+
+    public init(app: AppModel) {
+        self.app = app
+    }
+
+    public var body: some View {
+        Button("Bigger") { if let next = TextScale.bigger(than: app.textScale) { app.textScale = next } }
+            .keyboardShortcut("+")
+            .disabled(TextScale.bigger(than: app.textScale) == nil)
+        Button("Smaller") { if let next = TextScale.smaller(than: app.textScale) { app.textScale = next } }
+            .keyboardShortcut("-")
+            .disabled(TextScale.smaller(than: app.textScale) == nil)
+        Button("Actual Size") { app.textScale = 1 }
+            .keyboardShortcut("0")
+            .disabled(app.textScale == 1)
     }
 }
 
@@ -119,9 +268,11 @@ public struct TranscriptWidthCommands: View {
     }
 }
 
-/// View-menu items for the shell. Kept here with the views they drive.
+/// View-menu items for the shell. Kept here with the views they drive. The inspector items act on
+/// the frontmost window, and are disabled when there is none.
 public struct ShellViewCommands: View {
     @Bindable var app: AppModel
+    @FocusedValue(\.window) private var window
 
     public init(app: AppModel) {
         self.app = app
@@ -131,58 +282,78 @@ public struct ShellViewCommands: View {
         Picker("Group By", selection: $app.sidebarGrouping) {
             ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
         }
+        // Activity lists by day, whatever the grouping.
+        .disabled(app.appearance.sidebar == .activity)
+        Picker("Show", selection: $app.sidebarFilter) {
+            ForEach(SidebarFilter.allCases, id: \.self) { Text($0.label).tag($0) }
+        }
         Divider()
-        // A shortcut always shows its pane, opening the inspector if needed; ⌥⌘I hides it.
-        Menu("Inspector") {
+        // One of the panes, checked only while it's showing. Choosing one (or its shortcut) always
+        // shows it, opening the inspector if needed; ⌥⌘I hides it.
+        Picker("Inspector", selection: Binding(get: { window?.showInspector == true ? window?.inspectorPane : nil },
+                                               set: { if let pane = $0 { window?.openInspector(on: pane) } })) {
             ForEach(InspectorPane.allCases) { pane in
-                Toggle(pane.label, isOn: Binding(get: { app.isInspecting(pane) },
-                                                 set: { _ in app.openInspector(on: pane) }))
+                Text(pane.label)
+                    .tag(Optional(pane))
                     .keyboardShortcut(pane.shortcut, modifiers: [.command, .option])
             }
         }
-        Button(app.showInspector ? "Hide Inspector" : "Show Inspector") { app.showInspector.toggle() }
+        .disabled(window == nil)
+        Button(window?.showInspector == true ? "Hide Inspector" : "Show Inspector") { window?.showInspector.toggle() }
             .keyboardShortcut("i", modifiers: [.command, .option])
+            .disabled(window == nil)
     }
 }
 
 #if DEBUG
+/// RootView as its scene shows it, with the app-wide values the scene sets.
+private struct RootPreview: View {
+    let window: WindowModel
+    var body: some View { RootView(window: window).appEnvironment(window.app) }
+}
+
 // #Preview bodies are result-builder closures (no `if`/control flow), so the selection is set here.
 @MainActor
-private func rootPreviewApp() -> AppModel {
+private func rootPreviewWindow() -> WindowModel {
     let app = AppModel.sample()
-    if let chat = app.connection?.chats.first { app.open(threadID: chat.id) }
-    return app
+    return .sample(app, threadID: app.connection(app.lastHostID)?.chats.first?.id)
 }
 
 #Preview("RootView") {
-    RootView(app: rootPreviewApp())
+    RootPreview(window: rootPreviewWindow())
         .frame(width: 1100, height: 760)
 }
 
 #Preview("RootView (default new chat)") {
-    RootView(app: .sample())
+    RootPreview(window: .sample())
         .frame(width: 1100, height: 760)
 }
 
 #Preview("RootView (inspector open)") {
-    let app = rootPreviewApp()
-    app.showInspector = true
-    return RootView(app: app)
+    let window = rootPreviewWindow()
+    window.openInspector(on: .tasks)
+    return RootPreview(window: window)
         .frame(width: 1160, height: 760)
 }
 
 #Preview("RootView (wide transcript)") {
-    let app = rootPreviewApp()
-    app.transcriptWidth = .wide
-    return RootView(app: app)
+    let window = rootPreviewWindow()
+    window.app.transcriptWidth = .wide
+    return RootPreview(window: window)
         .frame(width: 1400, height: 760)
 }
 
+#Preview("RootView (bigger text)") {
+    let window = rootPreviewWindow()
+    window.app.textScale = 1.5
+    return RootPreview(window: window)
+        .frame(width: 1100, height: 760)
+}
+
 // The narrowest window without the inspector: every toolbar item must still fit.
-// The inspector preview uses the wider minimum that TetherApp applies while it is open.
 #Preview("RootView (narrow window)") {
-    RootView(app: rootPreviewApp())
-        .frame(width: 900, height: 600)
+    RootPreview(window: rootPreviewWindow())
+        .frame(width: 800, height: 600)
 }
 
 #endif

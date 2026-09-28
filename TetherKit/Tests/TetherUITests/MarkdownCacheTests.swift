@@ -64,6 +64,81 @@ struct MarkdownCacheTests {
         #expect(grown.blocks(for: text + " three").map(\.block) == MarkdownView.parse(text + " three"))
     }
 
+    /// A page of replies parsed ahead of its rows: a row made for one then reuses that parse.
+    @Test func prewarmedMessagesReuseTheirParse() async {
+        let texts = (0..<3).map { "# Reply \($0) \(UUID())\n\nSome `code` and **bold**.\n\n- one\n- two" }
+        await MarkdownCache.prewarm(texts + [texts[0]])
+        for text in texts {
+            let known = MarkdownCache.recent.blocks(for: text)
+            #expect(known?.map(\.block) == MarkdownView.parse(text))
+            #expect(MarkdownCache().blocks(for: text).map(\.id) == known?.map(\.id))
+        }
+    }
+
+    /// Each length of a streaming reply would be a key never looked up again; the finished reply is
+    /// the one worth keeping.
+    @Test func aStreamingReplyIsRememberedOnceItHasArrived() {
+        let text = "Streaming \(UUID()) reply, arriving a piece at a time."
+        let cache = MarkdownCache()
+        _ = cache.blocks(for: String(text.prefix(12)), streaming: true)
+        _ = cache.blocks(for: text, streaming: true)
+        #expect(!MarkdownCache.recent.contains(String(text.prefix(12))))
+        #expect(!MarkdownCache.recent.contains(text))
+        _ = cache.blocks(for: text, streaming: false)
+        #expect(MarkdownCache.recent.contains(text))
+    }
+
+    @Test func recentParsesKeepToTheirBudgetAndDropTheLeastRecentlyUsed() {
+        let recent = RecentParses(maxCount: 10, maxBytes: 1_000)
+        let texts = (0..<4).map { String(repeating: "\($0)", count: 200) + "!" } // 201 bytes each
+        for text in texts { recent.remember(text, []) }
+        #expect(recent.count == 4)
+        _ = recent.blocks(for: texts[0]) // used, so the second is now the oldest
+        recent.remember(String(repeating: "x", count: 201), [])
+        recent.remember(String(repeating: "y", count: 201), [])
+        #expect(recent.bytes <= 1_000)
+        #expect(recent.contains(texts[0]))
+        #expect(!recent.contains(texts[1]))
+        // Too big for the budget to be worth it.
+        recent.remember(String(repeating: "z", count: 400), [])
+        #expect(!recent.contains(String(repeating: "z", count: 400)))
+
+        let counted = RecentParses(maxCount: 2, maxBytes: 1_000)
+        for text in ["a", "b", "c"] { counted.remember(text, []) }
+        #expect(counted.count == 2)
+        #expect(!counted.contains("a"))
+    }
+
+    /// Text with no inline syntax skips the parser; it must come out exactly as the parser has it.
+    @Test func plainTextSkipsTheParserUnchanged() throws {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        let samples = [
+            "Plain words, with punctuation. (1 + 2) = 3; {x} #tag %d ^ | ' \" ?", "日本語のテキスト、句読点。",
+            "emoji 👍🏽 and é and e\u{301}", "a -- b ... c — d", "  lead", "trail  ", "tab\there", "x  \ny",
+            "1. not a list", "# not a heading", "- not a bullet", "a\u{00A0}b", "example.com/path", "a.b.com",
+            // With syntax: parsed as before.
+            "mail a@b.com now", "see https://apple.com", "foo www.bar.com", "x\r\ny", "a & b", "**bold** and _it_",
+        ]
+        for text in samples {
+            let parsed = try AttributedString(markdown: text, options: options)
+            #expect(MarkdownCache.inline(text) == parsed, "\(text.debugDescription)")
+        }
+        #expect(!MarkdownCache.mayHaveInlineSyntax("Just words."))
+        #expect(MarkdownCache.mayHaveInlineSyntax("Visit WWW.example.com"))
+        #expect(MarkdownCache.mayHaveInlineSyntax("a `b`"))
+    }
+
+    /// Lines that start like a heading or a list item but aren't one stay in their paragraph.
+    @Test func lookalikeLinesParseAsBefore() {
+        let text = "#hashtag\n####### seven\n-dash\n12 apples\n3.5 kg\n  * star item\n½. half\n## Title"
+        #expect(MarkdownView.parse(text) == [
+            .paragraph("#hashtag ####### seven -dash 12 apples 3.5 kg"),
+            .bullet(indent: 1, marker: "•", text: "star item"),
+            .bullet(indent: 0, marker: "½.", text: "half"),
+            .heading(level: 2, text: "Title"),
+        ])
+    }
+
     @Test func replacedTextIsParsedAfresh() {
         let cache = MarkdownCache()
         let long = (0..<4).map { PerformanceTranscript.markdown(section: $0) }.joined(separator: "\n\n")

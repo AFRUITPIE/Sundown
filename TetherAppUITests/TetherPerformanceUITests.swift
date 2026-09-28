@@ -6,8 +6,10 @@ import XCTest
 /// shaped like real work (bursts of tool calls between Markdown answers), with nothing else running.
 ///
 /// Run from the test navigator and read the hitch rate in the test report; Apple counts 10 ms/s or
-/// less as good. "Profile" on a test opens that same run in Instruments. CI skips this class: hitch
-/// numbers from a shared virtual machine mean nothing.
+/// less as good. Switching chats and streaming also report the app's CPU time, memory and disk
+/// writes, and how long its signposted intervals took (TetherKit's `Signposts`); launch and idle
+/// have tests of their own. "Profile" on a test opens that same run in Instruments. CI skips this
+/// class: numbers from a shared virtual machine mean nothing.
 final class TetherPerformanceUITests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -62,12 +64,24 @@ final class TetherPerformanceUITests: XCTestCase {
         settle()
     }
 
-    /// Hitches in the app's process while `block` runs, five times over.
+    /// Hitches in the app's process while `block` runs, five times over, and any `more` metrics.
     @MainActor
-    private func measureHitches(_ app: XCUIApplication, _ block: () -> Void) {
+    private func measureHitches(_ app: XCUIApplication, also more: [any XCTMetric] = [], _ block: () -> Void) {
         let options = XCTMeasureOptions()
         options.iterationCount = 5
-        measure(metrics: [XCTHitchMetric(application: app)], options: options, block: block)
+        measure(metrics: [XCTHitchMetric(application: app)] + more, options: options, block: block)
+    }
+
+    /// What the app's process used while the block ran: CPU time, the memory it kept, and what it
+    /// wrote to disk.
+    @MainActor
+    private func resources(_ app: XCUIApplication) -> [any XCTMetric] {
+        [XCTCPUMetric(application: app), XCTMemoryMetric(application: app), XCTStorageMetric(application: app)]
+    }
+
+    /// The time the app spent in one of its signposted intervals (TetherKit's `Signposts`).
+    private func signpost(_ category: String, _ name: String) -> XCTOSSignpostMetric {
+        XCTOSSignpostMetric(subsystem: "com.haydenhong.Tether", category: category, name: name)
     }
 
     /// Waits for an animation to finish without holding the main thread of the app.
@@ -116,7 +130,8 @@ final class TetherPerformanceUITests: XCTestCase {
     func testSwitchingChats() {
         let app = launch()
         let sidebar = app.outlines["Sidebar"]
-        measureHitches(app) {
+        // The other two chats aren't live in the fixture's daemon, so each visit reads them again.
+        measureHitches(app, also: resources(app) + [signpost("PointsOfInterest", "Chat Switch"), signpost("Transcript", "History Load")]) {
             sidebar.staticTexts["Performance chat 1"].click()
             settle()
             sidebar.staticTexts["Performance chat 2"].click()
@@ -154,11 +169,45 @@ final class TetherPerformanceUITests: XCTestCase {
         let app = launch()
         let input = app.descendants(matching: .any)["composer.input"]
         let stop = app.buttons["Stop"]
-        measureHitches(app) {
+        measureHitches(app, also: resources(app) + [signpost("Transcript", "Reply")]) {
             input.click()
             input.typeText("Keep going\r")
             XCTAssertTrue(stop.waitForExistence(timeout: 5))
             XCTAssertTrue(stop.waitForNonExistence(timeout: 60))
+        }
+    }
+
+    /// From launch until the app responds, and until its window's chat has loaded (the Launch
+    /// signpost), onto the long chat.
+    @MainActor
+    func testLaunch() {
+        let app = XCUIApplication()
+        app.launchEnvironment["TETHER_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["TETHER_UI_TEST_SCENARIO"] = "performance"
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+        self.app = app
+        let options = XCTMeasureOptions()
+        options.iterationCount = 5
+        measure(metrics: [XCTApplicationLaunchMetric(waitUntilResponsive: true), signpost("PointsOfInterest", "Launch")], options: options) {
+            app.launch()
+            // Time for the chat to load. Not a query: each one snapshots the app on its main thread,
+            // which would slow the launch being measured.
+            settle(3)
+            app.terminate()
+        }
+    }
+
+    /// The app left alone with the long chat open: anything that keeps working with nothing to do (a
+    /// timer, an animation, an observation loop) shows here. Nothing queries the app while it's
+    /// measured, which would wake it.
+    @MainActor
+    func testIdle() {
+        let app = launch()
+        settle(2)
+        let options = XCTMeasureOptions()
+        options.iterationCount = 5
+        measure(metrics: resources(app), options: options) {
+            settle(10)
         }
     }
 }

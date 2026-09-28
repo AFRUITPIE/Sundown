@@ -11,17 +11,21 @@ struct SidebarSectionsTests {
     private var calendar: Calendar {
         var c = Calendar(identifier: .gregorian)
         c.timeZone = TimeZone(identifier: "UTC")!
+        c.locale = Locale(identifier: "en_US")
         return c
     }
 
     private func chat(_ id: String, _ title: String = "Chat", cwd: String? = "/Users/hayden/Code/tether-app",
-                      daysAgo: Double = 0, hoursAgo: Double = 0) -> SidebarChat {
+                      daysAgo: Double = 0, hoursAgo: Double = 0,
+                      pinned: Bool = false, archived: Bool = false, needsYou: Bool = false) -> SidebarChat {
         SidebarChat(id: id, title: title, cwd: cwd,
-                    updatedAt: (now.timeIntervalSince1970 - daysAgo * 86_400 - hoursAgo * 3_600) * 1000)
+                    updatedAt: (now.timeIntervalSince1970 - daysAgo * 86_400 - hoursAgo * 3_600) * 1000,
+                    isPinned: pinned, isArchived: archived, needsYou: needsYou)
     }
 
-    private func sections(_ chats: [SidebarChat], _ grouping: SidebarGrouping = .date, search: String = "") -> [SidebarSection] {
-        sidebarSections(chats: chats, grouping: grouping, search: search, now: now, calendar: calendar)
+    private func sections(_ chats: [SidebarChat], _ grouping: SidebarGrouping = .date,
+                          style: Appearance.SidebarStyle = .chats, search: String = "") -> [SidebarSection] {
+        sidebarSections(chats: chats, grouping: grouping, style: style, search: search, now: now, calendar: calendar)
     }
 
     // MARK: date buckets
@@ -104,7 +108,7 @@ struct SidebarSectionsTests {
             chat("some", cwd: "/Users/hayden/Code/tether-app", daysAgo: 2),
         ], .directory)
 
-        #expect(result.map(\.title) == ["No Folder", "tether-app"])
+        #expect(result.map(\.title) == ["No Directory", "tether-app"])
         #expect(result[0].help == nil)
     }
 
@@ -144,10 +148,135 @@ struct SidebarSectionsTests {
         #expect(result[0].chats[0].title == "First")
     }
 
+    // MARK: pinned
+
+    @Test func pinnedChatsComeFirstMostRecentFirstAndAreNotRepeated() {
+        let result = sections([
+            chat("old-pin", daysAgo: 40, pinned: true),
+            chat("today", hoursAgo: 1),
+            chat("new-pin", hoursAgo: 2, pinned: true),
+            chat("yesterday", daysAgo: 1),
+        ])
+
+        #expect(result.map(\.title) == ["Pinned", "Today", "Yesterday"])
+        #expect(result[0].id == SidebarSection.pinnedID)
+        #expect(result[0].chats.map(\.id) == ["new-pin", "old-pin"])
+        #expect(result[1].chats.map(\.id) == ["today"])
+        // Every chat once: the outline list traps on two rows with one id.
+        #expect(result.flatMap { $0.chats.map(\.id) }.count == 4)
+    }
+
+    @Test func pinnedStaysOnTopWhenGroupedByFolder() {
+        let result = sections([
+            chat("server", cwd: "/Users/hayden/Code/tether-server", hoursAgo: 1),
+            chat("pinned-app", cwd: "/Users/hayden/Code/tether-app", daysAgo: 3, pinned: true),
+            chat("app", cwd: "/Users/hayden/Code/tether-app", daysAgo: 5),
+        ], .directory)
+
+        #expect(result.map(\.title) == ["Pinned", "tether-server", "tether-app"])
+        #expect(result[0].folder == nil)
+        #expect(result[2].chats.map(\.id) == ["app"])
+    }
+
+    @Test func aFolderWhollyPinnedHasNoSectionOfItsOwn() {
+        let result = sections([
+            chat("pinned-app", cwd: "/Users/hayden/Code/tether-app", hoursAgo: 1, pinned: true),
+            chat("server", cwd: "/Users/hayden/Code/tether-server", daysAgo: 2),
+        ], .directory)
+
+        #expect(result.map(\.title) == ["Pinned", "tether-server"])
+    }
+
+    @Test func anArchivedChatLeavesPinnedWhileArchived() {
+        let result = sections([
+            chat("archived-pin", daysAgo: 1, pinned: true, archived: true),
+            chat("pin", hoursAgo: 3, pinned: true),
+        ])
+
+        #expect(result.map(\.title) == ["Pinned", "Yesterday"])
+        #expect(result[0].chats.map(\.id) == ["pin"])
+        #expect(result[1].chats.map(\.id) == ["archived-pin"])
+    }
+
+    @Test func searchAppliesToPinnedToo() {
+        let result = sections([
+            chat("pin", "Unrelated", hoursAgo: 1, pinned: true),
+            chat("match", "Sidebar", daysAgo: 2),
+        ], search: "sidebar")
+
+        #expect(result.map(\.title) == ["Previous 7 Days"])
+    }
+
+    // MARK: folders
+
+    @Test func folderSectionsCarryTheirFolderForTheHeadersActions() {
+        let result = sections([
+            chat("app", cwd: "/Users/hayden/Code/tether-app", hoursAgo: 1),
+            chat("none", cwd: nil, daysAgo: 2),
+        ], .directory)
+
+        #expect(result.map(\.folder) == ["/Users/hayden/Code/tether-app", nil])
+        #expect(sections([chat("app", hoursAgo: 1)]).allSatisfy { $0.folder == nil })
+    }
+
+    // MARK: activity
+
+    @Test func activityListsWhatNeedsYouFirstThenEveryDay() {
+        let result = sections([
+            chat("today", hoursAgo: 1),
+            chat("waiting", daysAgo: 3, needsYou: true),
+            chat("yesterday", daysAgo: 1),
+            chat("saturday", daysAgo: 2),
+            chat("tuesday", daysAgo: 6),
+            chat("last-monday", daysAgo: 7),
+            chat("last-year", daysAgo: 300),
+        ], style: .activity)
+
+        #expect(result.map(\.title) == ["Needs You", "Today", "Yesterday", "Saturday", "Tuesday",
+                                         "September 14", "November 25, 2025"])
+        #expect(result[0].id == SidebarSection.needsYouID)
+        #expect(result[0].chats.map(\.id) == ["waiting"])
+        #expect(result.flatMap { $0.chats.map(\.id) }.count == 7)
+    }
+
+    @Test func activityGroupsChatsOfOneDayTogetherMostRecentFirst() {
+        let result = sections([
+            chat("morning", daysAgo: 2, hoursAgo: 4),
+            chat("evening", daysAgo: 2),
+            chat("waiting-a", hoursAgo: 5, needsYou: true),
+            chat("waiting-b", hoursAgo: 1, needsYou: true),
+        ], style: .activity)
+
+        #expect(result.map(\.title) == ["Needs You", "Saturday"])
+        #expect(result[0].chats.map(\.id) == ["waiting-b", "waiting-a"])
+        #expect(result[1].chats.map(\.id) == ["evening", "morning"])
+        #expect(Set(result.map(\.id)).count == result.count)
+    }
+
+    /// Activity marks a pin on the row rather than moving the chat, and doesn't group by folder.
+    @Test func activityHasNoPinnedSectionAndIgnoresTheGrouping() {
+        let result = sections([
+            chat("pin", daysAgo: 1, pinned: true),
+            chat("server", cwd: "/Users/hayden/Code/tether-server", hoursAgo: 1),
+        ], .directory, style: .activity)
+
+        #expect(result.map(\.title) == ["Today", "Yesterday"])
+        #expect(result.allSatisfy { $0.folder == nil })
+        #expect(result[1].chats.first?.isPinned == true)
+    }
+
+    @Test func aChatAheadOfOurClockIsToday() {
+        let result = sections([chat("future", hoursAgo: -30), chat("now", hoursAgo: 1)], style: .activity)
+
+        #expect(result.map(\.title) == ["Today"])
+        #expect(result[0].chats.map(\.id) == ["future", "now"])
+    }
+
     // MARK: nothing to group
 
     @Test func noChatsMeansNoSections() {
         #expect(sections([]).isEmpty)
         #expect(sections([], .directory).isEmpty)
+        #expect(sections([], style: .activity).isEmpty)
     }
 }

@@ -27,6 +27,12 @@ struct TranscriptRowsTests {
         #expect(calls.map(\.id) == ["t1", "t2", "t3"])
     }
 
+    /// Settings ▸ Advanced ▸ Tool Calls ▸ Every Call: every call on a row of its own.
+    @Test func withoutGroupingEveryCallIsItsOwnRow() {
+        let rows = foldTranscriptRows([message("m1"), call("t1"), call("t2"), call("t3"), message("m2")], grouping: false)
+        #expect(rows.map(\.id) == ["m1", "t1", "t2", "t3", "m2"])
+    }
+
     @Test func runningCallBreaksTheGroup() {
         let rows = foldTranscriptRows([call("t1"), call("t2", status: .running), call("t3")])
         // t1 alone, t2 alone (running), t3 alone — none of these runs has 2+ members.
@@ -43,9 +49,46 @@ struct TranscriptRowsTests {
         #expect(running.id == "t3" && running.status == .running)
     }
 
-    @Test func failedAndDeniedCallsBreakTheGroup() {
-        let rows = foldTranscriptRows([call("t1"), call("t2", status: .failed), call("t3"), call("t4", status: .denied), call("t5")])
-        #expect(rows.count == 5)
+    /// A call that failed, was denied or stopped is finished work too: it folds into the run, which
+    /// says quietly how many failed.
+    @Test func failedDeniedAndStoppedCallsJoinTheRun() {
+        let rows = foldTranscriptRows([call("t1"), call("t2", status: .failed), call("t3"),
+                                       call("t4", status: .denied), call("t5", status: .interrupted)])
+        #expect(rows.map(\.id) == ["group-t1"])
+        guard case .toolGroup(let calls) = rows[0] else { Issue.record("expected one group"); return }
+        #expect(calls.count == 5)
+    }
+
+    private func prompt(_ id: String, at ms: Double) -> Item {
+        .userMessage(.init(id: id, createdAt: ms, content: [.text(.init(text: "go"))]))
+    }
+
+    private func reply(_ id: String, at ms: Double) -> Item {
+        .agentMessage(.init(id: id, createdAt: ms, text: "done"))
+    }
+
+    /// Worked For: a finished turn keeps its prompt and last reply, and folds what came between,
+    /// timed from the prompt to that reply.
+    @Test func workedForFoldsAFinishedTurnsWork() {
+        let items = [prompt("p1", at: 1_000), message("m1"), call("t1"), call("t2", status: .failed), reply("r1", at: 61_000)]
+        let rows = foldTranscriptRows(items, folding: .workedFor, lastTurnRunning: false)
+        #expect(rows.map(\.id) == ["p1", "work-p1", "r1"])
+        guard case .turnWork(_, let work, let duration) = rows[1] else { Issue.record("expected the work"); return }
+        #expect(work.map(\.id) == ["m1", "group-t1"])
+        #expect(duration == 60_000)
+    }
+
+    /// The running turn isn't folded yet; one with no reply after its work, or no work, never is.
+    @Test func workedForLeavesRunningAndReplylessTurnsAlone() {
+        let running = [prompt("p1", at: 0), call("t1"), reply("r1", at: 5), prompt("p2", at: 10), call("t2"), reply("r2", at: 20)]
+        let rows = foldTranscriptRows(running, folding: .workedFor, lastTurnRunning: true)
+        #expect(rows.map(\.id) == ["p1", "work-p1", "r1", "p2", "t2", "r2"])
+
+        let noReply = [prompt("p1", at: 0), call("t1"), call("t2")]
+        #expect(foldTranscriptRows(noReply, folding: .workedFor, lastTurnRunning: false).map(\.id) == ["p1", "group-t1"])
+
+        let noWork = [prompt("p1", at: 0), message("m1"), reply("r1", at: 5)]
+        #expect(foldTranscriptRows(noWork, folding: .workedFor, lastTurnRunning: false).map(\.id) == ["p1", "m1", "r1"])
     }
 
     @Test func todoWriteNeverGroups() {

@@ -15,41 +15,54 @@ struct PendingRequestView: View {
             case .planApprove(let p): PlanPrompt(params: p) { thread.answer(pending, with: $0) }
             case .elicitationRequest(let e): ElicitationPrompt(params: e) { thread.answer(pending, with: $0) }
             case .dialogRequest(let d):
-                PromptCard(title: "Claude needs a decision", symbol: "questionmark.circle") {
-                    Text(d.dialogKind).font(.callout.monospaced())
-                    Text(d.payload.pretty).font(.caption.monospaced()).lineLimit(10)
+                PromptCard(title: "Claude Needs a Decision", symbol: "questionmark.circle") {
+                    Text(d.dialogKind).scaledFont(.callout, design: .monospaced)
+                    Text(PrettyInput.text(for: pending.id, d.payload)).scaledFont(.caption, design: .monospaced).lineLimit(10)
                     HStack {
                         Spacer()
                         Button("Dismiss") { thread.answer(pending, with: ["behavior": "cancelled"]) }
                     }
                 }
             case .unknown(let method, _):
-                PromptCard(title: "Unsupported request", symbol: "questionmark.circle") {
-                    Text(method).font(.callout.monospaced())
+                PromptCard(title: "Unsupported Request", symbol: "questionmark.circle") {
+                    Text(method).scaledFont(.callout, design: .monospaced)
                 }
             }
         }
     }
 }
 
+/// A request that waits on an answer: a heading, what's asked, and the answers. VoiceOver goes to
+/// its heading when it arrives, since nothing else can happen in the chat until it's answered.
 struct PromptCard<Content: View>: View {
     let title: String
     let symbol: String
     var tint: Color = .orange
     @ViewBuilder var content: Content
+    @AccessibilityFocusState private var headingFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(title, systemImage: symbol).font(.headline).foregroundStyle(tint)
+            Label(title, systemImage: symbol).scaledFont(.headline).foregroundStyle(tint)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityFocused($headingFocused)
             content
         }
+        .accessibilityElement(children: .contain)
+        .onAppear { headingFocused = true }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular.tint(tint.opacity(0.12)), in: .rect(cornerRadius: 24))
+        .glassEffect(.regular.tint(tint.opacity(0.12)), in: .rect(cornerRadius: Layout.cardCornerRadius))
+        // Comes out of the glass around it, and goes back into it, as it's asked and answered.
+        .glassEffectTransition(.materialize)
     }
 }
 
 struct PermissionPrompt: View {
+    @Environment(\.composerHasFocus) private var composerHasFocus
+    /// Return answers the card, except while the message field has focus: a default button is the
+    /// whole window's, and Return in a draft would otherwise press it.
+    private var defaultKey: KeyboardShortcut? { composerHasFocus ? nil : .defaultAction }
     let params: PermissionRequestParams
     let respond: (JSONValue) -> Void
     @State private var denyMessage = ""
@@ -61,11 +74,11 @@ struct PermissionPrompt: View {
 
     var body: some View {
         PromptCard(title: headline, symbol: "hand.raised") {
-            if let d = params.description { Text(d).font(.callout).foregroundStyle(.secondary) }
+            if let d = params.description { Text(d).scaledFont(.callout).foregroundStyle(.secondary) }
             detail
-            if let r = params.decisionReason { Text(r).font(.caption).foregroundStyle(.secondary) }
+            if let r = params.decisionReason { Text(r).scaledFont(.caption).foregroundStyle(.secondary) }
             if showingDeny {
-                TextField("Tell Claude what to do instead (optional)", text: $denyMessage, axis: .vertical)
+                TextField("What to Do Instead (Optional)", text: $denyMessage, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(deny)
             }
@@ -73,24 +86,35 @@ struct PermissionPrompt: View {
                 // Exactly one default button, so Return always does something.
                 if !showingDeny {
                     Button("Deny…") { showingDeny = true }
-                        .keyboardShortcut(denyIsDefault ? .defaultAction : nil)
+                        .keyboardShortcut(denyIsDefault ? defaultKey : nil)
                 } else {
-                    Button("Deny", action: deny).keyboardShortcut(.defaultAction)
+                    Button("Deny", action: deny).keyboardShortcut(defaultKey)
                 }
                 Spacer()
                 if params.suppressAlwaysAllowRule != true {
-                    Menu("Always allow") {
-                        Button("For this session") { respond(["decision": "allow", "scope": "session"]) }
-                        Button("For this project (shared)") { respond(["decision": "allow", "scope": "project"]) }
-                        Button("For this project (just me)") { respond(["decision": "allow", "scope": "local"]) }
-                        Button("Everywhere (user settings)") { respond(["decision": "allow", "scope": "user"]) }
+                    // Where each rule is written, as the item's subtitle.
+                    Menu("Always Allow") {
+                        Button("For This Session") { respond(["decision": "allow", "scope": "session"]) }
+                        Button { respond(["decision": "allow", "scope": "project"]) } label: {
+                            Text("For This Project")
+                            Text("Shared, in .claude/settings.json")
+                        }
+                        Button { respond(["decision": "allow", "scope": "local"]) } label: {
+                            Text("For This Project, Just Me")
+                            Text("In .claude/settings.local.json")
+                        }
+                        Button { respond(["decision": "allow", "scope": "user"]) } label: {
+                            Text("Everywhere")
+                            Text("In your user settings")
+                        }
                     }
-                    .fixedSize()
+                    // Its title whole; the row gives way around it.
+                    .fixedSize(horizontal: true, vertical: false)
                 }
                 // Prominence follows the default key (two branches: the styles are different types).
                 if allowIsDefault {
                     Button("Allow") { respond(["decision": "allow", "scope": "once"]) }
-                        .keyboardShortcut(.defaultAction)
+                        .keyboardShortcut(defaultKey)
                         .buttonStyle(.borderedProminent)
                 } else {
                     Button("Allow") { respond(["decision": "allow", "scope": "once"]) }
@@ -109,13 +133,13 @@ struct PermissionPrompt: View {
         if let cmd = input.string("command") {
             CodeBlock(code: "$ " + cmd, language: "bash")
         } else if let old = input.string("old_string"), let new = input.string("new_string") {
-            Text((input.string("file_path") ?? "").abbreviatingHome).font(.caption.monospaced())
+            Text((input.string("file_path") ?? "").abbreviatingHome).scaledFont(.caption, design: .monospaced)
             DiffView(old: old, new: new, lineLimit: 10)
         } else if let content = input.string("content"), let path = input.string("file_path") {
-            Text(path.abbreviatingHome).font(.caption.monospaced())
+            Text(path.abbreviatingHome).scaledFont(.caption, design: .monospaced)
             CodeBlock(code: content, language: path.lastPathComponent, lineLimit: 10)
         } else if input.objectValue?.isEmpty == false {
-            CodeBlock(code: input.pretty, language: params.toolName, lineLimit: 10)
+            CodeBlock(code: PrettyInput.text(for: params.requestId, input), language: params.toolName, lineLimit: 10)
         }
     }
 
@@ -125,16 +149,20 @@ struct PermissionPrompt: View {
 }
 
 struct QuestionPrompt: View {
+    @Environment(\.composerHasFocus) private var composerHasFocus
+    /// Return answers the card, except while the message field has focus: a default button is the
+    /// whole window's, and Return in a draft would otherwise press it.
+    private var defaultKey: KeyboardShortcut? { composerHasFocus ? nil : .defaultAction }
     let params: QuestionRequestParams
     let respond: (JSONValue) -> Void
     @State private var selections: [String: Set<String>] = [:]
     @State private var other: [String: String] = [:]
 
     var body: some View {
-        PromptCard(title: "Claude has a question", symbol: "questionmark.bubble", tint: .blue) {
+        PromptCard(title: "Claude Has a Question", symbol: "questionmark.bubble", tint: .blue) {
             ForEach(params.questions, id: \.question) { q in
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(q.question).font(.body.weight(.medium))
+                    Text(q.question).scaledFont(.body, weight: .medium)
                     if q.multiSelect {
                         ForEach(q.options, id: \.label) { o in
                             Toggle(isOn: Binding(
@@ -164,7 +192,7 @@ struct QuestionPrompt: View {
                         .pickerStyle(.radioGroup)
                         .labelsHidden() // the question is already the heading above
                         let chosen = q.options.first { selections[q.question, default: []].contains($0.label) }
-                        if let chosen { Text(chosen.description).font(.caption).foregroundStyle(.secondary) }
+                        if let chosen { Text(chosen.description).scaledFont(.caption).foregroundStyle(.secondary) }
                     }
                     TextField(q.multiSelect ? "Something else (adds to the choices above)" : "Something else",
                               text: Binding(get: { other[q.question, default: ""] },
@@ -179,7 +207,7 @@ struct QuestionPrompt: View {
             HStack {
                 Button("Skip") { respond(["decision": "decline"]) }
                 Spacer()
-                Button("Submit", action: submit).buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(!complete)
+                Button("Submit", action: submit).buttonStyle(.borderedProminent).keyboardShortcut(defaultKey).disabled(!complete)
             }
         }
     }
@@ -205,31 +233,58 @@ struct QuestionPrompt: View {
 }
 
 struct PlanPrompt: View {
+    @Environment(\.composerHasFocus) private var composerHasFocus
+    /// Return answers the card, except while the message field has focus: a default button is the
+    /// whole window's, and Return in a draft would otherwise press it.
+    private var defaultKey: KeyboardShortcut? { composerHasFocus ? nil : .defaultAction }
     let params: PlanApproveParams
     let respond: (JSONValue) -> Void
     @State private var feedback = ""
 
     var body: some View {
-        PromptCard(title: "Ready to proceed with this plan?", symbol: "list.bullet.clipboard", tint: .purple) {
-            ScrollView {
-                MarkdownView(text: params.plan).frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 280)
-            TextField("Feedback to keep planning (optional)", text: $feedback, axis: .vertical)
+        PromptCard(title: "Ready to Proceed with This Plan?", symbol: "list.bullet.clipboard", tint: .purple) {
+            ScrollView { plan }
+                .frame(maxHeight: 280)
+            TextField("Feedback (Optional)", text: $feedback, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
-            HStack {
-                Button("Keep planning") { respond(["decision": "reject", "feedback": .string(feedback)]) }
-                Spacer()
-                Button("Approve, ask before edits") { respond(["decision": "approve", "permissionMode": "default"]) }
-                Button("Approve, auto-accept edits") { respond(["decision": "approve", "permissionMode": "acceptEdits"]) }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+            // In a row while they fit; stacked at the trailing edge in a narrow window or at a
+            // bigger text size, rather than truncated.
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    keepPlanning
+                    Spacer()
+                    approve
+                }
+                VStack(alignment: .trailing) {
+                    approve
+                    keepPlanning
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
+    }
+
+    private var plan: some View {
+        MarkdownView(text: params.plan).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var keepPlanning: some View {
+        Button("Keep Planning") { respond(["decision": "reject", "feedback": .string(feedback)]) }
+    }
+
+    @ViewBuilder private var approve: some View {
+        Button("Approve, Ask Before Edits") { respond(["decision": "approve", "permissionMode": "default"]) }
+        Button("Approve, Accept Edits") { respond(["decision": "approve", "permissionMode": "acceptEdits"]) }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(defaultKey)
     }
 }
 
 struct ElicitationPrompt: View {
+    @Environment(\.composerHasFocus) private var composerHasFocus
+    /// Return answers the card, except while the message field has focus: a default button is the
+    /// whole window's, and Return in a draft would otherwise press it.
+    private var defaultKey: KeyboardShortcut? { composerHasFocus ? nil : .defaultAction }
     let params: ElicitationRequestParams
     let respond: (JSONValue) -> Void
     @State private var values: [String: String] = [:]
@@ -239,15 +294,15 @@ struct ElicitationPrompt: View {
     }
 
     var body: some View {
-        PromptCard(title: "\(params.serverName) needs input", symbol: "puzzlepiece.extension", tint: .teal) {
-            Text(params.message).font(.callout)
+        PromptCard(title: "\(params.serverName) Needs Input", symbol: "puzzlepiece.extension", tint: .teal) {
+            Text(params.message).scaledFont(.callout)
             if let urlString = params.url, let url = URL(string: urlString) {
-                Link(urlString, destination: url).font(.callout)
+                Link(urlString, destination: url).scaledFont(.callout)
             }
             ForEach(fields, id: \.key) { f in
                 field(f)
                 if let d = f.schema.string("description") {
-                    Text(d).font(.caption).foregroundStyle(.secondary)
+                    Text(d).scaledFont(.caption).foregroundStyle(.secondary)
                 }
             }
             HStack {
@@ -258,7 +313,8 @@ struct ElicitationPrompt: View {
                     for f in fields {
                         let v = values[f.key, default: ""]
                         switch f.schema.string("type") {
-                        case "number", "integer": content[f.key] = Double(v).map { .number($0) } ?? .string(v)
+                        case "number": content[f.key] = Self.number(v).map { .number($0) }
+                        case "integer": content[f.key] = Self.number(v).map { .number($0.rounded()) }
                         case "boolean": content[f.key] = .bool(["true", "yes", "1"].contains(v.lowercased()))
                         default: content[f.key] = .string(v)
                         }
@@ -266,14 +322,15 @@ struct ElicitationPrompt: View {
                     respond(["action": "accept", "content": .object(content)])
                 }
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(defaultKey)
                 .disabled(!complete)
             }
         }
         // Seeded so `complete` can tell an untouched required field from one left off.
         .onAppear {
             for f in fields where values[f.key] == nil {
-                values[f.key] = f.schema.string("type") == "boolean" ? "false" : (f.schema["default"]?.stringValue ?? "")
+                values[f.key] = f.schema.string("type") == "boolean" ? "false"
+                    : (f.schema["default"]?.stringValue ?? f.schema["default"]?.doubleValue?.formatted(.number.grouping(.never)) ?? "")
             }
         }
     }
@@ -284,7 +341,17 @@ struct ElicitationPrompt: View {
     }
 
     private var complete: Bool {
-        required.allSatisfy { !values[$0, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        required.allSatisfy { key in
+            let type = fields.first { $0.key == key }?.schema.string("type")
+            if type == "number" || type == "integer" { return Self.number(values[key, default: ""]) != nil }
+            return !values[key, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    /// A number as the reader writes it ("1,5" in French), or as written plainly.
+    static func number(_ text: String) -> Double? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        return (try? Double(trimmed, format: .number)) ?? Double(trimmed)
     }
 
     /// The control that matches the declared type.
@@ -296,6 +363,8 @@ struct ElicitationPrompt: View {
             Toggle(title, isOn: Binding(get: { values[f.key] == "true" },
                                         set: { values[f.key] = $0 ? "true" : "false" }))
         case "number", "integer":
+            // Text, read as a number when sent: a value binding took what was typed only once Return
+            // or Tab committed it, so clicking Continue dropped it.
             TextField(title, text: text, prompt: Text("Number"))
                 .textFieldStyle(.roundedBorder)
                 .monospacedDigit()
@@ -377,3 +446,8 @@ private func params(_ request: ServerRequest) -> ElicitationRequestParams {
 }
 
 #endif
+
+extension EnvironmentValues {
+    /// Whether the chat's message field has focus, for the prompt cards over it.
+    @Entry var composerHasFocus = false
+}

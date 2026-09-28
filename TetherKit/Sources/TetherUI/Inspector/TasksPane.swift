@@ -2,7 +2,9 @@ import SwiftUI
 import TetherKit
 
 /// The subagents and workflows this chat has started. Reads `thread.taskEntries`, which is stored
-/// and rebuilt only on task events, so streamed message deltas never touch this pane.
+/// and rebuilt only on task events, so streamed message deltas never touch this pane. A task's
+/// detail replaces the list, with its own back button: not a `NavigationStack`, whose Back button
+/// went to the window's toolbar, over the chat, rather than over the pane.
 struct TasksPane: View {
     let thread: ThreadModel
     let connection: HostConnection
@@ -42,13 +44,19 @@ struct TaskRow: View {
                 Text(statusText).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            if SubagentLifecycle.isRunning(call: entry.call, task: entry.task) {
-                ProgressView().controlSize(.small)
-            } else {
-                Image(systemName: statusSymbol).foregroundStyle(.secondary)
+            // The status line says it in words; the spinner and glyphs are for the eye, or the
+            // row would read as a progress indicator.
+            Group {
+                if SubagentLifecycle.isRunning(call: entry.call, task: entry.task) {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: statusSymbol).foregroundStyle(.secondary)
+                }
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
             }
-            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
         }
+        .accessibilityElement(children: .combine)
     }
 
     private var statusText: String {
@@ -76,19 +84,6 @@ struct InspectorTaskDetail: View {
     let close: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button("All Tasks", systemImage: "chevron.left", action: close)
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                Text(entry.task?.description ?? entry.call?.input.string("description") ?? "Task")
-                    .font(.headline)
-                    .lineLimit(1)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            Divider()
             Form {
                 // Unheaded: a "Status" section whose first row is "Status" says it twice.
                 Section {
@@ -144,7 +139,21 @@ struct InspectorTaskDetail: View {
                     }
                 }
             }
-        }
+            // Back to the list, over the task, which scrolls under it.
+            .safeAreaBar(edge: .top) {
+                HStack {
+                    Button("All Tasks", systemImage: "chevron.left", action: close)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                    Text(entry.task?.description ?? entry.call?.input.string("description") ?? "Task")
+                        .font(.headline)
+                        .lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
     }
 }
 
@@ -162,16 +171,18 @@ struct InspectorTaskDetail: View {
 }
 
 #Preview("Tasks (subagent detail)") {
+    // Live, so All Tasks goes back to the list in the canvas.
+    @Previewable @State var selection: String? = "tool-subagent-explore"
     inspectorPreview {
-        ThreadInspector(thread: .sampleToolCalls(), connection: .sample(),
-                        selectedTaskID: .constant("tool-subagent-explore"))
+        ThreadInspector(thread: .sampleToolCalls(), connection: .sample(), selectedTaskID: $selection)
     }
 }
 
 /// A task still running: it can be stopped from here.
 #Preview("Tasks (running task detail)") {
+    @Previewable @State var selection: String? = "task:task-1"
     inspectorPreview {
-        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), selectedTaskID: .constant("task:task-1"))
+        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), selectedTaskID: $selection)
     }
 }
 

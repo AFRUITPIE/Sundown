@@ -1,18 +1,20 @@
-#if DEBUG
 import Foundation
 import TetherProtocol
 
-/// A process-free JSON-RPC server for XCTest UI runs. The only entry point is the explicit
+/// A process-free JSON-RPC server for XCTest UI runs. In every build, inert unless the app is
+/// launched with TETHER_UI_TEST_MODE=1: the performance tests run against a Release build. The only entry point is the explicit
 /// TETHER_UI_TEST_MODE launch path; unhandled methods return an error instead of reaching Claude.
 public enum UITestFixture {
     public static let threadID = "fixture-thread"
 
+    /// `failedConnects` attempts fail before one succeeds: two keep the status card up for a few
+    /// seconds of retries, long enough to press its Reconnect.
     @MainActor
-    public static func connection(host: HostConfig = .local, failFirstConnect: Bool = false,
+    public static func connection(host: HostConfig = .local, failedConnects: Int = 0,
                                   pendingPermission: Bool = false, performance: Bool = false) -> HostConnection {
         let attempts = FixtureAttempts()
         return HostConnection(host: host, transportProvider: { _ in
-            if failFirstConnect, await attempts.next() == 1 {
+            if await attempts.next() <= failedConnects {
                 throw TransportError.launchFailed("Fixture connection unavailable")
             }
             return FixtureTransport(pendingPermission: pendingPermission, performance: performance)
@@ -91,6 +93,16 @@ private actor FixtureScript {
     private var nextSequence = 1
     private var nextMessage = 0
     private var additionalThreads: [ThreadSummary] = []
+    /// Rename, Duplicate and Delete, as the list and reads then show them.
+    private var titles: [String: String] = [:]
+    private var deleted: Set<String> = []
+    private var tags: [String: String] = [:]
+    /// A fork's id, and the chat whose items it reads.
+    private var forks: [String: String] = [:]
+    /// How many times Restore Code has run.
+    private var rewound = 0
+    private var schedules: [ScheduledTask] = []
+    private var installedPlugins: [String] = []
 
     init(pendingPermission: Bool, performance: Bool) {
         self.pendingPermission = pendingPermission
@@ -119,10 +131,39 @@ private actor FixtureScript {
         case "model/list": return .init(value: .result(json(ModelListResult(models: []))))
         case "thread/list":
             let perf = performance ? PerformanceTranscript.otherChats : []
-            return .init(value: .result(json(ThreadListResult(threads: additionalThreads + perf + [originalSummary]))))
+            let threads = (additionalThreads + perf + [originalSummary])
+                .filter { !deleted.contains($0.threadId) }
+                .map { summary in
+                    var summary = summary
+                    if let title = titles[summary.threadId] { summary.customTitle = title }
+                    if let tag = tags[summary.threadId] { summary.tag = tag }
+                    return summary
+                }
+            return .init(value: .result(json(ThreadListResult(threads: threads))))
+        case "thread/tag":
+            if let id = params["threadId"]?.stringValue { tags[id] = params["tag"]?.stringValue }
+            return .init(value: .result([:]))
+        case "thread/rename":
+            if let id = params["threadId"]?.stringValue, let title = params["title"]?.stringValue { titles[id] = title }
+            return .init(value: .result([:]))
+        case "thread/delete":
+            if let id = params["threadId"]?.stringValue { deleted.insert(id) }
+            return .init(value: .result([:]))
+        case "thread/fork":
+            let source = params["threadId"]?.stringValue ?? UITestFixture.threadID
+            let id = "fixture-fork-\(forks.count + 1)"
+            forks[id] = forks[source] ?? source
+            let title = (additionalThreads + PerformanceTranscript.otherChats + [originalSummary])
+                .first { $0.threadId == source }.map { titles[source] ?? $0.title } ?? "Chat"
+            additionalThreads.insert(.init(threadId: id, title: title, cwd: "/tmp/tether-fixture",
+                                           updatedAt: 1_700_000_000_003, status: .idle), at: 0)
+            return .init(value: .result(json(ThreadForkResult(threadId: id))))
         case "thread/read":
-            let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
-            let summary = (additionalThreads + PerformanceTranscript.otherChats).first { $0.threadId == id } ?? originalSummary
+            let requested = params["threadId"]?.stringValue ?? UITestFixture.threadID
+            // A fork reads as the chat it was made from.
+            let id = forks[requested] ?? requested
+            var summary = (additionalThreads + PerformanceTranscript.otherChats).first { $0.threadId == requested } ?? originalSummary
+            if let title = titles[requested] { summary.customTitle = title }
             let items: [Item] = performance && (id == UITestFixture.threadID || id.hasPrefix("perf-chat-")) ? PerformanceTranscript.history : id == UITestFixture.threadID ? [
                 .userMessage(.init(id: "fixture-user", createdAt: 1_700_000_000_000,
                                    content: [.text(.init(text: "Summarize this project"))])),
@@ -142,8 +183,11 @@ private actor FixtureScript {
             ))))
         case "thread/subscribe":
             let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
+            // The performance scenario's other chats aren't live in the daemon, as most of a real
+            // host's aren't: they're followed, let go when left, and read again when reopened.
+            let status: ThreadStatus = id.hasPrefix("perf-chat-") ? .notLoaded : .idle
             var reply = Reply(value: .result(json(ThreadSubscribeResult(
-                thread: .init(threadId: id, status: .idle, cwd: "/tmp/tether-fixture", lastSeq: nextSequence),
+                thread: .init(threadId: id, status: status, cwd: "/tmp/tether-fixture", lastSeq: nextSequence),
                 replayed: 0, gap: false
             ))))
             if id == UITestFixture.threadID, pendingPermission, !sentPermission {
@@ -169,14 +213,71 @@ private actor FixtureScript {
             if performance { return performanceTurn(threadID: id, input: params["input"]) }
             return .init(value: .result(json(TurnStartResult(turnId: "fixture-turn", messageId: "fixture-message", queued: false))),
                          notifications: turnNotifications(threadID: id, input: params["input"]))
+        case "plugin/list":
+            let installed: [JSONValue] = installedPlugins.map { ["id": .string($0), "version": "1.0.0", "scope": "user", "enabled": true] }
+            let available: [JSONValue] = [["pluginId": "fixture-lint@fixture-market", "name": "fixture-lint",
+                                           "description": "Lint the fixture's files.", "marketplaceName": "fixture-market", "installCount": 42]]
+            return .init(value: .result(["installed": .array(installed), "available": .array(available)]))
+        case "plugin/install":
+            if let id = params["pluginId"]?.stringValue { installedPlugins.append(id) }
+            return .init(value: .result([:]))
+        case "plugin/uninstall":
+            installedPlugins.removeAll { $0 == params["pluginId"]?.stringValue }
+            return .init(value: .result([:]))
+        case "thread/sideQuestion":
+            let q = params["question"]?.stringValue ?? ""
+            return .init(value: .result(["answer": .string("A side answer to “\(q)”.")]))
+        case "schedule/list":
+            return .init(value: .result(json(ScheduleListResult(tasks: schedules))))
+        case "schedule/save":
+            guard let p = try? JSONDecoder().decode(ScheduleSaveParams.self, from: JSONEncoder().encode(params)) else {
+                return .init(value: .error("bad schedule"))
+            }
+            let task = ScheduledTask(id: p.id ?? "schedule-\(schedules.count + 1)", name: p.name, prompt: p.prompt, cwd: p.cwd,
+                                     model: p.model, permissionMode: p.permissionMode, cadence: p.cadence, hour: p.hour,
+                                     minute: p.minute, weekday: p.weekday, enabled: p.enabled,
+                                     nextRunAt: p.enabled && p.cadence != .manual ? 1_900_000_000_000 : nil)
+            if let i = schedules.firstIndex(where: { $0.id == task.id }) { schedules[i] = task } else { schedules.append(task) }
+            return .init(value: .result(json(ScheduleSaveResult(task: task))))
+        case "schedule/delete":
+            schedules.removeAll { $0.id == params["id"]?.stringValue }
+            return .init(value: .result([:]))
+        case "schedule/run":
+            let id = params["id"]?.stringValue ?? ""
+            if let i = schedules.firstIndex(where: { $0.id == id }) {
+                schedules[i].lastRunAt = 1_800_000_000_000
+                schedules[i].lastThreadId = UITestFixture.threadID
+            }
+            return .init(value: .result(["threadId": .string(UITestFixture.threadID)]))
+        case "git/status":
+            return .init(value: .result(["isRepo": true, "branch": "main", "files": [["status": "M", "path": "Sources/App.swift"]]]))
+        case "git/diff":
+            let staged = params["staged"]?.boolValue ?? false
+            return .init(value: .result(["diff": .string(staged ? "" : """
+            diff --git a/Sources/App.swift b/Sources/App.swift
+            --- a/Sources/App.swift
+            +++ b/Sources/App.swift
+            @@ -1,3 +1,3 @@
+             import SwiftUI
+            -let greeting = "Hello"
+            +let greeting = "Hello, Tether"
+             print(greeting)
+            """)]))
+        case "thread/rewindFiles":
+            let dryRun = params["dryRun"]?.boolValue ?? false
+            rewound += dryRun ? 0 : 1
+            // Once put back, there's nothing left to restore.
+            let changed: JSONValue = rewound > 0 && dryRun ? [] : ["/tmp/tether-fixture/Sources/App.swift", "/tmp/tether-fixture/README.md"]
+            return .init(value: .result(["result": ["canRewind": true, "filesChanged": changed, "insertions": 12, "deletions": 3]]))
         case "command/list": return .init(value: .result(["commands": []]))
         case "fs/search": return .init(value: .result(["paths": []]))
         default: return .init(value: .error("Unexpected fixture method: \(method)"))
         }
     }
 
-    /// A prompt in the performance scenario gets a long working reply: the prompt and "running" at
-    /// once, then tool calls and Markdown streamed a few characters a frame, then "idle".
+    /// A prompt in the performance scenario gets a long working reply: the turn, the prompt and
+    /// "running" at once, then tool calls and Markdown streamed a few characters a frame, then the
+    /// turn's end and "idle", in the order a real host sends them.
     private func performanceTurn(threadID: String, input: JSONValue?) -> Reply {
         nextMessage += 1
         let turn = nextMessage
@@ -184,14 +285,19 @@ private actor FixtureScript {
         let user = Item.userMessage(.init(id: "perf-sent-\(turn)", createdAt: 1_900_000_000_000 + Double(turn * 1000),
                                           content: [.text(.init(text: text))]))
         var reply = Reply(value: .result(json(TurnStartResult(turnId: "perf-turn-\(turn)", messageId: "perf-message-\(turn)", queued: false))))
+        let started = Turn(id: "perf-turn-\(turn)", status: .inProgress, startedAt: 1_900_000_000_000 + Double(turn * 1000))
+        var completed = started
+        completed.status = .completed
         reply.notifications = [
-            ("item/started", json(ItemStartedNotification(threadId: threadID, seq: nextSequence + 1, item: user))),
-            ("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(nextSequence + 2)), "status": "running"]),
+            ("turn/started", json(TurnStartedNotification(threadId: threadID, seq: nextSequence + 1, turn: started))),
+            ("item/started", json(ItemStartedNotification(threadId: threadID, seq: nextSequence + 2, item: user))),
+            ("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(nextSequence + 3)), "status": "running"]),
         ]
-        reply.stream = PerformanceTranscript.reply(threadID: threadID, firstSeq: nextSequence + 3, turn: turn)
-        let last = nextSequence + 3 + reply.stream.count
-        reply.stream.append(("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(last)), "status": "idle"]))
-        nextSequence = last
+        reply.stream = PerformanceTranscript.reply(threadID: threadID, firstSeq: nextSequence + 4, turn: turn)
+        let last = nextSequence + 4 + reply.stream.count
+        reply.stream.append(("turn/completed", json(TurnCompletedNotification(threadId: threadID, seq: last, turn: completed))))
+        reply.stream.append(("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(last + 1)), "status": "idle"]))
+        nextSequence = last + 1
         return reply
     }
 
@@ -203,7 +309,7 @@ private actor FixtureScript {
                                           content: [.text(.init(text: text))]))
         let answerID = "fixture-stream-\(nextMessage)"
         let answer = Item.agentMessage(.init(id: answerID, createdAt: timestamp + 1, text: ""))
-        let notifications: [(String, JSONValue)] = [
+        var notifications: [(String, JSONValue)] = [
             ("item/started", json(ItemStartedNotification(threadId: threadID, seq: nextSequence + 1, item: user))),
             ("item/started", json(ItemStartedNotification(threadId: threadID, seq: nextSequence + 2, item: answer))),
             ("item/agentMessage/delta", json(ItemAgentMessageDeltaNotification(
@@ -213,6 +319,12 @@ private actor FixtureScript {
             ("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(nextSequence + 5)), "status": "idle"])
         ]
         nextSequence += 5
+        // As session tools' suggest_task would.
+        if text.localizedCaseInsensitiveContains("suggest a task") {
+            nextSequence += 1
+            notifications.append(("thread/taskSuggested", ["threadId": .string(threadID), "seq": .number(Double(nextSequence)),
+                                                           "title": "Write the release notes", "prompt": "Draft release notes for 0.6."]))
+        }
         return notifications
     }
 }
@@ -298,8 +410,9 @@ enum PerformanceTranscript {
                 running.status = .running
                 running.outputText = nil
                 out.append(("item/started", json(ItemStartedNotification(threadId: threadID, seq: next(), item: .toolCall(running)))))
-                // Blank frames: the call runs for a moment before it completes.
-                for _ in 0..<4 { out.append(("item/toolCall/progress", json(ItemToolCallProgressNotification(
+                // Blank frames: the call runs for a moment before it completes. The first runs for
+                // a few seconds, long enough for a UI test to find it running.
+                for _ in 0..<(section == 0 && call == 0 ? 200 : 4) { out.append(("item/toolCall/progress", json(ItemToolCallProgressNotification(
                     threadId: threadID, seq: next(), itemId: id, elapsedSeconds: 0.1)))) }
                 out.append(("item/completed", json(ItemCompletedNotification(threadId: threadID, seq: next(), item: done))))
             }
@@ -353,4 +466,3 @@ enum PerformanceTranscript {
 private func json<T: Encodable>(_ value: T) -> JSONValue {
     try! JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
 }
-#endif

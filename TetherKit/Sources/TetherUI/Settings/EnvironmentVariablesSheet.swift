@@ -50,32 +50,32 @@ struct EnvironmentVariablesSheet: View {
                 }
             }
             .tableStyle(.inset)
+            // Names and values are code, not prose.
+            .autocorrectionDisabled()
             .alternatingRowBackgrounds()
             Divider()
             HStack(spacing: 0) {
-                Button { addRow() } label: { Image(systemName: "plus") }
-                    .accessibilityLabel("Add Variable")
-                Button { removeSelected() } label: { Image(systemName: "minus") }
+                Button("Add Variable", systemImage: "plus") { addRow() }
+                Button("Remove Variable", systemImage: "minus") { removeSelected() }
                     .disabled(selection.isEmpty)
-                    .accessibilityLabel("Remove Variable")
                 Spacer()
             }
+            .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            Divider()
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
+        }
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
                 Button("Done") {
                     apply(EnvVariable.environment(rows))
                     dismiss()
                 }
-                .keyboardShortcut(.defaultAction)
             }
-            .padding()
         }
-        .frame(width: 520, height: 320)
+        // A form sheet's size; the table takes what the buttons leave.
+        .presentationSizing(.form)
     }
 
     private func addRow() {

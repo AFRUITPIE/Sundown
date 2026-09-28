@@ -64,10 +64,32 @@ extension EnvironmentValues {
     /// What the composer's field starts with. Empty everywhere in the app; previews set it to show
     /// the field with a draft in it, which is otherwise the composer's own private state.
     @Entry var composerDraft: String = ""
+
+    /// Where each chat's unsent text is kept; the shell sets it to the app's store.
+    @Entry var composerDrafts = ComposerDrafts()
+}
+
+/// The app's per-chat drafts, as the composer reaches them. Compares by the store it points at, so
+/// setting it in a body doesn't invalidate every composer.
+struct ComposerDrafts: Equatable {
+    weak var app: AppModel?
+
+    /// Read when a composer appears; not observed.
+    @MainActor func text(for key: String) -> String { app?.draft(for: key) ?? "" }
+    @MainActor func set(_ text: String, for key: String) { app?.setDraft(text, for: key) }
+    /// Text put in the composer from outside it; observed, and changed only by a delivery.
+    @MainActor func delivery(for key: String) -> AppModel.DraftDelivery? { app?.draftDeliveries[key] }
+
+    static func == (a: Self, b: Self) -> Bool { a.app === b.app }
 }
 
 enum Layout {
     static let gutter: CGFloat = 28
+    /// The corners every card shares (the message field, the prompt, status and connection cards),
+    /// so shapes stacked together read as one family.
+    static let cardCornerRadius: CGFloat = 22
+    /// Below the composer, in a chat and on New Chat alike, so it doesn't move when a chat starts.
+    static let composerBottom: CGFloat = 14
 }
 
 extension View {
@@ -92,29 +114,30 @@ private struct ReadingColumn: ViewModifier {
     }
 }
 
+/// Numbers as the reader's locale writes them.
 enum Format {
+    /// "$0.42", or four places below a cent, where two would say nothing.
     static func cost(_ usd: Double) -> String {
-        usd < 0.01 ? String(format: "$%.4f", usd) : String(format: "$%.2f", usd)
+        usd.formatted(.currency(code: "USD").precision(.fractionLength(usd < 0.01 ? 4 : 2)))
     }
 
+    /// "42s", "3m 12s", "1h 5m": the two largest units.
     static func duration(_ seconds: Double) -> String {
-        seconds < 60 ? String(format: "%.0fs", seconds) : String(format: "%dm %02ds", Int(seconds) / 60, Int(seconds) % 60)
+        Duration.seconds(seconds.rounded())
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow, maximumUnitCount: 2))
     }
 
+    /// "950", "12.3K", "1.2M".
     static func tokens(_ n: Double) -> String {
-        n >= 1_000_000 ? String(format: "%.1fM", n / 1_000_000) : n >= 1000 ? String(format: "%.1fk", n / 1000) : String(Int(n))
+        n.formatted(.number.notation(.compactName).precision(.fractionLength(0...1)))
     }
 
-    /// Shared: building a formatter costs more than using one.
-    @MainActor private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f
-    }()
-
-    @MainActor
-    static func relative(msSinceEpoch: Double) -> String {
-        relativeFormatter.localizedString(for: Date(timeIntervalSince1970: msSinceEpoch / 1000), relativeTo: .now)
+    /// When a message was sent: the time today, the day and time before that.
+    static func messageTime(msSinceEpoch: Double) -> String {
+        let date = Date(timeIntervalSince1970: msSinceEpoch / 1000)
+        return Calendar.current.isDateInToday(date)
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
     }
 }
 
@@ -202,6 +225,12 @@ extension PermissionMode {
     /// toolbar menu and Settings so the two lists can't drift apart.
     static let selectable: [PermissionMode] = [.default, .acceptEdits, .plan, .auto, .dontAsk, .bypassPermissions]
 
+    /// The modes a menu lists: Bypass Permissions only with Settings ▸ General ▸ Offer Bypass
+    /// Permissions, or while it is the mode already chosen, so leaving it is still possible.
+    static func offered(bypass: Bool, current: PermissionMode) -> [PermissionMode] {
+        selectable.filter { $0 != .bypassPermissions || bypass || current == .bypassPermissions }
+    }
+
     /// One word each: a pop-up button is as wide as its widest item.
     var label: String {
         switch self {
@@ -225,6 +254,20 @@ extension PermissionMode {
         case .dontAsk: return "Don't Ask"
         case .bypassPermissions: return "Bypass Permissions"
         default: return rawValue.humanized
+        }
+    }
+
+    /// What Claude does in this mode, in one line under its name wherever it's chosen. Nil for a
+    /// mode a newer server sends that this build can't describe.
+    var summary: String? {
+        switch self {
+        case .default: return "Asks before editing files or running commands"
+        case .acceptEdits: return "Edits files without asking; asks before commands"
+        case .plan: return "Plans without making changes"
+        case .auto: return "Doesn’t ask; a classifier blocks risky actions"
+        case .dontAsk: return "Denies anything not already allowed"
+        case .bypassPermissions: return "Never asks. Use only in a sandbox."
+        default: return nil
         }
     }
 
@@ -259,4 +302,81 @@ extension HostConnection.State {
 extension ThreadStatus {
     /// Title case, never the wire value: the inspector shows "Not Loaded", not `notLoaded`.
     var label: String { rawValue.humanized }
+}
+
+// MARK: text size
+
+extension EnvironmentValues {
+    /// How much larger than the system's sizes the transcript and composer draw their text
+    /// (View ▸ Bigger / Smaller). macOS has no Dynamic Type, so the app offers its own.
+    @Entry var textScale: CGFloat = 1
+}
+
+/// The sizes View ▸ Bigger and Smaller step through, up to the 200% the HIG asks apps to allow.
+enum TextScale {
+    static let steps: [CGFloat] = [0.85, 1, 1.15, 1.3, 1.5, 1.75, 2]
+
+    static func bigger(than scale: CGFloat) -> CGFloat? { steps.first { $0 > scale + 0.001 } }
+    static func smaller(than scale: CGFloat) -> CGFloat? { steps.last { $0 < scale - 0.001 } }
+
+    /// "100%", as Settings lists a step.
+    static func label(_ scale: CGFloat) -> String { "\(Int((scale * 100).rounded()))%" }
+}
+
+/// A text style at the reader's chosen size: the system style, scaled, so it keeps the style's
+/// weight, leading and tracking at every size.
+private struct ScaledFont: ViewModifier {
+    let style: Font.TextStyle
+    let weight: Font.Weight?
+    let explicitDesign: Font.Design?
+    @Environment(\.textScale) private var scale
+    func body(content: Content) -> some View {
+        content.font(.system(style, design: explicitDesign ?? .default, weight: weight).scaled(by: scale))
+    }
+}
+
+extension EnvironmentValues {
+    /// Whether the window's host is this Mac, so a path in the transcript can be opened here.
+    @Entry var hostIsLocal = false
+
+    /// Settings ▸ General ▸ Open Files With, on its own rather than read from `appearance`, so
+    /// another setting changing doesn't redraw every tool call.
+    @Entry var openFilesWith: Appearance.FileEditor = .defaultApp
+}
+
+extension View {
+    /// For content the reader resizes with View ▸ Bigger and Smaller — the transcript, prompts and
+    /// the composer — not for controls and chrome.
+    func scaledFont(_ style: Font.TextStyle, weight: Font.Weight? = nil, design: Font.Design? = nil) -> some View {
+        modifier(ScaledFont(style: style, weight: weight, explicitDesign: design))
+    }
+}
+
+/// The app's settings every view reads from the environment, set once for each scene.
+extension Scene {
+    public func appEnvironment(_ app: AppModel) -> some Scene {
+        environment(\.appearance, app.appearance)
+            .environment(\.textScale, app.textScale)
+            .environment(\.openFilesWith, app.appearance.openFilesWith)
+            .environment(\.readingWidth, app.transcriptWidth.points)
+            .environment(\.reducesEffects, app.reducesEffects)
+    }
+}
+
+extension View {
+    /// The same, for a preview, which has no scene to set them.
+    func appEnvironment(_ app: AppModel) -> some View {
+        environment(\.appearance, app.appearance)
+            .environment(\.textScale, app.textScale)
+            .environment(\.openFilesWith, app.appearance.openFilesWith)
+            .environment(\.readingWidth, app.transcriptWidth.points)
+            .environment(\.reducesEffects, app.reducesEffects)
+    }
+}
+
+extension AnyTransition {
+    /// `transition`, which moves or scales something, or a plain fade under Reduce Motion.
+    static func moving(_ transition: AnyTransition, reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : transition
+    }
 }

@@ -11,24 +11,22 @@ struct AddSSHHostSheet: View {
     @State private var aliases: [String] = []
 
     var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    if !aliases.isEmpty {
-                        Picker("SSH Config", selection: $destination) {
-                            Text("Choose…").tag("")
-                            ForEach(aliases, id: \.self) { Text($0).tag($0) }
-                        }
+        Form {
+            Section {
+                TextField("Destination", text: $destination, prompt: Text("Alias or user@host"))
+                    .autocorrectionDisabled()
+                    // The ~/.ssh/config aliases that match what's typed, as the field's suggestions.
+                    .textInputSuggestions(suggestions, id: \.self) { alias in
+                        Text(alias).textInputCompletion(alias)
                     }
-                    TextField("Destination", text: $destination, prompt: Text("Alias or user@host"))
-                        .accessibilityIdentifier("host.destination")
-                    TextField("Name", text: $name, prompt: Text(destination.isEmpty ? "Optional" : destination))
-                }
+                    .accessibilityIdentifier("host.destination")
+                TextField("Name", text: $name, prompt: Text(destination.isEmpty ? "Optional" : destination))
             }
-            .formStyle(.grouped)
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
+        }
+        .formStyle(.grouped)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
                 Button("Add") {
                     let trimmed = destination.trimmingCharacters(in: .whitespaces)
                     let title = name.trimmingCharacters(in: .whitespaces)
@@ -36,17 +34,21 @@ struct AddSSHHostSheet: View {
                     dismiss()
                 }
                 .disabled(destination.trimmingCharacters(in: .whitespaces).isEmpty)
-                .keyboardShortcut(.defaultAction)
             }
-            .padding()
         }
-        // Three rows at most; a grouped Form on its own would take the whole screen.
-        .frame(width: 440, height: 230)
+        // As tall as its two rows, at a form sheet's width.
+        .presentationSizing(.form.fitted(horizontal: false, vertical: true))
         .task {
             aliases = await Task.detached(priority: .userInitiated) {
                 SSHConfig.hostAliases()
             }.value
         }
+    }
+
+    /// Every alias while the field is empty; then those containing what's typed.
+    private var suggestions: [String] {
+        let typed = destination.trimmingCharacters(in: .whitespaces)
+        return typed.isEmpty ? aliases : aliases.filter { $0.localizedCaseInsensitiveContains(typed) && $0 != typed }
     }
 }
 

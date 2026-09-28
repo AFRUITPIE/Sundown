@@ -37,6 +37,11 @@
                BlueprintName = "TetherAppUITests"
                ReferencedContainer = "container:Tether.xcodeproj">
             </BuildableReference>
+            <SkippedTests>
+               <Test
+                  Identifier = "TetherPerformanceUITests">
+               </Test>
+            </SkippedTests>
          </TestableReference>
       </Testables>
    </TestAction>

@@ -33,25 +33,43 @@ struct SessionSettings {
 
     /// The New Chat draft, carried into `startThread`. Without a connection there is no catalog
     /// and nothing to set, so the menus stay on screen disabled.
-    init(draft app: AppModel, connection: HostConnection?) {
+    init(draft window: WindowModel, connection: HostConnection?) {
         // Resolved against the catalog here too: it usually lands after `newChat()` seeded the draft.
-        model = Binding(get: { connection?.models.concreteValue(for: app.draftModel ?? app.defaultModel) ?? app.draftModel },
-                        set: { app.draftModel = $0 })
-        effort = Binding(get: { app.draftEffort }, set: { app.draftEffort = $0 })
-        permissionMode = Binding(get: { app.draftPermissionMode }, set: { app.draftPermissionMode = $0 })
-        fastMode = Binding(get: { app.draftFastMode }, set: { app.draftFastMode = $0 })
+        model = Binding(get: { connection?.models.concreteValue(for: window.draftModel ?? window.app.defaultModel) ?? window.draftModel },
+                        set: { window.draftModel = $0 })
+        effort = Binding(get: { window.draftEffort }, set: { window.draftEffort = $0 })
+        permissionMode = Binding(get: { window.draftPermissionMode }, set: { window.draftPermissionMode = $0 })
+        fastMode = Binding(get: { window.draftFastMode }, set: { window.draftFastMode = $0 })
         models = connection?.models ?? []
         fastModeDisabledReason = nil
         isEnabled = connection != nil
     }
 
     /// The one place that decides which of the two the toolbar is driving.
-    static func current(_ app: AppModel) -> SessionSettings {
-        if let thread = app.selectedThread, let connection = app.connection {
-            return SessionSettings(thread: thread, connection: connection)
+    static func current(_ window: WindowModel) -> SessionSettings {
+        let settings = if let thread = window.selectedThread, let connection = window.connection {
+            SessionSettings(thread: thread, connection: connection)
+        } else {
+            SessionSettings(draft: window, connection: window.connection)
         }
-        return SessionSettings(draft: app, connection: app.connection)
+        return settings.offering(bypass: window.app.appearance.offerBypass)
     }
+
+    /// Settings ▸ General ▸ Offer Bypass Permissions.
+    var offersBypass = false
+
+    func offering(bypass: Bool) -> SessionSettings {
+        var settings = self
+        settings.offersBypass = bypass
+        return settings
+    }
+
+    var offeredModes: [PermissionMode] {
+        PermissionMode.offered(bypass: offersBypass, current: permissionMode.wrappedValue)
+    }
+
+    /// Auto needs a model that supports it; one that says it doesn't can't be put in it.
+    var autoModeUnavailable: Bool { currentModel?.supportsAutoMode == false }
 
     /// The catalog entry behind the current selection — the catalog's own default while the chat
     /// hasn't reported one, and nil for a model the CLI doesn't list.
@@ -76,23 +94,30 @@ struct SessionSettings {
 /// Resolves the session settings in its own body rather than in `RootView`'s, so what they read —
 /// the chat's model, effort and mode, the catalog — invalidates this toolbar item, not the shell.
 struct ToolbarSessionControl<Control: View>: View {
-    let app: AppModel
+    let window: WindowModel
     let control: (SessionSettings) -> Control
 
-    var body: some View { control(.current(app)) }
+    var body: some View { control(.current(window)) }
 }
 
-/// The chat's three settings as one toolbar item, so they share one glass capsule the way Xcode's
-/// scheme and run destination do. Separate items would each get their own.
+/// The chat's three settings as one toolbar item, a control group, so they share one glass capsule
+/// the way Xcode's scheme and run destination do, and Customize Toolbar and the » menu call them
+/// Session.
 struct SessionMenus: View {
     let settings: SessionSettings
 
     var body: some View {
-        HStack(spacing: 0) {
+        ControlGroup {
             ModelMenu(settings: settings)
             EffortMenu(settings: settings)
             PermissionsMenu(settings: settings)
+        } label: {
+            Label("Session", systemImage: SessionSymbol.model)
         }
+        // One capsule, as Safari's back and forward share one (the default style gave each menu its
+        // own); the chevrons still say each is a menu.
+        .controlGroupStyle(.navigation)
+        .menuIndicator(.visible)
     }
 }
 
@@ -110,18 +135,20 @@ struct ModelMenu: View {
         } label: {
             ReservedWidthLabel(settings.modelLabel, systemImage: SessionSymbol.model,
                                widestOf: settings.models.concrete.map(\.shortName) + [settings.modelLabel])
+                // Toolbar items are icon-only by default; this is the one that has to say a name.
+                // On the label, not the menu, which would pass it on to the menu's items.
+                .labelStyle(.titleAndIcon)
         }
-        // Toolbar items are icon-only by default; this is the one that has to say a name.
-        .labelStyle(.titleAndIcon)
         .disabled(!settings.isEnabled)
-        .help("Model: \(settings.modelLabel)")
+        .help("Model")
         .accessibilityLabel("Model")
         .accessibilityValue(settings.modelLabel)
     }
 }
 
-/// Icon-only: the gauge's needle carries the value, the tooltip spells it out. A pull-down with a
-/// checked list, like the model's, because a pop-up here would show its rows as bare gauges.
+/// A gauge whose needle carries the value, the tooltip spelling it out, shown as the toolbar's
+/// display mode says (icon only by default). A pull-down with a checked list, like the model's,
+/// because a pop-up here would show its rows as bare gauges.
 struct EffortMenu: View {
     let settings: SessionSettings
 
@@ -136,15 +163,14 @@ struct EffortMenu: View {
             ReservedWidthLabel("Effort", systemImage: value.symbol(in: levels),
                                symbols: [SessionSymbol.automaticEffort] + levels.map { $0.symbol(in: levels) })
         }
-        .labelStyle(.iconOnly)
         .disabled(!settings.isEnabled)
-        .help("Effort: \(value.label)")
+        .help("Effort")
         .accessibilityLabel("Effort")
         .accessibilityValue(value.label)
     }
 }
 
-/// Icon-only, and the only control that ever shows colour: bypass means Claude stops asking.
+/// The mode's symbol, and the only control that ever shows colour: bypass means Claude stops asking.
 struct PermissionsMenu: View {
     let settings: SessionSettings
 
@@ -152,10 +178,10 @@ struct PermissionsMenu: View {
 
     var body: some View {
         Menu {
-            PermissionsPicker(settings: settings)
-                .pickerStyle(.inline)
+            Section("Permissions") { PermissionModeItems(settings: settings) }
         } label: {
             let label = ReservedWidthLabel(mode.label, systemImage: mode.symbol,
+                                           // Every mode, offered or not, so hiding one never resizes the control.
                                            symbols: PermissionMode.selectable.map(\.symbol))
             // Only the dangerous mode styles its label: an unconditional `.foregroundStyle` would
             // also paint over the disabled appearance.
@@ -165,9 +191,8 @@ struct PermissionsMenu: View {
                 label
             }
         }
-        .labelStyle(.iconOnly)
         .disabled(!settings.isEnabled)
-        .help("Permissions: \(mode.longLabel)")
+        .help("Permissions")
         .accessibilityLabel("Permissions")
         .accessibilityValue(mode.longLabel)
     }
@@ -196,9 +221,12 @@ struct FastModeToggle: View {
     let settings: SessionSettings
 
     var body: some View {
-        Toggle("Fast Mode", systemImage: SessionSymbol.fastMode, isOn: settings.fastMode)
-            .disabled(settings.fastModeUnavailable != nil)
-            .help(settings.fastModeUnavailable ?? "The same model, with faster output")
+        // What it does, or why it can't be switched on, as the item's subtitle.
+        Toggle(isOn: settings.fastMode) {
+            Label("Fast Mode", systemImage: SessionSymbol.fastMode)
+            Text(settings.fastModeUnavailable ?? "The same model, with faster output")
+        }
+        .disabled(settings.fastModeUnavailable != nil)
     }
 }
 
@@ -216,36 +244,92 @@ struct EffortPicker: View {
     }
 }
 
-struct PermissionsPicker: View {
+/// The modes as menu items, each with a line under its name saying what it does. Toggles bound to
+/// the selection, not a Picker: a Picker's rows become menu items without their second `Text`,
+/// where a Toggle's becomes the item's subtitle, and a Toggle is checked like a picker row
+/// (`PermissionMenuItemsTests` reads the menu SwiftUI builds). Choosing the checked mode again
+/// leaves it chosen.
+struct PermissionModeItems: View {
     let settings: SessionSettings
 
     var body: some View {
-        Picker("Permissions", selection: settings.permissionMode) {
-            ForEach(PermissionMode.selectable, id: \.self) { mode in
-                Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
+        let selection = settings.permissionMode
+        ForEach(settings.offeredModes, id: \.self) { mode in
+            Toggle(isOn: Binding(get: { selection.wrappedValue == mode },
+                                 set: { if $0 { selection.wrappedValue = mode } })) {
+                Label(mode.longLabel, systemImage: mode.symbol)
+                if let summary = mode.summary { Text(summary) }
             }
+            .disabled(mode == .auto && settings.autoModeUnavailable)
         }
     }
 }
 
-/// The Chat menu: the open chat's settings, or the New Chat draft's, for a hidden or customized
-/// toolbar.
+/// The Chat menu, for the frontmost window: the open chat's settings, or the New Chat draft's,
+/// for a hidden or customized toolbar, then what can be done to the chat itself. With no window
+/// open every item is still listed, dimmed.
 public struct ChatCommands: View {
-    let app: AppModel
+    @FocusedValue(\.window) private var window
 
-    public init(app: AppModel) {
-        self.app = app
-    }
+    public init() {}
 
     public var body: some View {
-        let settings = SessionSettings.current(app)
-        Group {
-            ModelPicker(settings: settings)
-            FastModeToggle(settings: settings)
-            EffortPicker(settings: settings)
-            PermissionsPicker(settings: settings)
+        if let window {
+            let settings = SessionSettings.current(window)
+            Group {
+                ModelPicker(settings: settings)
+                FastModeToggle(settings: settings)
+                EffortPicker(settings: settings)
+                Menu("Permissions") { PermissionModeItems(settings: settings) }
+            }
+            .disabled(!settings.isEnabled)
+            Divider()
+            // Not ⌘;, which is Edit ▸ Spelling and Grammar ▸ Check Document Now.
+            Button("Ask a Side Question…") { window.sideQuestion = window.selectedThread }
+                .keyboardShortcut(";", modifiers: [.command, .option])
+                .disabled(window.selectedThread == nil)
+            // Here, not on the Stop button, which is Send again once there's text in the field.
+            Button("Stop") {
+                if let thread = window.selectedThread, let connection = window.connection {
+                    Task { await connection.interrupt(thread) }
+                }
+            }
+            .keyboardShortcut(".")
+            .disabled(window.selectedThread?.isRunning != true)
+            Divider()
+            // ⌥⌘, not ⌘ or ⌃⌘: a text field keeps ⌘↑ and ⌘↓ (start and end of the text) and ⌃⌘↓
+            // (writing direction); it has nothing on ⌥⌘↑ or ⌥⌘↓, so these work from the composer.
+            Button("Previous Prompt") { window.prompts.go(.previous) }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                .disabled(window.selectedThread == nil)
+            Button("Next Prompt") { window.prompts.go(.next) }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                .disabled(window.selectedThread == nil)
+            Divider()
+            // Not ⌃⇥, which is Window ▸ Show Next Tab: windows gather into tabs, as any window group's do.
+            Button("Next Chat") { window.showAdjacentChat(1) }
+                .keyboardShortcut("]", modifiers: [.command, .option])
+                .disabled(window.adjacentChat(1) == nil)
+            Button("Previous Chat") { window.showAdjacentChat(-1) }
+                .keyboardShortcut("[", modifiers: [.command, .option])
+                .disabled(window.adjacentChat(-1) == nil)
+            Divider()
+            ChatActionItems(window: window, thread: window.selectedThread)
+        } else {
+            Group {
+                ForEach(["Model", "Fast Mode", "Effort", "Permissions"], id: \.self) { Button($0) {} }
+                Divider()
+                Button("Ask a Side Question…") {}
+                Button("Stop") {}
+                Divider()
+                ForEach(["Previous Prompt", "Next Prompt"], id: \.self) { Button($0) {} }
+                Divider()
+                ForEach(["Next Chat", "Previous Chat"], id: \.self) { Button($0) {} }
+                Divider()
+                ForEach(["Open in New Window", "Pin", "Rename…", "Duplicate", "Show in Finder", "Archive", "Delete…"], id: \.self) { Button($0) {} }
+            }
+            .disabled(true)
         }
-        .disabled(!settings.isEnabled)
     }
 }
 
@@ -260,8 +344,8 @@ private func previewSettings(thread: ThreadModel, connection: HostConnection = .
 @MainActor
 private func previewDraftSettings(connected: Bool = true) -> SessionSettings {
     let connection: HostConnection = connected ? .sample() : .sampleDisconnected()
-    let app = AppModel.sample(connections: [connection])
-    return SessionSettings(draft: app, connection: connected ? connection : nil)
+    let window = WindowModel.sample(.sample(connections: [connection]))
+    return SessionSettings(draft: window, connection: connected ? connection : nil)
 }
 
 /// Declared the way `RootView` declares them, so a preview shows the real glass shape and spacing
@@ -315,11 +399,26 @@ private struct SessionControlsPreview: View {
             FastModeToggle(settings: settings)
         }
         Section("Effort") { EffortPicker(settings: settings).labelsHidden() }
-        Section("Permissions") { PermissionsPicker(settings: settings).labelsHidden() }
+        Section("Permissions") { PermissionModeItems(settings: settings) }
     }
     .pickerStyle(.inline)
+    // Checked like the menu's items, rather than switches.
+    .toggleStyle(.checkbox)
     .formStyle(.grouped)
-    .frame(width: 340, height: 760)
+    .frame(width: 380, height: 800)
+}
+
+/// Every mode's name and the line under it, Bypass Permissions offered, as the permissions menu
+/// lists them.
+#Preview("Permissions menu contents") {
+    var settings = previewSettings(thread: .sample(model: "sonnet", effort: .medium, permissionMode: .acceptEdits))
+    settings.offersBypass = true
+    return Form {
+        Section("Permissions") { PermissionModeItems(settings: settings) }
+    }
+    .toggleStyle(.checkbox)
+    .formStyle(.grouped)
+    .frame(width: 400, height: 440)
 }
 
 /// The needle spread for every catalog shape, so a model with four levels reads as sensibly as

@@ -31,7 +31,7 @@ public final class ProcessTransport: Transport, @unchecked Sendable {
     private let lock = NSLock()
     private var stderrBuffer = Data()
     /// Only touched from stdout's readabilityHandler, which the system serializes.
-    private var stdoutBuffer = Data()
+    private var stdoutLines = LineSplitter()
     private var started = false
     public let commandDescription: String
 
@@ -65,13 +65,7 @@ public final class ProcessTransport: Transport, @unchecked Sendable {
                     h.readabilityHandler = nil
                     return
                 }
-                self.stdoutBuffer.append(chunk)
-                while let nl = self.stdoutBuffer.firstIndex(of: 0x0A) {
-                    let line = self.stdoutBuffer[self.stdoutBuffer.startIndex..<nl]
-                    let data = Data(line)
-                    self.stdoutBuffer.removeSubrange(self.stdoutBuffer.startIndex...nl)
-                    if !data.isEmpty { continuation.yield(data) }
-                }
+                self.stdoutLines.split(chunk) { continuation.yield($0) }
             }
             process.terminationHandler = { [weak self] p in
                 self?.stdout.fileHandleForReading.readabilityHandler = nil
@@ -100,5 +94,35 @@ public final class ProcessTransport: Transport, @unchecked Sendable {
     public func close() async {
         try? stdin.fileHandleForWriting.close()
         if process.isRunning { process.terminate() }
+    }
+}
+
+/// Splits a byte stream into its newline-terminated lines. Each byte is looked at once, as its chunk
+/// arrives. A line that spans chunks is gathered in a buffer of its own and handed over in it, which
+/// isn't then kept: one long line doesn't leave its size allocated for the connection's life.
+struct LineSplitter {
+    /// The start of a line whose newline hasn't come yet. Never holds a newline.
+    private(set) var partial = Data()
+
+    /// Calls `line` with each complete, non-empty line the chunk ends, in order.
+    mutating func split(_ chunk: Data, _ line: (Data) -> Void) {
+        chunk.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            guard let base = bytes.baseAddress else { return }
+            var start = 0
+            while start < bytes.count, let found = memchr(base + start, 0x0A, bytes.count - start) {
+                let end = base.distance(to: UnsafeRawPointer(found))
+                if partial.isEmpty {
+                    if end > start { line(Data(bytes: base + start, count: end - start)) }
+                } else {
+                    partial.append(base.assumingMemoryBound(to: UInt8.self) + start, count: end - start)
+                    line(partial)
+                    partial = Data()
+                }
+                start = end + 1
+            }
+            if start < bytes.count {
+                partial.append(base.assumingMemoryBound(to: UInt8.self) + start, count: bytes.count - start)
+            }
+        }
     }
 }

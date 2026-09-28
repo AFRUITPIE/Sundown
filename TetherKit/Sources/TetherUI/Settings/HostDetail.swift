@@ -8,7 +8,6 @@ struct HostDetail: View {
     let connection: HostConnection?
     let update: (HostConfig) -> Void
     @State private var editingEnvironment = false
-    @State private var showingLog = false
 
     var body: some View {
         Form {
@@ -26,6 +25,7 @@ struct HostDetail: View {
                         updated.kind = .ssh(destination: value)
                         update(updated)
                     }
+                    .autocorrectionDisabled()
                 }
             }
             connectionSection
@@ -38,9 +38,6 @@ struct HostDetail: View {
                 updated.env = environment
                 update(updated)
             }
-        }
-        .sheet(isPresented: $showingLog) {
-            ConnectionLogSheet(host: host.name, lines: connection?.log ?? [])
         }
     }
 
@@ -91,6 +88,7 @@ struct HostDetail: View {
                 }
                 .labelsHidden()
                 .font(.body.monospaced())
+                .autocorrectionDisabled()
             }
             LabeledContent("Environment Variables") {
                 HStack(spacing: 10) {
@@ -101,7 +99,7 @@ struct HostDetail: View {
             }
             if connection != nil {
                 LabeledContent("Connection Log") {
-                    Button("Show…") { showingLog = true }
+                    ShowConnectionLogButton(hostID: host.id, title: "Show…")
                 }
             }
         }

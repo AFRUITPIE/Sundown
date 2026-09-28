@@ -2,16 +2,19 @@ import SwiftUI
 import TetherKit
 
 /// The inspector's content: the selected chat's, or a placeholder so the column is never blank.
+/// The pane tabs stay over the placeholder too, so they don't come and go with the chat.
 struct InspectorView: View {
-    @Bindable var app: AppModel
+    @Bindable var window: WindowModel
     @Binding var selectedTaskID: String?
 
     var body: some View {
-        if let thread = app.selectedThread, let connection = app.connection {
-            ThreadInspector(thread: thread, connection: connection, pane: $app.inspectorPane,
+        if let thread = window.selectedThread, let connection = window.connection {
+            ThreadInspector(thread: thread, connection: connection, pane: $window.inspectorPane,
                             selectedTaskID: $selectedTaskID)
         } else {
-            ContentUnavailableView("No Session", systemImage: "sidebar.trailing")
+            InspectorTabs(pane: $window.inspectorPane) { _ in
+                ContentUnavailableView("No Session", systemImage: "sidebar.trailing")
+            }
         }
     }
 }
@@ -21,6 +24,8 @@ struct InspectorView: View {
 struct ThreadInspector: View {
     let thread: ThreadModel
     let connection: HostConnection
+    /// Changes for a preview, which has no repository to read.
+    @Environment(\.previewChanges) private var previewChanges
     @Binding var pane: InspectorPane
     @Binding var selectedTaskID: String?
 
@@ -33,41 +38,52 @@ struct ThreadInspector: View {
     }
 
     var body: some View {
+        InspectorTabs(pane: $pane) { paneView($0) }
+    }
+
+    private func paneView(_ pane: InspectorPane) -> some View {
         Group {
             switch pane {
             case .tasks: TasksPane(thread: thread, connection: connection, selectedTaskID: $selectedTaskID)
             case .session: SessionPane(thread: thread, connection: connection)
-            case .mcp: MCPPane(thread: thread)
+            case .mcp: MCPPane(thread: thread, connection: connection)
+            case .changes: ChangesPane(thread: thread, connection: connection, changes: previewChanges)
             }
         }
         .inspectorPaneStyle()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // A bar, so a pane's form scrolls under it with the standard edge effect.
-        .safeAreaBar(edge: .top) {
-            // `.tabs` rather than `.segmented`: it switches views rather than choosing a value,
-            // and VoiceOver announces the options as tabs.
-            Picker("Inspector", selection: $pane) {
-                ForEach(InspectorPane.allCases) { Text($0.label).tag($0) }
+    }
+}
+
+/// The panes as SwiftUI's own tabs, in its default style: a tab bar across the top of the pane,
+/// inside the inspector, that VoiceOver reads as tabs. Not in the toolbar, where every change of
+/// tab made AppKit lay the whole toolbar out again.
+struct InspectorTabs<Content: View>: View {
+    @Binding var pane: InspectorPane
+    @ViewBuilder let content: (InspectorPane) -> Content
+
+    var body: some View {
+        TabView(selection: $pane) {
+            ForEach(InspectorPane.allCases) { tab in
+                Tab(tab.label, systemImage: tab.symbol, value: tab) { content(tab) }
             }
-            .pickerStyle(.tabs)
-            .labelsHidden()
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
         }
     }
 }
 
 /// The inspector's show/hide button: plain, like Xcode's, so it doesn't tint while the inspector
-/// is open. Declared by the inspector, so it sits above the column.
+/// is open. Declared by the inspector column, so it sits above it.
 struct InspectorToggle: View {
-    @Bindable var app: AppModel
+    let window: WindowModel
 
     var body: some View {
-        Button("Inspector", systemImage: "sidebar.trailing") {
-            app.showInspector.toggle()
-        }
-        .help(app.showInspector ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+        Button("Inspector", systemImage: "sidebar.trailing") { window.showInspector.toggle() }
+            .help(window.showInspector ? "Hide Inspector" : "Show Inspector")
     }
+}
+
+extension EnvironmentValues {
+    @Entry var previewChanges: WorkingChanges?
 }
 
 extension View {
@@ -115,26 +131,25 @@ func inspectorPreview<Content: View>(@ViewBuilder _ content: () -> Content) -> s
     .frame(width: 900, height: 640)
 }
 
-/// The whole inspector the way `RootView` builds it, from an `AppModel` with a chat selected.
-/// The segmented shell itself is shown by each pane's previews, which host `ThreadInspector`.
+/// The whole inspector the way `RootView` builds it, from a window with a chat selected.
+/// The tabbed shell itself is shown by each pane's previews, which host `ThreadInspector`.
 /// #Preview bodies are result-builder closures (no `if`/control flow), so selection happens here.
 @MainActor
-private func inspectorPreviewApp() -> AppModel {
+private func inspectorPreviewWindow() -> WindowModel {
     let app = AppModel.sample()
-    if let chat = app.connection?.chats.first { app.open(threadID: chat.id) }
-    return app
+    return .sample(app, threadID: app.connection(app.lastHostID)?.chats.first?.id)
 }
 
 #Preview("Inspector (from AppModel)") {
     inspectorPreview {
-        InspectorView(app: inspectorPreviewApp(), selectedTaskID: .constant(nil))
+        InspectorView(window: inspectorPreviewWindow(), selectedTaskID: .constant(nil))
     }
 }
 
 /// New Chat: no session to inspect, and the column still says so.
 #Preview("Inspector (no session)") {
     inspectorPreview {
-        InspectorView(app: .sample(), selectedTaskID: .constant(nil))
+        InspectorView(window: .sample(), selectedTaskID: .constant(nil))
     }
 }
 #endif

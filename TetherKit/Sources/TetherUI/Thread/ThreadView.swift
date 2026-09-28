@@ -9,14 +9,30 @@ struct ThreadView: View {
 
     var body: some View {
         TranscriptView(thread: thread, connection: connection)
-            // Controls float over the transcript on glass; content scrolls underneath with a soft edge.
+            // Controls float over the transcript on glass; content scrolls underneath with the system edge effect.
             .safeAreaBar(edge: .bottom) {
                 BottomBar(thread: thread, connection: connection)
             }
-            .scrollEdgeEffectStyle(.soft, for: .bottom)
-            // The same soft edge under the toolbar.
-            .scrollEdgeEffectStyle(.soft, for: .top)
+            // Find in Chat's bar, over the transcript while it's open.
+            .safeAreaBar(edge: .top) { FindBarHost(thread: thread) }
             .task(id: thread.id) { await connection.open(thread) }
+            .modifier(ProxyIcon(directory: connection.host.isLocal ? thread.cwd : nil))
+            .modifier(OpensFileLinks(cwd: thread.cwd))
+    }
+}
+
+/// The chat's directory as the window's proxy icon, on this Mac: dragged, it's the directory, and
+/// ⌘-clicking the title shows its path. Here rather than on the shell, which keeps one identity
+/// while the chat changes.
+private struct ProxyIcon: ViewModifier {
+    let directory: String?
+
+    func body(content: Content) -> some View {
+        if let directory {
+            content.navigationDocument(URL(filePath: directory, directoryHint: .isDirectory))
+        } else {
+            content
+        }
     }
 }
 
@@ -29,7 +45,56 @@ struct ThreadView: View {
     .frame(width: 900, height: 700)
 }
 
-/// Taller than the window: it opens at its latest message. A shorter one sits at the top.
+/// Settings ▸ Advanced ▸ Tool Calls ▸ Every Call, and code that doesn't wrap.
+#Preview("Idle chat (every call)") {
+    var appearance = Appearance()
+    appearance.toolCalls = .everyCall
+    return NavigationStack {
+        ThreadView(thread: .sampleIdleChat(), connection: .sample())
+    }
+    .environment(\.appearance, appearance)
+    .frame(width: 900, height: 700)
+}
+
+/// Settings ▸ Advanced ▸ Tool Calls, each way: runs summarized, each finished turn's work behind
+/// one line, and every call on its own.
+#Preview("Work (summarized)") {
+    NavigationStack {
+        ThreadView(thread: .sampleWorkChat(), connection: .sample())
+    }
+    .frame(width: 900, height: 800)
+}
+
+#Preview("Work (worked for)") {
+    var appearance = Appearance()
+    appearance.toolCalls = .workedFor
+    return NavigationStack {
+        ThreadView(thread: .sampleWorkChat(), connection: .sample())
+    }
+    .environment(\.appearance, appearance)
+    .frame(width: 900, height: 800)
+}
+
+#Preview("Work (every call)") {
+    var appearance = Appearance()
+    appearance.toolCalls = .everyCall
+    return NavigationStack {
+        ThreadView(thread: .sampleWorkChat(), connection: .sample())
+    }
+    .environment(\.appearance, appearance)
+    .frame(width: 900, height: 800)
+}
+
+#Preview("Running turn (code not wrapped)") {
+    var appearance = Appearance()
+    appearance.wrapCode = false
+    return NavigationStack {
+        ThreadView(thread: .sampleRunningTurn(), connection: .sample())
+    }
+    .environment(\.appearance, appearance)
+    .frame(width: 900, height: 700)
+}
+
 #Preview("Idle chat (opens at the end)") {
     NavigationStack {
         ThreadView(thread: .sampleIdleChat(), connection: .sample())

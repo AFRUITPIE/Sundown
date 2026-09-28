@@ -3,7 +3,7 @@ import TetherKit
 
 /// Host management stays in one Settings pane. A picker chooses which host's form is shown.
 struct HostsSettings: View {
-    @Bindable var app: AppModel
+    let app: AppModel
     @State private var selection: UUID?
     @State private var addingHost = false
     @State private var hostToRemove: HostConfig?
@@ -18,30 +18,27 @@ struct HostsSettings: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            hostPicker
-            Divider()
-            detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .task { if selection == nil { selection = app.hostID } }
+        detail
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The host's form scrolls under the picker, with the system's edge effect.
+            .safeAreaBar(edge: .top) { hostPicker }
+        .task { if selection == nil { selection = app.lastHostID } }
         .sheet(isPresented: $addingHost) {
             AddSSHHostSheet { host in
                 app.addHost(host)
                 selection = host.id
             }
         }
-        .alert("Remove “\(hostToRemove?.name ?? "")”?", isPresented: Binding(
+        .confirmationDialog("Remove “\(hostToRemove?.name ?? "")”?", isPresented: Binding(
             get: { hostToRemove != nil },
             set: { if !$0 { hostToRemove = nil } }
-        ), presenting: hostToRemove) { host in
+        ), titleVisibility: .visible, presenting: hostToRemove) { host in
             Button("Remove", role: .destructive) {
                 app.removeHost(host.id)
                 selection = HostConfig.local.id
             }
-            Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Chats and configuration on the host itself are unchanged.")
+            Text("Its chats stay on the host.")
         }
     }
 
@@ -58,26 +55,15 @@ struct HostsSettings: View {
 
             // The add/remove pair: one control, so the thinner minus glyph gets the plus's height.
             ControlGroup {
-                Button {
-                    addingHost = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .accessibilityLabel("Add SSH Host")
-                .help("Add SSH Host")
-
-                Button {
-                    hostToRemove = removableHost
-                } label: {
-                    Image(systemName: "minus")
-                }
-                .disabled(removableHost == nil)
-                .accessibilityLabel("Remove Host")
-                .help("Remove Host")
+                Button("Add SSH Host", systemImage: "plus") { addingHost = true }
+                    .help("Add SSH Host")
+                Button("Remove Host", systemImage: "minus") { hostToRemove = removableHost }
+                    .disabled(removableHost == nil)
+                    .help("Remove Host")
             }
+            .labelStyle(.iconOnly)
         }
         .padding()
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var hostSelection: Binding<UUID> {
@@ -92,6 +78,9 @@ struct HostsSettings: View {
             HostDetail(host: host, connection: app.connection(host.id)) { app.updateHost($0) }
                 // A different host gets its own fields, so a part-typed name can't land on it.
                 .id(host.id)
+                // Its environment values are read from the Keychain when it connects; one that
+                // hasn't yet has them read here, so they don't show as None.
+                .task(id: host.id) { _ = await app.loadEnvironment(for: host.id) }
         } else {
             ContentUnavailableView("No Hosts", systemImage: "network")
         }
@@ -104,16 +93,20 @@ struct HostStatusLabel: View {
     let state: HostConnection.State
 
     var body: some View {
-        HStack(spacing: 6) {
+        Label {
+            Text(state.detailLabel)
+        } icon: {
             if case .connecting = state {
-                ProgressView().controlSize(.small)
+                // The words say it; a spinner in the element made it read as a progress indicator.
+                ProgressView().controlSize(.small).accessibilityHidden(true)
             } else {
                 Image(systemName: state.symbol).foregroundStyle(state.tint)
             }
-            Text(state.detailLabel)
         }
+        .labelStyle(.titleAndIcon)
         .help(state.help)
-        .accessibilityLabel(state.help)
+        // Read as it's written ("Connected"); the help says more for the pointer.
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -168,22 +161,19 @@ extension HostConnection.State {
 
 #Preview("Hosts (connected SSH host)") {
     let ssh = HostConnection.sampleConnectedSSH()
-    let app = AppModel.sample(connections: [.sample(), ssh])
-    app.hostID = ssh.id
-    return HostsSettings(app: app)
+    // First, so Settings opens on it.
+    return HostsSettings(app: .sample(connections: [ssh, .sample()]))
 }
 
 #Preview("Hosts (connection failed)") {
     let failed = HostConnection.sampleFailed()
-    let app = AppModel.sample(connections: [.sample(), failed])
-    app.hostID = failed.id
-    return HostsSettings(app: app)
+    // First, so Settings opens on it.
+    return HostsSettings(app: .sample(connections: [failed, .sample()]))
 }
 
 #Preview("Hosts (connecting)") {
     let connecting = HostConnection.sampleConnecting()
-    let app = AppModel.sample(connections: [.sample(), connecting])
-    app.hostID = connecting.id
-    return HostsSettings(app: app)
+    // First, so Settings opens on it.
+    return HostsSettings(app: .sample(connections: [connecting, .sample()]))
 }
 #endif

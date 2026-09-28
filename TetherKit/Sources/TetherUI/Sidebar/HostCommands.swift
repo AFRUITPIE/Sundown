@@ -5,7 +5,8 @@ import TetherKit
 /// connection. Not a toolbar control: it changes only when switching sessions, which is the
 /// sidebar's job, and the subtitle names the host whenever there is more than one.
 public struct HostCommands: View {
-    @Bindable var app: AppModel
+    let app: AppModel
+    @FocusedValue(\.window) private var window
     @Environment(\.openSettings) private var openSettings
     @AppStorage("tether.settingsPane") private var settingsPane = SettingsDestination.general.storedValue
 
@@ -14,11 +15,23 @@ public struct HostCommands: View {
     }
 
     public var body: some View {
-        HostPicker(app: app)
+        // The frontmost window's host; with no window open the hosts are listed, dimmed.
+        if let window {
+            HostPicker(window: window)
+                .pickerStyle(.inline)
+        } else {
+            Picker("Host", selection: .constant(app.lastHostID)) {
+                ForEach(app.hosts) { host in Label(host.name, systemImage: host.symbol).tag(host.id) }
+            }
             .pickerStyle(.inline)
+            .disabled(true)
+        }
         Divider()
-        if let connection = app.connection {
+        if let connection = window?.connection ?? app.connection(app.lastHostID) {
             ConnectButton(connection: connection)
+            ShowScheduledTasksButton(hostID: connection.id)
+            ShowPluginsButton(hostID: connection.id)
+            ShowConnectionLogButton(hostID: connection.id)
         }
         Button("Manage Hosts…") {
             settingsPane = SettingsDestination.hosts.storedValue
@@ -45,13 +58,25 @@ struct ConnectButton: View {
 
 /// Every configured host, checked on the current one.
 struct HostPicker: View {
-    @Bindable var app: AppModel
+    @Bindable var window: WindowModel
 
     var body: some View {
-        Picker("Host", selection: $app.hostID) {
-            ForEach(app.hosts) { host in
+        Picker("Host", selection: $window.hostID) {
+            ForEach(window.app.hosts) { host in
                 Label(host.name, systemImage: host.symbol).tag(host.id)
             }
         }
     }
 }
+
+#if DEBUG
+/// The Host menu's host list, as a pop-up: a preview can't open the menu bar.
+#Preview("Host picker") {
+    let app = AppModel.sample(connections: [.sample(), .sampleFailed()])
+    Form {
+        HostPicker(window: .sample(app))
+    }
+    .formStyle(.grouped)
+    .frame(width: 360)
+}
+#endif

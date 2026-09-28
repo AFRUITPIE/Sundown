@@ -257,10 +257,13 @@ extension ThreadModel {
         title: String,
         cwd: String?,
         secondsAgo: Double,
-        status: ThreadStatus = .notLoaded
+        status: ThreadStatus = .notLoaded,
+        tag: String? = nil
     ) -> ThreadModel {
-        ThreadModel(id: id, summary: .init(threadId: id, title: title, cwd: cwd,
-                                           updatedAt: preview(secondsAgo: secondsAgo), status: status))
+        var summary = ThreadSummary(threadId: id, title: title, cwd: cwd,
+                                    updatedAt: preview(secondsAgo: secondsAgo), status: status)
+        summary.tag = tag
+        return ThreadModel(id: id, summary: summary)
     }
 
     /// A chat whose transcript hasn't arrived — what the transcript stands in for. With a message
@@ -287,14 +290,23 @@ extension ThreadModel {
                       description: "Render every inspector pane", status: "failed", data: [:]),
             ],
             mcpServers: [
-                .init(name: "xcode", status: "connected"),
-                .init(name: "computer-use", status: "connected"),
-                .init(name: "reminders", status: "failed"),
+                .init(name: "xcode", status: "connected", toolCount: 24),
+                .init(name: "computer-use", status: "connected", toolCount: 1),
+                .init(name: "linear", status: "needs-auth"),
+                .init(name: "reminders", status: "failed", error: "spawn RemindersServer ENOENT"),
             ])
     }
 
     /// A finished conversation: a question, some visible thinking, and a Markdown reply that
     /// exercises headings, a bullet list, inline code and a fenced code block.
+    /// A finished chat in which Claude suggested a task to start separately.
+    public static func sampleWithSuggestedTask() -> ThreadModel {
+        let t = sampleIdleChat()
+        t.apply(.threadTaskSuggested(.init(threadId: t.id, seq: 10_000, title: "Add previews for SessionPane",
+                                           prompt: "Add #Preview coverage for SessionPane's loading, failed and ready states.")))
+        return t
+    }
+
     public static func sampleIdleChat() -> ThreadModel {
         sample(
             title: "Explain ThreadModel's turn tracking",
@@ -364,6 +376,91 @@ extension ThreadModel {
         )
     }
 
+    /// Two finished turns of real-looking work: messages between runs of reads, searches, edits and
+    /// commands, one of which failed. For comparing Settings ▸ Advanced ▸ Tool Calls.
+    public static func sampleWorkChat() -> ThreadModel {
+        let root = "/Users/hayden/Code/tether-app/TetherKit/Sources/TetherUI/"
+        let build: JSONValue = ["command": "swift build --package-path TetherKit", "description": "Build TetherKit"]
+        let edit: JSONValue = [
+            "file_path": .string(root + "RootView.swift"),
+            "old_string": "        .frame(minWidth: showInspector ? 1000 : 740)",
+            "new_string": "        .frame(minWidth: 740)",
+        ]
+        var first: [Item] = [
+            .sampleUserMessage("Resizing the window with the inspector open stutters. Can you find out why?", secondsAgo: 900),
+            .sampleAgentMessage("I'll look at how the split view sets its widths.", secondsAgo: 895),
+        ]
+        first.append(.sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "RootView.swift")],
+                                     status: .completed, secondsAgo: 890))
+        first.append(.sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Inspector/InspectorView.swift")],
+                                     status: .completed, secondsAgo: 885))
+        first.append(.sampleToolCall(name: "Grep", kind: .grep, input: ["pattern": "minWidth"], status: .completed,
+                                     outputText: "RootView.swift:44\nRootView.swift:67", secondsAgo: 880))
+        first.append(.sampleToolCall(name: "Bash", kind: .bash, input: build, status: .failed,
+                                     outputText: "error: cannot find 'inspectorMinimum' in scope\n  --> RootView.swift:67:21", secondsAgo: 860))
+        first.append(.sampleAgentMessage("The build caught a name I got wrong. Fixing it.", secondsAgo: 850))
+        first.append(.sampleToolCall(name: "Edit", kind: .fileEdit, input: edit, status: .completed, secondsAgo: 840))
+        first.append(.sampleToolCall(name: "Edit", kind: .fileEdit, input: [
+            "file_path": .string(root + "RootView.swift"),
+            "old_string": "    private var minWidth: CGFloat? {\n        guard showInspector else { return 740 }\n        return inspectorSettled ? 1000 : nil\n    }",
+            "new_string": "    private var minWidth: CGFloat? {\n        guard showInspector else { return InspectorWidth.windowMinimum }\n        return inspectorSettled ? InspectorWidth.windowMinimum + InspectorWidth.column : nil\n    }",
+        ], status: .completed, secondsAgo: 835))
+        first.append(.sampleToolCall(name: "Write", kind: .fileWrite, input: [
+            "file_path": .string(root + "Inspector/InspectorWidth.swift"),
+            "content": "import CoreGraphics\n\n/// The widths the window's minimum is made of.\nenum InspectorWidth {\n    static let windowMinimum: CGFloat = 740\n    static let column: CGFloat = 260\n}\n",
+        ], status: .completed, secondsAgo: 830))
+        first.append(.sampleToolCall(name: "MultiEdit", kind: .fileEdit, input: [
+            "file_path": .string(root + "Inspector/InspectorView.swift"),
+            "edits": [
+                ["old_string": ".inspectorColumnWidth(min: 260, ideal: 300, max: 420)",
+                 "new_string": ".inspectorColumnWidth(min: InspectorWidth.column, ideal: 300, max: 420)"],
+            ],
+        ], status: .completed, secondsAgo: 825))
+        // Failed, so it changed nothing and isn't counted.
+        first.append(.sampleToolCall(name: "Edit", kind: .fileEdit, input: [
+            "file_path": .string(root + "Thread/TranscriptView.swift"), "old_string": "minWidth", "new_string": "minimumWidth",
+        ], status: .failed, outputText: "<tool_use_error>String to replace not found in file.</tool_use_error>", secondsAgo: 820))
+        first.append(.sampleToolCall(name: "Bash", kind: .bash, input: build, status: .completed, outputText: "Build complete!", secondsAgo: 800))
+        first.append(.sampleAgentMessage("Opening the inspector raised the window's minimum width from 740 to 1000 halfway through its animation, so AppKit resized the window while the split view was still laying out. The minimum now stays at 740.", secondsAgo: 690))
+        var second: [Item] = [.sampleUserMessage("Does anything else change the width while it opens?", secondsAgo: 300)]
+        second.append(.sampleToolCall(name: "Grep", kind: .grep, input: ["pattern": "inspectorColumnWidth"], status: .completed, secondsAgo: 295))
+        second.append(.sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptView.swift")],
+                                      status: .completed, secondsAgo: 290))
+        second.append(.sampleAgentMessage("Only the column width itself, which is fixed at 260. The transcript re-measures its rows when its width changes, but it keeps its place.", secondsAgo: 270))
+        return sample(title: "Smooth out the inspector resize", items: first + second,
+                      turns: [.sample(secondsAgo: 690), .sample(secondsAgo: 270)])
+    }
+
+    /// A chat picked up over more than a week, for its date separators: a prompt eight days ago,
+    /// three days ago, yesterday, and a few hours ago, then a follow-up minutes after that reply,
+    /// which gets none.
+    public static func sampleDatedChat() -> ThreadModel {
+        let day: Double = 86_400
+        let root = "/Users/hayden/Code/tether-app/TetherKit/Sources/TetherUI/"
+        let items: [Item] = [
+            .sampleUserMessage("Sketch how the transcript could mark where a chat picks up after a break.", secondsAgo: 8 * day),
+            .sampleAgentMessage("Messages puts the date above the first message after an hour's gap, and above every day change. The same rule suits a transcript.", secondsAgo: 8 * day - 40),
+            .sampleUserMessage("Let's do it. Start with the decision, and test it.", secondsAgo: 3 * day),
+            .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptView.swift")],
+                            status: .completed, secondsAgo: 3 * day - 20),
+            .sampleToolCall(name: "Edit", kind: .fileEdit, input: [
+                "file_path": .string(root + "Thread/TranscriptView.swift"),
+                "old_string": "TranscriptRowView(row: row, thread: thread)",
+                "new_string": "TranscriptRowView(row: row, thread: thread)\n    // Dates come in as rows of their own.",
+            ], status: .completed, secondsAgo: 3 * day - 30),
+            .sampleAgentMessage("The decision is a pure function over the prompts' times, with tests for a day change and for an hour's gap.", secondsAgo: 3 * day - 60),
+            .sampleUserMessage("Does it use the reader's locale?", secondsAgo: day),
+            .sampleAgentMessage("Yes: the day and time come from the locale's own formats, and Today and Yesterday from its relative names.", secondsAgo: day - 20),
+            .sampleUserMessage("Ship it.", secondsAgo: 3 * 3_600),
+            .sampleAgentMessage("Committed.", secondsAgo: 3 * 3_600 - 30),
+            .sampleUserMessage("One more thing: does a follow-up a few minutes later get one too?", secondsAgo: 3 * 3_600 - 300),
+            .sampleAgentMessage("No. It's the same stretch of the chat, so it goes on without a date.", secondsAgo: 3 * 3_600 - 320),
+        ]
+        return sample(title: "Date separators", items: items,
+                      turns: [.sample(secondsAgo: 8 * day - 40), .sample(secondsAgo: 3 * day - 60), .sample(secondsAgo: day - 20),
+                              .sample(secondsAgo: 3 * 3_600 - 30), .sample(secondsAgo: 3 * 3_600 - 320)])
+    }
+
     /// A thread waiting on a permission decision — `pending.first` replaces the composer.
     public static func samplePendingPermission() -> ThreadModel {
         sample(title: "Clean the build directory", status: .requiresAction, items: [
@@ -413,6 +510,18 @@ extension ThreadModel {
         ], turns: [
             .sample(status: .interrupted, secondsAgo: 38, result: .sample(durationSeconds: 12, totalCostUsd: 0.03)),
         ])
+    }
+
+    /// A finished chat whose plan limit is `status` (`allowed_warning`, `rejected`), resetting
+    /// `resetsIn` seconds from now — exercises StatusStrip's usage line.
+    public static func sampleRateLimited(_ status: String, kind: String, utilization: Double, resetsIn: TimeInterval) -> ThreadModel {
+        let thread = sampleIdleChat()
+        let info: [String: JSONValue] = [
+            "status": .string(status), "rateLimitType": .string(kind), "utilization": .number(utilization),
+            "resetsAt": .number(Date.now.addingTimeInterval(resetsIn).timeIntervalSince1970),
+        ]
+        thread.apply(.threadRateLimit(.init(threadId: thread.id, seq: 10_000, info: .object(info))))
+        return thread
     }
 
     /// A running turn stuck retrying the API — exercises StatusStrip's retry banner.
@@ -526,9 +635,9 @@ extension HostConnection {
     }
 
     /// A host whose last connection attempt failed.
-    public static func sampleFailed() -> HostConnection {
+    public static func sampleFailed(reason: String = "Connection refused") -> HostConnection {
         let connection = HostConnection(host: .init(name: "staging", kind: .ssh(destination: "staging")))
-        connection.previewSeed(state: .failed("Connection refused"))
+        connection.previewSeed(state: .failed(reason))
         return connection
     }
 }

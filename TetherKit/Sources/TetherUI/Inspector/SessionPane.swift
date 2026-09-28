@@ -35,6 +35,23 @@ struct SessionPane: View {
                 Button("Refresh") { Task { await refresh() } }
                     .disabled(usage.isLoading)
             }
+            if let limit = thread.rateLimit {
+                Section("Plan Usage") {
+                    if let used = limit.utilization {
+                        Gauge(value: min(used, 1)) {
+                            Text(limit.name.capitalized)
+                        } currentValueLabel: {
+                            Text("\(Int((used * 100).rounded()))%")
+                        }
+                        // The accent color until the limit is near, and said in words as well.
+                        .tint(limit.status == .allowed ? nil : limit.status == .warning ? .orange : .red)
+                        .accessibilityValue("\(Int((used * 100).rounded())) percent\(limit.status == .allowed ? "" : limit.status == .warning ? ", near the limit" : ", limit reached")")
+                    }
+                    if let reset = limit.resetsAt {
+                        LabeledContent("Resets", value: reset.formatted(date: .abbreviated, time: .shortened))
+                    }
+                }
+            }
             Section("Cost") {
                 LabeledContent("Total", value: Format.cost(thread.totalCostUsd))
                 if let last = thread.turns.last?.result {
@@ -52,14 +69,15 @@ struct SessionPane: View {
                 }
             }
         }
-        // Keyed on the thread too, or two chats with the same turn count share a stale result.
-        .task(id: Key(threadId: thread.id, turns: thread.turns.count)) {
+        // Keyed on the thread too, or two chats share a stale result; and on the last finished
+        // turn, since the context only settles when a turn ends.
+        .task(id: Key(threadId: thread.id, turn: thread.lastFinishedTurn)) {
             guard fetchesUsage else { return }
             await refresh()
         }
     }
 
-    private struct Key: Equatable { let threadId: String; let turns: Int }
+    private struct Key: Equatable { let threadId: String; let turn: String? }
 
     @ViewBuilder private func contextBody(_ u: JSONValue?) -> some View {
         if let u {
@@ -130,8 +148,10 @@ private func sessionPreview(_ usage: Loaded<JSONValue?>) -> some View {
 
 /// The live pane: this preview's connection has no loaded thread, so it shows that state.
 #Preview("Session") {
+    // Live, so the preview canvas can switch tabs.
+    @Previewable @State var pane = InspectorPane.session
     inspectorPreview {
-        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), pane: .constant(.session))
+        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), pane: $pane)
     }
 }
 

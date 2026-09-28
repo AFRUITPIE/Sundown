@@ -18,25 +18,36 @@ final class TetherAppUITests: XCTestCase {
         return app
     }
 
-    /// The inspector opens from its toolbar button, and its tabs switch panes.
+    /// The inspector opens from its toolbar button, and its tabs, SwiftUI's own over the pane,
+    /// switch panes.
     @MainActor
     func testExistingChatAndInspector() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
         let toggle = app.buttons["Inspector"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-        // The fixture's store is fresh, so the inspector starts closed.
+        // The fixture's store is fresh, so the inspector starts closed, with no tabs.
+        let mcp = paneTab(app, "MCP")
+        XCTAssertFalse(mcp.exists)
         toggle.click()
-        let mcp = app.tabGroups["Inspector"].tabs["MCP"]
         XCTAssertTrue(mcp.waitForExistence(timeout: 5))
-        // With the inspector open the window's minimum width reaches past the CI runner's display
-        // (#38), where the tab and the toggle aren't hittable, so both go by shortcut from here.
-        app.typeKey("3", modifierFlags: [.command, .option])
+        mcp.click()
         let empty = app.staticTexts["No MCP Servers"]
         XCTAssertTrue(empty.waitForExistence(timeout: 5))
         XCTAssertEqual((mcp.value as? NSNumber)?.intValue, 1)
+        XCTAssertEqual((paneTab(app, "Tasks").value as? NSNumber)?.intValue, 0)
         app.typeKey("i", modifierFlags: [.command, .option])
         XCTAssertTrue(empty.waitForNonExistence(timeout: 5))
+    }
+
+    /// One of the inspector's tabs: a tab, or a radio button, however the tab bar reports it; not
+    /// View ▸ Inspector's menu item of the same name.
+    @MainActor
+    private func paneTab(_ app: XCUIApplication, _ name: String) -> XCUIElement {
+        let types = [XCUIElement.ElementType.tab.rawValue, XCUIElement.ElementType.radioButton.rawValue]
+        return app.windows.firstMatch.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@ AND elementType IN %@", name, types))
+            .element(boundBy: 0)
     }
 
     @MainActor
@@ -81,10 +92,11 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertTrue(permissions.waitForExistence(timeout: 5))
         let before = (effort.frame, permissions.frame)
 
-        choose("Bypass Permissions", in: "Permissions", app: app)
+        // Don't Ask, not Bypass Permissions: Settings offers Bypass only when asked to.
+        choose("Don't Ask", in: "Permissions", app: app)
         choose("Max", in: "Effort", app: app)
 
-        XCTAssertEqual(permissions.value as? String, "Bypass Permissions")
+        XCTAssertEqual(permissions.value as? String, "Don't Ask")
         XCTAssertEqual(effort.frame, before.0)
         XCTAssertEqual(permissions.frame, before.1)
     }
@@ -101,15 +113,23 @@ final class TetherAppUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
     }
 
-    /// New Chat keeps its folder with the composer, not in a form under the toolbar.
+    /// New Chat keeps its folder with the composer, not in a form under the toolbar: the folder,
+    /// the branch checked out there, and Work In, in one row above the field.
     @MainActor
     func testNewChatFolderSitsAboveTheComposer() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["Fixture Chat"].waitForExistence(timeout: 15))
         app.buttons["New Chat"].click()
-        let folder = app.popUpButtons["newChat.folder"]
+        let folder = app.descendants(matching: .any)["newChat.folder"]
         let input = app.descendants(matching: .any)["composer.input"]
         XCTAssertTrue(folder.waitForExistence(timeout: 5))
+        let workIn = app.descendants(matching: .any)["newChat.workIn"]
+        XCTAssertTrue(workIn.exists, "Work In sits beside the folder")
+        XCTAssertEqual(workIn.value as? String, "This Directory")
+        // The fixture's `git/status` says the folder is on main.
+        let branch = app.descendants(matching: .any)["newChat.branch"]
+        XCTAssertTrue(branch.waitForExistence(timeout: 5))
+        XCTAssertEqual(branch.label, "Branch main")
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         XCTAssertLessThan(folder.frame.maxY, input.frame.minY)
         XCTAssertEqual(folder.value as? String, "/tmp/tether-fixture")
@@ -160,6 +180,8 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertTrue(sidebar.staticTexts["General"].waitForExistence(timeout: 10))
         sidebar.staticTexts["General"].click()
         XCTAssertTrue(app.staticTexts["New Chats"].waitForExistence(timeout: 10))
+        // Reading Width, in General's Chats section.
+        XCTAssertTrue(app.radioButtons["Wide"].waitForExistence(timeout: 10))
         app.radioButtons["Wide"].click()
         XCTAssertEqual((app.radioButtons["Wide"].value as? NSNumber)?.intValue, 1)
         app.radioButtons["Narrow"].click()
@@ -241,5 +263,29 @@ final class TetherAppUITests: XCTestCase {
         jump.click()
         XCTAssertTrue(jump.waitForNonExistence(timeout: 5))
         XCTAssertTrue(latest.isHittable)
+    }
+
+    /// Opening and closing the inspector in a window as narrow as it goes. The detail column's
+    /// minimum used to come from whatever its content measured, and with the composer's + button
+    /// that made AppKit lay the window out again and again until it gave up and crashed.
+    @MainActor
+    func testInspectorInANarrowWindow() {
+        let app = launch(scenario: "performance")
+        XCTAssertTrue(app.staticTexts["Section 29: tightening the renderer"].firstMatch.waitForExistence(timeout: 20))
+        let window = app.windows.firstMatch
+        // As narrow as the window allows: the drag goes further than the minimum.
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -3, dy: -3))
+        corner.click(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: -600, dy: 0)),
+                     withVelocity: XCUIGestureVelocity(600), thenHoldForDuration: 0.1)
+
+        for _ in 0..<3 {
+            app.typeKey("i", modifierFlags: [.command, .option])
+            Thread.sleep(forTimeInterval: 1)
+            app.typeKey("i", modifierFlags: [.command, .option])
+            Thread.sleep(forTimeInterval: 1)
+        }
+
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertTrue(window.exists)
     }
 }

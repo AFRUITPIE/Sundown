@@ -10,6 +10,11 @@ struct SidebarChat: Identifiable, Hashable, Sendable {
     /// Milliseconds since the epoch, as the server reports it. Nil for a chat that exists only in
     /// this app so far (no first message on disk yet); it is the newest thing there is.
     let updatedAt: Double?
+    /// Pinned in this app. An archived chat keeps its pin, but leaves Pinned until it's unarchived.
+    var isPinned = false
+    var isArchived = false
+    /// Waiting on a permission, a question, a plan or a form: the Activity sidebar's Needs You.
+    var needsYou = false
 }
 
 /// One `Section` of the sidebar list.
@@ -19,6 +24,11 @@ struct SidebarSection: Identifiable, Equatable {
     /// The full path behind a directory section's short name; nil when the title says it all.
     let help: String?
     let chats: [SidebarChat]
+    /// The folder a directory section lists, for its header's actions; nil for every other section.
+    var folder: String? = nil
+
+    static let pinnedID = "pinned"
+    static let needsYouID = "needs-you"
 }
 
 /// The date buckets, in the order they are shown.
@@ -50,10 +60,15 @@ private enum DateBucket: CaseIterable {
 /// Groups a host's chats for the sidebar. Pure — same inputs, same sections. `now` and `calendar`
 /// are parameters so the date buckets can be tested at their boundaries.
 ///
+/// Chats: Pinned on top, then the rest by `grouping`. Activity: Needs You on top, then every other
+/// chat by day; `grouping` doesn't apply, and a pin is only a mark on the row. Either way a chat is
+/// listed once: the sidebar's outline list traps on two rows with one id.
+///
 /// Search runs before grouping, so a section only exists if something in it matched.
 func sidebarSections(
     chats: [SidebarChat],
     grouping: SidebarGrouping,
+    style: Appearance.SidebarStyle = .chats,
     search: String = "",
     now: Date = .now,
     calendar: Calendar = .current
@@ -66,9 +81,20 @@ func sidebarSections(
         return l == r ? a.offset < b.offset : l > r
     }.map(\.element)
 
-    switch grouping {
-    case .date: return byDate(ordered, now: now, calendar: calendar)
-    case .directory: return byDirectory(ordered)
+    switch style {
+    case .chats:
+        let pinned = ordered.filter { $0.isPinned && !$0.isArchived }
+        let rest = pinned.isEmpty ? ordered : ordered.filter { !($0.isPinned && !$0.isArchived) }
+        let top = pinned.isEmpty ? [] : [SidebarSection(id: SidebarSection.pinnedID, title: "Pinned", help: nil, chats: pinned)]
+        switch grouping {
+        case .date: return top + byDate(rest, now: now, calendar: calendar)
+        case .directory: return top + byDirectory(rest)
+        }
+    case .activity:
+        let waiting = ordered.filter(\.needsYou)
+        let rest = waiting.isEmpty ? ordered : ordered.filter { !$0.needsYou }
+        let top = waiting.isEmpty ? [] : [SidebarSection(id: SidebarSection.needsYouID, title: "Needs You", help: nil, chats: waiting)]
+        return top + byDay(rest, now: now, calendar: calendar)
     }
 }
 
@@ -110,9 +136,41 @@ private func byDirectory(_ ordered: [SidebarChat]) -> [SidebarSection] {
     return order.map { cwd in
         // Keyed on the whole path: two projects can share a last component.
         SidebarSection(id: cwd.map { "dir:\($0)" } ?? "dir:none",
-                       title: cwd?.lastPathComponent ?? "No Folder",
+                       title: cwd?.lastPathComponent ?? "No Directory",
                        help: cwd?.abbreviatingHome,
-                       chats: grouped[cwd] ?? [])
+                       chats: grouped[cwd] ?? [],
+                       folder: cwd)
+    }
+}
+
+/// One section per calendar day, newest first, as Mail dates a message: Today, Yesterday, the
+/// weekday for the rest of the week, then the date.
+private func byDay(_ ordered: [SidebarChat], now: Date, calendar: Calendar) -> [SidebarSection] {
+    let today = calendar.startOfDay(for: now)
+    var order: [Date] = []
+    var grouped: [Date: [SidebarChat]] = [:]
+    for chat in ordered {
+        // A clock a little ahead of ours still reads as today.
+        let day = min(calendar.startOfDay(for: chat.sortDate(now: now)), today)
+        if grouped[day] == nil { order.append(day) }
+        grouped[day, default: []].append(chat)
+    }
+    return order.map { day in
+        SidebarSection(id: "day:\(Int(day.timeIntervalSince1970))", title: dayTitle(day, today: today, calendar: calendar),
+                       help: nil, chats: grouped[day] ?? [])
+    }
+}
+
+private func dayTitle(_ day: Date, today: Date, calendar: Calendar) -> String {
+    let days = calendar.dateComponents([.day], from: day, to: today).day ?? 0
+    let style = Date.FormatStyle(locale: calendar.locale ?? .current, calendar: calendar, timeZone: calendar.timeZone)
+    switch days {
+    case ..<1: return "Today"
+    case 1: return "Yesterday"
+    case 2..<7: return day.formatted(style.weekday(.wide))
+    default:
+        let thisYear = calendar.component(.year, from: day) == calendar.component(.year, from: today)
+        return day.formatted(thisYear ? style.month(.wide).day() : style.month(.wide).day().year())
     }
 }
 
