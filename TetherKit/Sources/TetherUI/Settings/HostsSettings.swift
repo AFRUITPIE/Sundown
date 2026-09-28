@@ -116,8 +116,8 @@ extension HostConnection.State {
         switch self {
         case .connected: "Connected"
         case .connecting: "Connecting"
-        case .failed, .disconnected, .appTooOld: "Not Connected"
-        case .needsServer(let offer): offer.isUpdate ? "Needs an Update" : "Not Installed"
+        case .failed, .disconnected: "Not Connected"
+        case .needsNode: "Needs Node.js"
         }
     }
 
@@ -131,16 +131,16 @@ extension HostConnection.State {
         switch self {
         case .connected: "checkmark.circle.fill"
         case .connecting: "ellipsis.circle"
-        case .failed, .appTooOld: "exclamationmark.triangle"
+        case .failed: "exclamationmark.triangle"
         case .disconnected: "bolt.horizontal.circle"
-        case .needsServer(let offer): offer.isUpdate ? "arrow.triangle.2.circlepath.circle" : "arrow.down.circle"
+        case .needsNode: "shippingbox"
         }
     }
 
     var tint: Color {
         switch self {
         case .connected: .green
-        case .failed, .appTooOld, .needsServer: .orange
+        case .failed, .needsNode: .orange
         default: .secondary
         }
     }
@@ -149,11 +149,9 @@ extension HostConnection.State {
     var failureMessage: String? {
         switch self {
         case .failed(let message): return message
-        case .needsServer(let offer):
-            if let failure = offer.failure { return failure }
-            if case .outdated(let installed) = offer.reason { return "This host runs Tether \(installed), which is too old for this app." }
-            return nil
-        case .appTooOld(let version): return "This host runs Tether \(version), which needs a newer version of this app."
+        case .needsNode(let need):
+            let detail = need.detail(host: "this host")
+            return detail.prefix(1).uppercased() + detail.dropFirst()
         default: return nil
         }
     }

@@ -3,7 +3,7 @@
 A native SwiftUI client for [tether-server](../tether-server): Claude Code on this Mac, or on any host you can reach over SSH, with sessions that keep running while the app is closed.
 
 ```
-Tether.xcodeproj     macOS app target (signing, bundle, server-binary build phase)
+Tether.xcodeproj     macOS app target (signing, bundle)
 Tether/              app entry point + assets
 TetherKit/           Swift package
   TetherKit          transport (local shell / ssh), JSON-RPC client, host bootstrap, stores
@@ -14,7 +14,7 @@ Protocol types come from `TetherProtocol`, which is generated in `../tether-serv
 
 ## Develop
 
-1. Open `Tether.xcodeproj` and run the **Tether** scheme. The app carries no server: it offers to install the Tether server on each host from tether-server's releases, asking first.
+1. Open `Tether.xcodeproj` and run the **Tether** scheme. The app carries no server: each host runs tether-server's npm package with its own `npx` (Node.js 18 or later), at the version the app pins, and a host without Node.js can have the server copied to it.
 2. To run a `../tether-server` working copy instead, set This Mac's Server Command in Settings ▸ Hosts to `<bun> run <path>/tether-server/src/cli.ts connect`.
 3. Live Swift tests against the real `claude` (Haiku): `TETHER_E2E=1 swift test --package-path TetherKit`.
 4. Debug builds accept `TETHER_OPEN_THREAD=<id>`, set in the scheme's environment variables, to open a chat on launch.
@@ -30,5 +30,4 @@ management, chat streaming, and reconnection without inference calls. Run it loc
 
 The PR workflow runs both suites on the `xcode-27` GitHub runner and uploads the `.xcresult`
 bundle. SwiftPM resolves the pinned `TetherProtocol` package from the public
-`AFRUITPIE/tether-server` repository. The workflow skips bundling server binaries, because fixture
-tests do not use them. No Claude credentials are supplied to CI.
+`AFRUITPIE/tether-server` repository. No Claude credentials are supplied to CI.

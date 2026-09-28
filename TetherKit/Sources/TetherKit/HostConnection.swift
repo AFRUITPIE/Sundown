@@ -12,10 +12,9 @@ public final class HostConnection: Identifiable {
         case connecting(String)
         case connected
         case failed(String)
-        /// The host has no Tether server, or one too old for this app: offered, never installed unasked.
-        case needsServer(ServerOffer)
-        /// The host's server is newer than this app can talk to.
-        case appTooOld(serverVersion: String)
+        /// The host has no Node.js 18 or later for `npx`: a copy of the server is offered instead,
+        /// never made unasked.
+        case needsNode(NodeNeeded)
     }
 
     public private(set) var host: HostConfig
@@ -30,10 +29,10 @@ public final class HostConnection: Identifiable {
     /// All chats on this host, most recent first (across every directory).
     public private(set) var chats: [ThreadModel] = []
     public private(set) var log: [String] = []
-    /// A newer server than the host's, which still works: offered in Settings ▸ Hosts, not needed.
-    public private(set) var availableUpdate: ServerOffer?
-    /// While a server is being installed or updated on the host.
-    public private(set) var isInstalling = false
+    /// How the host runs the server, once checked: `npx` with its Node.js, or a copy.
+    public private(set) var runner: ServerRunner?
+    /// While the server is being copied to the host.
+    public private(set) var isCopying = false
 
     private var threads: [String: ThreadModel] = [:]
     private var client: RPCClient?
@@ -53,11 +52,11 @@ public final class HostConnection: Identifiable {
     private var openRequested = Set<String>()
     private var chatsRefreshTask: Task<Void, Never>?
     @ObservationIgnored private let transportProvider: TransportProvider?
-    /// Looks at the host's server before connecting, and installs it when asked. None for the
+    /// Checks the host before connecting, and copies the server there when asked. None for the
     /// reconnect tests' hosts, which connect straight to their transport.
     @ObservationIgnored private let provisioner: (any ServerProvisioning)?
-    /// The host's server was found usable this launch: a reconnect goes straight to `connect`, one
-    /// login rather than two. A failed connection looks again.
+    /// The host was checked this launch: a reconnect goes straight to `connect`, one login rather
+    /// than two. A failed connection looks again.
     @ObservationIgnored private var serverChecked = false
 
     /// Reported to the daemon on connect.
@@ -143,7 +142,7 @@ public final class HostConnection: Identifiable {
             if let transportProvider {
                 transport = try await transportProvider(host)
             } else {
-                let cmd = (provisioner ?? HostBootstrapper()).connectCommand(for: host)
+                let cmd = (provisioner ?? HostBootstrapper()).connectCommand(for: host, runner: runner)
                 appendLog("$ \(([cmd.executable] + cmd.arguments).joined(separator: " "))")
                 transport = ProcessTransport(executable: cmd.executable, arguments: cmd.arguments)
             }
@@ -195,86 +194,54 @@ public final class HostConnection: Identifiable {
         }
     }
 
-    /// Looks at the host's server: true to go on and connect; false when it has to be installed or
-    /// updated first (asked in `state`), or is too new for this app.
+    /// Checks the host: true to go on and connect; false when it has no Node.js to run the server
+    /// with (said in `state`, with the copy offered instead).
     private func checkServer(with provisioner: any ServerProvisioning) async throws -> Bool {
         state = .connecting("Checking \(host.name)…")
         let probe = try await provisioner.probe(host)
-        switch ServerAssessment.of(probe, clientProtocol: tetherProtocolVersion, minServerProtocol: Self.minServerProtocol) {
-        case .ready(let installed, let update):
-            appendLog("Tether \(installed.version) on \(host.name)")
-            if let update { appendLog("Tether \(update.version) is available") }
-            availableUpdate = update
-            serverChecked = true
-            if let update { Task { await fillSize(update) } }
-            return true
-        case .needs(let offer):
-            if case .outdated(let installed) = offer.reason {
-                appendLog("\(host.name) runs Tether \(installed), which is too old for this app")
-            } else {
-                appendLog("Tether isn’t installed on \(host.name)")
+        switch ServerAssessment.of(probe, checksums: provisioner.checksums) {
+        case .ready(let runner):
+            switch runner {
+            case .npx(let node): appendLog("Node.js \(node) on \(host.name): running Tether \(ServerRelease.version) with npx")
+            case .copied: appendLog("Running the copy of Tether \(ServerRelease.version) on \(host.name)")
             }
-            state = .needsServer(offer)
-            Task { await fillSize(offer) }
-            return false
-        case .appTooOld(let version):
-            appendLog("\(host.name) runs Tether \(version), which needs a newer version of this app")
-            state = .appTooOld(serverVersion: version)
+            self.runner = runner
+            serverChecked = true
+            return true
+        case .needsNode(let need):
+            if let found = need.found {
+                appendLog("\(host.name) has Node.js \(found); Tether needs \(ServerRelease.minimumNode) or later")
+            } else {
+                appendLog("No npx on \(host.name)’s PATH")
+            }
+            state = .needsNode(need)
             return false
         }
     }
 
-    /// The offer's download size, once the release answers, for the question that asks about it.
-    private func fillSize(_ offer: ServerOffer) async {
-        guard let size = await provisioner?.downloadSize(of: offer) else { return }
-        if case .needsServer(var shown) = state, shown.id == offer.id {
-            shown.size = size
-            state = .needsServer(shown)
-        }
-        if var shown = availableUpdate, shown.id == offer.id {
-            shown.size = size
-            availableUpdate = shown
-        }
-    }
-
-    /// Installs or updates the host's server as offered, running exactly the command the user was
-    /// shown, then connects, or reconnects so the daemon moves onto it once its work is done. A
-    /// chat running meanwhile goes on: only a host that wasn't connected shows the progress.
-    public func installServer(_ offer: ServerOffer) async {
-        guard let provisioner, !isInstalling else { return }
-        isInstalling = true
-        defer { isInstalling = false }
-        let wasConnected = state == .connected
-        let verb = offer.isUpdate ? "Updating" : "Installing"
-        if !wasConnected { state = .connecting("\(verb) Tether \(offer.version)…") }
-        appendLog("$ \(offer.command)")
+    /// Installs the server on the host when the user says to (Install Tether): downloaded here,
+    /// checked, and copied over. Then connects.
+    public func copyServer(_ copy: ServerCopy) async {
+        guard let provisioner, !isCopying, case .needsNode(let need) = state else { return }
+        isCopying = true
+        defer { isCopying = false }
+        state = .connecting("Installing Tether \(copy.version)…")
         do {
-            try await provisioner.install(offer, on: host) { [weak self] line in
+            try await provisioner.copy(copy, to: host) { [weak self] line in
                 Task { @MainActor in
                     guard let self else { return }
                     self.appendLog(line)
                     if case .connecting = self.state { self.state = .connecting(line) }
                 }
             }
-            availableUpdate = nil
             serverChecked = false
-            if wasConnected {
-                await reconnect()
-            } else {
-                state = .disconnected
-                await connect()
-            }
+            state = .disconnected
+            await connect()
         } catch {
-            appendLog("\(verb) Tether failed: \(error.localizedDescription)")
-            var failed = offer
-            failed.failure = error.localizedDescription
-            if case .newer = offer.reason {
-                // An update it didn't need: the host goes on with the server it has.
-                availableUpdate = failed
-                if !wasConnected { state = .disconnected }
-            } else {
-                state = .needsServer(failed)
-            }
+            appendLog("Installing Tether failed: \(error.localizedDescription)")
+            var failed = need
+            failed.copy?.failure = error.localizedDescription
+            state = .needsNode(failed)
         }
     }
 
@@ -1279,10 +1246,10 @@ extension HostConnection {
         models: [ModelInfo] = [],
         projects: [ProjectListResult.Project] = [],
         chats: [ThreadModel] = [],
-        availableUpdate: ServerOffer? = nil
+        runner: ServerRunner? = nil
     ) {
         self.state = state
-        self.availableUpdate = availableUpdate
+        self.runner = runner
         self.client = client
         self.serverInfo = serverInfo
         self.account = account

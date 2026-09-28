@@ -24,49 +24,46 @@ public enum UITestFixture {
     }
 }
 
-/// A fixture host's Tether server, as the UI tests need it: not installed, too old or too new for
-/// this app, or failing to install. Installing takes a moment and says so, as a real host does.
+/// A fixture host without Node.js 18 or later, as the UI tests need it: none, an older one, or a
+/// copy of the server that fails. Copying takes a moment and says so, as a real host does.
 public final class FixtureServer: ServerProvisioning {
     public enum Scenario: String, Sendable {
-        case missing = "server-missing"
-        case outdated = "server-outdated"
-        case tooNew = "server-too-new"
-        case installFails = "server-install-failed"
+        case nodeMissing = "node-missing"
+        case nodeOutdated = "node-outdated"
+        case copyFails = "copy-failed"
     }
 
     private let scenario: Scenario
-    private let installed: Mutex<InstalledServer?>
+    private let copied = Mutex(false)
 
     init(_ scenario: Scenario) {
         self.scenario = scenario
-        let start: InstalledServer? = switch scenario {
-        case .missing, .installFails: nil
-        case .outdated: InstalledServer(version: "0.4.0", protocolVersion: 0, minClientProtocol: 0)
-        case .tooNew: InstalledServer(version: "0.9.0", protocolVersion: tetherProtocolVersion + 1, minClientProtocol: tetherProtocolVersion + 1)
-        }
-        installed = Mutex(start)
     }
 
     public func probe(_ host: HostConfig) async throws -> ServerProbe {
-        ServerProbe(platform: "darwin-arm64", installed: installed.withLock { $0 })
+        let copied = copied.withLock { $0 }
+            ? InstalledServer(version: ServerRelease.version, protocolVersion: tetherProtocolVersion, minClientProtocol: 1) : nil
+        return ServerProbe(platform: "darwin-arm64", node: scenario == .nodeOutdated ? "16.20.2" : nil, copied: copied)
     }
 
-    public func downloadSize(of offer: ServerOffer) async -> Int64? { 70_400_000 }
+    public var checksums: [String: String] { ["darwin-arm64": String(repeating: "0", count: 64)] }
 
-    public func install(_ offer: ServerOffer, on host: HostConfig, progress: @escaping @Sendable (String) -> Void) async throws {
-        progress("Downloading Tether \(offer.version) for \(offer.platform)")
+    public func copy(_ copy: ServerCopy, to host: HostConfig, progress: @escaping @Sendable (String) -> Void) async throws {
+        progress("Downloading Tether \(copy.version) for \(copy.platform)")
         try await Task.sleep(for: .milliseconds(400))
-        if scenario == .installFails {
-            throw HostBootstrapper.BootstrapError.install("Couldn’t download tether-\(offer.version)-\(offer.platform) (404).")
+        if scenario == .copyFails {
+            throw HostBootstrapper.BootstrapError.download("Couldn’t download tether-\(copy.version)-\(copy.platform) (404).")
         }
-        progress("Verifying")
+        progress("Checking it")
         try await Task.sleep(for: .milliseconds(200))
-        installed.withLock { $0 = InstalledServer(version: offer.version, protocolVersion: tetherProtocolVersion, minClientProtocol: 1) }
-        progress("Installed Tether \(offer.version)")
+        copied.withLock { $0 = true }
+        progress("Installed Tether \(copy.version)")
     }
 
     /// Unused: the fixture's transport stands in for the process.
-    public func connectCommand(for host: HostConfig) -> (executable: String, arguments: [String]) { ("/usr/bin/false", []) }
+    public func connectCommand(for host: HostConfig, runner: ServerRunner?) -> (executable: String, arguments: [String]) {
+        ("/usr/bin/false", [])
+    }
 }
 
 private actor FixtureAttempts {

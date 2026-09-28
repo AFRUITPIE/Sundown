@@ -1,94 +1,83 @@
 import CryptoKit
 import Foundation
-import Synchronization
 
-/// What the app does with a host's server before connecting: looks at what's installed, installs
-/// or updates it when the user says to, and builds the command that connects. A seam, so the UI
-/// tests' fixture hosts can be missing a server, or have one too old or too new.
+/// What the app does with a host's server before connecting: checks for Node.js (or a copied
+/// server), copies the server over when the user says to, and builds the command that connects. A
+/// seam, so the UI tests' fixture hosts can be without Node.js, or fail to copy.
 public protocol ServerProvisioning: Sendable {
     func probe(_ host: HostConfig) async throws -> ServerProbe
-    /// The offer's download size, when the release answers; asked while the offer is on screen.
-    func downloadSize(of offer: ServerOffer) async -> Int64?
-    /// Runs the offer's command on the host (`progress` gets its lines as they come), or, when the
-    /// host can't download it, downloads and checks it here and copies it over.
-    func install(_ offer: ServerOffer, on host: HostConfig, progress: @escaping @Sendable (String) -> Void) async throws
-    func connectCommand(for host: HostConfig) -> (executable: String, arguments: [String])
+    /// Each platform's binary's SHA-256: the platforms a copy can go to.
+    var checksums: [String: String] { get }
+    /// Downloads the binary here, checks it, and puts it on the host (`progress` gets each step).
+    func copy(_ copy: ServerCopy, to host: HostConfig, progress: @escaping @Sendable (String) -> Void) async throws
+    /// `runner` is what the check found; a host's Server Command is run instead, as it is.
+    func connectCommand(for host: HostConfig, runner: ServerRunner?) -> (executable: String, arguments: [String])
 }
 
-/// The real hosts: this Mac, and SSH destinations through the system's `ssh`. Nothing is bundled:
-/// a host has its server in `~/.tether/bin`, installed and updated from tether-server's releases.
+/// The real hosts: this Mac, and SSH destinations through the system's `ssh`. Everything runs under
+/// the user's login shell, so PATH (the first `npx`, the first `claude`) matches their terminal.
 public struct HostBootstrapper: ServerProvisioning {
     public enum BootstrapError: LocalizedError {
-        case unsupportedPlatform(String)
         case command(String, String)
-        case install(String)
         case download(String)
 
         public var errorDescription: String? {
             switch self {
-            case .unsupportedPlatform(let p): return "No Tether server build for \(p)."
             case .command(let cmd, let err): return "\(cmd) failed: \(err)"
-            case .install(let reason), .download(let reason): return reason
+            case .download(let reason): return reason
             }
         }
     }
 
-    public init() {}
+    /// Each platform's binary's SHA-256: the pinned ones, or a test's.
+    public let checksums: [String: String]
 
-    public func connectCommand(for host: HostConfig) -> (executable: String, arguments: [String]) {
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        let ssh = Self.sshOptions + Self.sharedConnectionOptions()
+    public init(checksums: [String: String] = ServerRelease.checksums) {
+        self.checksums = checksums
+    }
+
+    static var loginShell: String { ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh" }
+
+    /// `command` under the host's login shell. Over SSH it's in single quotes, so it has none.
+    static func underLoginShell(_ command: String, on host: HostConfig) -> (executable: String, arguments: [String]) {
+        switch host.kind {
+        case .local: return (loginShell, ["-lc", command])
+        case .ssh(let dest):
+            return ("/usr/bin/ssh", sshOptions + sharedConnectionOptions() + [dest, "exec \"$SHELL\" -lc '\(command)'"])
+        }
+    }
+
+    public func connectCommand(for host: HostConfig, runner: ServerRunner?) -> (executable: String, arguments: [String]) {
         if let custom = host.serverCommand, !custom.isEmpty {
             switch host.kind {
-            case .local: return (shell, ["-lc", custom])
-            case .ssh(let dest): return ("/usr/bin/ssh", ssh + [dest, custom])
+            case .local: return (Self.loginShell, ["-lc", custom])
+            case .ssh(let dest): return ("/usr/bin/ssh", Self.sshOptions + Self.sharedConnectionOptions() + [dest, custom])
             }
         }
-        // Under the user's login shell, so PATH (and the first `claude`) match their terminal.
-        switch host.kind {
-        case .local:
-            return (shell, ["-lc", "exec \(ServerRelease.installedPath) connect"])
-        case .ssh(let dest):
-            return ("/usr/bin/ssh", ssh + [dest, "exec \"$SHELL\" -lc 'exec \(ServerRelease.installedPath) connect'"])
-        }
+        let command = runner == .copied ? "\(ServerRelease.copiedPath()) connect" : ServerRelease.npxCommand()
+        return Self.underLoginShell("exec \(command)", on: host)
     }
+
+    /// One command, in any login shell (sh, bash, zsh or fish): the system, the first `npx`'s Node.js,
+    /// and a copied server's version. `true` so a host with neither still answers.
+    static let probeCommand = "echo tether-probe; uname -sm; command -v npx >/dev/null && node --version; "
+        + "\(ServerRelease.copiedPath()) version --json 2>/dev/null; true"
 
     public func probe(_ host: HostConfig) async throws -> ServerProbe {
-        switch host.kind {
-        case .local:
-            let path = NSString(string: ServerRelease.installedPath).expandingTildeInPath
-            var installed: InstalledServer?
-            if FileManager.default.isExecutableFile(atPath: path) {
-                installed = (try? await Self.run(path, ["version", "--json"])).flatMap(Self.installedServer)
-            } else {
-                let folder = (path as NSString).deletingLastPathComponent
-                installed = Self.earlierInstall((try? FileManager.default.contentsOfDirectory(atPath: folder)) ?? [])
-            }
-            return ServerProbe(platform: "darwin-\(Self.localArch)", installed: installed)
-        case .ssh(let dest):
-            // One login for all of it; `true` so a host without the server still answers.
-            let output = try await Self.run("/usr/bin/ssh", Self.sshOptions + Self.sharedConnectionOptions()
-                                            + [dest, "uname -sm; \(ServerRelease.installedPath) version --json 2>/dev/null || ls ~/.tether/bin 2>/dev/null; true"])
-            let lines = output.split(separator: "\n", maxSplits: 1)
-            guard let uname = lines.first else { throw BootstrapError.command("ssh", "no output from \(dest)") }
-            let rest = lines.count > 1 ? String(lines[1]) : ""
-            return ServerProbe(platform: try Self.platform(fromUname: String(uname)),
-                               installed: Self.installedServer(rest)
-                                   ?? Self.earlierInstall(rest.split(whereSeparator: \.isNewline).map(String.init)))
-        }
+        let command = Self.underLoginShell(Self.probeCommand, on: host)
+        return try Self.parseProbe(try await Self.run(command.executable, command.arguments))
     }
 
-    /// A server an earlier version of this app put in `~/.tether/bin` (`tether-<version>`, no
-    /// `tether` link to it): the newest release there, as too old for this app, so the host is
-    /// offered an update, which links it and clears the rest away.
-    static func earlierInstall(_ names: [String]) -> InstalledServer? {
-        let versions = names.compactMap { name -> String? in
-            guard name.hasPrefix("tether-") else { return nil }
-            let version = String(name.dropFirst("tether-".count))
-            return version.wholeMatch(of: /\d+\.\d+\.\d+/) != nil ? version : nil
+    /// The probe's lines after its marker, whatever a login script printed before it.
+    static func parseProbe(_ output: String) throws -> ServerProbe {
+        let lines = output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let marker = lines.lastIndex(of: "tether-probe"), marker + 1 < lines.count else {
+            throw BootstrapError.command("The check", "no answer")
         }
-        guard let newest = versions.max(by: { ServerVersion($0) < ServerVersion($1) }) else { return nil }
-        return InstalledServer(version: newest, protocolVersion: 0, minClientProtocol: 0)
+        let rest = lines[(marker + 2)...]
+        let node = rest.first { $0.wholeMatch(of: /v\d+(\.\d+)*/) != nil }.map { String($0.dropFirst()) }
+        return ServerProbe(platform: platform(fromUname: lines[marker + 1]), node: node,
+                           copied: installedServer(rest.joined(separator: "\n")))
     }
 
     /// `tether version --json`'s object, whatever a login script printed around it.
@@ -97,72 +86,64 @@ public struct HostBootstrapper: ServerProvisioning {
         return try? JSONDecoder().decode(InstalledServer.self, from: Data(output[start...end].utf8))
     }
 
-    public func downloadSize(of offer: ServerOffer) async -> Int64? {
-        var request = URLRequest(url: ServerRelease.url(ServerRelease.binaryName(version: offer.version, platform: offer.platform),
-                                                        version: offer.version))
-        request.httpMethod = "HEAD"
-        guard let (_, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200, response.expectedContentLength > 0 else { return nil }
-        return response.expectedContentLength
-    }
-
-    public func install(_ offer: ServerOffer, on host: HostConfig, progress: @escaping @Sendable (String) -> Void) async throws {
-        do {
-            switch host.kind {
-            case .local:
-                try await Self.stream("/bin/sh", ["-c", offer.command], progress: progress)
-            case .ssh(let dest):
-                try await Self.stream("/usr/bin/ssh", Self.sshOptions + Self.sharedConnectionOptions() + [dest, offer.command],
-                                      progress: progress)
-            }
-        } catch {
-            // A host that can't reach the releases (no way out, a proxy it doesn't know) gets them
-            // from this Mac. If that fails too, the host's own reason is the one to show.
-            progress("\(host.name) couldn’t install it (\(error.localizedDescription)); downloading it on this Mac")
-            do {
-                try await installFromThisMac(offer, on: host, progress: progress)
-            } catch let fallback {
-                progress("That failed too: \(fallback.localizedDescription)")
-                throw error
-            }
-        }
-    }
-
-    /// Downloads the binary and install.sh here, checks the binary against the release's
-    /// SHA256SUMS, and has install.sh put that file in place on the host (`TETHER_BINARY`).
-    func installFromThisMac(_ offer: ServerOffer, on host: HostConfig, progress: @escaping @Sendable (String) -> Void) async throws {
-        let name = ServerRelease.binaryName(version: offer.version, platform: offer.platform)
-        let folder = FileManager.default.temporaryDirectory.appending(path: "tether-install-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
-
-        progress("Downloading Tether \(offer.version) for \(offer.platform)")
-        let binary = try await Self.download(ServerRelease.url(name, version: offer.version), to: folder.appending(path: name))
-        let sums = String(decoding: try await Self.data(ServerRelease.url("SHA256SUMS", version: offer.version)), as: UTF8.self)
-        let script = try await Self.data(ServerRelease.url("install.sh", version: offer.version))
-        progress("Verifying")
-        guard let expected = ReleaseChecksums.digest(of: name, in: sums) else {
-            throw BootstrapError.download("The release doesn’t list a checksum for \(name).")
-        }
-        guard try Self.sha256(of: binary) == expected else {
-            throw BootstrapError.download("\(name) doesn’t match its checksum.")
-        }
+    public func copy(_ copy: ServerCopy, to host: HostConfig, progress: @escaping @Sendable (String) -> Void) async throws {
+        let binary = try await download(copy, progress: progress)
+        defer { try? FileManager.default.removeItem(at: binary.deletingLastPathComponent()) }
         switch host.kind {
         case .local:
-            // The folder's name is a UUID: nothing in the path needs quoting.
-            let preamble = "TETHER_BINARY='\(binary.path)'\nexport TETHER_BINARY\n"
-            try await Self.stream("/bin/sh", ["-s"], input: Data(preamble.utf8) + script, progress: progress)
+            try Self.place(binary, version: copy.version,
+                           in: URL(filePath: NSString(string: ServerRelease.directory).expandingTildeInPath))
         case .ssh(let dest):
             let ssh = Self.sshOptions + Self.sharedConnectionOptions()
-            let upload = ".tether/bin/\(name).upload"
-            progress("Copying it to \(dest)")
-            _ = try await Self.run("/usr/bin/ssh", ssh + [dest, "mkdir -p ~/.tether/bin"])
+            let file = ServerRelease.copiedPath(version: copy.version)
+            progress("Installing it on \(dest)")
+            _ = try await Self.run("/usr/bin/ssh", ssh + [dest, "mkdir -p \(ServerRelease.directory)"])
             _ = try await Self.run("/usr/bin/scp", ["-q", "-o", "BatchMode=yes"] + Self.sharedConnectionOptions()
-                                   + [binary.path, "\(dest):\(upload)"])
-            // `sh -s` reads the script from here, so the host's login shell (fish, say) only runs `sh`.
-            let preamble = "TETHER_BINARY=\"$HOME/\(upload)\"\nexport TETHER_BINARY\n"
-            try await Self.stream("/usr/bin/ssh", ssh + [dest, "sh -s"], input: Data(preamble.utf8) + script, progress: progress)
-            _ = try? await Self.run("/usr/bin/ssh", ssh + [dest, "rm -f ~/\(upload)"])
+                                   + [binary.path, "\(dest):\(file.dropFirst(2)).part"])
+            // Put in place whole, then the other versions cleared away: one a daemon is still
+            // running from stays on disk until it exits.
+            _ = try await Self.run("/usr/bin/ssh", ssh + [dest, "chmod 755 \(file).part && mv -f \(file).part \(file) && "
+                                   + "find \(ServerRelease.directory) -maxdepth 1 -name 'tether*' ! -name tether-\(copy.version) -delete"])
+        }
+        progress("Installed Tether \(copy.version)")
+    }
+
+    /// The release's binary, downloaded to a folder of its own and checked against the checksum
+    /// this app was built with.
+    func download(_ copy: ServerCopy, progress: @escaping @Sendable (String) -> Void) async throws -> URL {
+        let name = ServerRelease.binaryName(version: copy.version, platform: copy.platform)
+        guard let expected = checksums[copy.platform] else {
+            throw BootstrapError.download("There’s no Tether \(copy.version) for \(copy.platform).")
+        }
+        let folder = FileManager.default.temporaryDirectory.appending(path: "tether-copy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        do {
+            progress("Downloading Tether \(copy.version) for \(copy.platform)")
+            let binary = try await Self.download(ServerRelease.url(name, version: copy.version), to: folder.appending(path: name))
+            progress("Checking it")
+            guard try Self.sha256(of: binary) == expected else {
+                throw BootstrapError.download("\(name) doesn’t match the checksum this app has for it.")
+            }
+            return binary
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw error
+        }
+    }
+
+    /// Puts a checked binary in `folder` as `tether-<version>`, whole, and clears the other versions
+    /// away.
+    static func place(_ binary: URL, version: String, in folder: URL) throws {
+        let files = FileManager.default
+        try files.createDirectory(at: folder, withIntermediateDirectories: true)
+        let part = folder.appending(path: "tether-\(version).part")
+        try? files.removeItem(at: part)
+        try files.copyItem(at: binary, to: part)
+        try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: part.path)
+        let destination = folder.appending(path: "tether-\(version)")
+        _ = try files.replaceItemAt(destination, withItemAt: part)
+        for name in try files.contentsOfDirectory(atPath: folder.path) where name.hasPrefix("tether") && name != "tether-\(version)" {
+            try? files.removeItem(at: folder.appending(path: name))
         }
     }
 
@@ -200,9 +181,10 @@ public struct HostBootstrapper: ServerProvisioning {
         #endif
     }
 
-    static func platform(fromUname s: String) throws -> String {
+    /// `darwin-arm64`, `linux-x64` and so on, from `uname -sm`; nil for a system with no build.
+    static func platform(fromUname s: String) -> String? {
         let parts = s.split(separator: " ")
-        guard parts.count >= 2 else { throw BootstrapError.unsupportedPlatform(s) }
+        guard parts.count >= 2 else { return nil }
         let os = parts[0] == "Darwin" ? "darwin" : parts[0] == "Linux" ? "linux" : ""
         let arch: String
         switch parts[1] {
@@ -210,7 +192,7 @@ public struct HostBootstrapper: ServerProvisioning {
         case "x86_64", "amd64": arch = "x64"
         default: arch = ""
         }
-        guard !os.isEmpty, !arch.isEmpty else { throw BootstrapError.unsupportedPlatform(s) }
+        guard !os.isEmpty, !arch.isEmpty else { return nil }
         return "\(os)-\(arch)"
     }
 
@@ -230,71 +212,6 @@ public struct HostBootstrapper: ServerProvisioning {
                 else { cont.resume(throwing: BootstrapError.command(([exe] + args).joined(separator: " "), e.isEmpty ? "exit \(proc.terminationStatus)" : e)) }
             }
             do { try p.run() } catch { cont.resume(throwing: error) }
-        }
-    }
-
-    /// Runs a command, handing each line it prints to `progress` as it comes (install.sh's
-    /// `tether-install: ` prefix taken off), with `input` on its standard input. A failure says
-    /// install.sh's own reason when it gave one.
-    static func stream(_ exe: String, _ args: [String], input: Data? = nil,
-                       progress: @escaping @Sendable (String) -> Void) async throws {
-        let prefix = "tether-install: "
-        let tidy: @Sendable (Substring) -> String = { line in
-            line.hasPrefix(prefix) ? String(line.dropFirst(prefix.count)) : String(line)
-        }
-        let pending = Mutex(Data())
-        let errors = Mutex(Data())
-        let emit: @Sendable (Data, Bool) -> Void = { chunk, final in
-            let lines: [Substring] = pending.withLock { buffer in
-                buffer.append(chunk)
-                var text = String(decoding: buffer, as: UTF8.self)
-                if !final, let last = text.lastIndex(of: "\n") {
-                    buffer = Data(text[text.index(after: last)...].utf8)
-                    text = String(text[..<last])
-                } else if !final {
-                    return []
-                } else {
-                    buffer = Data()
-                }
-                return text.split(whereSeparator: \.isNewline)
-            }
-            for line in lines where !line.trimmingCharacters(in: .whitespaces).isEmpty { progress(tidy(line)) }
-        }
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, any Error>) in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: exe)
-            process.arguments = args
-            let out = Pipe(), err = Pipe(), inPipe = Pipe()
-            process.standardOutput = out
-            process.standardError = err
-            process.standardInput = input == nil ? FileHandle.nullDevice : inPipe
-            out.fileHandleForReading.readabilityHandler = { handle in emit(handle.availableData, false) }
-            err.fileHandleForReading.readabilityHandler = { handle in
-                let chunk = handle.availableData
-                errors.withLock { $0.append(chunk) }
-            }
-            process.terminationHandler = { proc in
-                out.fileHandleForReading.readabilityHandler = nil
-                err.fileHandleForReading.readabilityHandler = nil
-                emit(out.fileHandleForReading.readDataToEndOfFile(), true)
-                let rest = err.fileHandleForReading.readDataToEndOfFile()
-                let stderr = errors.withLock { String(decoding: $0 + rest, as: UTF8.self) }
-                guard proc.terminationStatus != 0 else { return cont.resume() }
-                let lines = stderr.split(whereSeparator: \.isNewline).map(String.init)
-                let reason = lines.last { $0.hasPrefix(prefix + "error: ") }.map { String($0.dropFirst((prefix + "error: ").count)) }
-                    ?? lines.last?.trimmingCharacters(in: .whitespaces)
-                    ?? "exit \(proc.terminationStatus)"
-                cont.resume(throwing: BootstrapError.install(reason))
-            }
-            do {
-                try process.run()
-                if let input {
-                    inPipe.fileHandleForWriting.write(input)
-                    try? inPipe.fileHandleForWriting.close()
-                }
-            } catch {
-                cont.resume(throwing: error)
-            }
         }
     }
 

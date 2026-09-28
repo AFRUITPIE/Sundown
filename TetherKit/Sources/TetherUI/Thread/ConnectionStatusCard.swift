@@ -7,17 +7,15 @@ import TetherKit
 struct ConnectionStatusCard: View {
     let status: Status
     let connection: HostConnection
-    /// The install or update being asked about.
-    @State private var asking: ServerOffer?
 
     /// What the card says: nothing while the host is connected.
     enum Status: Equatable {
         case notConnected(host: String)
         case connecting(host: String)
         case failed(reason: String)
-        /// No server on the host, or one too old: installed or updated when the user says so.
-        case needsServer(ServerOffer, host: String)
-        case appTooOld(host: String, serverVersion: String)
+        /// No Node.js 18 or later on the host: the user installs it, or has this Mac install the
+        /// server there.
+        case needsNode(NodeNeeded, host: String)
 
         init?(_ state: HostConnection.State, host: String) {
             switch state {
@@ -25,8 +23,7 @@ struct ConnectionStatusCard: View {
             case .disconnected: self = .notConnected(host: host)
             case .connecting: self = .connecting(host: host)
             case .failed(let reason): self = .failed(reason: reason)
-            case .needsServer(let offer): self = .needsServer(offer, host: host)
-            case .appTooOld(let version): self = .appTooOld(host: host, serverVersion: version)
+            case .needsNode(let need): self = .needsNode(need, host: host)
             }
         }
 
@@ -35,10 +32,7 @@ struct ConnectionStatusCard: View {
             case .notConnected: "Not Connected"
             case .connecting: "Connecting…"
             case .failed: "Couldn’t Connect"
-            case .needsServer(let offer, _) where offer.failure != nil:
-                offer.isUpdate ? "Couldn’t Update Tether" : "Couldn’t Install Tether"
-            case .needsServer(let offer, _): offer.isUpdate ? "Tether Needs an Update" : "Tether Isn’t Installed"
-            case .appTooOld: "Couldn’t Connect"
+            case .needsNode(let need, _): need.title
             }
         }
 
@@ -46,14 +40,7 @@ struct ConnectionStatusCard: View {
             switch self {
             case .notConnected(let host), .connecting(let host): host
             case .failed(let reason): reason
-            case .needsServer(let offer, _) where offer.failure != nil: offer.failure ?? ""
-            case .needsServer(let offer, let host):
-                if case .outdated(let installed) = offer.reason {
-                    "\(host) runs Tether \(installed); this app needs \(offer.version)."
-                } else {
-                    host
-                }
-            case .appTooOld(let host, let version): "\(host) runs Tether \(version), which needs a newer version of this app."
+            case .needsNode(let need, let host): need.detail(host: host)
             }
         }
 
@@ -62,9 +49,14 @@ struct ConnectionStatusCard: View {
             switch self {
             case .notConnected: "Connect"
             case .connecting: nil
-            case .failed, .appTooOld: "Reconnect"
-            case .needsServer(let offer, _): offer.askTitle
+            case .failed: "Reconnect"
+            case .needsNode: "Check Again"
             }
+        }
+
+        /// The install offered beside it, when there is one.
+        var copy: ServerCopy? {
+            if case .needsNode(let need, _) = self { need.copy } else { nil }
         }
     }
 
@@ -80,6 +72,12 @@ struct ConnectionStatusCard: View {
                     .help(status.detail)
             }
             Spacer(minLength: 8)
+            if let copy = status.copy, case .needsNode(let need, _) = status {
+                Button(need.installTitle) { Task { await connection.copyServer(copy) } }
+                    .buttonStyle(.bordered)
+                    .disabled(connection.isCopying)
+                    .accessibilityIdentifier("composer.installServer")
+            }
             if let action = status.action {
                 Button(action, action: fix)
                     .buttonStyle(.bordered)
@@ -93,25 +91,36 @@ struct ConnectionStatusCard: View {
         .glassEffect(.regular, in: .rect(cornerRadius: Layout.cardCornerRadius))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("composer.status")
-        .serverInstallSheet($asking, connection: connection)
     }
 
     private func fix() {
         switch status {
-        case .needsServer(let offer, _): asking = offer
-        case .notConnected: Task { await connection.connect() }
+        case .notConnected, .needsNode: Task { await connection.connect() }
         default: Task { await connection.reconnect() }
         }
     }
 }
 
+extension NodeNeeded {
+    /// What a host without a usable Node.js says: the title, and the line under it.
+    var title: String { copy?.failure != nil ? "Couldn’t Install Tether" : "Tether Needs Node.js" }
+
+    func detail(host: String) -> String {
+        if let failure = copy?.failure { return failure }
+        if let found { return "\(host) has Node.js \(found); install \(ServerRelease.minimumNode) or later." }
+        return "Install Node.js \(ServerRelease.minimumNode) or later on \(host)."
+    }
+
+    /// The button that has this Mac install the server there instead.
+    var installTitle: String { copy?.failure != nil ? "Try Again" : "Install Tether" }
+}
+
 #if DEBUG
-/// A host without the Tether server, or with one too old or too new for this app, or whose install
-/// failed: each asks before anything is installed, and says what to do.
-#Preview("Status card (server)") {
+/// A host without Node.js, with one too old, with no build to install, and whose install failed.
+#Preview("Status card (Node.js)") {
     VStack(spacing: 24) {
-        ForEach([HostConnection.sampleNeedsServer(), .sampleNeedsServer(.outdated(installed: "0.4.0")),
-                 .sampleNeedsServer(failure: "Couldn’t download tether-0.5.6-linux-x64 (404)."), .sampleAppTooOld()], id: \.id) { connection in
+        ForEach([HostConnection.sampleNeedsNode(), .sampleNeedsNode(found: "16.20.2"), .sampleNeedsNode(canCopy: false),
+                 .sampleNeedsNode(failure: "Couldn’t download tether-0.5.7-linux-x64 (404).")], id: \.id) { connection in
             BottomBar(thread: .sampleIdleChat(), connection: connection)
         }
     }
