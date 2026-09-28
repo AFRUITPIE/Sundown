@@ -13,6 +13,12 @@ struct ChangesPane: View {
     /// Where the repository is on this Mac, which git's paths are relative to, for Open and Show
     /// in Finder; nil on another host. Found when the changes are read, not in a body.
     @State private var repository: String?
+    /// Each file's widest line number, which every number in it is given the width of, found when
+    /// the changes are read: finding it in the file's body walked every line on every update.
+    @State private var widest: [FileDiff.ID: String]
+    /// The chat and turn the changes were last read after.
+    @State private var readAfter: Key?
+    @Environment(\.appearsActive) private var appearsActive
     /// False when a preview seeded the changes.
     private let fetches: Bool
 
@@ -21,6 +27,7 @@ struct ChangesPane: View {
         self.connection = connection
         _state = State(initialValue: changes.map { .ready($0) } ?? .loading)
         _repository = State(initialValue: changes != nil && connection.host.isLocal ? thread.cwd : nil)
+        _widest = State(initialValue: changes.map(Self.widestNumbers) ?? [:])
         fetches = changes == nil
     }
 
@@ -34,14 +41,40 @@ struct ChangesPane: View {
     var body: some View {
         content
             .safeAreaBar(edge: .bottom) { actions }
-            // After each turn ends, when Claude has changed what it's going to change.
-            .task(id: Key(thread: thread.id, turn: thread.lastFinishedTurn)) {
-                guard fetches else { return }
+            // After each turn ends, when Claude has changed what it's going to change. Not while
+            // the window is in the background, where no one is reading it and a scheduled task's
+            // turns can end one after another: a turn that ends then is read after once it's back.
+            .task(id: ActiveKey(key: Key(thread: thread.id, turn: thread.lastFinishedTurn), active: appearsActive)) {
+                let key = Key(thread: thread.id, turn: thread.lastFinishedTurn)
+                guard fetches, key != readAfter,
+                      appearsActive || state.isLoading || key.thread != readAfter?.thread else { return }
                 await refresh()
+                // A read the window going to the background cut short is made again when it's back.
+                if !Task.isCancelled { readAfter = key }
             }
     }
 
     private struct Key: Equatable { let thread: String; let turn: String? }
+    private struct ActiveKey: Equatable { let key: Key; let active: Bool }
+
+    /// The widest line number in each file, as text.
+    nonisolated static func widestNumbers(_ changes: WorkingChanges) -> [FileDiff.ID: String] {
+        Dictionary(changes.files.map { file in
+            var widest: Int?
+            for hunk in file.hunks {
+                for line in hunk.lines {
+                    if let n = line.newNumber ?? line.oldNumber, n > widest ?? .min { widest = n }
+                }
+            }
+            return (file.id, widest.map(String.init) ?? "")
+        }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Off the main actor: up to 5,000 lines a file, and hundreds of files.
+    @concurrent
+    private nonisolated static func widestNumbersOffMain(_ changes: WorkingChanges?) async -> [FileDiff.ID: String] {
+        changes.map(widestNumbers) ?? [:]
+    }
 
     @ViewBuilder private var content: some View {
         switch state {
@@ -65,9 +98,16 @@ struct ChangesPane: View {
                     summary(changes)
                     ForEach(changes.files) { file in
                         FileSection(file: file, location: repository.map { ($0 as NSString).appendingPathComponent(file.path) },
+                                    widest: widest[file.id] ?? "",
                                     comments: comments.filter { $0.path == file.path },
                                     add: { line, text in comments.append(ReviewComment(path: file.path, line: line, text: text)) },
                                     remove: { c in comments.removeAll { $0.id == c.id } })
+                    }
+                    if changes.omittedFiles > 0 {
+                        Text(changes.omittedFiles == 1 ? "1 more new file isn’t shown."
+                                                        : "\(changes.omittedFiles.formatted()) more new files aren’t shown.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .padding(12)
@@ -125,8 +165,10 @@ struct ChangesPane: View {
         }
         do {
             let changes = try await connection.workingChanges(cwd: cwd)
+            let widest = await Self.widestNumbersOffMain(changes)
             // A chat can work in a folder below the repository's top, and git's paths start there.
             repository = connection.host.isLocal ? cwd.enclosingRepository ?? cwd : nil
+            self.widest = widest
             state = .ready(changes)
         } catch is CancellationError {
         } catch {
@@ -141,21 +183,27 @@ private struct FileSection: View {
     let file: FileDiff
     /// The file on this Mac; nil on another host.
     let location: String?
+    /// The file's widest line number, whose width every number is given, so the code lines up.
+    let widest: String
     let comments: [ChangesPane.ReviewComment]
     let add: (Int, String) -> Void
     let remove: (ChangesPane.ReviewComment) -> Void
     @State private var expanded = true
-    @State private var showsAll = false
+    /// How many lines are shown: `lineLimit`, then a page more each time it's asked for.
+    @State private var shownLines = FileSection.lineLimit
     @State private var hovering = false
     @Environment(\.openFilesWith) private var editor
 
     /// Lines shown until Show All: enough to read a change, few enough that a large diff opens
     /// at once.
     static let lineLimit = 300
+    /// Lines added to them at a time: all of a file's 5,000 at once, each line a button in a stack
+    /// that isn't lazy, held up the window for a moment.
+    static let page = 1_000
 
-    /// Each hunk with the lines of it that are shown, up to the limit unless Show All.
+    /// Each hunk with the lines of it that are shown, up to `shownLines`.
     private var shown: [(hunk: FileDiff.Hunk, lines: ArraySlice<FileDiff.Line>)] {
-        var budget = showsAll ? Int.max : Self.lineLimit
+        var budget = shownLines
         var parts: [(hunk: FileDiff.Hunk, lines: ArraySlice<FileDiff.Line>)] = []
         for hunk in file.hunks where budget > 0 {
             let lines = hunk.lines.prefix(budget)
@@ -170,9 +218,7 @@ private struct FileSection: View {
             if file.isBinary {
                 Text("Binary File").font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
             } else {
-                let byLine = Dictionary(grouping: comments, by: \.line)
-                // The widest line number, whose width every number is given, so the code lines up.
-                let widest = file.hunks.flatMap(\.lines).compactMap { $0.newNumber ?? $0.oldNumber }.max().map(String.init) ?? ""
+                let byLine = comments.isEmpty ? [:] : Dictionary(grouping: comments, by: \.line)
                 VStack(alignment: .leading, spacing: 6) {
                     // Code keeps its shape: a long line scrolls sideways rather than wrapping. A
                     // plain stack, bounded by `lineLimit`: a lazy one in here sized itself to the
@@ -200,9 +246,18 @@ private struct FileSection: View {
                     .background(.fill.quinary, in: .rect(cornerRadius: 6))
                     .clipShape(.rect(cornerRadius: 6))
                     if file.lineCount > Self.lineLimit {
-                        Button(showsAll ? "Show Less" : "Show All \(file.lineCount.formatted()) Lines") { showsAll.toggle() }
-                            .buttonStyle(.link)
-                            .font(.caption)
+                        let lineCount = file.lineCount
+                        Group {
+                            if shownLines >= lineCount {
+                                Button("Show Less") { shownLines = Self.lineLimit }
+                            } else if lineCount - shownLines <= Self.page {
+                                Button("Show All \(lineCount.formatted()) Lines") { shownLines += Self.page }
+                            } else {
+                                Button("Show \(Self.page.formatted()) More Lines") { shownLines += Self.page }
+                            }
+                        }
+                        .buttonStyle(.link)
+                        .font(.caption)
                     }
                     if file.omittedLines > 0 {
                         Text("\(file.omittedLines.formatted()) more lines aren’t shown.")
@@ -284,8 +339,8 @@ private struct LineRow: View {
         .popover(isPresented: $commenting, arrowEdge: .leading) {
             LineCommentEditor(line: number) { add(number, $0) }
         }
-        .contextMenu { Button("Comment on Line \(number)…") { commenting = true } }
-        .help("Comment")
+        // No context menu or tooltip: a click comments, as the hint says, and each was one more
+        // thing on every one of up to thousands of lines.
         .accessibilityLabel("Line \(number), \(line.kind == .added ? "added" : line.kind == .removed ? "removed" : "unchanged")")
         .accessibilityValue(line.text)
         .accessibilityTextContentType(.sourceCode)

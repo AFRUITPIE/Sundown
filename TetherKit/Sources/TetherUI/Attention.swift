@@ -319,7 +319,10 @@ final class AttentionCenter: NSObject {
         } onChange: { [weak self] in
             Task { @MainActor in self?.trackBadge() }
         }
-        NSApp?.dockTile.badgeLabel = count > 0 ? String(count) : nil
+        // Only when it changes: this runs whenever any chat starts, stops or asks for something,
+        // and setting the label redraws the Dock tile even when it's the same.
+        let label = count > 0 ? String(count) : nil
+        if let tile = NSApp?.dockTile, tile.badgeLabel != label { tile.badgeLabel = label }
     }
 
     /// The Dock icon's menu: chats waiting on you, then chats Claude is working in, then New Chat.

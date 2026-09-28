@@ -23,7 +23,7 @@ struct MarkdownView: View {
     var body: some View {
         // A block that appears after the first draw arrived while the reply streamed.
         let arriving = cache.hasDrawn
-        let blocks = cache.blocks(for: text)
+        let blocks = cache.blocks(for: text, streaming: streams)
         let _ = cache.hasDrawn = true
         let markers = Self.widestMarkers(blocks)
         VStack(alignment: .leading, spacing: 0) {
@@ -83,13 +83,28 @@ struct MarkdownView: View {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("```") { return nil }
             var content = line
-            if let heading = trimmed.firstMatch(of: /^#{1,6}\s+(.*)$/) { content = String(heading.1) }
+            if trimmed.first == "#", let heading = trimmed.firstMatch(of: headingPattern) { content = String(heading.2) }
             let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
             return (try? AttributedString(markdown: content, options: options)).map { String($0.characters) } ?? content
         }.joined(separator: "\n")
     }
 
-    static func parse(_ text: String) -> [Block] {
+    /// Made once: a regex literal in the loop below made, and compiled, a new one for every line.
+    /// `Regex` isn't `Sendable`, but it compiles its program once, atomically, and only reads it
+    /// after, so parses off the main actor can share these.
+    nonisolated(unsafe) private static let headingPattern = /^(#{1,6})\s+(.*)$/
+    nonisolated(unsafe) private static let listItemPattern = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/
+
+    /// Whether a line could be a list item: after its indent, a marker or a digit. Cheap, so the
+    /// pattern runs only on lines that might match it. (`\s` is `isWhitespace` and `\d` is
+    /// `isNumber`, so every line the pattern matches passes.)
+    private nonisolated static func mightBeListItem(_ line: String) -> Bool {
+        guard let c = line.first(where: { !$0.isWhitespace }) else { return false }
+        return c == "-" || c == "*" || c == "+" || c.isNumber
+    }
+
+    /// Pure, so a page of history can be parsed off the main actor (`MarkdownCache.prewarm`).
+    nonisolated static func parse(_ text: String) -> [Block] {
         var blocks: [Block] = []
         var para: [String] = []
         var lines = text.components(separatedBy: "\n")[...]
@@ -110,7 +125,7 @@ struct MarkdownView: View {
                 blocks.append(.code(lang: lang, body: body.joined(separator: "\n")))
             } else if trimmed.isEmpty {
                 flush()
-            } else if let m = trimmed.firstMatch(of: /^(#{1,6})\s+(.*)$/) {
+            } else if trimmed.first == "#", let m = trimmed.firstMatch(of: headingPattern) {
                 flush()
                 blocks.append(.heading(level: m.1.count, text: String(m.2)))
             } else if trimmed == "---" || trimmed == "***" || trimmed == "___" {
@@ -126,7 +141,7 @@ struct MarkdownView: View {
                     rows.append(cells(t))
                 }
                 blocks.append(.table(rows))
-            } else if let m = line.firstMatch(of: /^(\s*)([-*+]|\d+[.)])\s+(.*)$/) {
+            } else if mightBeListItem(line), let m = line.firstMatch(of: listItemPattern) {
                 flush()
                 let marker = m.2 == "-" || m.2 == "*" || m.2 == "+" ? "•" : String(m.2)
                 blocks.append(.bullet(indent: m.1.count / 2, marker: marker, text: String(m.3)))
@@ -143,7 +158,7 @@ struct MarkdownView: View {
 
     /// A single newline inside a paragraph is a space, as in CommonMark; a line ending in two
     /// spaces or a backslash keeps its break.
-    private static func joinSoftBreaks(_ lines: [String]) -> String {
+    private nonisolated static func joinSoftBreaks(_ lines: [String]) -> String {
         var out = ""
         for (i, line) in lines.enumerated() {
             guard i < lines.count - 1 else { out += line; break }
@@ -156,7 +171,7 @@ struct MarkdownView: View {
         return out
     }
 
-    private static func cells(_ row: String) -> [String] {
+    private nonisolated static func cells(_ row: String) -> [String] {
         row.split(separator: "|", omittingEmptySubsequences: false)
             .dropFirst().dropLast()
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -276,6 +291,8 @@ final class MarkdownCache {
     var hasDrawn = false
     private var text = ""
     private var blocks: [MarkdownView.Rendered] = []
+    /// Whether this view has put its message in `recent`, which it does once, when it isn't streaming.
+    private var remembered = false
     /// UTF-8 length of the settled prefix, and its blocks.
     private var settledLength = 0
     private var settledBlocks: [MarkdownView.Rendered] = []
@@ -286,17 +303,22 @@ final class MarkdownCache {
     private var previousLineBlank = false
     /// App-wide, so a block reused from `recent` never shares an id with one parsed here.
     private static var nextID = 0
-    /// Whole messages as a new view first saw them. A view is made again when its chat is reopened
-    /// or its row scrolls back into view; this spares it parsing the message on that frame.
-    private static var recent: [String: [MarkdownView.Rendered]] = [:]
-    private static var recentOrder: [String] = []
+    /// Whole messages as views saw them once settled, and prewarmed ones. A view is made again
+    /// when its chat is reopened or its row scrolls back into view; this spares it parsing the
+    /// message on that frame.
+    static let recent = RecentParses()
     /// The unsettled tail's blocks from the last call: a block whose text didn't change keeps its
     /// render, so it isn't parsed again and its view compares equal.
     private var tailBlocks: [MarkdownView.Rendered] = []
 
-    func blocks(for newText: String) -> [MarkdownView.Rendered] {
-        if newText.utf8.count == text.utf8.count, newText == text { return blocks }
-        if text.isEmpty, let known = Self.recent[newText] {
+    /// `streaming`: the message is still arriving, so this text isn't remembered in `recent`: each
+    /// length of it was a key never looked up again.
+    func blocks(for newText: String, streaming: Bool = false) -> [MarkdownView.Rendered] {
+        if newText.utf8.count == text.utf8.count, newText == text {
+            rememberOnce(streaming: streaming)
+            return blocks
+        }
+        if text.isEmpty, let known = Self.recent.blocks(for: newText) {
             // A fresh view of a message parsed before; streaming, if any, continues from here.
             text = newText
             blocks = known
@@ -304,9 +326,9 @@ final class MarkdownCache {
             settledLength = 0
             settledBlocks = []
             scannedLength = 0
+            remembered = true
             return blocks
         }
-        let isFirst = text.isEmpty
         let appended = newText.utf8.count >= scannedLength
             && newText.utf8.prefix(scannedLength).elementsEqual(text.utf8.prefix(scannedLength))
         if !appended { reset() }
@@ -315,11 +337,19 @@ final class MarkdownCache {
         let tail = String(decoding: text.utf8.dropFirst(settledLength), as: UTF8.self)
         let previous = tailBlocks
         tailBlocks = MarkdownView.parse(tail).enumerated().map { i, block in
-            i < previous.count && previous[i].block == block ? previous[i] : render(block)
+            i < previous.count && previous[i].block == block ? previous[i] : Self.render(block)
         }
         blocks = settledBlocks + tailBlocks
-        if isFirst { Self.remember(newText, blocks) }
+        rememberOnce(streaming: streaming)
         return blocks
+    }
+
+    /// The message as it is once it has stopped arriving: the first text a settled reply's view
+    /// sees, or a streamed reply's last.
+    private func rememberOnce(streaming: Bool) {
+        guard !streaming, !remembered else { return }
+        remembered = true
+        Self.recent.remember(text, blocks)
     }
 
     private func reset() {
@@ -331,16 +361,13 @@ final class MarkdownCache {
         previousLineBlank = false
     }
 
-    private func render(_ block: MarkdownView.Block) -> MarkdownView.Rendered {
-        Self.nextID += 1
-        return MarkdownView.Rendered(id: Self.nextID, block: block, inline: block.inlineText.map(Self.inline))
+    private static func render(_ block: MarkdownView.Block) -> MarkdownView.Rendered {
+        render(block, inline: block.inlineText.map(inline))
     }
 
-    private static func remember(_ text: String, _ blocks: [MarkdownView.Rendered]) {
-        guard recent[text] == nil else { return }
-        recent[text] = blocks
-        recentOrder.append(text)
-        if recentOrder.count > 400 { recent[recentOrder.removeFirst()] = nil }
+    private static func render(_ block: MarkdownView.Block, inline: [AttributedString]) -> MarkdownView.Rendered {
+        nextID += 1
+        return MarkdownView.Rendered(id: nextID, block: block, inline: inline)
     }
 
     /// Moves the settled boundary to the last blank line outside a code fence, scanning only the
@@ -377,14 +404,41 @@ final class MarkdownCache {
         // Blocks that were the tail's until now keep their render as they settle.
         let parsed = MarkdownView.parse(newlySettled)
         settledBlocks += parsed.enumerated().map { i, block in
-            i < tailBlocks.count && tailBlocks[i].block == block ? tailBlocks[i] : render(block)
+            i < tailBlocks.count && tailBlocks[i].block == block ? tailBlocks[i] : Self.render(block)
         }
         tailBlocks = Array(tailBlocks.dropFirst(parsed.count))
         settledLength = boundary
     }
 
+    /// Parses messages off the main actor and remembers them, so their rows find them parsed: a
+    /// chat opening, or an older page going in above the reader, otherwise parsed each reply in
+    /// its row's body on the main thread. Ids are given here, on the main actor, as every block's
+    /// are. Pass a page of replies, not a whole long chat's: what's remembered is bounded.
+    static func prewarm(_ texts: [String]) async {
+        var seen = Set<String>()
+        let fresh = texts.filter { !recent.contains($0) && seen.insert($0).inserted }
+        guard !fresh.isEmpty else { return }
+        let parsed = await parseAll(fresh)
+        for (text, blocks) in zip(fresh, parsed) where !recent.contains(text) {
+            recent.remember(text, blocks.map { render($0.block, inline: $0.inline) })
+        }
+    }
+
+    /// Each message's blocks and their inline text, stopping early if the caller has gone.
+    @concurrent
+    private nonisolated static func parseAll(_ texts: [String]) async -> [[(block: MarkdownView.Block, inline: [AttributedString])]] {
+        var out: [[(block: MarkdownView.Block, inline: [AttributedString])]] = []
+        for text in texts {
+            if Task.isCancelled { break }
+            out.append(MarkdownView.parse(text).map { ($0, $0.inlineText.map(inline)) })
+        }
+        return out
+    }
+
     /// Inline Markdown as an attributed string, styled for the transcript.
-    static func inline(_ text: String) -> AttributedString {
+    nonisolated static func inline(_ text: String) -> AttributedString {
+        // Most blocks have no inline syntax at all, and the parser costs several times a plain string.
+        guard mayHaveInlineSyntax(text) else { return AttributedString(text) }
         guard var value = try? AttributedString(
             markdown: text,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
@@ -393,10 +447,33 @@ final class MarkdownCache {
         return value
     }
 
+    /// Whether the text holds anything inline Markdown could change: emphasis, code, links, images,
+    /// autolinks (a URL's colon, an address's @, "www."), HTML, entities, escapes, strikethrough, or
+    /// a carriage return. Without any of them the parser gives back the text as it was.
+    nonisolated static func mayHaveInlineSyntax(_ text: String) -> Bool {
+        var ws = 0
+        for byte in text.utf8 {
+            switch byte {
+            case UInt8(ascii: "*"), UInt8(ascii: "_"), UInt8(ascii: "`"), UInt8(ascii: "["), UInt8(ascii: "]"),
+                 UInt8(ascii: "!"), UInt8(ascii: "<"), UInt8(ascii: ">"), UInt8(ascii: "&"), UInt8(ascii: "\\"),
+                 UInt8(ascii: "~"), UInt8(ascii: ":"), UInt8(ascii: "@"), UInt8(ascii: "\r"):
+                return true
+            case UInt8(ascii: "w"), UInt8(ascii: "W"):
+                ws += 1
+            case UInt8(ascii: "."):
+                if ws >= 3 { return true }
+                ws = 0
+            default:
+                ws = 0
+            }
+        }
+        return false
+    }
+
     /// Inline code on a faint fill, in the text's own color: red already means a failure or a risky
     /// permission elsewhere. Text draws the code and strong runs monospaced and bold itself, so they
     /// take the surrounding size, whatever View ▸ Bigger or Smaller has made it.
-    private static func style(_ value: inout AttributedString) {
+    private nonisolated static func style(_ value: inout AttributedString) {
         let ranges = value.runs.compactMap { run -> (Range<AttributedString.Index>, InlinePresentationIntent)? in
             run.inlinePresentationIntent.map { (run.range, $0) }
         }
@@ -404,6 +481,60 @@ final class MarkdownCache {
             if intent.contains(.code) {
                 value[range].backgroundColor = Color.primary.opacity(0.08)
             }
+        }
+    }
+}
+
+/// Parses of whole messages, for views made again and messages prewarmed. Bounded by count and by
+/// the messages' size, a long chat's replies being megabytes; the least recently used go first.
+@MainActor
+final class RecentParses {
+    private struct Entry {
+        let blocks: [MarkdownView.Rendered]
+        let bytes: Int
+        var lastUse: Int
+    }
+
+    private var entries: [String: Entry] = [:]
+    private var clock = 0
+    /// The remembered messages' UTF-8 lengths, summed.
+    private(set) var bytes = 0
+    let maxCount: Int
+    let maxBytes: Int
+
+    init(maxCount: Int = 400, maxBytes: Int = 4 << 20) {
+        self.maxCount = maxCount
+        self.maxBytes = maxBytes
+    }
+
+    var count: Int { entries.count }
+
+    func contains(_ text: String) -> Bool { entries[text] != nil }
+
+    /// A remembered message's blocks, which makes it the most recently used.
+    func blocks(for text: String) -> [MarkdownView.Rendered]? {
+        guard let i = entries.index(forKey: text) else { return nil }
+        clock += 1
+        entries.values[i].lastUse = clock
+        return entries.values[i].blocks
+    }
+
+    func remember(_ text: String, _ blocks: [MarkdownView.Rendered]) {
+        let size = text.utf8.count
+        // A message that alone takes much of the budget would push out everything else.
+        guard size <= maxBytes / 4 else { return }
+        clock += 1
+        if let i = entries.index(forKey: text) {
+            entries.values[i].lastUse = clock
+            return
+        }
+        entries[text] = Entry(blocks: blocks, bytes: size, lastUse: clock)
+        bytes += size
+        while entries.count > maxCount || bytes > maxBytes, let oldest = entries.indices.min(by: {
+            entries.values[$0].lastUse < entries.values[$1].lastUse
+        }) {
+            bytes -= entries.values[oldest].bytes
+            entries.remove(at: oldest)
         }
     }
 }
@@ -429,8 +560,6 @@ struct CodeBlock: View {
     @State private var expanded = false
     @Environment(\.appearance) private var appearance
 
-    private var codeText: Text { Text(verbatim: code) }
-
     private func styled(_ text: some View) -> some View {
         text
             .scaledFont(.callout, design: .monospaced)
@@ -441,16 +570,35 @@ struct CodeBlock: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var lineCount: Int { code.reduce(1) { $1 == "\n" ? $0 + 1 : $0 } }
-    private var isTruncated: Bool { lineLimit.map { lineCount > $0 } ?? false }
+    /// How many lines the code has, and, when it has more than `limit` and one, where its first
+    /// `limit` and one end. Collapsed, only those are drawn: a tool's output can be megabytes, and
+    /// Text laid all of it out to show 14 lines. The one past the limit keeps the last line shown
+    /// ending in an ellipsis, as it did. One pass over the bytes, not two over the Characters.
+    nonisolated static func measure(_ code: String, limit: Int?) -> (lines: Int, collapsedEnd: String.Index?) {
+        let utf8 = code.utf8
+        var lines = 1
+        var end: String.Index?
+        var i = utf8.startIndex
+        while i != utf8.endIndex {
+            if utf8[i] == UInt8(ascii: "\n") {
+                if let limit, lines == limit + 1 { end = i }
+                lines += 1
+            }
+            utf8.formIndex(after: &i)
+        }
+        return (lines, end)
+    }
 
     var body: some View {
+        let measure = Self.measure(code, limit: lineLimit)
+        let isTruncated = lineLimit.map { measure.lines > $0 } ?? false
+        let codeText = Text(verbatim: !expanded ? measure.collapsedEnd.map { String(code[..<$0]) } ?? code : code)
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(language.isEmpty ? "code" : language)
                 Spacer()
                 if isTruncated {
-                    Button(expanded ? "Show Less" : "Show All \(lineCount) Lines") { expanded.toggle() }
+                    Button(expanded ? "Show Less" : "Show All \(measure.lines) Lines") { expanded.toggle() }
                         .buttonStyle(.link)
                 }
                 CopyButton {

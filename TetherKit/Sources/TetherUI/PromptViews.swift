@@ -17,7 +17,7 @@ struct PendingRequestView: View {
             case .dialogRequest(let d):
                 PromptCard(title: "Claude Needs a Decision", symbol: "questionmark.circle") {
                     Text(d.dialogKind).scaledFont(.callout, design: .monospaced)
-                    Text(d.payload.pretty).scaledFont(.caption, design: .monospaced).lineLimit(10)
+                    Text(PrettyInput.text(for: pending.id, d.payload)).scaledFont(.caption, design: .monospaced).lineLimit(10)
                     HStack {
                         Spacer()
                         Button("Dismiss") { thread.answer(pending, with: ["behavior": "cancelled"]) }
@@ -139,7 +139,7 @@ struct PermissionPrompt: View {
             Text(path.abbreviatingHome).scaledFont(.caption, design: .monospaced)
             CodeBlock(code: content, language: path.lastPathComponent, lineLimit: 10)
         } else if input.objectValue?.isEmpty == false {
-            CodeBlock(code: input.pretty, language: params.toolName, lineLimit: 10)
+            CodeBlock(code: PrettyInput.text(for: params.requestId, input), language: params.toolName, lineLimit: 10)
         }
     }
 
