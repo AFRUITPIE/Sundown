@@ -592,9 +592,12 @@ public final class HostConnection: Identifiable {
 
     public func delete(_ model: ThreadModel) async {
         await perform(model) { try await $0.call(Methods.ThreadDelete.self, .init(threadId: model.id)) }
+        // A prompt still waiting would hold its answer task in the client, and the request, for good.
+        model.clearPending()
         chats.removeAll { $0 === model }
         threads.removeValue(forKey: model.id)
         openRequested.remove(model.id)
+        subscribed.remove(model.id)
     }
 
     /// Fetch the page before the items already held, one page at a time.

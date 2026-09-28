@@ -420,6 +420,27 @@ struct HostWireTests {
         await connection.disconnect()
     }
 
+    /// A prompt still waiting in a deleted chat is let go: its answer task in the client ends, and
+    /// a late answer goes nowhere.
+    @Test func deletingAChatLetsGoOfItsPrompt() async throws {
+        let transport = WireTransport(responder: daemon)
+        let connection = connection(transport)
+        await connection.connect()
+        let thread = connection.thread("t")
+        transport.emit(#"{"id":"req-1","method":"permission/request","params":{"threadId":"t","requestId":"p","toolUseId":"u","toolName":"Bash","input":{}}}"#)
+        try await waitUntil { thread.pending.count == 1 }
+        let prompt = thread.pending[0]
+
+        await connection.delete(thread)
+
+        #expect(thread.pending.isEmpty)
+        #expect(!connection.chats.contains { $0 === thread })
+        prompt.respond(["behavior": "allow"])
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await !transport.sent.contains { $0["id"] == .string("req-1") })
+        await connection.disconnect()
+    }
+
     private func connection(_ transport: WireTransport) -> HostConnection {
         HostConnection(host: HostConfig(name: "wire", kind: .ssh(destination: "wire")), transportProvider: { _ in transport })
     }
