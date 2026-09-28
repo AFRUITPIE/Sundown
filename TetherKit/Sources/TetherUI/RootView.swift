@@ -2,26 +2,42 @@ import SwiftUI
 import TetherKit
 
 /// One window: creates its `WindowModel` once, starts it when the window appears and lets its chat
-/// go when the window closes, and hands it to the menu bar while the window is frontmost.
+/// go when the window closes, and hands it to the menu bar while the window is frontmost. Keeps the
+/// scene's value on what the window shows, and its inspector in scene storage, so the system
+/// restores each window as it was.
 public struct WindowRoot: View {
     @State private var window: WindowModel
+    @Binding private var target: WindowTarget
+    @SceneStorage("showInspector") private var storedShowInspector: Bool?
+    @SceneStorage("inspectorPane") private var storedInspectorPane: InspectorPane?
     @Environment(\.appearsActive) private var appearsActive
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
 
-    public init(app: AppModel, target: WindowTarget? = nil) {
+    public init(app: AppModel, target: Binding<WindowTarget>) {
+        _target = target
         // Side-effect free until `start()`, so a discarded instance leaves nothing behind.
-        _window = State(initialValue: WindowModel(app: app, target: target))
+        _window = State(initialValue: WindowModel(app: app, target: target.wrappedValue))
     }
 
     public var body: some View {
         RootView(window: window)
             .focusedSceneValue(\.window, window)
             .onAppear {
-                window.start()
-                // So a notification or the Dock menu can open a window when none is left.
-                let open = openWindow
-                window.app.openWindow = { open(value: $0) }
+                let restored = storedShowInspector.map { ($0, storedInspectorPane ?? .tasks) }
+                window.start(inspector: restored)
+            }
+            .onChange(of: window.hostID) { target = window.target(keeping: target.id) }
+            .onChange(of: window.threadID) { target = window.target(keeping: target.id) }
+            // Not initial: `start()` reads the stored values first.
+            .onChange(of: window.showInspector) { storedShowInspector = window.showInspector }
+            .onChange(of: window.inspectorPane) { storedInspectorPane = window.inspectorPane }
+            // Links from outside a window: this one if it shows the chat, else any open window.
+            .handlesExternalEvents(preferring: TetherLink.preference(host: window.hostID, thread: window.threadID),
+                                   allowing: ["*"])
+            .onOpenURL { url in
+                guard let link = TetherLink(url) else { return }
+                Task { await window.handle(link) }
             }
             .onDisappear { window.close() }
             .onChange(of: appearsActive, initial: true) {
@@ -262,7 +278,7 @@ struct NewChatButton: View {
 }
 
 /// File ▸ New Chat and New Window. New Chat acts on the frontmost window, opening one if there is
-/// none; a new window starts on New Chat, on the frontmost window's host.
+/// none; the first window opened this launch shows the last chat, and later ones New Chat.
 public struct FileCommands: View {
     let app: AppModel
     @FocusedValue(\.window) private var window
@@ -274,13 +290,11 @@ public struct FileCommands: View {
 
     public var body: some View {
         Button("New Chat") {
-            if let window { window.newChat() } else { openWindow(value: WindowTarget(hostID: app.lastHostID)) }
+            if let window { window.newChat() } else { openWindow(value: app.newWindowTarget()) }
         }
         .keyboardShortcut("n")
-        Button("New Window") {
-            openWindow(value: WindowTarget(hostID: window?.hostID ?? app.lastHostID))
-        }
-        .keyboardShortcut("n", modifiers: [.command, .option])
+        Button("New Window") { openWindow(value: app.newWindowTarget()) }
+            .keyboardShortcut("n", modifiers: [.command, .option])
     }
 }
 

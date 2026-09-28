@@ -5,6 +5,10 @@ import TetherUI
 @main
 struct TetherApp: App {
     @NSApplicationDelegateAdaptor(TetherAppDelegate.self) private var delegate
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openURL) private var openURL
+    /// Active while any of the app's windows is.
+    @Environment(\.scenePhase) private var scenePhase
     @State private var app: AppModel = {
         // UI tests, in any build: the performance tests run against Release.
         if ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1" {
@@ -20,33 +24,33 @@ struct TetherApp: App {
         return app
     }()
 
-    init() {
-        // The system's own window restoration is off; the app reopens the last window's host and
-        // chat itself. After a crash it restored a state with no windows, and neither
-        // `.defaultLaunchBehavior(.presented)` nor `.restorationBehavior(.disabled)` overrode it: the
-        // app launched with no window. Registered here, before `NSApplicationMain` reads it.
-        UserDefaults.standard.register(defaults: ["ApplePersistenceIgnoreState": true])
-    }
-
     var body: some Scene {
+        // Before any window: a launch that restores none still gets one (`TetherAppDelegate`).
+        let _ = delegate.install(app: app) { openWindow(value: $0) }
         // Each window has its own host and chat. One opened by File ▸ New Window or Open in New
         // Window carries its target.
-        WindowGroup("Tether", for: WindowTarget.self) { $target in
-            WindowRoot(app: app, target: target)
+        WindowGroup(for: WindowTarget.self) { $target in
+            WindowRoot(app: app, target: $target)
                 .onAppear {
-                    delegate.app = app
                     app.startAttention()
+                    // The app's own actions, which outlive any one window.
+                    app.openWindow = { openWindow(value: $0) }
+                    app.openURL = { openURL($0) }
                 }
+        } defaultValue: {
+            app.newWindowTarget()
         }
+        // Links from outside a window (notifications, the Dock menu, Shortcuts): each window says
+        // which it prefers (`WindowRoot`), and one opens when none is open.
+        .handlesExternalEvents(matching: ["*"])
         .defaultSize(width: 1100, height: 760)
-        // A window at every launch, including after a crash or force quit, which otherwise restored
-        // the app with none.
+        // The system restores each window to what it showed (its value and scene storage), as
+        // the person's "close windows when quitting" setting says; with nothing to restore, a window.
         .defaultLaunchBehavior(.presented)
-        // Not restored by the system: after a crash it restored a state with no windows, and
-        // `.presented` didn't override it, so the app launched with none. The app reopens the last
-        // window's host and chat itself (`AppModel.lastHostID`, `lastThreadID`).
-        .restorationBehavior(.disabled)
+        .onChange(of: scenePhase, initial: true) { app.isActive = scenePhase == .active }
         .commands {
+            // New Chat and New Window: SwiftUI's own New Window kept ⌘N, whatever the scene's
+            // `keyboardShortcut` asked for, and ⌘N is New Chat.
             CommandGroup(replacing: .newItem) { FileCommands(app: app) }
             CommandGroup(replacing: .help) { HelpCommands() }
             CommandGroup(after: .pasteboard) {
@@ -86,11 +90,17 @@ private struct HostWindows: Scene {
             PluginsWindow(app: app, hostID: hostID)
         }
         .defaultSize(width: 640, height: 520)
+        .handlesExternalEvents(matching: [])
+        // Opened for a host from the Host menu, never from File ▸ New.
+        .commandsRemoved()
         // A host's scheduled tasks, run by its daemon.
         WindowGroup("Scheduled Tasks", id: ScheduledTasksWindow.id, for: UUID.self) { $hostID in
             ScheduledTasksWindow(app: app, hostID: hostID)
         }
         .defaultSize(width: 820, height: 560)
+        .handlesExternalEvents(matching: [])
+        // Opened for a host from the Host menu, never from File ▸ New.
+        .commandsRemoved()
         // Settings ▸ Advanced ▸ Inspector ▸ Floating Panel: one panel for the front window's chat.
         // Its View-menu item is the app's own Show Inspector, so the scene's is removed.
         UtilityWindow("Inspector", id: InspectorPanel.id) {
@@ -104,5 +114,8 @@ private struct HostWindows: Scene {
             ConnectionLogWindow(app: app, hostID: hostID)
         }
         .defaultSize(width: 620, height: 400)
+        .handlesExternalEvents(matching: [])
+        // Opened for a host from the Host menu, never from File ▸ New.
+        .commandsRemoved()
     }
 }

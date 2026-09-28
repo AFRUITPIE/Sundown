@@ -151,7 +151,7 @@ final class AttentionCenter: NSObject {
         let failed = info.status == TurnStatus.failed.rawValue
         // A turn you stopped isn't news.
         guard info.status != TurnStatus.interrupted.rawValue else { return }
-        guard Self.shouldNotify(.replyFinished(failed: failed), prefs: app.alerts, appIsActive: NSApp.isActive, chatIsShown: isShown(thread)) else {
+        guard Self.shouldNotify(.replyFinished(failed: failed), prefs: app.alerts, appIsActive: app.isActive, chatIsShown: isShown(thread)) else {
             // In front of you: no notification, but VoiceOver hears that the reply is done.
             if isShown(thread) { announce(failed ? "Claude couldn’t finish." : "Claude finished.") }
             return
@@ -166,7 +166,7 @@ final class AttentionCenter: NSObject {
         if let requestID = info.requestID, !sightings.firstSighting(of: "\(connection.id)/\(requestID)") { return }
         let thread = connection.thread(id)
         let request = thread.pending.first { $0.id == info.requestID }?.request
-        guard Self.shouldNotify(.needsInput, prefs: app.alerts, appIsActive: NSApp.isActive, chatIsShown: isShown(thread)) else {
+        guard Self.shouldNotify(.needsInput, prefs: app.alerts, appIsActive: app.isActive, chatIsShown: isShown(thread)) else {
             if isShown(thread) { announce(Self.describe(request)) }
             return
         }
@@ -291,14 +291,7 @@ final class AttentionCenter: NSObject {
 
     /// Opens the chat a notification is about.
     func open(host: UUID, threadID: String) {
-        NSApp.activate()
-        if let window = app.openWindows.first(where: \.isKey) ?? app.openWindows.first {
-            window.hostID = host
-            window.open(threadID: threadID)
-        } else {
-            app.openOnLaunch(threadID: threadID, on: host)
-            app.openWindow?(WindowTarget(hostID: host, threadID: threadID))
-        }
+        app.open(.chat(host: host, thread: threadID))
     }
 
     // MARK: Dock
@@ -327,36 +320,35 @@ final class AttentionCenter: NSObject {
     }
 
     /// The Dock icon's menu: chats waiting on you, then chats Claude is working in, then New Chat.
+    /// SwiftUI's own menu content, hosted where AppKit asks for a menu.
     func dockMenu() -> NSMenu {
-        let menu = NSMenu()
-        func add(_ threads: [(HostConnection, ThreadModel)], heading: String) {
-            guard !threads.isEmpty else { return }
-            let header = NSMenuItem(title: heading, action: nil, keyEquivalent: "")
-            header.isEnabled = false
-            menu.addItem(header)
-            for (connection, thread) in threads.prefix(8) {
-                let item = NSMenuItem(title: thread.title, action: #selector(openFromDock(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = [connection.id.uuidString, thread.id]
-                menu.addItem(item)
+        NSHostingMenu(rootView: DockMenu(app: app))
+    }
+}
+
+/// The Dock menu's items, each a `tether://` link the app routes to a window.
+private struct DockMenu: View {
+    let app: AppModel
+
+    var body: some View {
+        let chats = app.connections.values.flatMap { c in c.chats.map { (connection: c, thread: $0) } }
+        let waiting = chats.filter { !$0.thread.pending.isEmpty || $0.thread.status == .requiresAction }
+        let working = chats.filter { $0.thread.isRunning && $0.thread.pending.isEmpty && $0.thread.status != .requiresAction }
+        section("Waiting on You", waiting)
+        section("Working", working)
+        Button("New Chat") { app.open(.newChat()) }
+    }
+
+    @ViewBuilder
+    private func section(_ title: String, _ chats: [(connection: HostConnection, thread: ThreadModel)]) -> some View {
+        if !chats.isEmpty {
+            Section(title) {
+                ForEach(chats.prefix(8), id: \.thread.id) { chat in
+                    Button(chat.thread.title) { app.open(.chat(host: chat.connection.id, thread: chat.thread.id)) }
+                }
             }
-            menu.addItem(.separator())
         }
-        let chats = app.connections.values.flatMap { c in c.chats.map { (c, $0) } }
-        add(chats.filter { !$0.1.pending.isEmpty || $0.1.status == .requiresAction }, heading: "Waiting on You")
-        add(chats.filter { $0.1.isRunning && $0.1.pending.isEmpty && $0.1.status != .requiresAction }, heading: "Working")
-        let new = NSMenuItem(title: "New Chat", action: #selector(newChatFromDock), keyEquivalent: "")
-        new.target = self
-        menu.addItem(new)
-        return menu
     }
-
-    @objc private func openFromDock(_ item: NSMenuItem) {
-        guard let ids = item.representedObject as? [String], ids.count == 2, let host = UUID(uuidString: ids[0]) else { return }
-        open(host: host, threadID: ids[1])
-    }
-
-    @objc private func newChatFromDock() { app.showNewChat() }
 }
 
 extension AttentionCenter: UNUserNotificationCenterDelegate {
@@ -392,15 +384,33 @@ extension AttentionCenter: UNUserNotificationCenterDelegate {
     }
 }
 
-/// The app's delegate, for what SwiftUI has no scene API for: the Dock icon's menu.
+/// The app's delegate, for what SwiftUI has no scene API for: the Dock icon's menu, and a window
+/// when the system's restoration brings back none.
 @MainActor
 public final class TetherAppDelegate: NSObject, NSApplicationDelegate {
     public weak var app: AppModel?
+    private var openWindow: ((WindowTarget) -> Void)?
 
-    /// No window tabs, as in Messages: Window ▸ Show Next Tab would take ⌃⇥ from Chat ▸ Next Chat,
-    /// and a window per chat is what File ▸ New Window and Open in New Window are for.
+    /// Called from the app's body, before any window exists.
+    public func install(app: AppModel, openWindow: @escaping (WindowTarget) -> Void) {
+        guard self.app == nil else { return }
+        self.app = app
+        self.openWindow = openWindow
+    }
+
+    /// A launch whose restored state has no windows — after a crash, or a quit with every window
+    /// closed — opens one anyway. SwiftUI's `defaultLaunchBehavior(.presented)` applies only when
+    /// there's no state to restore at all.
     public func applicationWillFinishLaunching(_ notification: Notification) {
-        NSWindow.allowsAutomaticWindowTabbing = false
+        NotificationCenter.default.addObserver(forName: NSApplication.didFinishRestoringWindowsNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.openWindowIfNone() }
+        }
+    }
+
+    private func openWindowIfNone() {
+        guard let app, !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) else { return }
+        openWindow?(app.newWindowTarget())
     }
 
     public func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {

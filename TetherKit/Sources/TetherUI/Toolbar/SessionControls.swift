@@ -348,11 +348,12 @@ public struct ChatCommands: View {
                 .keyboardShortcut(.downArrow, modifiers: [.command, .option])
                 .disabled(window.selectedThread == nil)
             Divider()
+            // Not ⌃⇥, which is Window ▸ Show Next Tab: windows gather into tabs, as any window group's do.
             Button("Next Chat") { window.showAdjacentChat(1) }
-                .keyboardShortcut(.tab, modifiers: .control)
+                .keyboardShortcut("]", modifiers: [.command, .option])
                 .disabled(window.adjacentChat(1) == nil)
             Button("Previous Chat") { window.showAdjacentChat(-1) }
-                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+                .keyboardShortcut("[", modifiers: [.command, .option])
                 .disabled(window.adjacentChat(-1) == nil)
             Divider()
             ChatActionItems(window: window, thread: window.selectedThread)

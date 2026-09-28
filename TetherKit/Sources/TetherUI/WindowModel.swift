@@ -4,15 +4,42 @@ import SwiftUI
 import TetherKit
 import TetherProtocol
 
-/// What a new window opens on: a host, and a chat on it or New Chat. Codable so File ▸ New Window
-/// and Open in New Window can pass it to `openWindow(value:)`, and the system can restore it.
+/// What a window shows: a host, and a chat on it or New Chat. The window's scene value: each window
+/// keeps it current (`WindowRoot`), so the system restores each window to it, and opening a chat
+/// with `openWindow(value:)` brings forward the window already showing that chat. Two windows on
+/// New Chat are different windows, so without a chat a target is equal only to itself (`id`).
 public struct WindowTarget: Codable, Hashable, Sendable {
     public var hostID: UUID
     public var threadID: String?
+    /// Tells apart windows that show no chat.
+    public var id: UUID
 
-    public init(hostID: UUID, threadID: String? = nil) {
+    public init(hostID: UUID, threadID: String? = nil, id: UUID = UUID()) {
         self.hostID = hostID
         self.threadID = threadID
+        self.id = id
+    }
+
+    /// A value saved before `id` existed still restores its window.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hostID = try c.decode(UUID.self, forKey: .hostID)
+        threadID = try c.decodeIfPresent(String.self, forKey: .threadID)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+    }
+
+    public static func == (a: Self, b: Self) -> Bool {
+        if let thread = a.threadID { return thread == b.threadID && a.hostID == b.hostID }
+        return b.threadID == nil && a.id == b.id
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        if let threadID {
+            hasher.combine(hostID)
+            hasher.combine(threadID)
+        } else {
+            hasher.combine(id)
+        }
     }
 }
 
@@ -173,19 +200,27 @@ public final class WindowModel {
     /// initializer has no side effects.
     private var started = false
 
-    /// Opens on `target`, or where the most recently used window was.
-    public init(app: AppModel, target: WindowTarget? = nil) {
+    /// Opens on `target`. Reads nothing off `app`: a window's model is made in its view's
+    /// initializer, which runs again whenever the scene's content does; `start()` finishes the job.
+    public init(app: AppModel, target: WindowTarget) {
         self.app = app
-        let host = target?.hostID ?? app.lastHostID
-        self.hostID = app.connections[host] != nil || app.hosts.contains(where: { $0.id == host }) ? host : HostConfig.local.id
-        self.threadID = target == nil ? app.lastThreadID : target?.threadID
-        self.showInspector = app.lastShowInspector
-        self.inspectorPane = app.lastInspectorPane
+        self.hostID = target.hostID
+        self.threadID = target.threadID
+        self.showInspector = false
+        self.inspectorPane = .tasks
     }
 
-    /// Shows the chat and seeds the draft. Called once the window is on screen.
-    public func start() {
+    /// Shows the chat and seeds the draft. Called once the window is on screen, with the inspector
+    /// as the window had it (restored), or as the most recently used window had it (a new window).
+    public func start(inspector: (shown: Bool, pane: InspectorPane)? = nil) {
         guard !started else { return }
+        // A remembered host can disappear between launches; this Mac is always configured.
+        if app.connections[hostID] == nil && !app.hosts.contains(where: { $0.id == hostID }) {
+            hostID = HostConfig.local.id
+        }
+        let inspector = inspector ?? (app.lastShowInspector, app.lastInspectorPane)
+        showInspector = inspector.shown
+        inspectorPane = inspector.pane
         started = true
         app.register(self)
         seedDraft()
@@ -208,8 +243,8 @@ public final class WindowModel {
     /// The connection for the host the sidebar is showing.
     public var connection: HostConnection? { app.connections[hostID] }
 
-    /// Where Open in New Window and the window's restoration point.
-    public var target: WindowTarget { WindowTarget(hostID: hostID, threadID: threadID) }
+    /// What the window shows, as its scene value: `id` keeps a window on New Chat itself.
+    public func target(keeping id: UUID) -> WindowTarget { WindowTarget(hostID: hostID, threadID: threadID, id: id) }
 
     /// The window's subtitle: the chat's folder name, or the New Chat folder's; the full path is in
     /// the Session pane, or the folder pop-up on New Chat. Prefixed with the host when there is
@@ -240,6 +275,27 @@ public final class WindowModel {
     public func open(threadID id: String, on host: UUID? = nil) {
         if let host, host != hostID { hostID = host }
         threadID = id
+    }
+
+    /// A link routed to this window: a chat to show, or New Chat — the Dock menu's, or Shortcuts'
+    /// Start a Chat on this Mac, in `folder` if given, with `prompt` in the field, or sent when
+    /// there's a folder to start in.
+    public func handle(_ link: TetherLink) async {
+        switch link {
+        case .chat(let host, let thread):
+            open(threadID: thread, on: host)
+        case .newChat(let host, let folder, let prompt, let sendToken):
+            if let host, host != hostID { hostID = host }
+            newChat()
+            if let folder, !folder.isEmpty { draftDirectory = (folder as NSString).expandingTildeInPath }
+            let text = prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !text.isEmpty else { return }
+            if TetherLink.redeem(sendToken), draftDirectory != nil {
+                await startDraftChat([.text(.init(text: text))])
+            } else {
+                app.deliverDraft(text, for: "new-chat:\(hostID)")
+            }
+        }
     }
 
     /// A host this window shows was removed: fall back to this Mac.
@@ -334,8 +390,8 @@ extension WindowModel {
         if archived, threads.count == 1 { offerWorktreeRemoval(for: threads[0]) }
     }
 
-    /// The chat above or below this one in the sidebar's order (Chat ▸ Next Chat, ⌃⇥); from New
-    /// Chat, the first. Wraps at the ends, as ⌃⇥ does between tabs.
+    /// The chat above or below this one in the sidebar's order (Chat ▸ Next Chat, ⌥⌘]); from New
+    /// Chat, the first. Wraps at the ends, as moving between tabs does.
     func adjacentChat(_ offset: Int) -> String? {
         let order = sidebarList(sidebarThreads).flatMap { $0.chats.map(\.id) }
         guard !order.isEmpty else { return nil }

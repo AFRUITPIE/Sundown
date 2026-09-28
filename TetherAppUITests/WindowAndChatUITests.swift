@@ -216,16 +216,16 @@ final class WindowAndChatUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(calls.count, before + 2)
     }
 
-    /// ⌃⇥ and ⌃⇧⇥ step through the sidebar's chats.
+    /// Chat ▸ Next Chat (⌥⌘]) and Previous Chat (⌥⌘[) step through the sidebar's chats.
     @MainActor
-    func testControlTabStepsThroughChats() {
+    func testNextAndPreviousChatStepThroughChats() {
         let app = launch()
         row("Performance chat 1", in: sidebar(app)).click()
         XCTAssertTrue(waitForWindowTitles(app, ["Performance chat 1"]))
 
-        app.typeKey(.tab, modifierFlags: .control)
+        app.typeKey("]", modifierFlags: [.command, .option])
         XCTAssertTrue(waitForWindowTitles(app, ["Performance chat 2"]))
-        app.typeKey(.tab, modifierFlags: [.control, .shift])
+        app.typeKey("[", modifierFlags: [.command, .option])
         XCTAssertTrue(waitForWindowTitles(app, ["Performance chat 1"]))
     }
 

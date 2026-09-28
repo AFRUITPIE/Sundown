@@ -12,7 +12,7 @@ struct WindowModelTests {
     }
 
     private func window(_ app: AppModel, target: WindowTarget? = nil) -> WindowModel {
-        let window = WindowModel(app: app, target: target)
+        let window = WindowModel(app: app, target: target ?? app.newWindowTarget())
         window.start()
         return window
     }
@@ -162,7 +162,9 @@ struct WindowModelTests {
         #expect(!app.isShown(a.connection?.thread("shared")))
     }
 
-    @Test func aNewWindowOpensWhereTheLastOneWas() {
+    /// The launch's first window reopens the last chat; a later one is New Chat on the same host,
+    /// with the inspector as the last window left it.
+    @Test func aNewWindowOpensOnNewChatWithTheLastInspector() {
         let app = AppModel.sample()
         let a = window(app)
         a.open(threadID: "thread-1")
@@ -170,7 +172,8 @@ struct WindowModelTests {
 
         let b = window(app)
 
-        #expect(b.threadID == "thread-1")
+        #expect(b.hostID == a.hostID)
+        #expect(b.threadID == nil)
         #expect(b.isInspecting(.mcp))
         // A window opened on a target starts there instead.
         let c = window(app, target: WindowTarget(hostID: app.lastHostID))
@@ -257,10 +260,23 @@ struct WindowModelTests {
         #expect(app.draftDeliveries["new-chat:x"]?.id != first?.id)
     }
 
-    /// Set as soon as the model exists, so a Shortcut that launches the app finds it.
-    @Test func theModelIsCurrentFromTheStart() {
+    /// The launch's first window opens where the last one left off; every later one on New Chat.
+    @Test func onlyTheFirstNewWindowReopensTheLastChat() {
         let app = AppModel(defaults: isolatedDefaults())
-        #expect(AppModel.current === app)
+        app.openOnLaunch(threadID: "thread-1", on: HostConfig.local.id)
+        #expect(app.newWindowTarget().threadID == "thread-1")
+        #expect(app.newWindowTarget().threadID == nil)
+    }
+
+    /// A window's value is what SwiftUI matches to bring an open window forward: a chat by its
+    /// host and thread, New Chat never, since each window of it is its own.
+    @Test func windowTargetsMatchByChatNotByWindow() {
+        let host = HostConfig.local.id
+        #expect(WindowTarget(hostID: host, threadID: "t") == WindowTarget(hostID: host, threadID: "t"))
+        #expect(WindowTarget(hostID: host, threadID: "t") != WindowTarget(hostID: UUID(), threadID: "t"))
+        #expect(WindowTarget(hostID: host) != WindowTarget(hostID: host))
+        let one = WindowTarget(hostID: host)
+        #expect(one == WindowTarget(hostID: host, id: one.id))
     }
 
     @Test func defaultsRoundTripWithoutUsingStandardDefaults() {

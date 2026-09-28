@@ -105,7 +105,7 @@ public struct ScheduledTasksWindow: View {
     @ViewBuilder private var detail: some View {
         if case .ready(let all) = tasks, let id = selection, let task = all.first(where: { $0.id == id }), let connection {
             ScheduledTaskEditor(task: task, connection: connection, open: { threadID in
-                app.showChat(host: connection.id, threadID: threadID)
+                app.open(.chat(host: connection.id, thread: threadID))
             }, changed: { updated in
                 replace(updated)
             }, deleted: {

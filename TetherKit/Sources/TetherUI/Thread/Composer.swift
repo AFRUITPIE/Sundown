@@ -215,9 +215,10 @@ struct Composer: View {
         }
     }
 
-    /// The text, and Send beside it.
+    /// The text, and Send beside its last line: on the text's baseline, which Send's symbol shares,
+    /// so the text sits level with Send at any size rather than at the bottom of the row.
     private var oneRowField: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .lastTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 8) {
                 if !images.isEmpty { attachments }
                 textField
@@ -539,6 +540,25 @@ struct Composer: View {
     let connection = HostConnection.sample()
     GlassEffectContainer {
         Composer(connection: connection, cwd: nil, placeholder: "Choose a folder, then ask Claude…", submit: { _ in })
+    }
+    .padding(20)
+    .frame(width: 560)
+}
+
+/// Send stays by the last line as the text grows, and the text by Send at any size.
+#Preview("Several lines, and bigger text") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.sampleIdleChat()
+    VStack(spacing: 20) {
+        GlassEffectContainer {
+            Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in })
+        }
+        .environment(\.composerDraft, "Rename the helper,\nthen update its callers,\nand run the package tests")
+        GlassEffectContainer {
+            Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in })
+        }
+        .scaledFont(.body)
+        .environment(\.textScale, 1.5)
     }
     .padding(20)
     .frame(width: 560)

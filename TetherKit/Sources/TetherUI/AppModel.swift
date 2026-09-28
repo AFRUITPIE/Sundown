@@ -139,8 +139,20 @@ public final class AppModel {
 
     /// Notifications, the Dock badge and the Dock menu, once the app starts them.
     @ObservationIgnored private(set) var attention: AttentionCenter?
-    /// Opens a window on a target, for when none is left to show a chat in.
-    @ObservationIgnored var openWindow: ((WindowTarget) -> Void)?
+    /// Opens a window on a target, or brings forward the one showing it: the app's own
+    /// `openWindow`, not a window's, so it works with every window closed.
+    @ObservationIgnored public var openWindow: ((WindowTarget) -> Void)?
+
+    /// Whether the first window of this launch has opened, which opens where the most recently
+    /// used window left off when the system restores none.
+    @ObservationIgnored private var launchWindowOpened = false
+
+    /// What a window opens on when nothing says: the first window of a launch, where the most
+    /// recently used window was; every other, New Chat on the host most recently used.
+    public func newWindowTarget() -> WindowTarget {
+        defer { launchWindowOpened = true }
+        return WindowTarget(hostID: lastHostID, threadID: launchWindowOpened ? nil : lastThreadID)
+    }
 
     /// Starts notifications and the Dock badge. The app calls this; tests and previews don't, so
     /// nothing there reaches Notification Center.
@@ -153,42 +165,18 @@ public final class AppModel {
     /// The Dock icon's menu.
     public func dockMenu() -> NSMenu? { attention?.dockMenu() }
 
-    /// Brings a chat to the front, in the key window or a new one.
-    public func showChat(host: UUID, threadID: String) {
+    /// Whether the app is active: its scene phase, which the app sets. A notification is for when
+    /// it isn't, or the chat isn't the one in front.
+    @ObservationIgnored public var isActive = true
+
+    /// Opens a URL with the app's own action, for `open(_:)`.
+    @ObservationIgnored public var openURL: ((URL) -> Void)?
+
+    /// Shows what `link` names — a notification's chat, the Dock menu's New Chat — by opening it,
+    /// so SwiftUI picks the window (`WindowRoot`'s `handlesExternalEvents`).
+    public func open(_ link: TetherLink) {
         startAttention()
-        attention?.open(host: host, threadID: threadID)
-    }
-
-    /// The app's model, for what reaches it from outside a window: Shortcuts.
-    public private(set) static weak var current: AppModel?
-
-    /// Shortcuts' Start a Chat: New Chat on this Mac, in `folder` if given, with `prompt` in the
-    /// field — or sent, when `send` is set and there's a folder to start in.
-    public func startChat(folder: String?, prompt: String?, send: Bool) async {
-        showNewChat()
-        // A window that had to open appears on the next turn of the run loop.
-        for _ in 0..<20 where openWindows.isEmpty { try? await Task.sleep(for: .milliseconds(100)) }
-        guard let window = openWindows.first(where: \.isKey) ?? openWindows.first else { return }
-        if window.hostID != HostConfig.local.id { window.hostID = HostConfig.local.id }
-        window.newChat()
-        if let folder, !folder.isEmpty { window.draftDirectory = (folder as NSString).expandingTildeInPath }
-        let text = prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !text.isEmpty else { return }
-        if send, window.draftDirectory != nil {
-            await window.startDraftChat([.text(.init(text: text))])
-        } else {
-            deliverDraft(text, for: "new-chat:\(window.hostID)")
-        }
-    }
-
-    /// New Chat in the front window, or a new window if none is open.
-    public func showNewChat() {
-        NSApp.activate()
-        if let window = openWindows.first(where: \.isKey) ?? openWindows.first {
-            window.newChat()
-        } else {
-            openWindow?(WindowTarget(hostID: lastHostID))
-        }
+        if let openURL { openURL(link.url) } else { NSWorkspace.shared.open(link.url) }
     }
 
     /// Defaults for new threads, per app (persisted).
@@ -246,7 +234,6 @@ public final class AppModel {
         for c in connections.values { c.offersSessionTools = appearance.sessionTools }
         // Here, not when the first window appears: a Shortcut can launch the app and ask for a
         // chat before any window has.
-        Self.current = self
         // A draft typed just before quitting is written then.
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
