@@ -2,8 +2,8 @@ import Foundation
 import Security
 
 /// Where a host's environment values are kept: the Keychain, not the defaults file, since they're
-/// often credentials (API keys, AWS profiles).
-protocol SecretStore: AnyObject {
+/// often credentials (API keys, AWS profiles). Read off the main thread, just before a host connects.
+protocol SecretStore: AnyObject, Sendable {
     func read(_ account: String) -> Data?
     /// Stores `data`, or removes it when nil. False when the store refused, so the caller can keep
     /// its own copy until a write succeeds.
@@ -43,8 +43,9 @@ final class KeychainSecrets: SecretStore {
 }
 
 /// For tests, previews and UI tests, which keep defaults of their own and shouldn't touch the
-/// Keychain: kept in those defaults, under a key apart from the rest.
-final class DefaultsSecrets: SecretStore {
+/// Keychain: kept in those defaults, under a key apart from the rest. Defaults are safe to use from
+/// any thread.
+final class DefaultsSecrets: SecretStore, @unchecked Sendable {
     private let defaults: UserDefaults
     init(_ defaults: UserDefaults) { self.defaults = defaults }
     func read(_ account: String) -> Data? { defaults.data(forKey: "tether.secret.\(account)") }

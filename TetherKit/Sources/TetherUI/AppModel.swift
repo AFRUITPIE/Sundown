@@ -247,6 +247,12 @@ public final class AppModel {
     /// What each host's environment was when last written, so saving doesn't touch the Keychain
     /// for every change of selection.
     private var writtenEnv: [UUID: [String: String]] = [:]
+    /// Hosts whose values are in the Keychain and not read yet: each is read, off the main thread,
+    /// just before its host connects (`loadEnvironment`), rather than every host's at launch.
+    @ObservationIgnored private var unreadEnvironment: Set<UUID> = []
+    /// Whether the store said which hosts have values. One from an older build didn't, so each host
+    /// is read once and the next save says.
+    @ObservationIgnored private var environmentRecorded = true
 
     public convenience init(defaults: UserDefaults = .standard) {
         let standard = defaults === UserDefaults.standard
@@ -259,8 +265,7 @@ public final class AppModel {
         self.secrets = secrets
         self.draftQueue = DraftQueue(store: draftStore ?? DefaultsDrafts(defaults: defaults, key: Self.draftsKey))
         load()
-        for h in hosts { connections[h.id] = HostConnection(host: h) }
-        for c in connections.values { c.offersSessionTools = appearance.sessionTools }
+        for h in hosts { connections[h.id] = makeConnection(h) }
         // A draft typed just before quitting is written then.
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
@@ -276,6 +281,15 @@ public final class AppModel {
 
     public func connection(_ id: UUID) -> HostConnection? { connections[id] }
 
+    private func makeConnection(_ h: HostConfig) -> HostConnection {
+        let c = HostConnection(host: h)
+        c.offersSessionTools = appearance.sessionTools
+        if unreadEnvironment.contains(h.id) {
+            c.loadEnvironment = { [weak self] in await self?.loadEnvironment(for: h.id) }
+        }
+        return c
+    }
+
     /// Connects every host once, however many windows open.
     public func connectAll() {
         guard !connectedAll else { return }
@@ -290,8 +304,7 @@ public final class AppModel {
 
     public func addHost(_ h: HostConfig) {
         hosts.append(h)
-        let c = HostConnection(host: h)
-        c.offersSessionTools = appearance.sessionTools
+        let c = makeConnection(h)
         connections[h.id] = c
         save()
         Task { await c.connect() }
@@ -299,6 +312,15 @@ public final class AppModel {
 
     public func updateHost(_ h: HostConfig) {
         guard let i = hosts.firstIndex(where: { $0.id == h.id }) else { return }
+        var h = h
+        if unreadEnvironment.remove(h.id) != nil {
+            // Changed before its values were read, so Settings didn't show them: kept under what
+            // was typed rather than lost.
+            let stored = readEnvironment(secrets.read(h.id.uuidString))
+            writtenEnv[h.id] = stored
+            h.env = stored.merging(h.env) { _, typed in typed }
+            connections[h.id]?.loadEnvironment = nil
+        }
         hosts[i] = h
         connections[h.id]?.update(host: h)
         save()
@@ -310,12 +332,33 @@ public final class AppModel {
         hosts.removeAll { $0.id == id }
         secrets.write(nil, for: id.uuidString)
         writtenEnv[id] = nil
+        unreadEnvironment.remove(id)
         pinnedChats[id] = nil
         if let c = connections.removeValue(forKey: id) { Task { await c.disconnect() } }
         if lastHostID == id { lastHostID = HostConfig.local.id; lastThreadID = nil }
         for window in openWindows { window.hostRemoved(id) }
         save()
         saveWindow()
+    }
+
+    /// `id`'s environment values: read from the Keychain, off the main thread, the first time
+    /// they're asked for, which is just before the host connects.
+    func loadEnvironment(for id: UUID) async -> [String: String] {
+        guard unreadEnvironment.contains(id) else { return hosts.first { $0.id == id }?.env ?? [:] }
+        let secrets = secrets
+        let data = await Task.detached(priority: .userInitiated) { secrets.read(id.uuidString) }.value
+        // Read meanwhile, by a change in Settings.
+        guard unreadEnvironment.remove(id) != nil else { return hosts.first { $0.id == id }?.env ?? [:] }
+        let env = readEnvironment(data)
+        writtenEnv[id] = env
+        if let i = hosts.firstIndex(where: { $0.id == id }) { hosts[i].env = env }
+        // Record which hosts have values, for a store that didn't say or was wrong.
+        if !environmentRecorded || env.isEmpty { save() }
+        return env
+    }
+
+    private func readEnvironment(_ data: Data?) -> [String: String] {
+        data.flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
     }
 
     // MARK: windows
@@ -451,6 +494,9 @@ public final class AppModel {
         var sidebarFilter: String?
         /// By host id.
         var pinnedChats: [String: [String]]?
+        /// The hosts whose environment values are in the Keychain. Nil in a store from before it
+        /// was kept, which has every host's read once.
+        var environmentHosts: [String]?
     }
 
     /// Where the most recently used window was, under a key of its own: it changes with every chat
@@ -478,14 +524,13 @@ public final class AppModel {
         let stored = storedData.flatMap { try? JSONDecoder().decode(Stored.self, from: $0) }
         hosts = stored?.hosts ?? []
         if !hosts.contains(where: { $0.id == HostConfig.local.id }) { hosts.insert(.local, at: 0) }
-        for i in hosts.indices {
-            // A store from before the Keychain kept them has them inline; they move on the next save.
-            guard hosts[i].env.isEmpty else { continue }
-            if let data = secrets.read(hosts[i].id.uuidString),
-               let env = try? JSONDecoder().decode([String: String].self, from: data) {
-                hosts[i].env = env
-                writtenEnv[hosts[i].id] = env
-            }
+        // Values are read from the Keychain just before their host connects, and only for a host
+        // that has some. A store from before the Keychain kept them has them inline; they move on
+        // the next save.
+        let withValues = stored?.environmentHosts.map { Set($0.compactMap(UUID.init(uuidString:))) }
+        environmentRecorded = withValues != nil
+        for host in hosts where host.env.isEmpty && withValues?.contains(host.id) != false {
+            unreadEnvironment.insert(host.id)
         }
         appearance = defaults.data(forKey: Self.appearanceKey).flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
         alerts = defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode(AlertPreferences.self, from: $0) } ?? AlertPreferences()
@@ -535,12 +580,15 @@ public final class AppModel {
             if writtenEnv[host.id] ?? [:] == host.env { h.env = [:] }
             return h
         }
+        let inKeychain = self.hosts.filter { unreadEnvironment.contains($0.id) || !(writtenEnv[$0.id] ?? [:]).isEmpty }
         let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
                        sidebarGrouping: sidebarGrouping.rawValue, textScale: Double(textScale),
                        sidebarFilter: sidebarFilter.rawValue,
-                       pinnedChats: Dictionary(uniqueKeysWithValues: pinnedChats.map { ($0.key.uuidString, $0.value.sorted()) }))
+                       pinnedChats: Dictionary(uniqueKeysWithValues: pinnedChats.map { ($0.key.uuidString, $0.value.sorted()) }),
+                       environmentHosts: inKeychain.map(\.id.uuidString))
         write(try? Self.encoder.encode(s), forKey: Self.hostsKey)
+        environmentRecorded = true
     }
 
     private func saveWindow() {

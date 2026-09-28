@@ -72,6 +72,11 @@ public final class HostConnection: Identifiable {
         network?.watch(self)
     }
 
+    /// Reads the host's environment values the first time it connects: they're in the Keychain,
+    /// which isn't asked at launch, and only `initialize` needs them. Called once; nil when there's
+    /// nothing to read.
+    @ObservationIgnored public var loadEnvironment: (@MainActor () async -> [String: String]?)?
+
     public func update(host: HostConfig) {
         let needsReconnect = host.kind != self.host.kind || host.env != self.host.env || host.serverCommand != self.host.serverCommand
         self.host = host
@@ -108,6 +113,10 @@ public final class HostConnection: Identifiable {
             // screen creates another host while the fixture app is running.
             if ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1", transportProvider == nil {
                 throw TransportError.launchFailed("UI test host has no fixture transport")
+            }
+            if let load = loadEnvironment {
+                loadEnvironment = nil
+                if let env = await load() { host.env = env }
             }
             let transport: any Transport
             if let transportProvider {

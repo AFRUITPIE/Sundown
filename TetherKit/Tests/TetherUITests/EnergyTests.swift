@@ -101,6 +101,79 @@ struct DraftWriteTests {
     }
 }
 
+@MainActor
+@Suite
+struct KeychainReadTests {
+    private func defaults() throws -> UserDefaults {
+        try #require(UserDefaults(suiteName: "tether.tests.\(UUID().uuidString)"))
+    }
+
+    /// Launching asks the Keychain nothing: a host with values is read when it connects, and a
+    /// host without any never is.
+    @Test func onlyHostsWithValuesAreReadAndOnlyWhenTheyConnect() async throws {
+        let store = try defaults()
+        let secrets = CountingSecrets()
+        let first = AppModel(defaults: store, secrets: secrets)
+        _ = await first.loadEnvironment(for: HostConfig.local.id)
+        var withValues = HostConfig(name: "with", kind: .ssh(destination: "with"))
+        withValues.env = ["AWS_PROFILE": "dev"]
+        let without = HostConfig(name: "without", kind: .ssh(destination: "without"))
+        first.addHost(withValues)
+        first.addHost(without)
+        secrets.reads.withLock { $0 = [] }
+
+        let app = AppModel(defaults: store, secrets: secrets)
+        #expect(secrets.reads.withLock { $0 }.isEmpty)
+        #expect(app.connection(withValues.id)?.loadEnvironment != nil)
+        #expect(app.connection(without.id)?.loadEnvironment == nil)
+        #expect(app.connection(HostConfig.local.id)?.loadEnvironment == nil)
+
+        #expect(await app.loadEnvironment(for: withValues.id) == ["AWS_PROFILE": "dev"])
+        #expect(await app.loadEnvironment(for: withValues.id) == ["AWS_PROFILE": "dev"])
+        #expect(await app.loadEnvironment(for: without.id) == [:])
+        #expect(secrets.reads.withLock { $0 } == [withValues.id.uuidString])
+    }
+
+    /// An older store doesn't say which hosts have values: each is read once, and then it says.
+    @Test func anOlderStoreIsReadOnceThenRecordsWhichHostsHaveValues() async throws {
+        let store = try defaults()
+        let secrets = CountingSecrets()
+        let a = UUID(), b = UUID()
+        let old = #"{"hosts":[{"id":"\#(a.uuidString)","name":"a","kind":{"ssh":{"destination":"a"}},"env":{}},{"id":"\#(b.uuidString)","name":"b","kind":{"ssh":{"destination":"b"}},"env":{}}]}"#
+        store.set(Data(old.utf8), forKey: "tether.hosts.v1")
+        secrets.write(try JSONEncoder().encode(["TOKEN": "x"]), for: a.uuidString)
+
+        let app = AppModel(defaults: store, secrets: secrets)
+        #expect(app.connection(a)?.loadEnvironment != nil)
+        #expect(app.connection(b)?.loadEnvironment != nil)
+        for id in [HostConfig.local.id, a, b] { _ = await app.loadEnvironment(for: id) }
+
+        let next = AppModel(defaults: store, secrets: secrets)
+        #expect(next.connection(a)?.loadEnvironment != nil)
+        #expect(next.connection(b)?.loadEnvironment == nil)
+        #expect(next.connection(HostConfig.local.id)?.loadEnvironment == nil)
+    }
+
+    /// Changed in Settings before its values were read: they're kept, under anything typed.
+    @Test func aChangeBeforeTheValuesAreReadKeepsThem() async throws {
+        let store = try defaults()
+        let secrets = CountingSecrets()
+        var host = HostConfig(name: "box", kind: .ssh(destination: "box"))
+        host.env = ["AWS_PROFILE": "dev"]
+        AppModel(defaults: store, secrets: secrets).addHost(host)
+
+        let app = AppModel(defaults: store, secrets: secrets)
+        var renamed = try #require(app.hosts.first { $0.id == host.id })
+        renamed.name = "Build Box"
+        renamed.env = ["AWS_REGION": "us-west-2"]
+        app.updateHost(renamed)
+
+        #expect(app.hosts.first { $0.id == host.id }?.env == ["AWS_PROFILE": "dev", "AWS_REGION": "us-west-2"])
+        #expect(await AppModel(defaults: store, secrets: secrets).loadEnvironment(for: host.id)
+                == ["AWS_PROFILE": "dev", "AWS_REGION": "us-west-2"])
+    }
+}
+
 @Suite
 struct ReducedEffectsTests {
     @Test func energySavingHeatAndTheBackgroundReduceEffects() {
@@ -134,6 +207,22 @@ private final class CountingDrafts: DraftStore, @unchecked Sendable {
     func write(_ data: Data) -> Bool {
         let main = Thread.isMainThread
         state.withLock { $0.data = data; $0.writes += 1; $0.onMain.append(main) }
+        return true
+    }
+}
+
+/// Secrets in memory, counting reads.
+private final class CountingSecrets: SecretStore, @unchecked Sendable {
+    let reads = Mutex<[String]>([])
+    private let values = Mutex<[String: Data]>([:])
+
+    func read(_ account: String) -> Data? {
+        reads.withLock { $0.append(account) }
+        return values.withLock { $0[account] }
+    }
+
+    @discardableResult func write(_ data: Data?, for account: String) -> Bool {
+        values.withLock { $0[account] = data }
         return true
     }
 }
