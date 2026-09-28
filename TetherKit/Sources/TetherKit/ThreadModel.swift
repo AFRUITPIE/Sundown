@@ -360,9 +360,11 @@ public final class ThreadModel: Identifiable {
             settleTasks()
             setStreamingReply(nil)
         case .turnStarted(let e):
+            Signposts.replyStarted(in: self)
             upsertTurn(e.turn)
             promptSuggestion = nil
         case .turnCompleted(let e):
+            Signposts.replyEnded(in: self)
             upsertTurn(e.turn)
             setStreamingReply(nil)
         case .itemStarted(let e):

@@ -422,6 +422,8 @@ public final class TetherAppDelegate: NSObject, NSApplicationDelegate {
     /// Hosts connect, and notifications and the Dock badge start, with the app rather than its first
     /// chat window.
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        Signposts.launchBegan()
+        if let app { Metrics.start(app) }
         app?.isActive = NSApp.isActive
         app?.startAttention()
         app?.connectAll()

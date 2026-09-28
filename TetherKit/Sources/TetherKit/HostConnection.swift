@@ -105,6 +105,8 @@ public final class HostConnection: Identifiable {
         wantsConnection = true
         if case .connected = state { return }
         if case .connecting = state { return }
+        let signpost = Signposts.connect(host.name)
+        defer { signpost.end() }
         state = .connecting("Starting…")
         do {
             // UI tests must never fall through to the bundled daemon or SSH, even if a
@@ -125,6 +127,7 @@ public final class HostConnection: Identifiable {
                 appendLog("$ \(([cmd.executable] + cmd.arguments).joined(separator: " "))")
                 transport = ProcessTransport(executable: cmd.executable, arguments: cmd.arguments)
             }
+            signpost.event("Bootstrap")
             let client = RPCClient(transport: transport)
             self.client = client
             await client.setServerRequestHandler { [weak self] req in await self?.handleServerRequest(req) }
@@ -140,6 +143,7 @@ public final class HostConnection: Identifiable {
                 capabilities: .init(experimentalApi: true, optOutNotificationMethods: Self.unreadNotifications),
                 env: host.env.isEmpty ? nil : host.env))
             try await client.notify("initialized")
+            signpost.event("Handshake")
             if initResult.protocolVersion < Self.minServerProtocol {
                 throw Incompatible(message: "\(host.name) runs Tether \(initResult.serverInfo.version), which is too old for this app. Update the server there.")
             }
@@ -154,6 +158,7 @@ public final class HostConnection: Identifiable {
             await resubscribeAll()
             await openRequestedThreads()
             await refreshCatalog(full: !sameDaemon || models.isEmpty)
+            signpost.event("Catalog")
         } catch {
             var error = error
             if let e = error as? RPCError, e.code == RPCError.incompatibleProtocol {
@@ -288,6 +293,7 @@ public final class HostConnection: Identifiable {
     /// A batch, in order. A reply's text deltas go in as one, where nothing else for its chat comes
     /// between them: its text grows once per batch, and its row updates once.
     func route(_ batch: [ServerNotification]) {
+        Signposts.flushed(batch.count)
         for run in Self.textRuns(in: batch) {
             guard run.count > 1 else {
                 apply(run[0])
@@ -559,6 +565,7 @@ public final class HostConnection: Identifiable {
         } catch {
             model.setError(error.localizedDescription)
         }
+        Signposts.chatReady(model.id)
     }
 
     /// Transcripts load from the end, a page at a time.
@@ -571,6 +578,8 @@ public final class HostConnection: Identifiable {
     private func loadHistory(_ model: ThreadModel, force: Bool) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         if model.historyLoaded && !force { return }
+        let signpost = Signposts.historyLoad(model.id)
+        defer { signpost.end() }
         let r = try await client.call(Methods.ThreadRead.self, .init(
             threadId: model.id, cwd: model.cwd, limit: Self.initialHistoryLimit))
         // Counted before the page goes in, so its first draw only looks them up. Events that land
@@ -766,6 +775,8 @@ public final class HostConnection: Identifiable {
         guard let client else { return .unavailable }
         model.loadingOlder = true
         defer { model.loadingOlder = false }
+        let signpost = Signposts.olderPage(model.id)
+        defer { signpost.end() }
         do {
             let r = try await client.call(Methods.ThreadRead.self, .init(
                 threadId: model.id, cwd: model.cwd, limit: Self.olderHistoryPageSize, before: oldest))
@@ -1014,6 +1025,7 @@ public final class HostConnection: Identifiable {
     }
 
     private func appendLog(_ m: String) {
+        Signposts.log(m, host: host.name)
         log.append(m)
         if log.count > 500 { log.removeFirst(log.count - 500) }
     }

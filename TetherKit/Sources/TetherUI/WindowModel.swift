@@ -65,6 +65,7 @@ public final class WindowModel {
             // A search belongs to the chat it was typed in.
             if threadID != oldValue { find.dismiss() }
             guard started else { return }
+            if let threadID, threadID != oldValue { Signposts.chatSwitchBegan(to: threadID) }
             resolveSelection()
             app.remember(self)
         }
@@ -224,6 +225,8 @@ public final class WindowModel {
         app.register(self)
         seedDraft()
         resolveSelection()
+        // The launch's first window is ready now if it has no chat to load.
+        if selectedThread == nil { Signposts.chatReady(nil) }
     }
 
     /// The window closed: its chat is no longer on screen here.

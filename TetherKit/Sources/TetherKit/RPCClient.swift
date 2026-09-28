@@ -84,6 +84,8 @@ public actor RPCClient {
     // MARK: requests
 
     public func call<M: TetherMethod>(_ method: M.Type, _ params: M.Params) async throws -> M.Result {
+        let signpost = Signposts.rpc(M.name)
+        defer { signpost.end() }
         nextId += 1
         let id = nextId
         let line = try encoder.encode(Request(id: id, method: M.name, params: params))
