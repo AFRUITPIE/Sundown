@@ -1,3 +1,4 @@
+import ImageIO
 import SwiftUI
 import TetherKit
 import TetherProtocol
@@ -244,7 +245,6 @@ struct OpenChatAction: Equatable {
 
 struct UserMessageView: View {
     let message: Item.UserMessage
-    @State private var images = MessageImageCache()
     /// Whether the bubble is in its place. A prompt just sent starts out down by the composer and
     /// springs up into it, as Messages sends; one from history or another session is simply there.
     @State private var arrived: Bool
@@ -316,7 +316,7 @@ struct UserMessageView: View {
                 }
                 .scaledFont(.caption2).foregroundStyle(.secondary)
             }
-            ForEach(Array(message.content.enumerated()).filter { Self.draws($0.element) }, id: \.offset) { _, part in
+            ForEach(Array(message.content.enumerated()).filter { Self.draws($0.element) }, id: \.offset) { index, part in
                 // One view a part, even one that shows nothing, so SwiftUI can count them.
                 VStack(alignment: .trailing, spacing: 0) {
                     switch part {
@@ -325,12 +325,7 @@ struct UserMessageView: View {
                             .textSelection(.enabled)
                             .lineLimit(message.synthetic == true ? 6 : nil)
                     case .image(let img):
-                        if let ns = images.image(for: img.data) {
-                            Image(nsImage: ns).resizable().scaledToFit().frame(maxWidth: 240, maxHeight: 180)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
-                                .accessibilityLabel("Attached Image")
-                                .accessibilityIgnoresInvertColors()
-                        }
+                        MessageImage(key: "\(message.id)#\(index)", base64: img.data)
                     case .fileRef(let f):
                         Label(f.path, systemImage: "doc").scaledFont(.callout)
                     case .document(let d):
@@ -368,15 +363,74 @@ private struct PeerSessionLink: View {
     }
 }
 
-@MainActor
-private final class MessageImageCache {
-    private var values: [String: NSImage] = [:]
+/// An image in a prompt. Decoded and scaled down off the main actor the first time it's shown, and
+/// kept app-wide by its message and place, so a row made again draws it at once; a quiet box holds
+/// its place until then. Decoding every image whole on the main thread, and keying a row's cache by
+/// its megabytes of base64, took a chat with screenshots a moment to open.
+private struct MessageImage: View {
+    let key: String
+    let base64: String
+    @State private var image: NSImage?
+    @State private var unreadable = false
 
-    func image(for base64: String) -> NSImage? {
-        if let value = values[base64] { return value }
-        guard let data = Data(base64Encoded: base64), let value = NSImage(data: data) else { return nil }
-        values[base64] = value
-        return value
+    var body: some View {
+        if let image = image ?? MessageImages.cached(key) {
+            Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: 240, maxHeight: 180)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .accessibilityLabel("Attached Image")
+                .accessibilityIgnoresInvertColors()
+        } else if !unreadable {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(.fill.tertiary)
+                .frame(width: 120, height: 90)
+                .accessibilityLabel("Attached Image")
+                .task(id: key) {
+                    image = await MessageImages.load(key, base64: base64)
+                    unreadable = image == nil && !Task.isCancelled
+                }
+        }
+    }
+}
+
+/// Prompts' images, scaled to the most a prompt shows, by message id and part.
+@MainActor
+enum MessageImages {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.totalCostLimit = 64 << 20 // decoded bytes
+        return cache
+    }()
+
+    static func cached(_ key: String) -> NSImage? { cache.object(forKey: key as NSString) }
+
+    static func load(_ key: String, base64: String) async -> NSImage? {
+        if let image = cached(key) { return image }
+        guard let decoded = await decode(base64) else { return nil }
+        let image = NSImage(cgImage: decoded.image, size: decoded.size)
+        cache.setObject(image, forKey: key as NSString, cost: decoded.image.bytesPerRow * decoded.image.height)
+        return image
+    }
+
+    /// At most 480 pixels on the long edge, 240 points at 2x, and upright. Its size in points is the
+    /// whole image's, as `NSImage(data:)` gave it, so a prompt lays out as it did.
+    @concurrent
+    nonisolated static func decode(_ base64: String) async -> (image: CGImage, size: CGSize)? {
+        guard let data = Data(base64Encoded: base64), let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceCreateThumbnailWithTransform: true,
+                  kCGImageSourceThumbnailMaxPixelSize: 480,
+                  kCGImageSourceShouldCacheImmediately: true,
+              ] as CFDictionary),
+              image.width > 0, image.height > 0 else { return nil }
+        let dpi = (properties[kCGImagePropertyDPIWidth] as? Double).flatMap { $0 > 0 ? $0 : nil } ?? 72
+        let whole = Double(max(width, height)), scaled = Double(max(image.width, image.height))
+        return (image, CGSize(width: Double(image.width) * whole / scaled * 72 / dpi,
+                              height: Double(image.height) * whole / scaled * 72 / dpi))
     }
 }
 

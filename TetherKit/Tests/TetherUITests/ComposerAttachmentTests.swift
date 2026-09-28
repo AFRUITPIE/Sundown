@@ -73,6 +73,15 @@ struct ComposerAttachmentTests {
         guard case .mention = Composer.read(file: small, hostIsLocal: true) else { Issue.record("not mentioned"); return }
     }
 
+    /// A prompt's image is decoded small, off the main actor, keeping the size it had whole.
+    @Test func aPromptsImageIsDecodedSmallAtItsOwnSize() async throws {
+        let data = try Self.encoded(width: 1_000, height: 500, as: .png)
+        let decoded = try #require(await MessageImages.decode(data.base64EncodedString()))
+        #expect(decoded.image.width == 480 && decoded.image.height == 240)
+        #expect(decoded.size == CGSize(width: 1_000, height: 500))
+        #expect(await MessageImages.decode("not base64") == nil)
+    }
+
     private static func encoded(width: Int, height: Int, as type: UTType) throws -> Data {
         let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
