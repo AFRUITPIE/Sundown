@@ -234,7 +234,7 @@ private struct ScheduledTaskEditor: View {
             Section {
                 TextField("Name", text: $name)
                     .onSubmit(save)
-                Picker("Folder", selection: $cwd) {
+                Picker("Directory", selection: $cwd) {
                     ForEach(folders, id: \.self) { Text($0.abbreviatingHome).tag($0) }
                 }
             }

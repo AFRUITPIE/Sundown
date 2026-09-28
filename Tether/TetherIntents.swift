@@ -5,9 +5,9 @@ import TetherUI
 /// Shortcuts: start a chat in a folder with a prompt, ready to send or sent.
 struct StartChatIntent: AppIntent {
     static let title: LocalizedStringResource = "Start a Chat"
-    static let description = IntentDescription("Opens a new chat on this Mac in Tether, in a folder, with a prompt in the message field or sent.")
+    static let description = IntentDescription("Opens a new chat on this Mac in Tether, in a directory, with a prompt in the message field or sent.")
 
-    @Parameter(title: "Folder", description: "The folder Claude works in, such as ~/Code/my-app.")
+    @Parameter(title: "Directory", description: "The directory Claude works in, such as ~/Code/my-app.")
     var folder: String?
 
     @Parameter(title: "Prompt")

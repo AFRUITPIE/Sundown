@@ -154,19 +154,12 @@ public struct RootView: View {
                 // remembers the arrangement. Every item is still declared unconditionally.
                 .toolbar(id: "main") {
                     ToolbarItem(id: "newChat", placement: .navigation) { NewChatButton(window: window) }
-                    // Settings ▸ Advanced ▸ Session Controls picks which of these two shows: all three
-                    // menus, or (Split) permissions alone; Message Field shows neither. Hidden, not
-                    // removed, and neither item's menus ever change: when one item's menus came and
-                    // went instead, AppKit's toolbar layout asserted (an index past `_currentItems`)
-                    // as previews switched on New Chat.
+                        .visibilityPriority(.high)
+                    // The last to go to the » menu when the window is narrow; the title gives way first.
                     ToolbarItem(id: "session", placement: .primaryAction) {
                         ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
-                    .hidden(sessionControls != .toolbar)
-                    ToolbarItem(id: "permissions", placement: .primaryAction) {
-                        ToolbarSessionControl(window: window, control: PermissionsMenu.init(settings:))
-                    }
-                    .hidden(sessionControls != .split)
+                    .visibilityPriority(.high)
                     // Keeps the chat's settings apart from the inspector button beside them.
                     ToolbarSpacer(.fixed, placement: .primaryAction)
                 }
@@ -176,8 +169,6 @@ public struct RootView: View {
         // either way, and shows the inspector wherever it is.
         .modifier(InspectorColumn(window: window, isPresented: columnInspector))
     }
-
-    private var sessionControls: Appearance.SessionControlsPlacement { app.appearance.sessionControls }
 
     /// The sidebar's and detail's minimums (220 + 520) while the inspector column is closed. While
     /// it's open there is none: SwiftUI then keeps the window at least as wide as its columns, and an
@@ -267,13 +258,9 @@ struct NewChatButton: View {
     let window: WindowModel
 
     var body: some View {
-        Button {
-            window.newChat()
-        } label: {
-            Image(systemName: "square.and.pencil")
-        }
-        .accessibilityLabel("New Chat")
-        .help("New Chat")
+        // Titled, for the toolbar's Icon and Text mode and its Customize palette.
+        Button("New Chat", systemImage: "square.and.pencil") { window.newChat() }
+            .help("New Chat")
     }
 }
 
@@ -389,11 +376,13 @@ public struct ShellViewCommands: View {
             ForEach(SidebarFilter.allCases, id: \.self) { Text($0.label).tag($0) }
         }
         Divider()
-        // A shortcut always shows its pane, opening the inspector if needed; ⌥⌘I hides it.
-        Menu("Inspector") {
+        // One of the panes, checked only while it's showing. Choosing one (or its shortcut) always
+        // shows it, opening the inspector if needed; ⌥⌘I hides it.
+        Picker("Inspector", selection: Binding(get: { window?.inspectorShown == true ? window?.inspectorPane : nil },
+                                               set: { if let pane = $0 { window?.openInspector(on: pane) } })) {
             ForEach(InspectorPane.allCases) { pane in
-                Toggle(pane.label, isOn: Binding(get: { window?.isInspecting(pane) ?? false },
-                                                 set: { _ in window?.openInspector(on: pane) }))
+                Text(pane.label)
+                    .tag(Optional(pane))
                     .keyboardShortcut(pane.shortcut, modifiers: [.command, .option])
             }
         }
@@ -475,21 +464,6 @@ private func rootPreviewWindow() -> WindowModel {
     return RootView(window: window)
         .frame(width: 1100, height: 760)
 }
-
-/// Settings ▸ Advanced ▸ Session Controls: the toolbar keeps only what the message field doesn't
-/// hold — nothing for Message Field, permissions alone for Split.
-@MainActor
-private func rootPreview(_ placement: Appearance.SessionControlsPlacement, newChat: Bool = false) -> some View {
-    let window = newChat ? WindowModel.sample() : rootPreviewWindow()
-    window.app.appearance.sessionControls = placement
-    return RootView(window: window)
-        .frame(width: 1100, height: 760)
-}
-
-#Preview("RootView (session controls in message field)") { rootPreview(.messageField) }
-#Preview("RootView (session controls split)") { rootPreview(.split) }
-#Preview("RootView (new chat, session controls in message field)") { rootPreview(.messageField, newChat: true) }
-#Preview("RootView (new chat, session controls split)") { rootPreview(.split, newChat: true) }
 
 // The narrowest window without the inspector: every toolbar item must still fit.
 // The inspector preview uses the wider minimum that TetherApp applies while it is open.

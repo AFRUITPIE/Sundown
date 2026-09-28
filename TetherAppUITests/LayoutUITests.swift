@@ -136,33 +136,15 @@ final class LayoutUITests: XCTestCase {
 
     // MARK: Session controls
 
-    /// Session Controls moves the model, effort and permissions menus between the toolbar and the
-    /// message field, and Split leaves permissions in the toolbar.
+    /// Model, effort and permissions share one toolbar item.
     @MainActor
-    func testSessionControlsMoveBetweenToolbarAndField() {
+    func testSessionMenusAreInTheToolbar() {
         let app = launch()
         waitForLongChat(app)
-        let window = mainWindow(app)
-        let toolbarModel = window.toolbars.menuButtons["Model"]
-        XCTAssertTrue(toolbarModel.waitForExistence(timeout: 5))
-
-        var settings = openAdvanced(app)
-        choose(settings, "Session Controls", "Message Field")
-        closeSettings(app)
-        XCTAssertTrue(toolbarModel.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(window.menuButtons.matching(identifier: "composer.model").firstMatch.exists
-                      || window.menuButtons["Model"].exists, "no Model menu in the field")
-
-        settings = openAdvanced(app)
-        choose(settings, "Session Controls", "Split")
-        closeSettings(app)
-        XCTAssertTrue(window.toolbars.menuButtons["Permissions"].waitForExistence(timeout: 5))
-        XCTAssertFalse(window.toolbars.menuButtons["Model"].exists)
-
-        settings = openAdvanced(app)
-        choose(settings, "Session Controls", "Toolbar")
-        closeSettings(app)
-        XCTAssertTrue(toolbarModel.waitForExistence(timeout: 5))
+        let toolbar = mainWindow(app).toolbars.element(boundBy: 0)
+        for menu in ["Model", "Effort", "Permissions"] {
+            XCTAssertTrue(toolbar.menuButtons[menu].waitForExistence(timeout: 5), "no \(menu) menu in the toolbar")
+        }
     }
 
     // MARK: Transcript
@@ -302,7 +284,7 @@ final class LayoutUITests: XCTestCase {
         app.buttons["New Chat"].click()
         let workIn = app.descendants(matching: .any)["newChat.workIn"]
         XCTAssertTrue(workIn.waitForExistence(timeout: 5))
-        XCTAssertEqual(workIn.value as? String, "This Folder")
+        XCTAssertEqual(workIn.value as? String, "This Directory")
         workIn.click()
         app.menuItems["New Worktree"].click()
         XCTAssertEqual(workIn.value as? String, "New Worktree")

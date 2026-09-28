@@ -125,7 +125,7 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertTrue(folder.waitForExistence(timeout: 5))
         let workIn = app.descendants(matching: .any)["newChat.workIn"]
         XCTAssertTrue(workIn.exists, "Work In sits beside the folder")
-        XCTAssertEqual(workIn.value as? String, "This Folder")
+        XCTAssertEqual(workIn.value as? String, "This Directory")
         // The fixture's `git/status` says the folder is on main.
         let branch = app.descendants(matching: .any)["newChat.branch"]
         XCTAssertTrue(branch.waitForExistence(timeout: 5))

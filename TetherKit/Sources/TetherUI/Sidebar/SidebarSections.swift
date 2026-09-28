@@ -136,7 +136,7 @@ private func byDirectory(_ ordered: [SidebarChat]) -> [SidebarSection] {
     return order.map { cwd in
         // Keyed on the whole path: two projects can share a last component.
         SidebarSection(id: cwd.map { "dir:\($0)" } ?? "dir:none",
-                       title: cwd?.lastPathComponent ?? "No Folder",
+                       title: cwd?.lastPathComponent ?? "No Directory",
                        help: cwd?.abbreviatingHome,
                        chats: grouped[cwd] ?? [],
                        folder: cwd)

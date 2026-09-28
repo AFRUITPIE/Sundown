@@ -21,7 +21,7 @@ struct RemoteFolderPicker: View {
             .navigationTitle(path.abbreviatingHome)
             .toolbar {
                 ToolbarItem(placement: .navigation) {
-                    Button("Enclosing Folder", systemImage: "chevron.up") {
+                    Button("Enclosing Directory", systemImage: "chevron.up") {
                         path = (path as NSString).deletingLastPathComponent
                         Task { await load() }
                     }

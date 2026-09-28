@@ -340,7 +340,7 @@ extension WindowModel {
     /// Starts the New Chat draft as a chat with `input` as its first message, and opens it.
     func startDraftChat(_ input: [UserInput]) async {
         guard let connection else { return }
-        guard let cwd = draftDirectory else { draftError = "Choose a folder first."; return }
+        guard let cwd = draftDirectory else { draftError = "Choose a directory first."; return }
         draftError = nil
         do {
             let t = try await connection.startThread(cwd: cwd, input: input,

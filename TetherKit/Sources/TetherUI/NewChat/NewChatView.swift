@@ -60,9 +60,7 @@ struct NewChatView: View {
                             GlassEffectContainer(spacing: 10) {
                                 Composer(connection: connection, cwd: window.draftDirectory,
                                          draftKey: "new-chat:\(window.hostID)",
-                                         placeholder: window.draftDirectory == nil ? "Choose a folder, then ask Claude…" : "Ask Claude…",
-                                         // The draft's settings, which the first message starts the chat with.
-                                         sessionSettings: { SessionSettings(draft: window, connection: connection) },
+                                         placeholder: window.draftDirectory == nil ? "Choose a directory, then ask Claude…" : "Ask Claude…",
                                          submit: { input in await start(connection, input) })
                             }
                         }
@@ -152,7 +150,7 @@ struct NewChatView: View {
     private func folderMenu(_ connection: HostConnection) -> some View {
         let folder = window.draftDirectory
         return Menu {
-            Picker("Folder", selection: Binding(get: { window.draftDirectory }, set: { choose($0) })) {
+            Picker("Directory", selection: Binding(get: { window.draftDirectory }, set: { choose($0) })) {
                 ForEach(connection.projects.prefix(15), id: \.cwd) { p in
                     Text(p.cwd.abbreviatingHome).tag(Optional(p.cwd))
                 }
@@ -163,18 +161,18 @@ struct NewChatView: View {
             .pickerStyle(.inline)
             .labelsHidden()
             Divider()
-            Button("Choose Folder…", action: chooseFolder)
+            Button("Choose Directory…", action: chooseFolder)
         } label: {
             // The whole path, since the window's subtitle already names the folder. No symbol:
             // Work In's folder beside it would read as a second one.
-            Text(folder?.abbreviatingHome ?? "Choose Folder")
+            Text(folder?.abbreviatingHome ?? "Choose Directory")
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
         // Gives way before the others: a long path truncates in its middle instead.
         .layoutPriority(-1)
-        .help(folder ?? "Choose the folder Claude works in")
-        .accessibilityLabel("Folder")
+        .help(folder ?? "Choose the directory Claude works in")
+        .accessibilityLabel("Directory")
         .accessibilityValue(folder ?? "None")
         .accessibilityIdentifier("newChat.folder")
     }
@@ -195,13 +193,13 @@ struct NewChatView: View {
         } label: {
             Label(Self.workInTitle(worktree), systemImage: Self.workInSymbol(worktree))
         }
-        .help(worktree ? "Work in a new git worktree of this folder’s repository" : "Work in this folder")
+        .help(worktree ? "Work in a new git worktree of this directory’s repository" : "Work in this directory")
         .accessibilityLabel("Work In")
         .accessibilityValue(Self.workInTitle(worktree))
         .accessibilityIdentifier("newChat.workIn")
     }
 
-    private static func workInTitle(_ worktree: Bool) -> String { worktree ? "New Worktree" : "This Folder" }
+    private static func workInTitle(_ worktree: Bool) -> String { worktree ? "New Worktree" : "This Directory" }
     private static func workInSymbol(_ worktree: Bool) -> String { worktree ? "folder.badge.plus" : "folder" }
 
     private func choose(_ directory: String?) {

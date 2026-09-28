@@ -83,11 +83,21 @@ struct PermissionPrompt: View {
                 }
                 Spacer()
                 if params.suppressAlwaysAllowRule != true {
-                    Menu("Always allow") {
-                        Button("For this session") { respond(["decision": "allow", "scope": "session"]) }
-                        Button("For this project (shared)") { respond(["decision": "allow", "scope": "project"]) }
-                        Button("For this project (just me)") { respond(["decision": "allow", "scope": "local"]) }
-                        Button("Everywhere (user settings)") { respond(["decision": "allow", "scope": "user"]) }
+                    // Where each rule is written, as the item's subtitle.
+                    Menu("Always Allow") {
+                        Button("For This Session") { respond(["decision": "allow", "scope": "session"]) }
+                        Button { respond(["decision": "allow", "scope": "project"]) } label: {
+                            Text("For This Project")
+                            Text("Shared, in .claude/settings.json")
+                        }
+                        Button { respond(["decision": "allow", "scope": "local"]) } label: {
+                            Text("For This Project, Just Me")
+                            Text("In .claude/settings.local.json")
+                        }
+                        Button { respond(["decision": "allow", "scope": "user"]) } label: {
+                            Text("Everywhere")
+                            Text("In your user settings")
+                        }
                     }
                     .fixedSize()
                 }

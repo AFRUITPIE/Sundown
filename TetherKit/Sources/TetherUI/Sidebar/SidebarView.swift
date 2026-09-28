@@ -154,7 +154,7 @@ struct SidebarView: View {
         let unarchived = section.rows.map(\.thread).filter { !$0.isArchived }
         if !unarchived.isEmpty, window.connection != nil {
             Divider()
-            Button("Archive Chats in Folder…") { archivingFolder = FolderArchive(name: section.title, threads: unarchived) }
+            Button("Archive Chats in Directory…") { archivingFolder = FolderArchive(name: section.title, threads: unarchived) }
         }
     }
 

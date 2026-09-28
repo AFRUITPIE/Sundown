@@ -22,7 +22,7 @@ public enum TetherLink: Equatable, Sendable {
         case .newChat(let host, let folder, let prompt, let sendToken):
             c.host = "new-chat"
             c.queryItems = [host.map { URLQueryItem(name: "host", value: $0.uuidString) },
-                            folder.map { URLQueryItem(name: "folder", value: $0) },
+                            folder.map { URLQueryItem(name: "directory", value: $0) },
                             prompt.map { URLQueryItem(name: "prompt", value: $0) },
                             sendToken.map { URLQueryItem(name: "send", value: $0.uuidString) }].compactMap { $0 }
         }
@@ -38,7 +38,7 @@ public enum TetherLink: Equatable, Sendable {
             guard let host = query["host"].flatMap(UUID.init(uuidString:)), let thread = query["thread"] else { return nil }
             self = .chat(host: host, thread: thread)
         case "new-chat":
-            self = .newChat(host: query["host"].flatMap(UUID.init(uuidString:)), folder: query["folder"],
+            self = .newChat(host: query["host"].flatMap(UUID.init(uuidString:)), folder: query["directory"],
                             prompt: query["prompt"], sendToken: query["send"].flatMap(UUID.init(uuidString:)))
         default:
             return nil

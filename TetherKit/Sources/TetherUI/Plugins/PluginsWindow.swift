@@ -124,42 +124,36 @@ public struct PluginsWindow: View {
         }
     }
 
+    /// The plugin's switch, titled by its name, with where it came from as the subtitle.
     private func installedRow(_ plugin: InstalledPlugin) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(plugin.name).fontWeight(.medium)
-                Text([plugin.marketplace, plugin.version.map { "v\($0)" }, plugin.scope.map(Self.scopeLabel)].compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
+        Group {
             if working == plugin.id {
-                ProgressView().controlSize(.small)
+                LabeledContent {
+                    ProgressView().controlSize(.small)
+                } label: {
+                    installedLabel(plugin)
+                }
             } else {
-                Toggle("On", isOn: Binding(get: { plugin.enabled }, set: { on in
+                Toggle(isOn: Binding(get: { plugin.enabled }, set: { on in
                     change(plugin.id) { try await $0.setPlugin(plugin, enabled: on, cwd: folder) }
-                }))
-                .labelsHidden()
+                })) {
+                    installedLabel(plugin)
+                }
                 .toggleStyle(.switch)
                 .controlSize(.small)
             }
         }
         .contextMenu { Button("Uninstall…") { uninstalling = plugin } }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(plugin.name)
     }
 
+    @ViewBuilder private func installedLabel(_ plugin: InstalledPlugin) -> some View {
+        Text(plugin.name)
+        Text([plugin.marketplace, plugin.version.map { "v\($0)" }, plugin.scope.map(Self.scopeLabel)].compactMap { $0 }.joined(separator: " · "))
+    }
+
+    /// The plugin's name, what it does and how many have installed it, then Install.
     private func availableRow(_ plugin: AvailablePlugin) -> some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(plugin.name).fontWeight(.medium)
-                    if let count = plugin.installCount {
-                        Text("\(count.formatted()) installs").font(.caption).foregroundStyle(.tertiary)
-                    }
-                }
-                Text(plugin.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            }
-            Spacer()
+        LabeledContent {
             if working == plugin.id {
                 ProgressView().controlSize(.small)
             } else {
@@ -171,6 +165,12 @@ public struct PluginsWindow: View {
                 .menuStyle(.button)
                 .fixedSize()
                 .controlSize(.small)
+            }
+        } label: {
+            Text(plugin.name)
+            Text(plugin.description).lineLimit(2)
+            if let count = plugin.installCount {
+                Text("\(count.formatted()) installs")
             }
         }
     }

@@ -15,7 +15,7 @@ struct GeneralSettings: View {
                 modelRow
                 effortRow
                 permissionsRow
-                Picker("Folder", selection: $app.appearance.newChatFolder) {
+                Picker("Directory", selection: $app.appearance.newChatFolder) {
                     ForEach(Appearance.NewChatFolder.allCases) { Text($0.label).tag($0) }
                 }
                 Toggle("Start in a New Worktree", isOn: $app.appearance.worktreeByDefault)

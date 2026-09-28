@@ -53,10 +53,10 @@ struct TetherApp: App {
             // `keyboardShortcut` asked for, and ⌘N is New Chat.
             CommandGroup(replacing: .newItem) { FileCommands(app: app) }
             CommandGroup(replacing: .help) { HelpCommands() }
-            CommandGroup(after: .pasteboard) {
-                Divider()
-                FindCommands()
-            }
+            // Edit ▸ Find, for the chat, where the text-editing commands go. Not `TextEditingCommands`:
+            // its Find can't be left out, and a second Find submenu beside the chat's is worse than
+            // Spelling and Substitutions only in the message field's own context menu.
+            CommandGroup(replacing: .textEditing) { FindCommands() }
             // Also in the View menu, so changing it doesn't mean opening Settings.
             CommandGroup(after: .toolbar) {
                 TextSizeCommands(app: app)

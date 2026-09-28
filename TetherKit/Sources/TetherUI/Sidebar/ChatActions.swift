@@ -189,7 +189,7 @@ struct ChatActionAlerts: ViewModifier {
         guard let target = window.worktreeToRemove else { return "" }
         if target.discardCommits { return "Removing \(worktreeName) deletes its branch and the commits on it that aren’t merged anywhere else." }
         if target.force { return "Removing \(worktreeName) discards the changes in it that weren’t committed." }
-        return "The chat worked in \(worktreeName), a worktree of its own. Removing it deletes the folder and its branch."
+        return "The chat worked in \(worktreeName), a worktree of its own. Removing it deletes the directory and its branch."
     }
 
     private var deleteTitle: String {
