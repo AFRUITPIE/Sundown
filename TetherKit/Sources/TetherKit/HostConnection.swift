@@ -57,6 +57,7 @@ public final class HostConnection: Identifiable {
         self.id = host.id
         self.transportProvider = nil
         self.network = .shared
+        observeTurns()
         NetworkPath.shared.watch(self)
     }
 
@@ -67,6 +68,7 @@ public final class HostConnection: Identifiable {
         self.id = host.id
         self.transportProvider = transportProvider
         self.network = network
+        observeTurns()
         network?.watch(self)
     }
 
@@ -142,6 +144,7 @@ public final class HostConnection: Identifiable {
             appendLog("Connected: \(initResult.host.hostname), claude \(initResult.claude.version) at \(initResult.claude.path)")
             state = .connected
             reconnectAttempt = 0
+            forgetCommands()
             await resubscribeAll()
             await openRequestedThreads()
             await refreshCatalog(full: !sameDaemon || models.isEmpty)
@@ -686,10 +689,87 @@ public final class HostConnection: Identifiable {
         subscribed.contains(model.id) && !model.isFollowed
     }
 
-    /// Slash commands for a directory, narrowed to a thread's own set when it is loaded.
+    // MARK: slash commands
+
+    /// What a command list is for: a loaded thread's own set, or a directory's.
+    private enum CommandScope: Hashable {
+        case thread(String)
+        case folder(String?)
+    }
+
+    /// Command lists already fetched. The daemon answers `command/list` for a directory by starting
+    /// a Claude Code process there and keeping it for minutes, so a list is asked for only when
+    /// someone looks for a command, and kept: until the thread's turn ends (a turn can add one), the
+    /// connection is made again, or plugins change (`forgetCommands`).
+    @ObservationIgnored private var commandLists: [CommandScope: [SlashCommand]] = [:]
+    @ObservationIgnored private var commandFetches: [CommandScope: Task<[SlashCommand]?, Never>] = [:]
+    /// Bumped whenever the lists are let go, so a fetch under way then isn't kept.
+    @ObservationIgnored private var commandGeneration = 0
+    @ObservationIgnored private var turnObserver: (any NSObjectProtocol)?
+
+    private func commandScope(cwd: String?, thread: ThreadModel?) -> CommandScope {
+        if let thread, isLoaded(thread) { return .thread(thread.id) }
+        return .folder(cwd ?? thread?.cwd)
+    }
+
+    /// The commands already fetched for a directory, or a loaded thread's own; nil if they haven't
+    /// been. Asks the host nothing.
+    public func cachedCommands(cwd: String?, thread: ThreadModel? = nil) -> [SlashCommand]? {
+        commandLists[commandScope(cwd: cwd, thread: thread)]
+    }
+
+    /// Slash commands for a directory, narrowed to a thread's own set when it is loaded: the ones
+    /// already fetched, or fetched now (once, however many ask at the same time).
     public func commands(cwd: String?, thread: ThreadModel? = nil) async -> [SlashCommand] {
-        let threadId = thread.flatMap { isLoaded($0) ? $0.id : nil }
-        return (try? await client?.call(Methods.CommandList.self, .init(cwd: cwd ?? thread?.cwd, threadId: threadId)).commands) ?? []
+        let scope = commandScope(cwd: cwd, thread: thread)
+        if let list = commandLists[scope] { return list }
+        if let fetch = commandFetches[scope] { return await fetch.value ?? [] }
+        guard let client else { return [] }
+        let generation = commandGeneration
+        let threadId: String? = if case .thread(let id) = scope { id } else { nil }
+        let params = CommandListParams(cwd: cwd ?? thread?.cwd, threadId: threadId)
+        let fetch = Task { [weak self] () -> [SlashCommand]? in
+            let commands = try? await client.call(Methods.CommandList.self, params).commands
+            if let self, self.commandGeneration == generation {
+                self.commandFetches[scope] = nil
+                // A failure isn't kept: the next look asks again.
+                if let commands { self.commandLists[scope] = commands }
+            }
+            return commands
+        }
+        commandFetches[scope] = fetch
+        return await fetch.value ?? []
+    }
+
+    /// Lets every command list go, so the next look asks again: plugins changed, or the connection
+    /// was made again.
+    public func forgetCommands() {
+        commandGeneration += 1
+        commandLists.removeAll()
+        commandFetches.removeAll()
+    }
+
+    /// A finished turn can have added commands (a plugin installed, a file in .claude/commands).
+    private func forgetCommands(after threadID: String) {
+        let cwd = threads[threadID]?.cwd
+        guard commandLists[.thread(threadID)] != nil || commandLists[.folder(cwd)] != nil else { return }
+        commandGeneration += 1
+        commandLists[.thread(threadID)] = nil
+        commandLists[.folder(cwd)] = nil
+        commandFetches.removeAll()
+    }
+
+    /// Told of each turn that ends by `apply`'s own announcement, which the app's notifications
+    /// use too. Delivered on the posting thread, the main one.
+    private func observeTurns() {
+        turnObserver = NotificationCenter.default.addObserver(forName: .tetherTurnFinished, object: self, queue: nil) { [weak self] note in
+            guard let id = note.userInfo?["threadId"] as? String else { return }
+            MainActor.assumeIsolated { self?.forgetCommands(after: id) }
+        }
+    }
+
+    isolated deinit {
+        if let turnObserver { NotificationCenter.default.removeObserver(turnObserver) }
     }
 
     public func searchFiles(cwd: String, query: String) async -> [String] {
@@ -750,16 +830,19 @@ public final class HostConnection: Identifiable {
     public func installPlugin(_ id: String, scope: PluginInstallParams.Scope, cwd: String?) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         _ = try await client.call(Methods.PluginInstall.self, .init(pluginId: id, scope: scope, cwd: cwd))
+        forgetCommands()
     }
 
     public func uninstallPlugin(_ plugin: InstalledPlugin, cwd: String?) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         _ = try await client.call(Methods.PluginUninstall.self, .init(pluginId: plugin.id, scope: plugin.scope.map { .init(rawValue: $0) }, cwd: cwd))
+        forgetCommands()
     }
 
     public func setPlugin(_ plugin: InstalledPlugin, enabled: Bool, cwd: String?) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         _ = try await client.call(Methods.PluginSetEnabled.self, .init(pluginId: plugin.id, enabled: enabled, scope: plugin.scope.map { .init(rawValue: $0) }, cwd: cwd))
+        forgetCommands()
     }
 
     // MARK: scheduled tasks

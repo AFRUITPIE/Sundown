@@ -264,6 +264,88 @@ struct CatalogRefreshTests {
     }
 }
 
+@MainActor
+@Suite(.serialized)
+struct CommandCacheTests {
+    /// Showing chats asks for no commands; looking for one asks once per folder, however many chats
+    /// there are in it and however many ask at the same time.
+    @Test func commandsAreAskedForOncePerFolderAndNeverForShowingAChat() async throws {
+        let daemon = FakeDaemon()
+        await daemon.set("thread/read", page(["m"], hasMore: false))
+        let c = connection(daemon, host: .local)
+        await c.connect()
+        let a = c.thread("a"), b = c.thread("b"), other = c.thread("other")
+        a.setSummary(summary("a", cwd: "/work/app"))
+        b.setSummary(summary("b", cwd: "/work/app"))
+        other.setSummary(summary("other", cwd: "/work/server"))
+
+        for chat in [a, b, other, a, b] {
+            await c.open(chat)
+            c.leave(chat)
+        }
+        #expect(await daemon.count("command/list") == 0)
+        #expect(c.cachedCommands(cwd: a.cwd, thread: a) == nil)
+
+        async let first = c.commands(cwd: a.cwd, thread: a)
+        async let second = c.commands(cwd: b.cwd, thread: b)
+        let lists = await [first, second]
+        #expect(lists.allSatisfy { $0.map(\.name) == ["review"] })
+        #expect(await daemon.count("command/list") == 1)
+        #expect(c.cachedCommands(cwd: b.cwd, thread: b)?.map(\.name) == ["review"])
+
+        _ = await c.commands(cwd: a.cwd, thread: a)
+        #expect(await daemon.count("command/list") == 1)
+        _ = await c.commands(cwd: other.cwd, thread: other)
+        #expect(await daemon.count("command/list") == 2)
+        await c.disconnect()
+    }
+
+    /// A turn can add a command, and a new connection may be to a new daemon: either lets the
+    /// lists go, as a plugin change does.
+    @Test func aFinishedTurnAReconnectOrAPluginChangeAsksAgain() async throws {
+        let daemon = FakeDaemon()
+        let c = connection(daemon, host: .local)
+        await c.connect()
+        let a = c.thread("a"), other = c.thread("other")
+        a.setSummary(summary("a", cwd: "/work/app"))
+        other.setSummary(summary("other", cwd: "/work/server"))
+        _ = await c.commands(cwd: a.cwd, thread: a)
+        _ = await c.commands(cwd: other.cwd, thread: other)
+        #expect(await daemon.count("command/list") == 2)
+
+        await daemon.latest()?.emit(method: "turn/completed", params: [
+            "threadId": "a", "seq": 1,
+            "turn": encoded(Turn(id: "t1", status: .completed, startedAt: 1, completedAt: 2)),
+        ])
+        try await eventually { c.cachedCommands(cwd: a.cwd, thread: a) == nil }
+        // Only that chat's folder.
+        #expect(c.cachedCommands(cwd: other.cwd, thread: other) != nil)
+        _ = await c.commands(cwd: a.cwd, thread: a)
+        #expect(await daemon.count("command/list") == 3)
+
+        await c.reconnect()
+        #expect(c.cachedCommands(cwd: a.cwd, thread: a) == nil)
+        _ = await c.commands(cwd: a.cwd, thread: a)
+        #expect(await daemon.count("command/list") == 4)
+
+        c.forgetCommands()
+        #expect(c.cachedCommands(cwd: a.cwd, thread: a) == nil)
+        await c.disconnect()
+    }
+
+    /// A failed request isn't kept: the next look asks again.
+    @Test func aFailureIsNotKept() async throws {
+        let daemon = FakeDaemon()
+        await daemon.enqueue("command/list", .error(code: -1, message: "Claude Code didn't start"))
+        let c = connection(daemon, host: .local)
+        await c.connect()
+        #expect(await c.commands(cwd: "/work/app").isEmpty)
+        #expect(c.cachedCommands(cwd: "/work/app") == nil)
+        #expect(await c.commands(cwd: "/work/app").map(\.name) == ["review"])
+        await c.disconnect()
+    }
+}
+
 @Suite
 struct SSHOptionsTests {
     @Test func keepalivesEveryThirtySeconds() {
