@@ -21,7 +21,7 @@ struct ItemView: View {
     var body: some View {
         switch item {
         case .userMessage(let m):
-            UserMessageView(message: m)
+            UserMessageView(message: m, justSent: thread.sentAt.map { Date().timeIntervalSince($0) < 3 } ?? false)
                 .messageMenu(id: m.id, text: m.plainText, isMarkdown: false, sentAt: m.createdAt)
         case .agentMessage(let m):
             // Only the reply being streamed into fades its new text in; every other reply is settled.
@@ -87,8 +87,12 @@ private struct MessageMenu: ViewModifier {
                 if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
             }
             .overlay(alignment: trailing ? .topLeading : .topTrailing) {
-                if hovering { bar.offset(y: -14) }
+                if hovering {
+                    bar.offset(y: -14)
+                        .transition(.opacity.combined(with: .scale(0.9, anchor: trailing ? .leading : .trailing)))
+                }
             }
+            .animation(.easeOut(duration: 0.12), value: hovering)
             // After the overlay, so moving onto the bar doesn't hide it.
             .onHover { hovering = $0 }
             .accessibilityAction(named: "Copy", copyText)
@@ -105,8 +109,7 @@ private struct MessageMenu: ViewModifier {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 4)
                 .accessibilityIdentifier("message.time")
-            Button("Copy", systemImage: "doc.on.doc", action: copyText)
-                .help("Copy")
+            CopyButton(action: copyText)
             Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
                 .help("Fork from Here")
             if !isMarkdown {
@@ -128,6 +131,25 @@ private struct MessageMenu: ViewModifier {
     private func copy(_ string: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(string, forType: .string)
+    }
+}
+
+/// Copy, which turns into a checkmark for a moment once it has copied.
+struct CopyButton: View {
+    let action: () -> Void
+    @State private var copied = false
+
+    var body: some View {
+        Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
+            action()
+            copied = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.2))
+                copied = false
+            }
+        }
+        .contentTransition(.symbolEffect(.replace))
+        .help("Copy")
     }
 }
 
@@ -194,6 +216,17 @@ struct OpenChatAction: Equatable {
 struct UserMessageView: View {
     let message: Item.UserMessage
     @State private var images = MessageImageCache()
+    /// Whether the bubble is in its place. A prompt just sent starts out down by the composer and
+    /// springs up into it, as Messages sends; one from history or another session is simply there.
+    @State private var arrived: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// `justSent`: this app sent a prompt to the chat a moment ago (`ThreadModel.sentAt`), and this
+    /// is its echo, which comes back well within that.
+    init(message: Item.UserMessage, justSent: Bool = false) {
+        self.message = message
+        _arrived = State(initialValue: !(justSent && message.synthetic != true))
+    }
 
     var body: some View {
         HStack {
@@ -203,6 +236,17 @@ struct UserMessageView: View {
                 .padding(.vertical, 8)
                 .background(message.synthetic == true ? AnyShapeStyle(.quaternary.opacity(0.4)) : AnyShapeStyle(.quaternary),
                             in: RoundedRectangle(cornerRadius: 12))
+                // Drawn, not laid out: the row takes its place at once, so the transcript's scroll
+                // to its end isn't disturbed.
+                .scaleEffect(arrived ? 1 : 0.6, anchor: .bottomTrailing)
+                .offset(y: arrived ? 0 : 48)
+                .opacity(arrived ? 1 : 0)
+        }
+        .onAppear {
+            guard !arrived else { return }
+            if reduceMotion { arrived = true } else {
+                withAnimation(.spring(duration: 0.45, bounce: 0.3)) { arrived = true }
+            }
         }
     }
 

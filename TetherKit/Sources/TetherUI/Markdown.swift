@@ -403,7 +403,7 @@ struct CodeBlock: View {
                     Button(expanded ? "Show Less" : "Show All \(lineCount) Lines") { expanded.toggle() }
                         .buttonStyle(.link)
                 }
-                Button("Copy", systemImage: "doc.on.doc") {
+                CopyButton {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(code, forType: .string)
                 }

@@ -18,27 +18,70 @@ final class TetherAppUITests: XCTestCase {
         return app
     }
 
-    /// The inspector opens from its toolbar button, and its tabs switch panes.
+    /// The inspector opens from its toolbar button, and its tabs, a row of symbols over the pane,
+    /// switch panes.
     @MainActor
     func testExistingChatAndInspector() {
         let app = launch()
         XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
         let toggle = app.buttons["Inspector"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-        // The fixture's store is fresh, so the inspector starts closed, and its pane tabs, a segmented
-        // control in its toolbar, show only once it's open.
-        let mcp = app.toolbars.radioButtons["MCP"]
+        // The fixture's store is fresh, so the inspector starts closed, with no tabs.
+        let mcp = app.buttons["MCP"]
         XCTAssertFalse(mcp.exists)
         toggle.click()
         XCTAssertTrue(mcp.waitForExistence(timeout: 5))
-        // With the inspector open the window's minimum width reaches past the CI runner's display
-        // (#38), where the tab and the toggle aren't hittable, so both go by shortcut from here.
-        app.typeKey("3", modifierFlags: [.command, .option])
+        mcp.click()
         let empty = app.staticTexts["No MCP Servers"]
         XCTAssertTrue(empty.waitForExistence(timeout: 5))
-        XCTAssertEqual((mcp.value as? NSNumber)?.intValue, 1)
+        XCTAssertTrue(mcp.isSelected)
+        XCTAssertFalse(app.buttons["Tasks"].isSelected)
         app.typeKey("i", modifierFlags: [.command, .option])
         XCTAssertTrue(empty.waitForNonExistence(timeout: 5))
+    }
+
+    /// New Chat sits over the sidebar and goes with it; File ▸ New Chat stays.
+    @MainActor
+    func testNewChatGoesWithTheSidebar() {
+        let app = launch()
+        XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
+        let newChat = app.toolbars.buttons["New Chat"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 5))
+        XCTAssertTrue(newChat.isHittable)
+        app.menuBars.menuItems["toggleSidebar:"].click()
+        XCTAssertTrue(newChat.waitForNonExistence(timeout: 5))
+        app.menuBars.menuItems["toggleSidebar:"].click()
+        XCTAssertTrue(newChat.waitForExistence(timeout: 5))
+    }
+
+    /// With the inspector open the window shrinks to the columns' minimums, and nothing is cut off
+    /// at either edge; toggling the sidebar doesn't widen it. SwiftUI's own inspector kept the window
+    /// at least as wide as it was, and each sidebar toggle added to that.
+    @MainActor
+    func testTheWindowShrinksWithTheInspectorOpen() {
+        let app = launch()
+        XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
+        app.typeKey("1", modifierFlags: [.command, .option])
+        let tasks = app.buttons["Tasks"]
+        XCTAssertTrue(tasks.waitForExistence(timeout: 5))
+        let window = app.windows.firstMatch
+        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -3, dy: -3))
+        corner.click(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: -900, dy: 0)),
+                     withVelocity: XCUIGestureVelocity(800), thenHoldForDuration: 0.1)
+        let width = window.frame.width
+        // The sidebar's 220, the chat's 340 beside the inspector, and the inspector's 280.
+        XCTAssertEqual(width, 840, accuracy: 2)
+        let sidebar = app.outlines["Sidebar"]
+        XCTAssertGreaterThanOrEqual(sidebar.frame.minX, window.frame.minX - 1)
+        XCTAssertLessThanOrEqual(app.buttons["Changes"].frame.maxX, window.frame.maxX + 1)
+
+        for _ in 0..<2 {
+            app.menuBars.menuItems["toggleSidebar:"].click()
+            Thread.sleep(forTimeInterval: 0.8)
+            app.menuBars.menuItems["toggleSidebar:"].click()
+            Thread.sleep(forTimeInterval: 0.8)
+        }
+        XCTAssertEqual(window.frame.width, width, accuracy: 1)
     }
 
     @MainActor

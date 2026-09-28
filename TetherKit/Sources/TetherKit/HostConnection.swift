@@ -462,6 +462,7 @@ public final class HostConnection: Identifiable {
 
     public func send(_ model: ThreadModel, input: [UserInput]) async {
         guard let client else { model.setError("Not connected"); return }
+        model.sentAt = Date()
         do {
             try await makeLive(model, client)
             _ = try await client.call(Methods.TurnStart.self, .init(threadId: model.id, input: input))

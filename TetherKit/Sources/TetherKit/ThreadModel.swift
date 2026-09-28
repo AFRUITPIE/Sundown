@@ -36,6 +36,9 @@ public final class ThreadModel: Identifiable {
         _ = itemsVersion
         return storage
     }
+    /// When this app last sent a prompt here, so the prompt's bubble can spring up from the
+    /// composer when the daemon echoes it. Not observed: only a new bubble reads it, once.
+    @ObservationIgnored public var sentAt: Date?
     @ObservationIgnored private var storage: [Item] = []
     @ObservationIgnored private var boxes: [String: ItemBox] = [:]
     public private(set) var turns: [Turn] = []

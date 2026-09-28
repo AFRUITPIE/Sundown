@@ -37,6 +37,8 @@ struct Composer: View {
     @State private var fileMatches: [String] = []
     @State private var suggestions: [Suggestion] = []
     @State private var choosingFiles = false
+    /// Counts sends, for Send's spring.
+    @State private var sends = 0
     /// The last text put here from outside the field (`ComposerDrafts.delivery`), so each is applied once.
     @State private var appliedDelivery: UUID?
     /// The text Esc closed the suggestion list on: it stays closed until the text changes.
@@ -285,22 +287,29 @@ struct Composer: View {
 
     /// Send, a round button inside the field's trailing end; Stop in its place while Claude works
     /// and the field is empty.
-    @ViewBuilder private var sendOrStop: some View {
-        if showStop {
-            Button("Stop", systemImage: "stop.fill") { onStop?() }
-                .labelStyle(.iconOnly)
-                .modifier(RoundAction())
-                .tint(.red)
-                .keyboardShortcut(".", modifiers: .command)
-                .help("Stop")
-        } else {
-            Button("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up", action: send)
-                .accessibilityIdentifier("composer.send")
-                .labelStyle(.iconOnly)
-                .modifier(RoundAction())
-                .disabled(!canSend || awaitingAnswer)
-                .help(sendHelp)
+    /// Send springs up as it sends; Send and Stop trade places with a quick scale.
+    private var sendOrStop: some View {
+        ZStack {
+            if showStop {
+                Button("Stop", systemImage: "stop.fill") { onStop?() }
+                    .labelStyle(.iconOnly)
+                    .modifier(RoundAction())
+                    .tint(.red)
+                    .keyboardShortcut(".", modifiers: .command)
+                    .help("Stop")
+                    .transition(.scale(0.5).combined(with: .opacity))
+            } else {
+                Button("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up", action: send)
+                    .accessibilityIdentifier("composer.send")
+                    .labelStyle(.iconOnly)
+                    .symbolEffect(.bounce.up, value: sends)
+                    .modifier(RoundAction())
+                    .disabled(!canSend || awaitingAnswer)
+                    .help(sendHelp)
+                    .transition(.scale(0.5).combined(with: .opacity))
+            }
         }
+        .animation(.snappy(duration: 0.2), value: showStop)
     }
 
     /// A prominent round button, as Messages draws Send.
@@ -440,6 +449,7 @@ struct Composer: View {
         for attachment in images { input.append(attachment.input) }
         text = ""
         images = []
+        sends += 1
         Task { await submit(input) }
     }
 

@@ -2,18 +2,19 @@ import SwiftUI
 import TetherKit
 
 /// The inspector's content: the selected chat's, or a placeholder so the column is never blank.
+/// The pane tabs stay over the placeholder too, so they don't come and go with the chat.
 struct InspectorView: View {
     @Bindable var window: WindowModel
     @Binding var selectedTaskID: String?
-    /// The pane tabs over the pane; not in the inspector column, whose toolbar holds them.
-    var showsPicker = true
 
     var body: some View {
         if let thread = window.selectedThread, let connection = window.connection {
             ThreadInspector(thread: thread, connection: connection, pane: $window.inspectorPane,
-                            selectedTaskID: $selectedTaskID, showsPicker: showsPicker)
+                            selectedTaskID: $selectedTaskID)
         } else {
             ContentUnavailableView("No Session", systemImage: "sidebar.trailing")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .safeAreaBar(edge: .top) { InspectorTabBar(pane: $window.inspectorPane) }
         }
     }
 }
@@ -28,7 +29,7 @@ struct ThreadInspector: View {
     @Binding var pane: InspectorPane
     @Binding var selectedTaskID: String?
 
-    /// The pane tabs over the pane; not when the toolbar's tabs already choose it.
+    /// The pane tabs over the pane; not when the window's own tabs already choose it.
     var showsPicker = true
 
     init(thread: ThreadModel, connection: HostConnection, pane: Binding<InspectorPane> = .constant(.tasks),
@@ -53,39 +54,38 @@ struct ThreadInspector: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // A bar, so a pane's form scrolls under it with the standard edge effect.
         .safeAreaBar(edge: .top) {
-            if showsPicker { panePicker }
-        }
-    }
-
-    private var panePicker: some View {
-        Group {
-            // `.tabs` rather than `.segmented`: it switches views rather than choosing a value,
-            // and VoiceOver announces the options as tabs.
-            Picker("Inspector", selection: $pane) {
-                ForEach(InspectorPane.allCases) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.tabs)
-            .labelsHidden()
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            if showsPicker { InspectorTabBar(pane: $pane) }
         }
     }
 }
 
-/// The inspector's panes as a segmented control of their symbols, in the inspector column's own
-/// toolbar, as Xcode shows its inspectors'. Each segment is named for VoiceOver and its help tag.
-struct InspectorPanePicker: View {
+/// The panes as a row of their symbols over the pane, as Xcode shows its inspectors': the open
+/// one in the accent color, the others secondary. Plain borderless buttons, each named for
+/// VoiceOver and its help tag, and marked selected when it's the open pane.
+struct InspectorTabBar: View {
     @Binding var pane: InspectorPane
 
     var body: some View {
-        Picker("Inspector", selection: $pane) {
-            ForEach(InspectorPane.allCases) { pane in
-                Label(pane.label, systemImage: pane.symbol).tag(pane).help(pane.label)
+        HStack(spacing: 4) {
+            ForEach(InspectorPane.allCases) { tab in
+                Button {
+                    pane = tab
+                } label: {
+                    Label(tab.label, systemImage: tab.symbol)
+                        .labelStyle(.iconOnly)
+                        .frame(width: 32, height: 24)
+                        .contentShape(Rectangle())
+                        .foregroundStyle(pane == tab ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                }
+                .buttonStyle(.borderless)
+                .help(tab.label)
+                .accessibilityAddTraits(pane == tab ? .isSelected : [])
             }
         }
-        .pickerStyle(.segmented)
-        .labelStyle(.iconOnly)
-        .labelsHidden()
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Inspector")
     }
 }
 
@@ -127,7 +127,7 @@ extension Appearance.InspectorPlacement {
     /// The toggle's symbol: where the inspector will appear.
     var symbol: String {
         switch self {
-        case .column: "sidebar.trailing"
+        case .column, .system: "sidebar.trailing"
         case .panel: "macwindow.on.rectangle"
         case .drawer: "rectangle.bottomthird.inset.filled"
         case .overlay: "rectangle.inset.topright.filled"
@@ -279,7 +279,7 @@ func inspectorPreview<Content: View>(@ViewBuilder _ content: () -> Content) -> s
 }
 
 /// The whole inspector the way `RootView` builds it, from a window with a chat selected.
-/// The segmented shell itself is shown by each pane's previews, which host `ThreadInspector`.
+/// The tabbed shell itself is shown by each pane's previews, which host `ThreadInspector`.
 /// #Preview bodies are result-builder closures (no `if`/control flow), so selection happens here.
 @MainActor
 private func inspectorPreviewWindow() -> WindowModel {
@@ -298,5 +298,25 @@ private func inspectorPreviewWindow() -> WindowModel {
     inspectorPreview {
         InspectorView(window: .sample(), selectedTaskID: .constant(nil))
     }
+}
+
+/// The tabs alone, Session open, in light and dark.
+#Preview("Inspector tabs") {
+    VStack(spacing: 0) {
+        InspectorTabBar(pane: .constant(.session))
+        Divider()
+        InspectorTabBar(pane: .constant(.changes)).environment(\.colorScheme, .dark).background(.black)
+    }
+    .frame(width: 280)
+}
+
+/// The column beside the chat, as the detail column shows it: full height, its divider at the
+/// leading edge.
+#Preview("Inspector column") {
+    HStack(spacing: 0) {
+        Color(nsColor: .textBackgroundColor)
+        InspectorSidePane(window: inspectorPreviewWindow(), detailWidth: DetailWidth())
+    }
+    .frame(width: 720, height: 520)
 }
 #endif

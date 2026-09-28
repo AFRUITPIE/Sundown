@@ -57,6 +57,9 @@ public final class WindowModel {
     /// Which host `selectedThread` came from, so it is let go on the right connection.
     private var selectedThreadHost: UUID?
 
+    /// The split view's columns: whether the sidebar is showing. Only the sidebar's toolbar reads
+    /// it, to take New Chat away with the sidebar.
+    public var columns: NavigationSplitViewVisibility = .automatic
     /// Whether the trailing inspector is shown.
     public var showInspector: Bool { didSet { app.remember(self) } }
     /// The pane the inspector shows, kept while it is closed.
