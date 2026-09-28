@@ -114,10 +114,6 @@ public final class AppModel {
     /// The transcript and composer's text size, 1 being the system's (persisted).
     public var textScale: CGFloat = 1 { didSet { save() } }
 
-    /// Whether the floating inspector panel is open (Settings ▸ Advanced ▸ Inspector ▸ Floating
-    /// Panel). The app's, not a window's: one panel serves whichever window is in front.
-    public var inspectorPanelShown = false
-
     /// Settings ▸ General and Advanced (persisted under a key of its own).
     public var appearance = Appearance() {
         didSet {
@@ -298,15 +294,6 @@ public final class AppModel {
 
     func unregister(_ window: WindowModel) {
         windowRefs.removeAll { $0.window == nil || $0.window === window }
-        if activeWindow === window { activeWindow = windowRefs.last?.window }
-    }
-
-    /// The chat window most recently in front: what the floating inspector panel shows. A panel
-    /// doesn't get the main window's focused values, so the windows report themselves here.
-    public private(set) var activeWindow: WindowModel?
-
-    func activate(_ window: WindowModel) {
-        if activeWindow !== window { activeWindow = window }
     }
 
     /// A window changed what it shows: the next window, and the next launch, start from it.

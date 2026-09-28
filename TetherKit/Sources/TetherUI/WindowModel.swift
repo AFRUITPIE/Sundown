@@ -91,16 +91,6 @@ public final class WindowModel {
     /// The task the Tasks pane has open, wherever the inspector is.
     public var inspectedTaskID: String?
 
-    /// Whether the inspector is showing for this window, wherever Settings ▸ Advanced ▸ Inspector
-    /// puts it: the floating panel is the app's, one for every window; the other placements are
-    /// each window's own.
-    public var inspectorShown: Bool {
-        get { app.appearance.inspector == .panel ? app.inspectorPanelShown : showInspector }
-        set {
-            if app.appearance.inspector == .panel { app.inspectorPanelShown = newValue } else { showInspector = newValue }
-        }
-    }
-
     /// The New Chat screen's session controls, reset to the defaults by `newChat()`.
     public var draftModel: String?
     public var draftEffort: EffortLevel?
@@ -267,12 +257,12 @@ public final class WindowModel {
     }
 
     /// True when the inspector is open on `pane`.
-    public func isInspecting(_ pane: InspectorPane) -> Bool { inspectorShown && inspectorPane == pane }
+    public func isInspecting(_ pane: InspectorPane) -> Bool { showInspector && inspectorPane == pane }
 
     /// Shows `pane`, opening the inspector if it is closed.
     public func openInspector(on pane: InspectorPane) {
         if inspectorPane != pane { inspectorPane = pane }
-        if !inspectorShown { inspectorShown = true }
+        if !showInspector { showInspector = true }
     }
 
     /// Start composing a new chat on the host the sidebar is showing.

@@ -11,8 +11,6 @@ public struct WindowRoot: View {
     @SceneStorage("showInspector") private var storedShowInspector: Bool?
     @SceneStorage("inspectorPane") private var storedInspectorPane: InspectorPane?
     @Environment(\.appearsActive) private var appearsActive
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.undoManager) private var undoManager
 
     public init(app: AppModel, target: Binding<WindowTarget>) {
@@ -43,24 +41,7 @@ public struct WindowRoot: View {
                 Task { await window.handle(link) }
             }
             .onDisappear { window.close() }
-            .onChange(of: appearsActive, initial: true) {
-                window.isKey = appearsActive
-                if appearsActive { window.app.activate(window) }
-            }
-            // The floating inspector panel follows the app's state, whichever window changed it.
-            .onChange(of: window.app.inspectorPanelShown) { _, shown in
-                if shown { openWindow(id: InspectorPanel.id) } else { dismissWindow(id: InspectorPanel.id) }
-            }
-            // Leaving the panel for another placement closes it; its state carries to this window.
-            .onChange(of: window.app.appearance.inspector) { old, new in
-                guard old != new else { return }
-                if old == .panel, window.app.inspectorPanelShown {
-                    window.app.inspectorPanelShown = false
-                    if window.isKey { window.showInspector = true }
-                } else if new == .panel, window.isKey, window.showInspector {
-                    window.app.inspectorPanelShown = true
-                }
-            }
+            .onChange(of: appearsActive, initial: true) { window.isKey = appearsActive }
     }
 }
 
@@ -74,7 +55,7 @@ public struct RootView: View {
     private var app: AppModel { window.app }
 
     public var body: some View {
-        shell
+        splitView
         // Reaches the inspector too, whose task list shows subagents the same way.
         .environment(\.inspectSubagent, InspectSubagentAction(owner: window) { toolUseId in
             window.inspectedTaskID = toolUseId
@@ -98,39 +79,6 @@ public struct RootView: View {
         .frame(minWidth: minWidth, minHeight: 400)
         .chatActionAlerts(window)
         .task { app.connectAll() }
-    }
-
-    /// The window's content: the split view, or with Settings ▸ Advanced ▸ Inspector ▸ Tabs, SwiftUI's
-    /// own tabs at the window's root — the split view one of them, beside a tab per pane — which a
-    /// Mac window shows in its toolbar. The inspector's shown state and pane are the selection, so
-    /// its button, View ▸ Inspector and ⌥⌘1–4 keep working. Changing the setting rebuilds the window's
-    /// content, which is fine for a setting.
-    @ViewBuilder private var shell: some View {
-        if app.appearance.inspector == .tabs {
-            TabView(selection: tab) {
-                Tab("Chat", systemImage: "bubble.left.and.text.bubble.right", value: AppTab.chat) { splitView }
-                ForEach(InspectorPane.allCases) { pane in
-                    Tab(pane.label, systemImage: pane.symbol, value: AppTab.pane(pane)) { PaneTab(window: window, pane: pane) }
-                }
-            }
-        } else {
-            splitView
-        }
-    }
-
-    enum AppTab: Hashable {
-        case chat
-        case pane(InspectorPane)
-    }
-
-    private var tab: Binding<AppTab> {
-        Binding(get: { window.showInspector ? .pane(window.inspectorPane) : .chat },
-                set: { tab in
-                    switch tab {
-                    case .chat: window.showInspector = false
-                    case .pane(let pane): window.openInspector(on: pane)
-                    }
-                })
     }
 
     private var splitView: some View {
@@ -162,50 +110,31 @@ public struct RootView: View {
                     ToolbarSpacer(.fixed, placement: .primaryAction)
                 }
         }
-        // Attached to the split view, so it is full height and present on every screen. Presented only
-        // when Settings ▸ Advanced ▸ Inspector puts it beside the chat; its toolbar button stays
-        // either way, and shows the inspector wherever it is.
-        .modifier(InspectorColumn(window: window, isPresented: columnInspector))
+        // Attached to the split view, so it is full height and present on every screen.
+        .modifier(InspectorColumn(window: window))
     }
 
-    /// The sidebar's and detail's minimums (220 + 520) while the inspector column is closed. While
-    /// it's open there is none: SwiftUI then keeps the window at least as wide as its columns, and an
+    /// The sidebar's and detail's minimums (220 + 520) while the inspector is closed. While it's
+    /// open there is none: SwiftUI then keeps the window at least as wide as its columns, and an
     /// explicit minimum below that let the window shrink under them, clipping the sidebar and the
     /// inspector at both edges.
-    private var minWidth: CGFloat? {
-        app.appearance.inspector == .column && window.showInspector ? nil : 740
-    }
-
-    /// The inspector column, open only in its placement.
-    private var columnInspector: Binding<Bool> {
-        Binding(get: { app.appearance.inspector == .column && window.showInspector },
-                set: { window.showInspector = $0 })
-    }
+    private var minWidth: CGFloat? { window.showInspector ? nil : 740 }
 }
 
-/// SwiftUI's inspector on the split view, full height, presented when Settings ▸ Advanced ▸ Show
-/// Panes In says Inspector. In the other placements it stays unpresented only to hold the
-/// inspector's button, which then sits at the window's trailing edge and never tints; with Tabs
-/// there's none, since the tabs choose the panes.
+/// SwiftUI's inspector on the split view, full height, with its button in its own toolbar over
+/// the column, so it never tints. The pane tabs are in the pane, not the toolbar: there, every
+/// change of tab made AppKit lay the whole toolbar out again.
 private struct InspectorColumn: ViewModifier {
     @Bindable var window: WindowModel
-    let isPresented: Binding<Bool>
 
     func body(content: Content) -> some View {
-        if window.app.appearance.inspector == .tabs {
-            content
-        } else {
-            content.inspector(isPresented: isPresented) {
-                InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-                    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
-                    // Its button in its own toolbar, over the column. The pane tabs are in the pane,
-                    // not here: in the toolbar, every change of tab made AppKit lay the whole
-                    // toolbar out again.
-                    .toolbar {
-                        ToolbarSpacer(.flexible)
-                        ToolbarItem { InspectorToggle(window: window) }
-                    }
-            }
+        content.inspector(isPresented: $window.showInspector) {
+            InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
+                .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+                .toolbar {
+                    ToolbarSpacer(.flexible)
+                    ToolbarItem { InspectorToggle(window: window) }
+                }
         }
     }
 }
@@ -217,26 +146,6 @@ struct DetailView: View {
     var body: some View {
         // The column's root keeps one identity. When the root itself changed (the branch, or the
         // chat's `.id`), the column's toolbar items were torn down and rebuilt, fading in on every switch.
-        // A split view only for Settings ▸ Advanced ▸ Inspector ▸ Drawer, holding the drawer while
-        // it's open, so opening it doesn't change the column's root. Not always: a split view here
-        // beside the inspector column sent AppKit into its Update Constraints loop at launch.
-        // Changing the placement rebuilds the column, which is fine for a setting.
-        switch placement {
-        case .drawer:
-            VSplitView {
-                chat.frame(minHeight: 240)
-                if window.showInspector {
-                    InspectorDrawer(window: window)
-                }
-            }
-        case .column, .panel, .overlay, .tabs:
-            chat
-        }
-    }
-
-    /// The chat or New Chat. The chat and New Chat place Settings ▸ Advanced ▸ Inspector ▸ Over the
-    /// Chat's card themselves, above their bottom bars.
-    private var chat: some View {
         ZStack {
             if let thread = window.selectedThread, let connection = window.connection {
                 // The only `.id()` in the shell: a different chat gets its own composer draft and scroll position.
@@ -246,10 +155,7 @@ struct DetailView: View {
                 NewChatView(window: window)
             }
         }
-        .environment(\.inspectorCardWindow, window)
     }
-
-    private var placement: Appearance.InspectorPlacement { window.app.appearance.inspector }
 }
 
 struct NewChatButton: View {
@@ -384,7 +290,7 @@ public struct ShellViewCommands: View {
         Divider()
         // One of the panes, checked only while it's showing. Choosing one (or its shortcut) always
         // shows it, opening the inspector if needed; ⌥⌘I hides it.
-        Picker("Inspector", selection: Binding(get: { window?.inspectorShown == true ? window?.inspectorPane : nil },
+        Picker("Inspector", selection: Binding(get: { window?.showInspector == true ? window?.inspectorPane : nil },
                                                set: { if let pane = $0 { window?.openInspector(on: pane) } })) {
             ForEach(InspectorPane.allCases) { pane in
                 Text(pane.label)
@@ -393,7 +299,7 @@ public struct ShellViewCommands: View {
             }
         }
         .disabled(window == nil)
-        Button(window?.inspectorShown == true ? "Hide Inspector" : "Show Inspector") { window?.inspectorShown.toggle() }
+        Button(window?.showInspector == true ? "Hide Inspector" : "Show Inspector") { window?.showInspector.toggle() }
             .keyboardShortcut("i", modifiers: [.command, .option])
             .disabled(window == nil)
     }
@@ -423,22 +329,11 @@ private func rootPreviewWindow() -> WindowModel {
         .frame(width: 1100, height: 760)
 }
 
-/// Settings ▸ Advanced ▸ Show Panes In, open, one placement to a preview.
-@MainActor
-private func placementPreview(_ placement: Appearance.InspectorPlacement, pane: InspectorPane = .tasks) -> some View {
+#Preview("RootView (inspector open)") {
     let window = rootPreviewWindow()
-    window.app.appearance.inspector = placement
-    window.openInspector(on: pane)
+    window.openInspector(on: .tasks)
     return RootPreview(window: window)
         .frame(width: 1160, height: 760)
-}
-
-#Preview("RootView (inspector placements)", arguments: Appearance.InspectorPlacement.allCases) { placement in
-    placementPreview(placement)
-}
-
-#Preview("RootView (inspector tabs, Changes)") {
-    placementPreview(.tabs, pane: .changes)
 }
 
 #Preview("RootView (wide transcript)") {

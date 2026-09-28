@@ -22,35 +22,8 @@ public struct Appearance: Codable, Equatable, Sendable {
     // Advanced
     public var toolCalls: ToolCallDisplay = .summarized
     public var sidebar: SidebarStyle = .chats
-    public var inspector: InspectorPlacement = .column
 
     public init() {}
-
-    /// Where Tasks, Session, MCP and Changes are shown.
-    public enum InspectorPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
-        /// SwiftUI's inspector: a column beside the chat, its panes' tabs over the pane.
-        case column
-        /// The whole window tabbed: the chat (with the sidebar) one tab, each pane another, the tabs
-        /// in the toolbar.
-        case tabs
-        /// A floating panel above the windows, showing the front window's chat. The chat window never
-        /// changes width.
-        case panel
-        /// A drawer under the chat, whose height changes rather than the transcript's width.
-        case drawer
-        /// A card over the chat's trailing edge; the transcript underneath keeps its width.
-        case overlay
-        public var id: Self { self }
-        var label: String {
-            switch self {
-            case .column: "Inspector"
-            case .tabs: "Tabs"
-            case .panel: "Floating Panel"
-            case .drawer: "Drawer"
-            case .overlay: "Card Over the Chat"
-            }
-        }
-    }
 
     /// What the sidebar lists, and how.
     public enum SidebarStyle: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -154,7 +127,6 @@ public struct Appearance: Codable, Equatable, Sendable {
         openFilesWith = value(.openFilesWith, d.openFilesWith)
         toolCalls = value(.toolCalls, d.toolCalls)
         sidebar = value(.sidebar, d.sidebar)
-        inspector = value(.inspector, d.inspector)
     }
 }
 

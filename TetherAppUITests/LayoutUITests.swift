@@ -78,60 +78,16 @@ final class LayoutUITests: XCTestCase {
 
     // MARK: Panes
 
-    /// Every placement opens the MCP pane (⌥⌘3) and closes it again (⌥⌘I), switched while the chat
-    /// is open. Outside the column, opening it never changes the chat window's width.
+    /// ⌥⌘3 opens the inspector on MCP, and ⌥⌘I closes it again.
     @MainActor
-    func testEveryPanePlacementShowsThePanes() {
+    func testTheInspectorShowsThePanes() {
         let app = launch()
         waitForLongChat(app)
         let empty = text(app, "No MCP Servers")
-        for placement in ["Tabs", "Floating Panel", "Drawer", "Card Over the Chat", "Inspector"] {
-            let settings = openAdvanced(app)
-            choose(settings, "Show Panes In", placement)
-            closeSettings(app)
-            let width = mainWindow(app).frame.width
-
-            app.typeKey("3", modifierFlags: [.command, .option])
-            XCTAssertTrue(empty.waitForExistence(timeout: 5), "\(placement): no MCP pane")
-            if placement != "Inspector" {
-                XCTAssertEqual(mainWindow(app).frame.width, width, accuracy: 1, "\(placement) changed the window's width")
-            }
-            if placement == "Floating Panel" {
-                XCTAssertTrue(app.windows["Inspector"].exists || app.dialogs["Inspector"].exists, "no floating panel")
-            }
-            // Tabs shows the chat again from its Chat tab; the others hide the panes.
-            if placement == "Tabs" {
-                app.typeKey("i", modifierFlags: [.command, .option])
-                waitForLongChat(app)
-            } else {
-                mainWindow(app).click()
-                app.typeKey("i", modifierFlags: [.command, .option])
-                XCTAssertTrue(empty.waitForNonExistence(timeout: 5), "\(placement): the panes stayed")
-            }
-        }
-    }
-
-    /// Tabs puts the chat and each pane in the toolbar as tabs; ⌥⌘I goes back to the chat.
-    @MainActor
-    func testTabsAreInTheToolbar() {
-        let app = launch(appearance: #"{"inspector":"tabs"}"#)
-        waitForLongChat(app)
-        let tabs = mainWindow(app).toolbars.element(boundBy: 0).tabGroups.element(boundBy: 0)
-        let changes = tabs.tabs["Changes"]
-        XCTAssertTrue(changes.waitForExistence(timeout: 5))
-        XCTAssertEqual(tabs.tabs.count, 5)
-        changes.click()
-        XCTAssertTrue(text(app, "App.swift").waitForExistence(timeout: 5))
-        tabs.tabs["Chat"].click()
-        waitForLongChat(app)
-
         app.typeKey("3", modifierFlags: [.command, .option])
-        XCTAssertTrue(text(app, "No MCP Servers").waitForExistence(timeout: 5))
-        XCTAssertEqual(tabs.tabs["MCP"].value as? Int, 1)
+        XCTAssertTrue(empty.waitForExistence(timeout: 5), "no MCP pane")
         app.typeKey("i", modifierFlags: [.command, .option])
-        XCTAssertTrue(text(app, "No MCP Servers").waitForNonExistence(timeout: 5))
-        XCTAssertEqual(tabs.tabs["Chat"].value as? Int, 1)
-        waitForLongChat(app)
+        XCTAssertTrue(empty.waitForNonExistence(timeout: 5), "the inspector stayed open")
     }
 
     // MARK: Session controls

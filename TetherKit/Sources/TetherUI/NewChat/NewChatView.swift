@@ -46,7 +46,6 @@ struct NewChatView: View {
         // connected is said once, by the status card in the composer's place, as in a chat; the
         // folder waits with the draft until it is.
         Color.clear
-            .inspectorCardOverlay()
             .safeAreaBar(edge: .bottom) {
                 if let connection {
                     VStack(alignment: .leading, spacing: 10) {

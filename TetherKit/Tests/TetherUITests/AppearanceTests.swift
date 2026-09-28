@@ -18,12 +18,12 @@ struct AppearanceTests {
         app.appearance.offerBypass = true
         app.appearance.sendShortcut = .commandReturn
         app.appearance.openFilesWith = .zed
-        app.appearance.inspector = .drawer
+        app.appearance.sidebar = .activity
 
         let restored = AppModel(defaults: defaults).appearance
 
         #expect(restored.toolCalls == .everyCall)
-        #expect(restored.inspector == .drawer)
+        #expect(restored.sidebar == .activity)
         #expect(restored.offerBypass)
         #expect(restored.sendShortcut == .commandReturn)
         #expect(restored.openFilesWith == .zed)
@@ -57,14 +57,12 @@ struct AppearanceTests {
         var appearance = Appearance()
         appearance.toolCalls = .everyCall
         appearance.sidebar = .activity
-        appearance.inspector = .panel
         appearance.worktreeByDefault = true
         #expect(!appearance.advancedIsDefault)
         appearance.restoreAdvanced()
         #expect(appearance.advancedIsDefault)
         #expect(appearance.toolCalls == .summarized)
         #expect(appearance.sidebar == .chats)
-        #expect(appearance.inspector == .column)
         #expect(appearance.worktreeByDefault)
     }
 

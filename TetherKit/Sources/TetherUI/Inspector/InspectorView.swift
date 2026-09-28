@@ -29,24 +29,16 @@ struct ThreadInspector: View {
     @Binding var pane: InspectorPane
     @Binding var selectedTaskID: String?
 
-    /// The pane tabs over the pane; not when the window's own tabs already choose it.
-    var showsPicker = true
-
     init(thread: ThreadModel, connection: HostConnection, pane: Binding<InspectorPane> = .constant(.tasks),
-         selectedTaskID: Binding<String?> = .constant(nil), showsPicker: Bool = true) {
+         selectedTaskID: Binding<String?> = .constant(nil)) {
         self.thread = thread
         self.connection = connection
         self._pane = pane
         self._selectedTaskID = selectedTaskID
-        self.showsPicker = showsPicker
     }
 
     var body: some View {
-        if showsPicker {
-            InspectorTabs(pane: $pane) { paneView($0) }
-        } else {
-            paneView(pane)
-        }
+        InspectorTabs(pane: $pane) { paneView($0) }
     }
 
     private func paneView(_ pane: InspectorPane) -> some View {
@@ -79,146 +71,14 @@ struct InspectorTabs<Content: View>: View {
     }
 }
 
-/// One pane as a whole tab of the window (Settings ▸ Advanced ▸ Inspector ▸ Tabs): the chat's, or
-/// a placeholder on New Chat. The chat's title stays the window's.
-struct PaneTab: View {
-    @Bindable var window: WindowModel
-    let pane: InspectorPane
-
-    var body: some View {
-        Group {
-            if let thread = window.selectedThread, let connection = window.connection {
-                ThreadInspector(thread: thread, connection: connection, pane: .constant(pane),
-                                selectedTaskID: $window.inspectedTaskID, showsPicker: false)
-            } else {
-                ContentUnavailableView("No Session", systemImage: pane.symbol)
-            }
-        }
-        .navigationTitle(window.selectedThread?.title ?? "New Chat")
-        .navigationSubtitle(window.subtitle)
-    }
-}
-
 /// The inspector's show/hide button: plain, like Xcode's, so it doesn't tint while the inspector
-/// is open. Declared by the inspector column, so it sits above it, and stays in the toolbar when
-/// the inspector is elsewhere (Settings ▸ Advanced ▸ Inspector).
+/// is open. Declared by the inspector column, so it sits above it.
 struct InspectorToggle: View {
     let window: WindowModel
 
     var body: some View {
-        Button("Inspector", systemImage: window.app.appearance.inspector.symbol) {
-            window.inspectorShown.toggle()
-        }
-        .help(window.inspectorShown ? "Hide Inspector" : "Show Inspector")
-    }
-}
-
-extension Appearance.InspectorPlacement {
-    /// The toggle's symbol: where the inspector will appear.
-    var symbol: String {
-        switch self {
-        case .column: "sidebar.trailing"
-        case .panel: "macwindow.on.rectangle"
-        case .drawer: "rectangle.bottomthird.inset.filled"
-        case .overlay: "rectangle.inset.topright.filled"
-        case .tabs: "rectangle.split.3x1"
-        }
-    }
-}
-
-/// The inspector as a floating panel (Settings ▸ Advanced ▸ Inspector ▸ Floating Panel): a
-/// `UtilityWindow` that shows the front window's chat, so the chat window itself never changes
-/// width. It follows `AppModel.activeWindow`: a panel doesn't get the main window's focused values.
-public struct InspectorPanel: View {
-    public static let id = "inspector"
-    let app: AppModel
-    private var window: WindowModel? { app.activeWindow }
-
-    public init(app: AppModel) {
-        self.app = app
-    }
-
-    public var body: some View {
-        Group {
-            if let window {
-                InspectorPanelContent(window: window)
-            } else {
-                ContentUnavailableView("No Window", systemImage: "macwindow")
-            }
-        }
-        .frame(minWidth: 280, idealWidth: 320, maxWidth: .infinity, minHeight: 320, idealHeight: 540, maxHeight: .infinity)
-        .onAppear { app.inspectorPanelShown = true }
-        .onDisappear { app.inspectorPanelShown = false }
-    }
-}
-
-private struct InspectorPanelContent: View {
-    @Bindable var window: WindowModel
-
-    var body: some View {
-        InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-            .environment(\.hostIsLocal, window.connection?.host.isLocal == true)
-    }
-}
-
-/// Where Settings ▸ Advanced ▸ Inspector ▸ Over the Chat puts its card: over the content it's
-/// applied to, inside that content's safe area, so it clears a bottom bar added after it.
-struct InspectorCardOverlay: ViewModifier {
-    @Environment(\.inspectorCardWindow) private var window
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func body(content: Content) -> some View {
-        content.overlay(alignment: .topTrailing) {
-            // The animation on this stack, not the content: on the content it animated every change
-            // to the chat under the card too.
-            ZStack {
-                if let window, window.app.appearance.inspector == .overlay, window.showInspector {
-                    InspectorCard(window: window)
-                        .transition(.moving(.move(edge: .trailing).combined(with: .opacity), reduceMotion: reduceMotion))
-                }
-            }
-            .animation(.snappy(duration: 0.25), value: shown)
-        }
-    }
-
-    private var shown: Bool { window.map { $0.app.appearance.inspector == .overlay && $0.showInspector } ?? false }
-}
-
-extension View {
-    func inspectorCardOverlay() -> some View { modifier(InspectorCardOverlay()) }
-}
-
-extension EnvironmentValues {
-    /// The window whose inspector card a chat or New Chat shows, set by the detail column.
-    @Entry var inspectorCardWindow: WindowModel?
-}
-
-/// The inspector over the chat's trailing edge (Settings ▸ Advanced ▸ Inspector ▸ Over the Chat):
-/// a glass card, so the transcript underneath keeps its width and never re-wraps.
-struct InspectorCard: View {
-    @Bindable var window: WindowModel
-
-    var body: some View {
-        InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-            // An inspector's width, but never most of a narrow chat.
-            .containerRelativeFrame(.horizontal) { width, _ in min(320, width * 0.45) }
-            .frame(maxHeight: .infinity)
-            .clipShape(.rect(cornerRadius: Layout.cardCornerRadius))
-            .glassEffect(in: .rect(cornerRadius: Layout.cardCornerRadius))
-            .padding(12)
-    }
-}
-
-/// The inspector under the chat (Settings ▸ Advanced ▸ Inspector ▸ Drawer): its height changes,
-/// never the transcript's width, like Xcode's debug area.
-struct InspectorDrawer: View {
-    @Bindable var window: WindowModel
-
-    var body: some View {
-        InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: 160, idealHeight: 280, maxHeight: .infinity)
-            .background(.background)
+        Button("Inspector", systemImage: "sidebar.trailing") { window.showInspector.toggle() }
+            .help(window.showInspector ? "Hide Inspector" : "Show Inspector")
     }
 }
 
