@@ -25,6 +25,9 @@ public struct WindowRoot: View {
             .onAppear {
                 let restored = storedShowInspector.map { ($0, storedInspectorPane ?? .tasks) }
                 window.start(inspector: restored)
+                // Kept from the start, so a window never restores another window's inspector.
+                storedShowInspector = window.showInspector
+                storedInspectorPane = window.inspectorPane
             }
             // The window's own, so Edit ▸ Undo takes back an archive, a pin or a rename made in it.
             .onChange(of: undoManager, initial: true) { window.undoManager = undoManager }
@@ -33,9 +36,10 @@ public struct WindowRoot: View {
             // Not initial: `start()` reads the stored values first.
             .onChange(of: window.showInspector) { storedShowInspector = window.showInspector }
             .onChange(of: window.inspectorPane) { storedInspectorPane = window.inspectorPane }
-            // Links from outside a window: this one if it shows the chat, else any open window.
+            // A chat's link: this window if it shows the chat, else any. New Chat's link always
+            // opens a window of its own, so it never takes over the chat or draft of one in use.
             .handlesExternalEvents(preferring: TetherLink.preference(host: window.hostID, thread: window.threadID),
-                                   allowing: ["*"])
+                                   allowing: [TetherLink.chatPrefix])
             .onOpenURL { url in
                 guard let link = TetherLink(url) else { return }
                 Task { await window.handle(link) }

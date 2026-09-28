@@ -5,7 +5,8 @@ import Foundation
 /// defaults for tests and previews, which keep their own.
 protocol DraftStore {
     func read() -> [String: String]
-    func write(_ drafts: [String: String])
+    /// False when nothing was written, so the caller keeps its other copy.
+    @discardableResult func write(_ drafts: [String: String]) -> Bool
 }
 
 /// `Drafts.json` in the app's Application Support directory.
@@ -22,10 +23,15 @@ struct FileDrafts: DraftStore {
         (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
     }
 
-    func write(_ drafts: [String: String]) {
-        guard let data = try? JSONEncoder().encode(drafts) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+    @discardableResult func write(_ drafts: [String: String]) -> Bool {
+        guard let data = try? JSONEncoder().encode(drafts) else { return false }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
     }
 }
 
@@ -38,7 +44,9 @@ struct DefaultsDrafts: DraftStore {
         defaults.data(forKey: key).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
     }
 
-    func write(_ drafts: [String: String]) {
-        if let data = try? JSONEncoder().encode(drafts) { defaults.set(data, forKey: key) }
+    @discardableResult func write(_ drafts: [String: String]) -> Bool {
+        guard let data = try? JSONEncoder().encode(drafts) else { return false }
+        defaults.set(data, forKey: key)
+        return true
     }
 }

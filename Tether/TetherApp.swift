@@ -7,8 +7,6 @@ struct TetherApp: App {
     @NSApplicationDelegateAdaptor(TetherAppDelegate.self) private var delegate
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openURL) private var openURL
-    /// Active while any of the app's windows is.
-    @Environment(\.scenePhase) private var scenePhase
     @State private var app: AppModel = {
         // UI tests, in any build: the performance tests run against Release.
         if ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1" {
@@ -33,8 +31,7 @@ struct TetherApp: App {
             WindowRoot(app: app, target: $target)
                 .onAppear {
                     app.startAttention()
-                    // The app's own actions, which outlive any one window.
-                    app.openWindow = { openWindow(value: $0) }
+                    // The app's own action, which outlives any one window.
                     app.openURL = { openURL($0) }
                 }
         } defaultValue: {
@@ -48,7 +45,6 @@ struct TetherApp: App {
         // The system restores each window to what it showed (its value and scene storage), as
         // the person's "close windows when quitting" setting says; with nothing to restore, a window.
         .defaultLaunchBehavior(.presented)
-        .onChange(of: scenePhase, initial: true) { app.isActive = scenePhase == .active }
         .commands {
             // New Chat and New Window: SwiftUI's own New Window kept ⌘N, whatever the scene's
             // `keyboardShortcut` asked for, and ⌘N is New Chat.
@@ -76,6 +72,7 @@ struct TetherApp: App {
             .appEnvironment(app)
         // The Settings view supplies the split window's minimum size.
         Settings { SettingsView(app: app) }
+            .restorationBehavior(.disabled)
         // No menu bar extra: declared at all, even hidden, it kept SwiftUI updating its label in a
         // loop from launch.
     }
@@ -92,6 +89,9 @@ private struct HostWindows: Scene {
             PluginsWindow(app: app, hostID: hostID)
         }
         .defaultSize(width: 640, height: 520)
+        // Not restored: opened from the Host menu, for a host, and a launch that brought back only
+        // one of these showed no chat window.
+        .restorationBehavior(.disabled)
         .handlesExternalEvents(matching: [])
         // Opened for a host from the Host menu, never from File ▸ New.
         .commandsRemoved()
@@ -100,6 +100,7 @@ private struct HostWindows: Scene {
             ScheduledTasksWindow(app: app, hostID: hostID)
         }
         .defaultSize(width: 820, height: 560)
+        .restorationBehavior(.disabled)
         .handlesExternalEvents(matching: [])
         // Opened for a host from the Host menu, never from File ▸ New.
         .commandsRemoved()
@@ -108,6 +109,7 @@ private struct HostWindows: Scene {
             ConnectionLogWindow(app: app, hostID: hostID)
         }
         .defaultSize(width: 620, height: 400)
+        .restorationBehavior(.disabled)
         .handlesExternalEvents(matching: [])
         // Opened for a host from the Host menu, never from File ▸ New.
         .commandsRemoved()

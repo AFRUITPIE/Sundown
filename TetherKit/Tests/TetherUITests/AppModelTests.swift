@@ -278,15 +278,24 @@ struct WindowModelTests {
         #expect(app.newWindowTarget().threadID == nil)
     }
 
-    /// A window's value is what SwiftUI matches to bring an open window forward: a chat by its
-    /// host and thread, New Chat never, since each window of it is its own.
-    @Test func windowTargetsMatchByChatNotByWindow() {
+    /// A window is its own, whatever it shows, so Open in New Window can open a second window on
+    /// a chat already on screen; a restored window keeps its identity as its chat changes.
+    @Test func windowTargetsAreTheirWindowsNotTheirChats() {
         let host = HostConfig.local.id
-        #expect(WindowTarget(hostID: host, threadID: "t") == WindowTarget(hostID: host, threadID: "t"))
-        #expect(WindowTarget(hostID: host, threadID: "t") != WindowTarget(hostID: UUID(), threadID: "t"))
-        #expect(WindowTarget(hostID: host) != WindowTarget(hostID: host))
-        let one = WindowTarget(hostID: host)
-        #expect(one == WindowTarget(hostID: host, id: one.id))
+        #expect(WindowTarget(hostID: host, threadID: "t") != WindowTarget(hostID: host, threadID: "t"))
+        let one = WindowTarget(hostID: host, threadID: "t")
+        #expect(one == WindowTarget(hostID: host, threadID: "other", id: one.id))
+    }
+
+    /// The debug launch hook's chat goes to the launch's first window, restored or new, and only it;
+    /// every window after one has started opens on New Chat.
+    @Test func theLaunchChatGoesToTheFirstWindowOnly() {
+        let app = AppModel.sample()
+        app.openOnLaunch(threadID: "thread-1", on: HostConfig.local.id)
+        let restored = WindowModel(app: app, target: WindowTarget(hostID: HostConfig.local.id, threadID: "thread-2"))
+        restored.start()
+        #expect(restored.threadID == "thread-1")
+        #expect(app.newWindowTarget().threadID == nil)
     }
 
     @Test func defaultsRoundTripWithoutUsingStandardDefaults() {

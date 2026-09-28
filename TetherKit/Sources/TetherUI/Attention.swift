@@ -415,6 +415,18 @@ public final class TetherAppDelegate: NSObject, NSApplicationDelegate {
         openWindow?(app.newWindowTarget())
     }
 
+    /// Hosts connect, and notifications and the Dock badge start, with the app rather than its first
+    /// chat window.
+    public func applicationDidFinishLaunching(_ notification: Notification) {
+        app?.isActive = NSApp.isActive
+        app?.startAttention()
+        app?.connectAll()
+    }
+
+    /// Whether another app is in front, which decides whether a chat on screen is being looked at.
+    public func applicationDidBecomeActive(_ notification: Notification) { app?.isActive = true }
+    public func applicationDidResignActive(_ notification: Notification) { app?.isActive = false }
+
     public func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         app?.dockMenu()
     }

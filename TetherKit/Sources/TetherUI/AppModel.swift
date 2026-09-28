@@ -135,10 +135,6 @@ public final class AppModel {
 
     /// Notifications, the Dock badge and the Dock menu, once the app starts them.
     @ObservationIgnored private(set) var attention: AttentionCenter?
-    /// Opens a window on a target, or brings forward the one showing it: the app's own
-    /// `openWindow`, not a window's, so it works with every window closed.
-    @ObservationIgnored public var openWindow: ((WindowTarget) -> Void)?
-
     /// Whether the first window of this launch has opened, which opens where the most recently
     /// used window left off when the system restores none.
     @ObservationIgnored private var launchWindowOpened = false
@@ -148,6 +144,17 @@ public final class AppModel {
     public func newWindowTarget() -> WindowTarget {
         defer { launchWindowOpened = true }
         return WindowTarget(hostID: lastHostID, threadID: launchWindowOpened ? nil : lastThreadID)
+    }
+
+    /// A window started, a restored one included: any window opened after it is a new one.
+    func windowStarted() { launchWindowOpened = true }
+
+    /// The chat the launch's first window shows (`openOnLaunch`), handed out once.
+    @ObservationIgnored private var launchChat: (host: UUID, thread: String)?
+
+    func takeLaunchChat() -> (host: UUID, thread: String)? {
+        defer { launchChat = nil }
+        return launchChat
     }
 
     /// Starts notifications and the Dock badge. The app calls this; tests and previews don't, so
@@ -161,8 +168,9 @@ public final class AppModel {
     /// The Dock icon's menu.
     public func dockMenu() -> NSMenu? { attention?.dockMenu() }
 
-    /// Whether the app is active: its scene phase, which the app sets. A notification is for when
-    /// it isn't, or the chat isn't the one in front.
+    /// Whether the app is frontmost, which the app delegate sets. A notification is for when it
+    /// isn't, or the chat isn't the one in front. Not the scene phase: on the Mac that stays active
+    /// while a window is visible, with another app in front.
     @ObservationIgnored public var isActive = true
 
     /// Opens a URL with the app's own action, for `open(_:)`.
@@ -232,8 +240,6 @@ public final class AppModel {
         load()
         for h in hosts { connections[h.id] = HostConnection(host: h) }
         for c in connections.values { c.offersSessionTools = appearance.sessionTools }
-        // Here, not when the first window appears: a Shortcut can launch the app and ask for a
-        // chat before any window has.
         // A draft typed just before quitting is written then.
         terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
@@ -290,6 +296,7 @@ public final class AppModel {
     func register(_ window: WindowModel) {
         windowRefs.removeAll { $0.window == nil || $0.window === window }
         windowRefs.append(WeakWindow(window: window))
+        windowStarted()
     }
 
     func unregister(_ window: WindowModel) {
@@ -404,8 +411,7 @@ public final class AppModel {
         if !(draftStore is DefaultsDrafts), let old = defaults.data(forKey: Self.draftsKey) {
             let legacy = (try? JSONDecoder().decode([String: String].self, from: old)) ?? [:]
             drafts.merge(legacy) { current, _ in current }
-            draftStore.write(drafts)
-            defaults.removeObject(forKey: Self.draftsKey)
+            if draftStore.write(drafts) { defaults.removeObject(forKey: Self.draftsKey) }
         }
         appearance = defaults.data(forKey: Self.appearanceKey).flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
         alerts = defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode(AlertPreferences.self, from: $0) } ?? AlertPreferences()
@@ -454,11 +460,12 @@ public final class AppModel {
 }
 
 extension AppModel {
-    /// The next window to open starts on `threadID`: a notification's chat when no window is left,
-    /// and the debug-only `TETHER_OPEN_THREAD` launch hook.
+    /// The launch's first window shows `threadID`, whether it's restored or new: the debug-only
+    /// `TETHER_OPEN_THREAD` launch hook.
     public func openOnLaunch(threadID: String, on host: UUID) {
         lastHostID = host
         lastThreadID = threadID
+        launchChat = (host, threadID)
     }
 }
 

@@ -11,6 +11,8 @@ public enum TetherLink: Equatable, Sendable {
     case newChat(host: UUID? = nil, folder: String? = nil, prompt: String? = nil, sendToken: UUID? = nil)
 
     public static let scheme = "tether"
+    /// What every chat link, and no New Chat link, begins with.
+    static let chatPrefix = "tether://chat"
 
     public var url: URL {
         var c = URLComponents()

@@ -65,6 +65,24 @@ public final class HostConnection: Identifiable {
 
     // MARK: connection lifecycle
 
+    /// Connects if it isn't, and returns once it is, or once the attempt fails: for work asked of a
+    /// host before it's up, such as a Shortcut that launches the app to start a chat.
+    public func connected() async -> Bool {
+        if case .connected = state { return true }
+        if case .connecting = state {
+            while case .connecting = state {
+                // Woken by the next change of state, not by polling it.
+                await withCheckedContinuation { (resume: CheckedContinuation<Void, Never>) in
+                    withObservationTracking { _ = self.state } onChange: { resume.resume() }
+                }
+            }
+        } else {
+            await connect()
+        }
+        if case .connected = state { return true }
+        return false
+    }
+
     public func connect() async {
         wantsConnection = true
         if case .connected = state { return }

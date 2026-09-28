@@ -28,19 +28,11 @@ public struct WindowTarget: Codable, Hashable, Sendable {
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
     }
 
-    public static func == (a: Self, b: Self) -> Bool {
-        if let thread = a.threadID { return thread == b.threadID && a.hostID == b.hostID }
-        return b.threadID == nil && a.id == b.id
-    }
+    /// A window is its own, whatever it shows: Open in New Window opens a second window on a chat
+    /// already on screen. Links find the window showing their chat by `handlesExternalEvents`.
+    public static func == (a: Self, b: Self) -> Bool { a.id == b.id }
 
-    public func hash(into hasher: inout Hasher) {
-        if let threadID {
-            hasher.combine(hostID)
-            hasher.combine(threadID)
-        } else {
-            hasher.combine(id)
-        }
-    }
+    public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 /// One window's state: its host, the chat on screen (or New Chat and its draft), its inspector,
@@ -214,11 +206,17 @@ public final class WindowModel {
     /// as the window had it (restored), or as the most recently used window had it (a new window).
     public func start(inspector: (shown: Bool, pane: InspectorPane)? = nil) {
         guard !started else { return }
+        // Read before anything below changes this window, which is remembered as the last used.
+        let inspector = inspector ?? (app.lastShowInspector, app.lastInspectorPane)
+        // The debug launch hook's chat, in the launch's first window, restored or new.
+        if let chat = app.takeLaunchChat() {
+            hostID = chat.host
+            threadID = chat.thread
+        }
         // A remembered host can disappear between launches; this Mac is always configured.
         if app.connections[hostID] == nil && !app.hosts.contains(where: { $0.id == hostID }) {
             hostID = HostConfig.local.id
         }
-        let inspector = inspector ?? (app.lastShowInspector, app.lastInspectorPane)
         showInspector = inspector.shown
         inspectorPane = inspector.pane
         started = true
@@ -290,10 +288,17 @@ public final class WindowModel {
             if let folder, !folder.isEmpty { draftDirectory = (folder as NSString).expandingTildeInPath }
             let text = prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !text.isEmpty else { return }
-            if TetherLink.redeem(sendToken), draftDirectory != nil {
+            let key = "new-chat:\(hostID)"
+            let sends = TetherLink.redeem(sendToken)
+            // Sent once the host is connected, which it may not be yet on a launch.
+            if sends, draftDirectory != nil, await connection?.connected() == true {
                 await startDraftChat([.text(.init(text: text))])
-            } else {
-                app.deliverDraft(text, for: "new-chat:\(hostID)")
+                if draftError == nil { return }
+            }
+            // Otherwise it waits in the field. A link from anywhere but Shortcuts never replaces
+            // a draft that's already there.
+            if sends || app.draft(for: key).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                app.deliverDraft(text, for: key)
             }
         }
     }
