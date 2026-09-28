@@ -249,47 +249,72 @@ private struct TranscriptContent: View {
 
 /// Asks for the previous page while the top of the transcript is on screen, one page at a time.
 /// Not while the host is down, and after a failure it waits longer each time before asking again,
-/// then stops: every 300 ms it asked a host that couldn't answer. Scrolling the top away and back,
-/// or the host coming back, starts it over.
+/// then says it couldn't, with Try Again: every 300 ms it asked a host that couldn't answer.
+/// Scrolling the top away and back, or the host coming back, starts it over too.
 private struct OlderHistoryTrigger: View {
     let thread: ThreadModel
     let connection: HostConnection?
     @State private var visible = false
+    @State private var gaveUp: Bool
+    @State private var attempt = 0
 
-    /// What the asking depends on: a change of either starts it over.
+    init(thread: ThreadModel, connection: HostConnection?, gaveUp: Bool = false) {
+        self.thread = thread
+        self.connection = connection
+        _gaveUp = State(initialValue: gaveUp)
+    }
+
+    /// What the asking depends on: a change of any starts it over.
     private struct Asking: Equatable {
         let visible: Bool
         let connected: Bool
+        let attempt: Int
     }
 
     var body: some View {
         let connected = connection?.state == .connected
-        ProgressView("Loading Earlier Messages")
-            .labelsHidden()
-            .controlSize(.small)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .onScrollVisibilityChange(threshold: 0.01) { visible = $0 }
-            // A page goes in above the reader and normally takes the spinner off screen, which ends
-            // this. One short enough to leave it showing changes no visibility, so after a moment for
-            // the scroll to settle the next page is asked for here.
-            .task(id: Asking(visible: visible, connected: connected)) {
-                var failures = 0
-                while visible, connected, thread.hasMoreHistory, let connection, !Task.isCancelled {
-                    switch await connection.loadOlderHistory(thread) {
-                    case .loaded, .busy:
-                        failures = 0
-                        try? await Task.sleep(for: .milliseconds(300))
-                    case .failed:
-                        failures += 1
-                        // 2, 4 and 8 s, then not until something changes.
-                        guard failures <= 3 else { return }
-                        try? await Task.sleep(for: .seconds(1 << failures))
-                    case .unavailable, .complete:
+        VStack {
+            if gaveUp {
+                HStack {
+                    Label("Couldn’t Load Earlier Messages", systemImage: "exclamationmark.circle")
+                        .foregroundStyle(.secondary)
+                    Button("Try Again") { attempt += 1 }
+                        .buttonStyle(.link)
+                }
+                .font(.callout)
+            } else {
+                ProgressView("Loading Earlier Messages")
+                    .labelsHidden()
+                    .controlSize(.small)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .onScrollVisibilityChange(threshold: 0.01) { visible = $0 }
+        // A page goes in above the reader and normally takes the spinner off screen, which ends
+        // this. One short enough to leave it showing changes no visibility, so after a moment for
+        // the scroll to settle the next page is asked for here.
+        .task(id: Asking(visible: visible, connected: connected, attempt: attempt)) {
+            var failures = 0
+            while visible, connected, thread.hasMoreHistory, let connection, !Task.isCancelled {
+                gaveUp = false
+                switch await connection.loadOlderHistory(thread) {
+                case .loaded, .busy:
+                    failures = 0
+                    try? await Task.sleep(for: .milliseconds(300))
+                case .failed:
+                    failures += 1
+                    // 2, 4 and 8 s, then not until asked again.
+                    guard failures <= 3 else {
+                        gaveUp = !Task.isCancelled
                         return
                     }
+                    try? await Task.sleep(for: .seconds(1 << failures))
+                case .unavailable, .complete:
+                    return
                 }
             }
+        }
     }
 }
 
@@ -493,6 +518,13 @@ struct TurnOutcome: View {
     }
     .padding(20)
     .frame(width: 500)
+}
+
+/// Older history that couldn't be loaded after a few tries: said once, quietly, with Try Again.
+#Preview("Earlier messages (couldn’t load)") {
+    OlderHistoryTrigger(thread: .sampleIdleChat(), connection: nil, gaveUp: true)
+        .padding(20)
+        .frame(width: 500)
 }
 
 #endif
