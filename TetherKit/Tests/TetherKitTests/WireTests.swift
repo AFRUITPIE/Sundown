@@ -138,7 +138,7 @@ struct WireMessageTests {
 }
 
 /// The client over a transport that answers its calls.
-@Suite
+@Suite(.timeLimit(.minutes(1)))
 struct RPCClientTests {
     @Test func aCallSendsItsTypedParamsAndDecodesItsResult() async throws {
         let transport = WireTransport { method, params in
@@ -389,7 +389,7 @@ struct StreamedTextTests {
 
 /// A host's connection over the wire: what it asks the daemon for, and what it makes of what comes back.
 @MainActor
-@Suite(.serialized)
+@Suite(.serialized, .timeLimit(.minutes(1)))
 struct HostWireTests {
     @Test func itOptsOutOfWhatNothingReads() async throws {
         let transport = WireTransport(responder: daemon)
