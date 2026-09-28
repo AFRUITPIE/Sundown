@@ -426,22 +426,46 @@ public final class ThreadModel: Identifiable {
         var prose: [String] = []
         var code: [String] = []
         var inFence = false
-        for raw in markdown.split(whereSeparator: \.isNewline) {
+        /// `prose` with its whitespace collapsed. Once it's longer than `limit`, the rest of a long
+        /// reply can't change what's shown, so it isn't read.
+        var shown = ""
+        var shownCount = 0
+        var rest = markdown[...]
+        while !rest.isEmpty, shownCount <= limit {
+            // A line at a time, as `split(whereSeparator: \.isNewline)` has them, blank ones skipped.
+            let end = rest.firstIndex(where: \.isNewline) ?? rest.endIndex
+            let raw = rest[..<end]
+            rest = end < rest.endIndex ? rest[rest.index(after: end)...] : rest[end...]
+            guard !raw.isEmpty else { continue }
             var line = raw.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("```") || line.hasPrefix("~~~") { inFence.toggle(); continue }
             if inFence { code.append(line); continue }
             // Rules and a table's divider row.
             if line.allSatisfy({ "-*_|: ".contains($0) }) { continue }
-            line = line.replacing(/^(#{1,6}|>+|[-*+]|\d+[.)])\s+/, with: "")
-            line = line.replacing(/!?\[([^\]]*)\]\([^)]*\)/) { String($0.output.1) }
-            for marker in ["**", "__", "~~", "`", "*"] { line = line.replacingOccurrences(of: marker, with: "") }
+            line = line.replacing(Self.blockMarker, with: "")
+            line = line.replacing(Self.link) { String($0.output.1) }
+            for marker in Self.emphasisMarkers { line = line.replacingOccurrences(of: marker, with: "") }
             line = line.replacingOccurrences(of: "|", with: " ")
             prose.append(line)
+            let words = line.split(whereSeparator: \.isWhitespace)
+            guard !words.isEmpty else { continue }
+            for word in words {
+                if !shown.isEmpty { shown += " " }
+                shown += word
+            }
+            shownCount = shown.count
         }
         let text = (prose.isEmpty ? code : prose).joined(separator: " ")
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return text.count > limit ? String(text.prefix(limit)) : text
     }
+
+    // Made once, not per line.
+    /// A heading's hashes, a quote's >, or a list item's marker.
+    private static let blockMarker = /^(#{1,6}|>+|[-*+]|\d+[.)])\s+/
+    /// A link or image, keeping its text.
+    private static let link = /!?\[([^\]]*)\]\([^)]*\)/
+    private static let emphasisMarkers = ["**", "__", "~~", "`", "*"]
 
     private func noteStarted(_ id: String) {
         let now = ContinuousClock.now
