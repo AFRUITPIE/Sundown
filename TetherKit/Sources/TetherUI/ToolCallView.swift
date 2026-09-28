@@ -487,6 +487,7 @@ struct DiffView: View {
 
     private struct Loaded {
         let key: Key
+        let lineLimit: Int
         let diff: Diff
     }
 
@@ -535,7 +536,8 @@ struct DiffView: View {
 
     var body: some View {
         let key = Key(old: old, new: new)
-        let diff = Self.isSmall(key) ? cache.diff(key, lineLimit: lineLimit) : loaded.flatMap { $0.key == key ? $0.diff : nil }
+        let diff = Self.isSmall(key) ? cache.diff(key, lineLimit: lineLimit)
+            : loaded.flatMap { $0.lineLimit == lineLimit && $0.key == key ? $0.diff : nil }
         VStack(alignment: .leading, spacing: 0) {
             ForEach(diff.map { expanded ? $0.all : $0.collapsed } ?? []) { run in
                 Text(verbatim: run.text)
@@ -559,10 +561,10 @@ struct DiffView: View {
         .padding(.vertical, 6)
         .background(.fill.quinary, in: .rect(cornerRadius: 8))
         .task(id: key) {
-            guard !Self.isSmall(key), loaded?.key != key else { return }
+            guard !Self.isSmall(key), loaded?.key != key || loaded?.lineLimit != lineLimit else { return }
             let diff = await Self.diffOffMain(key, lineLimit: lineLimit)
             guard !Task.isCancelled else { return }
-            loaded = Loaded(key: key, diff: diff)
+            loaded = Loaded(key: key, lineLimit: lineLimit, diff: diff)
         }
     }
 }
@@ -570,13 +572,13 @@ struct DiffView: View {
 /// Memoizes one diff for the life of its view.
 @MainActor
 final class DiffCache {
-    private var key: DiffView.Key?
+    private var key: (diff: DiffView.Key, lineLimit: Int)?
     private var cached: DiffView.Diff?
 
     func diff(_ key: DiffView.Key, lineLimit: Int) -> DiffView.Diff {
-        if let cached, self.key == key { return cached }
+        if let cached, let known = self.key, known.lineLimit == lineLimit, known.diff == key { return cached }
         let diff = DiffView.diff(key, lineLimit: lineLimit)
-        self.key = key
+        self.key = (key, lineLimit)
         cached = diff
         return diff
     }

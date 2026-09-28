@@ -48,8 +48,9 @@ struct ChangesPane: View {
                 let key = Key(thread: thread.id, turn: thread.lastFinishedTurn)
                 guard fetches, key != readAfter,
                       appearsActive || state.isLoading || key.thread != readAfter?.thread else { return }
-                readAfter = key
                 await refresh()
+                // A read the window going to the background cut short is made again when it's back.
+                if !Task.isCancelled { readAfter = key }
             }
     }
 
