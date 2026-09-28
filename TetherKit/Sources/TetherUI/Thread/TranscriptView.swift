@@ -137,15 +137,16 @@ extension TranscriptView {
             withAnimation(reduceMotion ? nil : .default) { position.scrollTo(edge: .bottom) }
         } else if thread.hasMoreHistory, let connection {
             Task {
-                // Not for ever: a page that fails to load stays not loaded.
+                // Page by page until one has a prompt; not past a page that fails, or a host that's down.
                 var waits = 0
-                while promptTarget(.previous) == nil, thread.hasMoreHistory, waits < 50 {
-                    let count = thread.items.count
-                    await connection.loadOlderHistory(thread)
-                    // The spinner at the top may be loading the same page; wait for it.
-                    if thread.items.count == count {
+                pages: while promptTarget(.previous) == nil, thread.hasMoreHistory, waits < 50 {
+                    switch await connection.loadOlderHistory(thread) {
+                    case .loaded: continue
+                    case .busy:
+                        // The spinner at the top is loading that page; wait for it.
                         waits += 1
                         try? await Task.sleep(for: .milliseconds(100))
+                    case .failed, .unavailable, .complete: break pages
                     }
                 }
                 // After the scroll that keeps the reader in place as a page goes in above them.
