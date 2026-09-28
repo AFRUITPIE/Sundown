@@ -80,7 +80,6 @@ public struct RootView: View {
         .environment(\.transcriptFind, window.find)
         .environment(\.promptNavigator, window.prompts)
         .environment(\.composerDrafts, ComposerDrafts(app: app))
-        .frame(minWidth: minWidth, minHeight: 400)
         .chatActionAlerts(window)
         .task { app.connectAll() }
     }
@@ -92,10 +91,6 @@ public struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
             DetailView(window: window)
-                // Declared, so the split view's minimum counts the detail column: AppKit then widens a
-                // narrow window as the inspector opens, where without it the inspector spilled past
-                // the window's edge.
-                .navigationSplitViewColumnWidth(min: 520, ideal: 720)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(window.selectedThread?.title ?? "New Chat")
@@ -114,15 +109,16 @@ public struct RootView: View {
                     ToolbarSpacer(.fixed, placement: .primaryAction)
                 }
         }
+        // The sidebar at its usual width and room for every toolbar item (280 + 520), on the split
+        // view itself, inside the inspector: the inspector's column adds its own width to it, so
+        // the window widens only when the chat would get narrower than this, and shrinks back to
+        // it. Not a minimum on the detail column: SwiftUI counts the inspector's width twice
+        // there, so opening it set the window 600 pt past the closed minimum and held it; nor a
+        // minimum that changes as the inspector opens, which widened the window every time.
+        .frame(minWidth: 800, minHeight: 400)
         // Attached to the split view, so it is full height and present on every screen.
         .modifier(InspectorColumn(window: window))
     }
-
-    /// The sidebar's and detail's minimums (220 + 520) while the inspector is closed. While it's
-    /// open there is none: SwiftUI then keeps the window at least as wide as its columns, and an
-    /// explicit minimum below that let the window shrink under them, clipping the sidebar and the
-    /// inspector at both edges.
-    private var minWidth: CGFloat? { window.showInspector ? nil : 740 }
 }
 
 /// SwiftUI's inspector on the split view, full height, with its button in its own toolbar over
@@ -355,10 +351,9 @@ private func rootPreviewWindow() -> WindowModel {
 }
 
 // The narrowest window without the inspector: every toolbar item must still fit.
-// The inspector preview uses the wider minimum that TetherApp applies while it is open.
 #Preview("RootView (narrow window)") {
     RootPreview(window: rootPreviewWindow())
-        .frame(width: 900, height: 600)
+        .frame(width: 800, height: 600)
 }
 
 #endif
