@@ -628,15 +628,31 @@ public final class HostConnection: Identifiable {
         guard status.isRepo else { return nil }
         async let unstaged = client.call(Methods.GitDiff.self, .init(cwd: cwd))
         async let staged = client.call(Methods.GitDiff.self, .init(cwd: cwd, staged: true))
-        var untracked: [(path: String, content: String?)] = []
-        for file in status.files where file.status == "??" && !file.path.hasSuffix("/") {
-            let full = (cwd as NSString).appendingPathComponent(file.path)
-            let read = try? await client.call(Methods.FsRead.self, .init(path: full, maxBytes: 64 * 1024))
-            untracked.append((file.path, read.flatMap { $0.encoding == .utf8 ? $0.content : nil }))
+        // New files, read eight at a time rather than one after another, and only so many: a
+        // build folder missing from .gitignore can hold thousands. The rest are counted.
+        let new = status.files.filter { $0.status == "??" && !$0.path.hasSuffix("/") }.map(\.path)
+        var paths = new.prefix(WorkingChanges.maxUntrackedFiles).makeIterator()
+        let untracked = await withTaskGroup(of: (path: String, content: String?).self) { group in
+            func readNext() {
+                guard let path = paths.next() else { return }
+                let full = (cwd as NSString).appendingPathComponent(path)
+                group.addTask {
+                    let read = try? await client.call(Methods.FsRead.self, .init(path: full, maxBytes: 64 * 1024))
+                    return (path, read.flatMap { $0.encoding == .utf8 ? $0.content : nil })
+                }
+            }
+            for _ in 0..<8 { readNext() }
+            var untracked: [(path: String, content: String?)] = []
+            for await file in group {
+                untracked.append(file)
+                readNext()
+            }
+            return untracked
         }
         let stagedDiff = try await staged.diff, unstagedDiff = try await unstaged.diff
         let files = await UnifiedDiff.workingTree(staged: stagedDiff, unstaged: unstagedDiff, untracked: untracked)
-        return WorkingChanges(branch: status.branchName, files: files)
+        return WorkingChanges(branch: status.branchName, files: files,
+                              omittedFiles: max(new.count - WorkingChanges.maxUntrackedFiles, 0))
     }
 
     /// Whether `cwd` is in a git repository and what is checked out there (`branchName`), for New
@@ -814,12 +830,18 @@ public struct WorkingChanges: Sendable, Equatable {
     /// Summed once, not per draw.
     public let added: Int
     public let removed: Int
+    /// New files past `maxUntrackedFiles`, counted but not read or listed.
+    public let omittedFiles: Int
 
-    public init(branch: String?, files: [FileDiff]) {
+    /// New files read and listed, at most.
+    public static let maxUntrackedFiles = 200
+
+    public init(branch: String?, files: [FileDiff], omittedFiles: Int = 0) {
         self.branch = branch
         self.files = files
         added = files.reduce(0) { $0 + $1.added }
         removed = files.reduce(0) { $0 + $1.removed }
+        self.omittedFiles = omittedFiles
     }
 }
 
