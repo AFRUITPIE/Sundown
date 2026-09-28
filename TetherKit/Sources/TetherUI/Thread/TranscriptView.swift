@@ -230,6 +230,20 @@ private struct TranscriptContent: View {
         .scaledFont(.body)
         .padding(.vertical, 16)
         .readingColumn()
+        // Replies parsed off the main thread before their rows ask: the first row changes as a chat
+        // opens and as an older page goes in above.
+        .task(id: rows.first?.id) { await MarkdownCache.prewarm(repliesToParse()) }
+    }
+
+    /// The top-level replies at either end of what's held: where a chat opens and the reader
+    /// starts, and where an older page just went in. Not the one streaming, which changes per frame.
+    private func repliesToParse() -> [String] {
+        let items = thread.items
+        let ends = items.count > 120 ? Array(items.prefix(60) + items.suffix(60)) : items
+        return ends.compactMap { item in
+            guard case .agentMessage(let m) = item, m.parentToolUseId == nil, m.id != thread.streamingReplyID else { return nil }
+            return m.text
+        }
     }
 }
 
