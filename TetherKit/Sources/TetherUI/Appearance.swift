@@ -27,12 +27,8 @@ public struct Appearance: Codable, Equatable, Sendable {
 
     /// Where Tasks, Session, MCP and Changes are shown.
     public enum InspectorPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
-        /// A column at the chat's trailing edge, inside the detail column, its width dragged at its
-        /// leading edge. The window can shrink to the columns' minimums with it open.
+        /// SwiftUI's inspector: a column beside the chat, its panes' tabs over the pane.
         case column
-        /// SwiftUI's own `.inspector`: the same column, but on macOS 27 it keeps the window at
-        /// least as wide as it was while it's open.
-        case system
         /// The whole window tabbed: the chat (with the sidebar) one tab, each pane another, the tabs
         /// in the toolbar.
         case tabs
@@ -47,7 +43,6 @@ public struct Appearance: Codable, Equatable, Sendable {
         var label: String {
             switch self {
             case .column: "Inspector"
-            case .system: "System Inspector"
             case .tabs: "Tabs"
             case .panel: "Floating Panel"
             case .drawer: "Drawer"

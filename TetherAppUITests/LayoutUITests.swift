@@ -79,13 +79,13 @@ final class LayoutUITests: XCTestCase {
     // MARK: Panes
 
     /// Every placement opens the MCP pane (⌥⌘3) and closes it again (⌥⌘I), switched while the chat
-    /// is open. Outside the columns, opening it never changes the chat window's width.
+    /// is open. Outside the column, opening it never changes the chat window's width.
     @MainActor
     func testEveryPanePlacementShowsThePanes() {
         let app = launch()
         waitForLongChat(app)
         let empty = text(app, "No MCP Servers")
-        for placement in ["Tabs", "Floating Panel", "Drawer", "Card Over the Chat", "System Inspector", "Inspector"] {
+        for placement in ["Tabs", "Floating Panel", "Drawer", "Card Over the Chat", "Inspector"] {
             let settings = openAdvanced(app)
             choose(settings, "Show Panes In", placement)
             closeSettings(app)
@@ -93,7 +93,7 @@ final class LayoutUITests: XCTestCase {
 
             app.typeKey("3", modifierFlags: [.command, .option])
             XCTAssertTrue(empty.waitForExistence(timeout: 5), "\(placement): no MCP pane")
-            if !placement.hasSuffix("Inspector") {
+            if placement != "Inspector" {
                 XCTAssertEqual(mainWindow(app).frame.width, width, accuracy: 1, "\(placement) changed the window's width")
             }
             if placement == "Floating Panel" {

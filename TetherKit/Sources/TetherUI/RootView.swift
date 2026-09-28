@@ -81,7 +81,7 @@ public struct RootView: View {
         .environment(\.transcriptFind, window.find)
         .environment(\.promptNavigator, window.prompts)
         .environment(\.composerDrafts, ComposerDrafts(app: app))
-        .modifier(WindowMinimumWidth(window: window))
+        .frame(minWidth: minWidth, minHeight: 400)
         .chatActionAlerts(window)
         .task { app.connectAll() }
     }
@@ -120,13 +120,16 @@ public struct RootView: View {
     }
 
     private var splitView: some View {
-        // The column visibility is read only by the sidebar's toolbar (`SidebarColumn`), not here:
-        // read in this body, every sidebar toggle rebuilt the whole toolbar mid-animation.
-        NavigationSplitView(columnVisibility: $window.columns) {
-            SidebarColumn(window: window)
-                .navigationSplitViewColumnWidth(min: InspectorWidth.sidebar, ideal: 260, max: 420)
+        // No columnVisibility binding: writing it on every sidebar toggle rebuilt the toolbar mid-animation.
+        NavigationSplitView {
+            SidebarView(window: window)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
-            DetailColumn(window: window)
+            DetailView(window: window)
+                // Declared, so the split view's minimum counts the detail column: AppKit then widens a
+                // narrow window as the inspector opens, where without it the inspector spilled past
+                // the window's edge.
+                .navigationSplitViewColumnWidth(min: 520, ideal: 720)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(window.selectedThread?.title ?? "New Chat")
@@ -134,6 +137,7 @@ public struct RootView: View {
                 // Identified, so View ▸ Customize Toolbar… can rearrange these and the window
                 // remembers the arrangement. Every item is still declared unconditionally.
                 .toolbar(id: "main") {
+                    ToolbarItem(id: "newChat", placement: .navigation) { NewChatButton(window: window) }
                     // Settings ▸ Advanced ▸ Session Controls picks which of these two shows: all three
                     // menus, or (Split) permissions alone; Message Field shows neither. Hidden, not
                     // removed, and neither item's menus ever change: when one item's menus came and
@@ -159,9 +163,17 @@ public struct RootView: View {
 
     private var sessionControls: Appearance.SessionControlsPlacement { app.appearance.sessionControls }
 
+    /// The sidebar's and detail's minimums (220 + 520) while the inspector column is closed. While
+    /// it's open there is none: SwiftUI then keeps the window at least as wide as its columns, and an
+    /// explicit minimum below that let the window shrink under them, clipping the sidebar and the
+    /// inspector at both edges.
+    private var minWidth: CGFloat? {
+        app.appearance.inspector == .column && window.showInspector ? nil : 740
+    }
+
     /// The inspector column, open only in its placement.
     private var columnInspector: Binding<Bool> {
-        Binding(get: { app.appearance.inspector == .system && window.showInspector },
+        Binding(get: { app.appearance.inspector == .column && window.showInspector },
                 set: { window.showInspector = $0 })
     }
 }
@@ -180,7 +192,7 @@ private struct InspectorColumn: ViewModifier {
         } else {
             content.inspector(isPresented: isPresented) {
                 InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-                    .inspectorColumnWidth(min: InspectorWidth.min, ideal: InspectorWidth.ideal, max: InspectorWidth.max)
+                    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
                     // Its button in its own toolbar, over the column. The pane tabs are in the pane,
                     // not here: in the toolbar, every change of tab made AppKit lay the whole
                     // toolbar out again.
@@ -190,60 +202,6 @@ private struct InspectorColumn: ViewModifier {
                     }
             }
         }
-    }
-}
-
-/// The detail column: the chat, and Settings ▸ Advanced ▸ Show Panes In ▸ Inspector's column beside
-/// it while it's open, sliding in from the trailing edge. The chat keeps its minimum then, so the
-/// column's minimum is both, and AppKit widens a window too narrow for them.
-private struct DetailColumn: View {
-    @Bindable var window: WindowModel
-    @State private var width = DetailWidth()
-
-    private var showsPane: Bool { window.app.appearance.inspector == .column && window.showInspector }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            DetailView(window: window)
-                .frame(minWidth: showsPane ? InspectorWidth.chatBesidePane : nil)
-            if showsPane {
-                InspectorSidePane(window: window, detailWidth: width)
-                    .transition(.move(edge: .trailing))
-            }
-        }
-        .animation(.snappy(duration: 0.25), value: showsPane)
-        .onGeometryChange(for: CGFloat.self, of: \.size.width) { width.value = $0 }
-        // Declared, and with the inspector column in it while it's open: the split view shrinks the
-        // sidebar only once the detail column is at its declared minimum, so with the chat's alone
-        // it kept the sidebar's width and the columns overflowed the window at both edges.
-        .navigationSplitViewColumnWidth(min: minWidth, ideal: 720)
-    }
-
-    /// The chat's minimum, or with the inspector column open, its smaller one beside it plus the
-    /// column's width.
-    private var minWidth: CGFloat {
-        showsPane ? InspectorWidth.chatBesidePane + window.app.inspectorWidth : InspectorWidth.chat
-    }
-}
-
-/// The window's minimum width: the sidebar's and the chat's (only the chat's while the sidebar is
-/// hidden), plus the inspector column's while it's open. None while SwiftUI's own inspector is
-/// open: it keeps the window at least as wide as its columns then, and a smaller minimum let the
-/// window shrink under them. A modifier, so the sidebar's visibility redraws nothing but this.
-private struct WindowMinimumWidth: ViewModifier {
-    let window: WindowModel
-
-    func body(content: Content) -> some View {
-        content.frame(minWidth: minWidth, minHeight: 400)
-    }
-
-    private var minWidth: CGFloat? {
-        let placement = window.app.appearance.inspector
-        if placement == .system, window.showInspector { return nil }
-        let sidebar = window.columns == .detailOnly ? 0 : InspectorWidth.sidebar
-        let detail = placement == .column && window.showInspector
-            ? InspectorWidth.chatBesidePane + window.app.inspectorWidth : InspectorWidth.chat
-        return sidebar + detail
     }
 }
 
@@ -266,7 +224,7 @@ struct DetailView: View {
                     InspectorDrawer(window: window)
                 }
             }
-        case .column, .system, .panel, .overlay, .tabs:
+        case .column, .panel, .overlay, .tabs:
             chat
         }
     }
@@ -287,22 +245,6 @@ struct DetailView: View {
     }
 
     private var placement: Appearance.InspectorPlacement { window.app.appearance.inspector }
-}
-
-/// The sidebar, with New Chat over it at its leading edge. Gone with the sidebar: macOS keeps a
-/// sidebar's item beside the Show Sidebar button once it's collapsed, so it's hidden then. File ▸
-/// New Chat (⌘N) is there either way.
-private struct SidebarColumn: View {
-    @Bindable var window: WindowModel
-
-    var body: some View {
-        SidebarView(window: window)
-            .toolbar {
-                ToolbarItem { NewChatButton(window: window) }
-                    .hidden(window.columns == .detailOnly)
-                ToolbarSpacer(.flexible)
-            }
-    }
 }
 
 struct NewChatButton: View {

@@ -114,10 +114,6 @@ public final class AppModel {
     /// The transcript and composer's text size, 1 being the system's (persisted).
     public var textScale: CGFloat = 1 { didSet { save() } }
 
-    /// The inspector column's width (Settings ▸ Advanced ▸ Show Panes In ▸ Inspector), set when a
-    /// drag of its edge ends (persisted).
-    public var inspectorWidth: CGFloat = InspectorWidth.ideal { didSet { save() } }
-
     /// Whether the floating inspector panel is open (Settings ▸ Advanced ▸ Inspector ▸ Floating
     /// Panel). The app's, not a window's: one panel serves whichever window is in front.
     public var inspectorPanelShown = false
@@ -399,7 +395,6 @@ public final class AppModel {
         var sidebarGrouping: String?
         var threadID: String?
         var textScale: Double?
-        var inspectorWidth: Double?
         var sidebarFilter: String?
         /// By host id.
         var pinnedChats: [String: [String]]?
@@ -432,7 +427,6 @@ public final class AppModel {
         lastInspectorPane = s.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
         sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
         textScale = s.textScale.map { CGFloat($0) } ?? 1
-        inspectorWidth = s.inspectorWidth.map { InspectorWidth.clamp(CGFloat($0)) } ?? InspectorWidth.ideal
         sidebarFilter = s.sidebarFilter.flatMap(SidebarFilter.init(rawValue:)) ?? .all
         for (host, ids) in s.pinnedChats ?? [:] {
             if let id = UUID(uuidString: host), !ids.isEmpty { pinnedChats[id] = Set(ids) }
@@ -462,7 +456,7 @@ public final class AppModel {
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
                        showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue, hostID: lastHostID,
                        sidebarGrouping: sidebarGrouping.rawValue, threadID: lastThreadID, textScale: Double(textScale),
-                       inspectorWidth: Double(inspectorWidth), sidebarFilter: sidebarFilter.rawValue,
+                       sidebarFilter: sidebarFilter.rawValue,
                        pinnedChats: Dictionary(uniqueKeysWithValues: pinnedChats.map { ($0.key.uuidString, $0.value.sorted()) }))
         if let data = try? JSONEncoder().encode(s) { defaults.set(data, forKey: Self.hostsKey) }
     }

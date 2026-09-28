@@ -127,7 +127,7 @@ extension Appearance.InspectorPlacement {
     /// The toggle's symbol: where the inspector will appear.
     var symbol: String {
         switch self {
-        case .column, .system: "sidebar.trailing"
+        case .column: "sidebar.trailing"
         case .panel: "macwindow.on.rectangle"
         case .drawer: "rectangle.bottomthird.inset.filled"
         case .overlay: "rectangle.inset.topright.filled"
@@ -308,15 +308,5 @@ private func inspectorPreviewWindow() -> WindowModel {
         InspectorTabBar(pane: .constant(.changes)).environment(\.colorScheme, .dark).background(.black)
     }
     .frame(width: 280)
-}
-
-/// The column beside the chat, as the detail column shows it: full height, its divider at the
-/// leading edge.
-#Preview("Inspector column") {
-    HStack(spacing: 0) {
-        Color(nsColor: .textBackgroundColor)
-        InspectorSidePane(window: inspectorPreviewWindow(), detailWidth: DetailWidth())
-    }
-    .frame(width: 720, height: 520)
 }
 #endif
