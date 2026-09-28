@@ -14,7 +14,7 @@ Protocol types come from `TetherProtocol`, which is generated in `../tether-serv
 
 ## Develop
 
-1. Open `Tether.xcodeproj` and run the **Tether** scheme. The app carries no server: each host runs tether-server's npm package with its own `npx` (Node.js 18 or later), at the version the app pins, and a host without Node.js can have the server copied to it.
+1. Open `Tether.xcodeproj` and run the **Tether** scheme. The app carries no server: each host runs tether-server's npm package with its own `npx` (Node.js 18 or later), at the version the app pins.
 2. To run a `../tether-server` working copy instead, set This Mac's Server Command in Settings ▸ Hosts to `<bun> run <path>/tether-server/src/cli.ts connect`.
 3. Live Swift tests against the real `claude` (Haiku): `TETHER_E2E=1 swift test --package-path TetherKit`.
 4. Debug builds accept `TETHER_OPEN_THREAD=<id>`, set in the scheme's environment variables, to open a chat on launch.

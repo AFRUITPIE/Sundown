@@ -12,9 +12,6 @@ public final class HostConnection: Identifiable {
         case connecting(String)
         case connected
         case failed(String)
-        /// The host has no Node.js 18 or later for `npx`: a copy of the server is offered instead,
-        /// never made unasked.
-        case needsNode(NodeNeeded)
     }
 
     public private(set) var host: HostConfig
@@ -29,10 +26,6 @@ public final class HostConnection: Identifiable {
     /// All chats on this host, most recent first (across every directory).
     public private(set) var chats: [ThreadModel] = []
     public private(set) var log: [String] = []
-    /// How the host runs the server, once checked: `npx` with its Node.js, or a copy.
-    public private(set) var runner: ServerRunner?
-    /// While the server is being copied to the host.
-    public private(set) var isCopying = false
 
     private var threads: [String: ThreadModel] = [:]
     private var client: RPCClient?
@@ -52,12 +45,6 @@ public final class HostConnection: Identifiable {
     private var openRequested = Set<String>()
     private var chatsRefreshTask: Task<Void, Never>?
     @ObservationIgnored private let transportProvider: TransportProvider?
-    /// Checks the host before connecting, and copies the server there when asked. None for the
-    /// reconnect tests' hosts, which connect straight to their transport.
-    @ObservationIgnored private let provisioner: (any ServerProvisioning)?
-    /// The host was checked this launch: a reconnect goes straight to `connect`, one login rather
-    /// than two. A failed connection looks again.
-    @ObservationIgnored private var serverChecked = false
 
     /// Reported to the daemon on connect.
     static let appVersion: String =
@@ -67,7 +54,6 @@ public final class HostConnection: Identifiable {
         self.host = host
         self.id = host.id
         self.transportProvider = nil
-        self.provisioner = HostBootstrapper()
         self.network = .shared
         observeTurns()
         NetworkPath.shared.watch(self)
@@ -75,12 +61,10 @@ public final class HostConnection: Identifiable {
 
     /// Test seam for reconnect/replay coverage. `network` is the path a test drives; without one
     /// the host never waits for the network.
-    init(host: HostConfig, network: NetworkPath? = nil, provisioner: (any ServerProvisioning)? = nil,
-         transportProvider: @escaping TransportProvider) {
+    init(host: HostConfig, network: NetworkPath? = nil, transportProvider: @escaping TransportProvider) {
         self.host = host
         self.id = host.id
         self.transportProvider = transportProvider
-        self.provisioner = provisioner
         self.network = network
         observeTurns()
         network?.watch(self)
@@ -134,15 +118,11 @@ public final class HostConnection: Identifiable {
                 loadEnvironment = nil
                 if let env = await load() { host.env = env }
             }
-            // A host's own Server Command is run as it is: its server is the user's to manage.
-            if let provisioner, !serverChecked, host.serverCommand?.isEmpty ?? true {
-                guard try await checkServer(with: provisioner) else { return }
-            }
             let transport: any Transport
             if let transportProvider {
                 transport = try await transportProvider(host)
             } else {
-                let cmd = (provisioner ?? HostBootstrapper()).connectCommand(for: host, runner: runner)
+                let cmd = HostBootstrapper().connectCommand(for: host)
                 appendLog("$ \(([cmd.executable] + cmd.arguments).joined(separator: " "))")
                 transport = ProcessTransport(executable: cmd.executable, arguments: cmd.arguments)
             }
@@ -185,63 +165,10 @@ public final class HostConnection: Identifiable {
             }
             appendLog("Connection failed: \(error.localizedDescription)")
             await tearDown()
-            // The server may be gone from the host since it was checked: check again next time.
-            serverChecked = false
             state = .failed(error.localizedDescription)
             // Trying again can't fix a protocol mismatch; one side has to be updated first.
             retryable = !(error is Incompatible)
             if retryable { scheduleReconnect() }
-        }
-    }
-
-    /// Checks the host: true to go on and connect; false when it has no Node.js to run the server
-    /// with (said in `state`, with the copy offered instead).
-    private func checkServer(with provisioner: any ServerProvisioning) async throws -> Bool {
-        state = .connecting("Checking \(host.name)…")
-        let probe = try await provisioner.probe(host)
-        switch ServerAssessment.of(probe, checksums: provisioner.checksums) {
-        case .ready(let runner):
-            switch runner {
-            case .npx(let node): appendLog("Node.js \(node) on \(host.name): running Tether \(ServerRelease.version) with npx")
-            case .copied: appendLog("Running the copy of Tether \(ServerRelease.version) on \(host.name)")
-            }
-            self.runner = runner
-            serverChecked = true
-            return true
-        case .needsNode(let need):
-            if let found = need.found {
-                appendLog("\(host.name) has Node.js \(found); Tether needs \(ServerRelease.minimumNode) or later")
-            } else {
-                appendLog("No npx on \(host.name)’s PATH")
-            }
-            state = .needsNode(need)
-            return false
-        }
-    }
-
-    /// Installs the server on the host when the user says to (Install Tether): downloaded here,
-    /// checked, and copied over. Then connects.
-    public func copyServer(_ copy: ServerCopy) async {
-        guard let provisioner, !isCopying, case .needsNode(let need) = state else { return }
-        isCopying = true
-        defer { isCopying = false }
-        state = .connecting("Installing Tether \(copy.version)…")
-        do {
-            try await provisioner.copy(copy, to: host) { [weak self] line in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.appendLog(line)
-                    if case .connecting = self.state { self.state = .connecting(line) }
-                }
-            }
-            serverChecked = false
-            state = .disconnected
-            await connect()
-        } catch {
-            appendLog("Installing Tether failed: \(error.localizedDescription)")
-            var failed = need
-            failed.copy?.failure = error.localizedDescription
-            state = .needsNode(failed)
         }
     }
 
@@ -1245,11 +1172,9 @@ extension HostConnection {
         account: AccountInfo? = nil,
         models: [ModelInfo] = [],
         projects: [ProjectListResult.Project] = [],
-        chats: [ThreadModel] = [],
-        runner: ServerRunner? = nil
+        chats: [ThreadModel] = []
     ) {
         self.state = state
-        self.runner = runner
         self.client = client
         self.serverInfo = serverInfo
         self.account = account
