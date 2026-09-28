@@ -282,7 +282,7 @@ public final class ThreadModel: Identifiable {
                case .agentMessage(let m) = storage[i], m.parentToolUseId == nil {
                 setStreamingReply(e.itemId)
             }
-            mutate(e.itemId) { if case .agentMessage(var m) = $0 { m.text += e.delta; $0 = .agentMessage(m) } }
+            appendReplyText(e.delta, to: e.itemId)
         case .itemReasoningDelta(let e):
             mutate(e.itemId) { if case .reasoning(var m) = $0 { m.text += e.delta; $0 = .reasoning(m) } }
         case .itemToolCallProgress(let e):
@@ -462,6 +462,18 @@ public final class ThreadModel: Identifiable {
         if storage[i].isSubagentCall { refreshTaskEntries() }
     }
 
+    /// A reply's streamed text, appended where it is. The transcript and the item's box each keep
+    /// their own copy, so neither is shared when the next delta comes. Rebuilt from a copy, as
+    /// `mutate` does, the whole reply was copied for every delta: a reply cost the square of its
+    /// length to stream.
+    private func appendReplyText(_ delta: String, to id: String) {
+        guard !delta.isEmpty, let i = index[id], case .agentMessage = storage[i] else { return }
+        let wasEmpty = storage[i].isEmptyMessage
+        storage[i].appendReplyText(delta)
+        boxes[id]?.item.appendReplyText(delta)
+        if wasEmpty { itemsVersion &+= 1 }
+    }
+
     private func setStreamingReply(_ id: String?) {
         if streamingReplyID != id { streamingReplyID = id }
     }
@@ -599,6 +611,17 @@ private extension Item {
     var isEmptyMessage: Bool {
         if case .agentMessage(let m) = self { return m.text.isEmpty }
         return false
+    }
+}
+
+private extension Item {
+    /// Appends to a reply's text in place: taken out of `self` first, the text isn't also held by
+    /// `self` while it grows, so it isn't copied whole.
+    mutating func appendReplyText(_ delta: String) {
+        guard case .agentMessage(var message) = self else { return }
+        self = .unknown(.null)
+        message.text += delta
+        self = .agentMessage(message)
     }
 }
 
