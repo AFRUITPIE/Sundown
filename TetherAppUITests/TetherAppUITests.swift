@@ -18,7 +18,7 @@ final class TetherAppUITests: XCTestCase {
         return app
     }
 
-    /// The inspector opens from its toolbar button, and its tabs, a row of symbols over the pane,
+    /// The inspector opens from its toolbar button, and its tabs, SwiftUI's own over the pane,
     /// switch panes.
     @MainActor
     func testExistingChatAndInspector() {
@@ -27,17 +27,27 @@ final class TetherAppUITests: XCTestCase {
         let toggle = app.buttons["Inspector"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
         // The fixture's store is fresh, so the inspector starts closed, with no tabs.
-        let mcp = app.buttons["MCP"]
+        let mcp = paneTab(app, "MCP")
         XCTAssertFalse(mcp.exists)
         toggle.click()
         XCTAssertTrue(mcp.waitForExistence(timeout: 5))
         mcp.click()
         let empty = app.staticTexts["No MCP Servers"]
         XCTAssertTrue(empty.waitForExistence(timeout: 5))
-        XCTAssertTrue(mcp.isSelected)
-        XCTAssertFalse(app.buttons["Tasks"].isSelected)
+        XCTAssertEqual((mcp.value as? NSNumber)?.intValue, 1)
+        XCTAssertEqual((paneTab(app, "Tasks").value as? NSNumber)?.intValue, 0)
         app.typeKey("i", modifierFlags: [.command, .option])
         XCTAssertTrue(empty.waitForNonExistence(timeout: 5))
+    }
+
+    /// One of the inspector's tabs: a tab, or a radio button, however the tab bar reports it; not
+    /// View ▸ Inspector's menu item of the same name.
+    @MainActor
+    private func paneTab(_ app: XCUIApplication, _ name: String) -> XCUIElement {
+        let types = [XCUIElement.ElementType.tab.rawValue, XCUIElement.ElementType.radioButton.rawValue]
+        return app.windows.firstMatch.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@ AND elementType IN %@", name, types))
+            .element(boundBy: 0)
     }
 
     @MainActor

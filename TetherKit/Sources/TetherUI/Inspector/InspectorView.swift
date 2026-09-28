@@ -12,9 +12,9 @@ struct InspectorView: View {
             ThreadInspector(thread: thread, connection: connection, pane: $window.inspectorPane,
                             selectedTaskID: $selectedTaskID)
         } else {
-            ContentUnavailableView("No Session", systemImage: "sidebar.trailing")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .safeAreaBar(edge: .top) { InspectorTabBar(pane: $window.inspectorPane) }
+            InspectorTabs(pane: $window.inspectorPane) { _ in
+                ContentUnavailableView("No Session", systemImage: "sidebar.trailing")
+            }
         }
     }
 }
@@ -42,6 +42,14 @@ struct ThreadInspector: View {
     }
 
     var body: some View {
+        if showsPicker {
+            InspectorTabs(pane: $pane) { paneView($0) }
+        } else {
+            paneView(pane)
+        }
+    }
+
+    private func paneView(_ pane: InspectorPane) -> some View {
         Group {
             switch pane {
             case .tasks: TasksPane(thread: thread, connection: connection, selectedTaskID: $selectedTaskID)
@@ -52,52 +60,22 @@ struct ThreadInspector: View {
         }
         .inspectorPaneStyle()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // A bar, so a pane's form scrolls under it with the standard edge effect.
-        .safeAreaBar(edge: .top) {
-            if showsPicker { InspectorTabBar(pane: $pane) }
-        }
     }
 }
 
-/// The panes as a row of their symbols over the pane, in one Liquid Glass capsule as a toolbar
-/// control would be: the open one in the accent color on a tinted pill that slides to the tab
-/// chosen, the others secondary. Plain buttons inside the glass, not glass on glass; each named for
-/// VoiceOver and its help tag, and marked selected when it's the open pane.
-struct InspectorTabBar: View {
+/// The panes as SwiftUI's own tabs, in its default style: a tab bar across the top of the pane,
+/// inside the inspector, that VoiceOver reads as tabs. Not in the toolbar, where every change of
+/// tab made AppKit lay the whole toolbar out again.
+struct InspectorTabs<Content: View>: View {
     @Binding var pane: InspectorPane
-    @Namespace private var selection
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ViewBuilder let content: (InspectorPane) -> Content
 
     var body: some View {
-        HStack(spacing: 2) {
+        TabView(selection: $pane) {
             ForEach(InspectorPane.allCases) { tab in
-                Button {
-                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { pane = tab }
-                } label: {
-                    Label(tab.label, systemImage: tab.symbol)
-                        .labelStyle(.iconOnly)
-                        .frame(width: 34, height: 26)
-                        .foregroundStyle(pane == tab ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                        .background {
-                            if pane == tab {
-                                Capsule()
-                                    .fill(.tint.opacity(0.15))
-                                    .matchedGeometryEffect(id: "selection", in: selection)
-                            }
-                        }
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .help(tab.label)
-                .accessibilityAddTraits(pane == tab ? .isSelected : [])
+                Tab(tab.label, systemImage: tab.symbol, value: tab) { content(tab) }
             }
         }
-        .padding(4)
-        .glassEffect(.regular, in: .capsule)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Inspector")
     }
 }
 
@@ -310,15 +288,5 @@ private func inspectorPreviewWindow() -> WindowModel {
     inspectorPreview {
         InspectorView(window: .sample(), selectedTaskID: .constant(nil))
     }
-}
-
-/// The tabs alone, Session open, in light and dark.
-#Preview("Inspector tabs") {
-    VStack(spacing: 0) {
-        InspectorTabBar(pane: .constant(.session))
-        Divider()
-        InspectorTabBar(pane: .constant(.changes)).environment(\.colorScheme, .dark).background(.black)
-    }
-    .frame(width: 280)
 }
 #endif
