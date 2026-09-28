@@ -251,7 +251,7 @@ public final class HostConnection: Identifiable {
             try? await Task.sleep(for: .seconds(2))
             guard let self, !Task.isCancelled else { return }
             self.chatsRefreshTask = nil
-            await self.refreshRecentChats()
+            await self.afterTurn()
         }
     }
 
@@ -397,14 +397,39 @@ public final class HostConnection: Identifiable {
 
     /// The thread is no longer on screen. A followed one is let go: the daemon keeps a file watcher
     /// and the whole parsed transcript for each, and reopening reads it afresh. A live thread stays
-    /// subscribed, which is cheap and keeps its sidebar status current.
+    /// subscribed, which is cheap, keeps its sidebar status current and its place in the stream,
+    /// but keeps only its last page once nothing is going on in it (`trimIfOffScreen`); a running
+    /// one is trimmed after its turn. One with no stream at all (read from disk alone, or its query
+    /// closed) is let go like a followed one.
     /// Synchronous so a quick reselect can't open the thread before this unloads it.
     public func leave(_ model: ThreadModel) {
         openRequested.remove(model.id)
-        guard model.isFollowed, subscribed.contains(model.id), let client else { return }
-        subscribed.remove(model.id)
-        model.unload()
-        Task { _ = try? await client.call(Methods.ThreadUnsubscribe.self, .init(threadId: model.id)) }
+        // While disconnected nothing is subscribed; what's live is resubscribed on reconnecting,
+        // and trimmed after a turn from then on.
+        guard let client else { return }
+        if !subscribed.contains(model.id) {
+            if model.historyLoaded, !model.isRunning, model.pending.isEmpty { model.unload() }
+        } else if model.isFollowed {
+            subscribed.remove(model.id)
+            model.unload()
+            Task { _ = try? await client.call(Methods.ThreadUnsubscribe.self, .init(threadId: model.id)) }
+        } else {
+            trimIfOffScreen(model)
+        }
+    }
+
+    /// A chat no window shows, idle and with nothing waiting, keeps only its last page: a chat
+    /// Claude ran this launch otherwise kept every item and page it ever had for the app's life.
+    private func trimIfOffScreen(_ model: ThreadModel) {
+        guard !openRequested.contains(model.id), model.historyLoaded, !model.isRunning, model.pending.isEmpty else { return }
+        model.trim(toLast: Self.initialHistoryLimit)
+    }
+
+    /// A couple of seconds after a turn ends: Claude's name for a session only appears in
+    /// thread/list, and the chats no window shows let go of what the turn added.
+    func afterTurn() async {
+        for model in threads.values where subscribed.contains(model.id) { trimIfOffScreen(model) }
+        await refreshRecentChats()
     }
 
     private func loadRequestedThread(_ model: ThreadModel) async {
@@ -606,6 +631,9 @@ public final class HostConnection: Identifiable {
             let r = try await client.call(Methods.ThreadRead.self, .init(
                 threadId: model.id, cwd: model.cwd, limit: Self.olderHistoryPageSize, before: oldest))
             let changes = await FileChange.changes(ofCallsIn: r.items)
+            // Only onto what it was asked before: a chat trimmed or let go meanwhile would be left
+            // with a gap between the page and what it now holds.
+            guard model.itemIndex(of: oldest) == 0 else { return }
             model.prependHistory(items: r.items, hasMore: r.hasMore ?? false, fileChanges: changes)
         } catch {
             appendLog("Loading older history for \(model.id) failed: \(error.localizedDescription)")

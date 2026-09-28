@@ -100,6 +100,9 @@ public final class ThreadModel: Identifiable {
     /// When items started live, as opposed to arriving with history, for the rows that fade in.
     /// Unobserved: a row reads it once, when it appears.
     @ObservationIgnored private var started: [String: ContinuousClock.Instant] = [:]
+    /// The opening prompt's first words, kept when the items that hold it are let go (`trim`), so
+    /// an unnamed chat's title doesn't turn into a later prompt.
+    @ObservationIgnored private var openingPrompt: String?
 
     /// Where the reader was when an older page last went in above them: the row that was first.
     /// The transcript keeps that row where it was. Set only by a page, so the transcript's scroll
@@ -203,7 +206,7 @@ public final class ThreadModel: Identifiable {
         if let t = info?.title, !t.isEmpty { return t }
         if let s = summary?.title, !s.isEmpty { return s }
         if let p = summary?.firstPrompt, !p.isEmpty { return String(p.prefix(80)) }
-        return Self.firstPrompt(in: storage) ?? "New Chat"
+        return openingPrompt ?? Self.firstPrompt(in: storage) ?? "New Chat"
     }
 
     private static func firstPrompt(in items: [Item]) -> String? {
@@ -288,15 +291,49 @@ public final class ThreadModel: Identifiable {
     /// Drops the transcript so the next open reads it afresh.
     func unload() {
         fileChanges = [:]
+        started = [:]
+        openingPrompt = nil
         storage = []
         turns = []
         tasks = [:]
         taskIDsByToolUse = [:]
         backgroundTaskIDs = []
         reindex()
+        dropDerived()
         lastSeq = 0
         hasMoreHistory = false
         historyLoaded = false
+    }
+
+    /// Keeps only the last `count` items of a chat no window shows, and nothing worked out from
+    /// them. Its place in the stream stays as it is — `lastSeq`, the turns, the tasks still running —
+    /// so live events go on applying after it with no gap or overlap, and the items let go load
+    /// again a page at a time when it's shown and scrolled back (`hasMoreHistory`).
+    func trim(toLast count: Int) {
+        defer { dropDerived() }
+        guard historyLoaded, storage.count > count else { return }
+        // Its title stays the prompt it opened with, until Claude names it.
+        if openingPrompt == nil { openingPrompt = Self.firstPrompt(in: storage) }
+        storage.removeFirst(storage.count - count)
+        started = [:]
+        let held = Set(storage.map(\.id))
+        // A finished task whose call went with the older items isn't listed, as with a page loaded
+        // afresh; one still running is, so it can still be stopped.
+        tasks = tasks.filter { _, task in
+            task.toolUseId.map(held.contains) ?? true || InspectorTaskEntry.isRunning(task)
+        }
+        indexTasks()
+        reindex()
+        fileChanges = fileChanges.filter { held.contains($0.key) }
+        if !hasMoreHistory { hasMoreHistory = true }
+    }
+
+    /// Lets go of what's worked out from the items, all of it made again when it's next asked for.
+    private func dropDerived() {
+        cachedTopLevel = nil
+        cachedRows = nil
+        folded = nil
+        refoldFrom = 0
     }
 
     // MARK: notifications
@@ -465,6 +502,9 @@ public final class ThreadModel: Identifiable {
             previous = storage[i]
             storage[i] = item
         } else {
+            // An item from before the first one held, finishing now (a background task's call):
+            // the page it's on brings it when that loads. Put at the end it would read as new.
+            if hasMoreHistory, item.createdAt > 0, let first = storage.first?.createdAt, item.createdAt < first { return }
             i = storage.count
             previous = nil
             index[id] = i
@@ -726,6 +766,14 @@ public final class ThreadModel: Identifiable {
 
     /// The foldings whose rows are held, for tests: the current one's alone.
     var foldingsHeld: [TranscriptFolding] { folded.map { [$0.folding] } ?? [] }
+
+    /// How many items, or things made from them, the thread holds on to, for tests: the transcript,
+    /// its boxes, and what's worked out from it.
+    var itemsHeld: Int {
+        storage.count + boxes.count + (cachedTopLevel?.items.count ?? 0) + (cachedRows?.rows.count ?? 0)
+            + (folded?.rows.count ?? 0) + childIndexes.values.reduce(0) { $0 + $1.count } + subagentCallIDs.count
+            + fileChanges.count + started.count
+    }
 
     private func changes(of call: Item.ToolCall) -> [FileChange] {
         // Every other call changed nothing, and takes nothing to say so.
