@@ -71,13 +71,11 @@ public final class HostConnection: Identifiable {
         if case .connecting = state { return }
         state = .connecting("Starting…")
         do {
-            #if DEBUG
             // UI tests must never fall through to the bundled daemon or SSH, even if a
             // screen creates another host while the fixture app is running.
             if ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1", transportProvider == nil {
                 throw TransportError.launchFailed("UI test host has no fixture transport")
             }
-            #endif
             let transport: any Transport
             if let transportProvider {
                 transport = try await transportProvider(host)

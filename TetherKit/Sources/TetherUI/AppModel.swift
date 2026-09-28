@@ -462,9 +462,18 @@ public final class AppModel {
     }
 }
 
-#if DEBUG
 extension AppModel {
-    /// The launched XCTest app uses the real UI and reducer with only in-process transports.
+    /// The next window to open starts on `threadID`: a notification's chat when no window is left,
+    /// and the debug-only `TETHER_OPEN_THREAD` launch hook.
+    public func openOnLaunch(threadID: String, on host: UUID) {
+        lastHostID = host
+        lastThreadID = threadID
+    }
+}
+
+extension AppModel {
+    /// The launched XCTest app uses the real UI and reducer with only in-process transports. In
+    /// every build (the performance tests run against Release), used only with TETHER_UI_TEST_MODE.
     public static func uiTestFixture() -> AppModel {
         let failedConnects = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "connect-failure" ? 2 : 0
         let pendingPermission = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "permission"
@@ -486,14 +495,8 @@ extension AppModel {
         return app
     }
 
-    /// The first window opens on `threadID` (the `TETHER_OPEN_THREAD` launch hook).
-    public func openOnLaunch(threadID: String, on host: UUID) {
-        lastHostID = host
-        lastThreadID = threadID
-    }
-
     /// Pre-seeded hosts and connections for `#Preview`s and tests, off persistence and the network.
-    public static func sample(connections: [HostConnection] = [.sample()], defaults: UserDefaults? = nil) -> AppModel {
+    public static func sample(connections: [HostConnection], defaults: UserDefaults? = nil) -> AppModel {
         let app = AppModel(defaults: defaults ?? UserDefaults(suiteName: "tether.preview.\(UUID().uuidString)") ?? .standard)
         app.hosts = connections.map(\.host)
         app.connections = Dictionary(uniqueKeysWithValues: connections.map { ($0.id, $0) })
@@ -505,5 +508,12 @@ extension AppModel {
         }
         return app
     }
+}
+
+
+#if DEBUG
+extension AppModel {
+    /// One sample connection, for `#Preview`s.
+    public static func sample() -> AppModel { sample(connections: [.sample()]) }
 }
 #endif

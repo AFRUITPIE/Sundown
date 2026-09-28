@@ -168,15 +168,20 @@ private struct InspectorPanelContent: View {
 /// applied to, inside that content's safe area, so it clears a bottom bar added after it.
 struct InspectorCardOverlay: ViewModifier {
     @Environment(\.inspectorCardWindow) private var window
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .topTrailing) {
-            if let window, window.app.appearance.inspector == .overlay, window.showInspector {
-                InspectorCard(window: window)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            // The animation on this stack, not the content: on the content it animated every change
+            // to the chat under the card too.
+            ZStack {
+                if let window, window.app.appearance.inspector == .overlay, window.showInspector {
+                    InspectorCard(window: window)
+                        .transition(.moving(.move(edge: .trailing).combined(with: .opacity), reduceMotion: reduceMotion))
+                }
             }
+            .animation(.snappy(duration: 0.25), value: shown)
         }
-        .animation(.snappy(duration: 0.25), value: shown)
     }
 
     private var shown: Bool { window.map { $0.app.appearance.inspector == .overlay && $0.showInspector } ?? false }

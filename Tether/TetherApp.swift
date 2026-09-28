@@ -6,19 +6,18 @@ import TetherUI
 struct TetherApp: App {
     @NSApplicationDelegateAdaptor(TetherAppDelegate.self) private var delegate
     @State private var app: AppModel = {
-        #if DEBUG
+        // UI tests, in any build: the performance tests run against Release.
         if ProcessInfo.processInfo.environment["TETHER_UI_TEST_MODE"] == "1" {
             return AppModel.uiTestFixture()
         }
         let app = AppModel()
+        #if DEBUG
         // Debug: launch with TETHER_OPEN_THREAD=<id> to open a chat directly.
         if let id = ProcessInfo.processInfo.environment["TETHER_OPEN_THREAD"] {
             app.openOnLaunch(threadID: id, on: HostConfig.local.id)
         }
-        return app
-        #else
-        return AppModel()
         #endif
+        return app
     }()
 
     init() {

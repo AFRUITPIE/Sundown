@@ -69,6 +69,7 @@ private struct MessageMenu: ViewModifier {
     let sentAt: Double
     @Environment(\.forkChat) private var forkChat
     @Environment(\.restoreCode) private var restoreCode
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
 
     /// A prompt's bubble sits at the trailing edge; a reply at the leading one.
@@ -89,7 +90,8 @@ private struct MessageMenu: ViewModifier {
             .overlay(alignment: trailing ? .topLeading : .topTrailing) {
                 if hovering {
                     bar.offset(y: -14)
-                        .transition(.opacity.combined(with: .scale(0.9, anchor: trailing ? .leading : .trailing)))
+                        .transition(.moving(.opacity.combined(with: .scale(scale: 0.9, anchor: trailing ? .leading : .trailing)),
+                                            reduceMotion: reduceMotion))
                 }
             }
             .animation(.easeOut(duration: 0.12), value: hovering)
@@ -143,12 +145,15 @@ struct CopyButton: View {
         Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
             action()
             copied = true
-            Task {
-                try? await Task.sleep(for: .seconds(1.2))
-                copied = false
-            }
         }
+        // A content transition needs an animation to run in.
         .contentTransition(.symbolEffect(.replace))
+        .animation(.default, value: copied)
+        .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .seconds(1.2))
+            copied = false
+        }
         .help("Copy")
     }
 }

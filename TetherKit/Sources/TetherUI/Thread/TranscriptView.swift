@@ -29,9 +29,11 @@ struct TranscriptView: View {
                     // Drawing only: an offset moves the content's geometry, and the lazy stack
                     // worked out again which rows it shows on every frame of the glide.
                     content.visualEffect { effect, _ in effect.offset(y: y) }
-                } keyframes: { _ in
+                } keyframes: { current in
+                    // From where a glide still under way has got to, plus the new line: starting
+                    // over from the new line alone dropped what was left and the text jumped.
                     KeyframeTrack {
-                        MoveKeyframe(glide.distance)
+                        MoveKeyframe(min(current + glide.distance, Glide.limit))
                         CubicKeyframe(0, duration: 0.3)
                     }
                 }
@@ -62,7 +64,7 @@ struct TranscriptView: View {
             guard let id = find?.current else { return }
             onScreen.lastPrompt = nil
             followsEnd = false
-            withAnimation { position.scrollTo(id: id, anchor: .center) }
+            withAnimation(reduceMotion ? nil : .default) { position.scrollTo(id: id, anchor: .center) }
         }
         // Chat ▸ Previous and Next Prompt, from where the reader is.
         .onChange(of: promptNavigator?.step) { goToPrompt() }
@@ -86,7 +88,7 @@ struct TranscriptView: View {
                     Button("Jump to Latest", systemImage: "arrow.down") {
                         onScreen.lastPrompt = nil
                         followsEnd = true
-                        withAnimation { position.scrollTo(edge: .bottom) }
+                        withAnimation(reduceMotion ? nil : .default) { position.scrollTo(edge: .bottom) }
                     }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.glass)
@@ -94,7 +96,7 @@ struct TranscriptView: View {
                     .controlSize(.large)
                     .help("Scroll to Bottom")
                     .padding(.bottom, 8)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(.moving(.move(edge: .bottom).combined(with: .opacity), reduceMotion: reduceMotion))
                 }
             }
             // Scoped to the button so the transcript's own layout changes don't animate.
@@ -129,7 +131,7 @@ extension TranscriptView {
         } else if direction == .next {
             onScreen.lastPrompt = nil
             followsEnd = true
-            withAnimation { position.scrollTo(edge: .bottom) }
+            withAnimation(reduceMotion ? nil : .default) { position.scrollTo(edge: .bottom) }
         } else if thread.hasMoreHistory, let connection {
             Task {
                 // Not for ever: a page that fails to load stays not loaded.
@@ -158,11 +160,13 @@ extension TranscriptView {
     private func show(prompt id: String) {
         onScreen.lastPrompt = id
         followsEnd = false
-        withAnimation { position.scrollTo(id: id, anchor: .top) }
+        withAnimation(reduceMotion ? nil : .default) { position.scrollTo(id: id, anchor: .top) }
     }
 
     /// A distance the content is drawn below where it is, easing back to nothing.
     struct Glide {
+        /// Past this the end jumps: a whole block landing, not a line wrapping.
+        static let limit: CGFloat = 160
         var distance: CGFloat = 0
         var count = 0
     }
@@ -183,7 +187,7 @@ extension TranscriptView {
             return
         }
         let growth = new.content - old.content
-        guard growth > 0, growth < 160, !reduceMotion else { return }
+        guard growth > 0, growth < Glide.limit, !reduceMotion else { return }
         glide = Glide(distance: growth, count: glide.count + 1)
     }
 }
@@ -394,7 +398,8 @@ struct ThinkingLine: View {
             .symbolEffect(.variableColor.iterative, options: .repeating)
             .scaledFont(.callout)
             .foregroundStyle(.secondary)
-            .transition(.opacity)
+            // The model's changes carry no animation, so the transition brings its own.
+            .transition(.opacity.animation(.easeOut(duration: 0.2)))
     }
 }
 

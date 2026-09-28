@@ -6,6 +6,10 @@ import TetherProtocol
 struct BottomBar: View {
     let thread: ThreadModel
     let connection: HostConnection
+    /// Whether the message field has focus, so a prompt card's default button doesn't take Return
+    /// from a draft.
+    @State private var composerFocused = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         // One read of `pending`: it decides both the card and whether the composer can send.
@@ -15,8 +19,9 @@ struct BottomBar: View {
                 StatusStrip(thread: thread)
                 if let pending {
                     PendingRequestView(pending: pending, thread: thread)
+                        .environment(\.composerHasFocus, composerFocused)
                         .id(pending.id)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .transition(.moving(.move(edge: .bottom).combined(with: .opacity), reduceMotion: reduceMotion))
                 }
                 if !thread.suggestedTasks.isEmpty {
                     SuggestedTasksBar(thread: thread)
@@ -30,7 +35,7 @@ struct BottomBar: View {
                 sessionSettings: { SessionSettings(thread: thread, connection: connection) },
                 submit: { input in
                     await connection.send(thread, input: input)
-                })
+                }, onFocusChange: { composerFocused = $0 })
             }
             // The only explicit animation down here, and it runs only when a prompt comes or goes.
             // It has to sit on the stack the prompt is inserted into for the transition to have an

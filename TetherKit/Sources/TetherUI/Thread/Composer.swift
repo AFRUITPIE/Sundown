@@ -27,10 +27,13 @@ struct Composer: View {
     /// here, so what they read doesn't redraw the field.
     var sessionSettings: (@MainActor () -> SessionSettings)?
     let submit: ([UserInput]) async -> Void
+    /// Told when the message field gains or loses focus.
+    var onFocusChange: ((Bool) -> Void)?
 
     @Environment(\.composerDraft) private var composerDraft
     @Environment(\.composerDrafts) private var drafts
     @Environment(\.appearance) private var appearance
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var text = ""
     @State private var images: [Attachment] = []
     @State private var commands: [SlashCommand] = []
@@ -132,7 +135,7 @@ struct Composer: View {
                 .controlSize(.small)
                 .scaledFont(.callout)
                 .help("Use Suggestion")
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                .transition(.moving(.opacity.combined(with: .move(edge: .bottom)), reduceMotion: reduceMotion))
             }
             if let status {
                 ConnectionStatusCard(status: status, connection: connection)
@@ -167,8 +170,11 @@ struct Composer: View {
             for url in (try? result.get()) ?? [] { add(file: url) }
         }
         .onPasteCommand(of: [.png, .tiff, .jpeg], perform: { _ = drop($0) })
+        // The field is where focus goes when the window opens or focus has nowhere else to be, as
+        // on a chat switch; not taken from the sidebar or search while someone is using them.
+        .defaultFocus($focused, true)
+        .onChange(of: focused, initial: true) { onFocusChange?(focused) }
         .onAppear {
-            focused = true
             if let draftKey {
                 // The draft already holds any text delivered before the field appeared.
                 appliedDelivery = drafts.delivery(for: draftKey)?.id
@@ -297,16 +303,16 @@ struct Composer: View {
                     .tint(.red)
                     .keyboardShortcut(".", modifiers: .command)
                     .help("Stop")
-                    .transition(.scale(0.5).combined(with: .opacity))
+                    .transition(.moving(.scale(scale: 0.5).combined(with: .opacity), reduceMotion: reduceMotion))
             } else {
                 Button("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up", action: send)
                     .accessibilityIdentifier("composer.send")
                     .labelStyle(.iconOnly)
-                    .symbolEffect(.bounce.up, value: sends)
+                    .symbolEffect(.bounce.up, options: reduceMotion ? .nonRepeating.speed(0) : .default, value: sends)
                     .modifier(RoundAction())
                     .disabled(!canSend || awaitingAnswer)
                     .help(sendHelp)
-                    .transition(.scale(0.5).combined(with: .opacity))
+                    .transition(.moving(.scale(scale: 0.5).combined(with: .opacity), reduceMotion: reduceMotion))
             }
         }
         .animation(.snappy(duration: 0.2), value: showStop)

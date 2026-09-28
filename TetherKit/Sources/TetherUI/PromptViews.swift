@@ -50,6 +50,10 @@ struct PromptCard<Content: View>: View {
 }
 
 struct PermissionPrompt: View {
+    @Environment(\.composerHasFocus) private var composerHasFocus
+    /// Return answers the card, except while the message field has focus: a default button is the
+    /// whole window's, and Return in a draft would otherwise press it.
+    private var defaultKey: KeyboardShortcut? { composerHasFocus ? nil : .defaultAction }
     let params: PermissionRequestParams
     let respond: (JSONValue) -> Void
     @State private var denyMessage = ""
@@ -73,9 +77,9 @@ struct PermissionPrompt: View {
                 // Exactly one default button, so Return always does something.
                 if !showingDeny {
                     Button("Deny…") { showingDeny = true }
-                        .keyboardShortcut(denyIsDefault ? .defaultAction : nil)
+                        .keyboardShortcut(denyIsDefault ? defaultKey : nil)
                 } else {
-                    Button("Deny", action: deny).keyboardShortcut(.defaultAction)
+                    Button("Deny", action: deny).keyboardShortcut(defaultKey)
                 }
                 Spacer()
                 if params.suppressAlwaysAllowRule != true {
@@ -90,7 +94,7 @@ struct PermissionPrompt: View {
                 // Prominence follows the default key (two branches: the styles are different types).
                 if allowIsDefault {
                     Button("Allow") { respond(["decision": "allow", "scope": "once"]) }
-                        .keyboardShortcut(.defaultAction)
+                        .keyboardShortcut(defaultKey)
                         .buttonStyle(.borderedProminent)
                 } else {
                     Button("Allow") { respond(["decision": "allow", "scope": "once"]) }
@@ -125,6 +129,10 @@ struct PermissionPrompt: View {
 }
 
 struct QuestionPrompt: View {
+    @Environment(\.composerHasFocus) private var composerHasFocus
+    /// Return answers the card, except while the message field has focus: a default button is the
+    /// whole window's, and Return in a draft would otherwise press it.
+    private var defaultKey: KeyboardShortcut? { composerHasFocus ? nil : .defaultAction }
     let params: QuestionRequestParams
     let respond: (JSONValue) -> Void
     @State private var selections: [String: Set<String>] = [:]
@@ -179,7 +187,7 @@ struct QuestionPrompt: View {
             HStack {
                 Button("Skip") { respond(["decision": "decline"]) }
                 Spacer()
-                Button("Submit", action: submit).buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(!complete)
+                Button("Submit", action: submit).buttonStyle(.borderedProminent).keyboardShortcut(defaultKey).disabled(!complete)
             }
         }
     }
@@ -205,6 +213,10 @@ struct QuestionPrompt: View {
 }
 
 struct PlanPrompt: View {
+    @Environment(\.composerHasFocus) private var composerHasFocus
+    /// Return answers the card, except while the message field has focus: a default button is the
+    /// whole window's, and Return in a draft would otherwise press it.
+    private var defaultKey: KeyboardShortcut? { composerHasFocus ? nil : .defaultAction }
     let params: PlanApproveParams
     let respond: (JSONValue) -> Void
     @State private var feedback = ""
@@ -223,13 +235,17 @@ struct PlanPrompt: View {
                 Button("Approve, ask before edits") { respond(["decision": "approve", "permissionMode": "default"]) }
                 Button("Approve, auto-accept edits") { respond(["decision": "approve", "permissionMode": "acceptEdits"]) }
                     .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(defaultKey)
             }
         }
     }
 }
 
 struct ElicitationPrompt: View {
+    @Environment(\.composerHasFocus) private var composerHasFocus
+    /// Return answers the card, except while the message field has focus: a default button is the
+    /// whole window's, and Return in a draft would otherwise press it.
+    private var defaultKey: KeyboardShortcut? { composerHasFocus ? nil : .defaultAction }
     let params: ElicitationRequestParams
     let respond: (JSONValue) -> Void
     @State private var values: [String: String] = [:]
@@ -266,7 +282,7 @@ struct ElicitationPrompt: View {
                     respond(["action": "accept", "content": .object(content)])
                 }
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(defaultKey)
                 .disabled(!complete)
             }
         }
@@ -377,3 +393,8 @@ private func params(_ request: ServerRequest) -> ElicitationRequestParams {
 }
 
 #endif
+
+extension EnvironmentValues {
+    /// Whether the chat's message field has focus, for the prompt cards over it.
+    @Entry var composerHasFocus = false
+}

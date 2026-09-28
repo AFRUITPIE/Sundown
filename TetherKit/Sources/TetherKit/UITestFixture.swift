@@ -1,8 +1,8 @@
-#if DEBUG
 import Foundation
 import TetherProtocol
 
-/// A process-free JSON-RPC server for XCTest UI runs. The only entry point is the explicit
+/// A process-free JSON-RPC server for XCTest UI runs. In every build, inert unless the app is
+/// launched with TETHER_UI_TEST_MODE=1: the performance tests run against a Release build. The only entry point is the explicit
 /// TETHER_UI_TEST_MODE launch path; unhandled methods return an error instead of reaching Claude.
 public enum UITestFixture {
     public static let threadID = "fixture-thread"
@@ -457,4 +457,3 @@ enum PerformanceTranscript {
 private func json<T: Encodable>(_ value: T) -> JSONValue {
     try! JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
 }
-#endif

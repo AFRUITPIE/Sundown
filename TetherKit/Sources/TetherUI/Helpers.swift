@@ -124,24 +124,12 @@ enum Format {
         n >= 1_000_000 ? String(format: "%.1fM", n / 1_000_000) : n >= 1000 ? String(format: "%.1fk", n / 1000) : String(Int(n))
     }
 
-    /// Shared: building a formatter costs more than using one.
-    @MainActor private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f
-    }()
-
     /// When a message was sent: the time today, the day and time before that.
     static func messageTime(msSinceEpoch: Double) -> String {
         let date = Date(timeIntervalSince1970: msSinceEpoch / 1000)
         return Calendar.current.isDateInToday(date)
             ? date.formatted(date: .omitted, time: .shortened)
             : date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
-    }
-
-    @MainActor
-    static func relative(msSinceEpoch: Double) -> String {
-        relativeFormatter.localizedString(for: Date(timeIntervalSince1970: msSinceEpoch / 1000), relativeTo: .now)
     }
 }
 
@@ -382,5 +370,12 @@ extension View {
     /// the composer — not for controls and chrome.
     func scaledFont(_ style: Font.TextStyle, weight: Font.Weight? = nil, design: Font.Design? = nil) -> some View {
         modifier(ScaledFont(style: style, weight: weight, explicitDesign: design))
+    }
+}
+
+extension AnyTransition {
+    /// `transition`, which moves or scales something, or a plain fade under Reduce Motion.
+    static func moving(_ transition: AnyTransition, reduceMotion: Bool) -> AnyTransition {
+        reduceMotion ? .opacity : transition
     }
 }

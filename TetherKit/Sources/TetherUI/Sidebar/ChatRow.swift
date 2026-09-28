@@ -14,33 +14,38 @@ struct ChatRow: View {
                 ChatStatusGlyph(thread: thread)
                 Text(thread.title).lineLimit(1)
             }
-            if let secondary {
-                Text(secondary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            secondary
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .badge(thread.pending.count)
     }
 
-    /// The folder, where the section header doesn't already name it; otherwise when it was last used.
-    private var secondary: String? {
-        grouping == .date
-            ? thread.cwd?.lastPathComponent
-            : thread.summary.map { Format.relative(msSinceEpoch: $0.updatedAt) }
+    /// The folder, where the section header doesn't already name it; otherwise when it was last
+    /// used, which keeps itself current ("5 minutes ago") as time passes.
+    @ViewBuilder private var secondary: some View {
+        if grouping == .date {
+            if let folder = thread.cwd?.lastPathComponent { Text(folder) }
+        } else if let updated = thread.summary?.updatedAt {
+            Text(.currentDate, format: .reference(to: Date(timeIntervalSince1970: updated / 1000)))
+        }
     }
 }
 
 /// Claude working in the chat, or waiting on you; nothing otherwise.
 struct ChatStatusGlyph: View {
     let thread: ThreadModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if thread.isRunning {
-            Image(systemName: thread.status == .requiresAction ? "exclamationmark.circle.fill" : "circle.dotted")
-                .foregroundStyle(thread.status == .requiresAction ? .orange : Color.accentColor)
-                .symbolEffect(.rotate, isActive: thread.status == .running)
+            let needsYou = thread.status == .requiresAction
+            Image(systemName: needsYou ? "exclamationmark.circle.fill" : "circle.dotted")
+                .foregroundStyle(needsYou ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
+                .symbolEffect(.rotate, isActive: thread.status == .running && !reduceMotion)
+                // Said, not only drawn: the glyph and its color are all a row has for it.
+                .accessibilityLabel(needsYou ? "Needs You" : "Running")
         }
     }
 }
