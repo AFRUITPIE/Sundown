@@ -370,15 +370,18 @@ struct Composer: View {
             }
             .disabled(offered.isEmpty)
         } label: {
+            // Glass on the label itself: on macOS 27 the glass button style draws a flat circle on
+            // a `Menu`, not glass. As tall as the field beside it at one line.
             Label("Add", systemImage: "plus")
                 .labelStyle(.iconOnly)
+                .font(.system(size: 15, weight: .medium))
+                .frame(width: 34, height: 34)
+                .contentShape(.circle)
+                .glassEffect(.regular.interactive(), in: .circle)
         }
         .menuIndicator(.hidden)
-        // A round glass button, as the field beside it is glass.
         .menuStyle(.button)
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
-        .controlSize(.extraLarge)
+        .buttonStyle(.plain)
         .help("Add")
         .accessibilityIdentifier("composer.add")
     }

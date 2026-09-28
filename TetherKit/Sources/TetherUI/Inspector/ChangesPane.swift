@@ -269,7 +269,8 @@ private struct LineRow: View {
                 }
                 Text(sign).foregroundStyle(.secondary)
                 Text(line.text.isEmpty ? " " : line.text)
-                    .fixedSize()
+                    // Code keeps its lines: the diff scrolls sideways instead of wrapping.
+                    .fixedSize(horizontal: true, vertical: false)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .font(.caption.monospaced())

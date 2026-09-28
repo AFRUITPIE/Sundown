@@ -203,7 +203,8 @@ struct InspectorCard: View {
 
     var body: some View {
         InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-            .frame(width: 320)
+            // An inspector's width, but never most of a narrow chat.
+            .containerRelativeFrame(.horizontal) { width, _ in min(320, width * 0.45) }
             .frame(maxHeight: .infinity)
             .clipShape(.rect(cornerRadius: Layout.cardCornerRadius))
             .glassEffect(in: .rect(cornerRadius: Layout.cardCornerRadius))

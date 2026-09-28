@@ -101,7 +101,8 @@ struct PermissionPrompt: View {
                             Text("In your user settings")
                         }
                     }
-                    .fixedSize()
+                    // Its title whole; the row gives way around it.
+                    .fixedSize(horizontal: true, vertical: false)
                 }
                 // Prominence follows the default key (two branches: the styles are different types).
                 if allowIsDefault {
@@ -235,21 +236,40 @@ struct PlanPrompt: View {
 
     var body: some View {
         PromptCard(title: "Ready to proceed with this plan?", symbol: "list.bullet.clipboard", tint: .purple) {
-            ScrollView {
-                MarkdownView(text: params.plan).frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 280)
+            ScrollView { plan }
+                .frame(maxHeight: 280)
             TextField("Feedback (Optional)", text: $feedback, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
-            HStack {
-                Button("Keep planning") { respond(["decision": "reject", "feedback": .string(feedback)]) }
-                Spacer()
-                Button("Approve, ask before edits") { respond(["decision": "approve", "permissionMode": "default"]) }
-                Button("Approve, auto-accept edits") { respond(["decision": "approve", "permissionMode": "acceptEdits"]) }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(defaultKey)
+            // In a row while they fit; stacked at the trailing edge in a narrow window or at a
+            // bigger text size, rather than truncated.
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    keepPlanning
+                    Spacer()
+                    approve
+                }
+                VStack(alignment: .trailing) {
+                    approve
+                    keepPlanning
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
+    }
+
+    private var plan: some View {
+        MarkdownView(text: params.plan).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var keepPlanning: some View {
+        Button("Keep Planning") { respond(["decision": "reject", "feedback": .string(feedback)]) }
+    }
+
+    @ViewBuilder private var approve: some View {
+        Button("Approve, Ask Before Edits") { respond(["decision": "approve", "permissionMode": "default"]) }
+        Button("Approve, Accept Edits") { respond(["decision": "approve", "permissionMode": "acceptEdits"]) }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(defaultKey)
     }
 }
 

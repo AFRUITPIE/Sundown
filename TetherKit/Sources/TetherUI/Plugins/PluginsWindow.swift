@@ -166,7 +166,7 @@ public struct PluginsWindow: View {
                     Button("For This Project, Just Me") { install(plugin, .local) }.disabled(folder == nil)
                 }
                 .menuStyle(.button)
-                .fixedSize()
+                .fixedSize(horizontal: true, vertical: false)
                 .controlSize(.small)
             }
         } label: {

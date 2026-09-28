@@ -66,7 +66,7 @@ struct NewChatView: View {
                         // The chips are controls, so they keep the system's size; what's written here scales.
                         .scaledFont(.body)
                     }
-                    .padding(.bottom, 14)
+                    .padding(.bottom, Layout.composerBottom)
                     // The same column the transcript and its bottom bar use, so the composer doesn't
                     // move sideways when the first message turns this into a chat.
                     .readingColumn()

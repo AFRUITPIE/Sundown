@@ -36,7 +36,9 @@ struct ItemView: View {
                 VStack { Divider() }
                 Label(c.preTokens.map { "Conversation compacted · \(Format.tokens($0)) tokens" } ?? "Conversation compacted",
                       systemImage: "arrow.down.right.and.arrow.up.left")
-                    .scaledFont(.caption).foregroundStyle(.secondary).fixedSize()
+                    .scaledFont(.caption).foregroundStyle(.secondary)
+                    // The rules on either side give way first.
+                    .layoutPriority(1)
                 VStack { Divider() }
             }
         // Quiet, like a failed call: said, selectable to copy, not alarming.
@@ -90,7 +92,8 @@ private struct MessageMenu: ViewModifier {
             }
             .overlay(alignment: trailing ? .topLeading : .topTrailing) {
                 if hovering {
-                    bar.offset(y: -14)
+                    // Centered on the message's top edge, however tall the bar is at this text size.
+                    bar.alignmentGuide(.top) { $0[VerticalAlignment.center] }
                         .transition(.moving(.opacity.combined(with: .scale(scale: 0.9, anchor: trailing ? .leading : .trailing)),
                                             reduceMotion: reduceMotion))
                 }

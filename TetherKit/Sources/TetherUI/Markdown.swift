@@ -25,11 +25,13 @@ struct MarkdownView: View {
         let arriving = cache.hasDrawn
         let blocks = cache.blocks(for: text)
         let _ = cache.hasDrawn = true
+        let markers = Self.widestMarkers(blocks)
         VStack(alignment: .leading, spacing: 0) {
             ForEach(blocks.indices, id: \.self) { i in
                 MarkdownBlockView(rendered: blocks[i],
                                   topPadding: i == 0 ? 0 : Self.spacing(after: blocks[i - 1].block, before: blocks[i].block),
-                                  isEnd: streams && i == blocks.count - 1, arrives: streams && arriving)
+                                  isEnd: streams && i == blocks.count - 1, arrives: streams && arriving,
+                                  widestMarker: markers[i])
                     .equatable()
             }
         }
@@ -44,6 +46,28 @@ struct MarkdownView: View {
         let id: Int
         let block: Block
         let inline: [AttributedString]
+    }
+
+    /// For each list item, the widest marker among the items of its list at its depth ("10." in a
+    /// list that reaches ten), so their text starts at one edge; nil for other blocks.
+    static func widestMarkers(_ blocks: [Rendered]) -> [String?] {
+        var result = [String?](repeating: nil, count: blocks.count)
+        var i = 0
+        while i < blocks.count {
+            guard case .bullet = blocks[i].block else { i += 1; continue }
+            var end = i
+            while end < blocks.count, case .bullet = blocks[end].block { end += 1 }
+            var widest: [Int: String] = [:]
+            for case .bullet(let indent, let marker, _) in blocks[i..<end].map(\.block)
+            where marker.count > (widest[indent]?.count ?? 0) {
+                widest[indent] = marker
+            }
+            for j in i..<end {
+                if case .bullet(let indent, _, _) = blocks[j].block { result[j] = widest[indent] }
+            }
+            i = end
+        }
+        return result
     }
 
     /// List items sit closer together than paragraphs.
@@ -149,9 +173,13 @@ struct MarkdownBlockView: View, Equatable {
     var isEnd = false
     /// Whether the block appeared while its reply streamed, so its first text fades in too.
     var arrives = false
+    /// A list item's widest sibling marker, whose width its own marker takes.
+    var widestMarker: String?
+    @Environment(\.textScale) private var textScale
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
         a.rendered.id == b.rendered.id && a.topPadding == b.topPadding && a.isEnd == b.isEnd && a.arrives == b.arrives
+            && a.widestMarker == b.widestMarker
     }
 
     var body: some View {
@@ -187,11 +215,18 @@ struct MarkdownBlockView: View, Equatable {
             line
         case .bullet(let indent, let marker, _):
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(marker).foregroundStyle(.secondary).monospacedDigit()
-                    .frame(minWidth: 12, alignment: .trailing)
+                // As wide as the list's widest marker, so "9." and "10." end at one edge.
+                ZStack(alignment: .trailing) {
+                    Text(widestMarker ?? marker).hidden()
+                    Text(marker)
+                }
+                .frame(minWidth: 12, alignment: .trailing)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
                 line
             }
-            .padding(.leading, 6 + CGFloat(indent) * 18)
+            // Deeper levels step in by the text's size.
+            .padding(.leading, (6 + CGFloat(indent) * 18) * textScale)
         case .quote:
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 1).fill(.tertiary).frame(width: 3)
@@ -208,7 +243,8 @@ struct MarkdownBlockView: View, Equatable {
                             inline(r * columns + c).scaledFont(.body, weight: r == 0 ? .bold : nil)
                         }
                     }
-                    if r == 0 { Divider() }
+                    // Only as wide as the columns, so a narrow table hugs its content.
+                    if r == 0 { Divider().gridCellUnsizedAxes(.horizontal) }
                 }
             }
             .padding(8)

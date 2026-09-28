@@ -41,7 +41,7 @@ struct BottomBar: View {
             // animation to use.
             .animation(.snappy, value: pending?.id)
         }
-        .padding(.bottom, 14)
+        .padding(.bottom, Layout.composerBottom)
         .readingColumn()
         .scaledFont(.body)
     }

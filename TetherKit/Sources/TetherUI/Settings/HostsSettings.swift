@@ -18,12 +18,10 @@ struct HostsSettings: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            hostPicker
-            Divider()
-            detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+        detail
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // The host's form scrolls under the picker, with the system's edge effect.
+            .safeAreaBar(edge: .top) { hostPicker }
         .task { if selection == nil { selection = app.lastHostID } }
         .sheet(isPresented: $addingHost) {
             AddSSHHostSheet { host in
@@ -66,7 +64,6 @@ struct HostsSettings: View {
             .labelStyle(.iconOnly)
         }
         .padding()
-        .background(.windowBackground)
     }
 
     private var hostSelection: Binding<UUID> {

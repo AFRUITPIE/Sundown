@@ -78,19 +78,6 @@ struct InspectorTaskDetail: View {
     let close: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button("All Tasks", systemImage: "chevron.left", action: close)
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                Text(entry.task?.description ?? entry.call?.input.string("description") ?? "Task")
-                    .font(.headline)
-                    .lineLimit(1)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            Divider()
             Form {
                 // Unheaded: a "Status" section whose first row is "Status" says it twice.
                 Section {
@@ -146,7 +133,20 @@ struct InspectorTaskDetail: View {
                     }
                 }
             }
-        }
+            // Back to the list, over the task, which scrolls under it.
+            .safeAreaBar(edge: .top) {
+                HStack {
+                    Button("All Tasks", systemImage: "chevron.left", action: close)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                    Text(entry.task?.description ?? entry.call?.input.string("description") ?? "Task")
+                        .font(.headline)
+                        .lineLimit(1)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
     }
 }
 
