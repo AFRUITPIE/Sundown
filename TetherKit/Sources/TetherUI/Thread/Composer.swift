@@ -159,6 +159,9 @@ struct Composer: View {
         .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             for url in (try? result.get()) ?? [] { add(file: url) }
         }
+        .fileDialogConfirmationLabel("Attach")
+        // From the chat's directory, on this Mac; elsewhere wherever the panel was last.
+        .fileDialogDefaultDirectory(connection.host.isLocal ? cwd.map { URL(filePath: $0, directoryHint: .isDirectory) } : nil)
         .onPasteCommand(of: [.png, .tiff, .jpeg], perform: { _ = drop($0) })
         // The field is where focus goes when the window opens or focus has nowhere else to be, as
         // on a chat switch; not taken from the sidebar or search while someone is using them.

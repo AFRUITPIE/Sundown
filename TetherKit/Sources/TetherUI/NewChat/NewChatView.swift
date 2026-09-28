@@ -6,8 +6,7 @@ import TetherProtocol
 /// the one the sidebar shows.
 struct NewChatView: View {
     @Bindable var window: WindowModel
-    @State private var choosingLocalFolder = false
-    @State private var choosingRemoteFolder = false
+    @State private var choosingFolder = false
     /// What git says about the folder; nil until the host answers, or when it can't.
     @State private var git: FolderGit?
     @Environment(\.appearsActive) private var appearsActive
@@ -73,12 +72,7 @@ struct NewChatView: View {
                     .readingColumn()
                 }
             }
-            .fileImporter(isPresented: $choosingLocalFolder, allowedContentTypes: [.folder]) { result in
-                if case .success(let url) = result { choose(url.path) }
-            }
-            .sheet(isPresented: $choosingRemoteFolder) {
-                if let connection { RemoteFolderPicker(connection: connection) { choose($0) } }
-            }
+            .directoryChooser(isPresented: $choosingFolder, connection: connection, current: window.draftDirectory) { choose($0) }
             // `AppModel` seeds the folder with the host's first project; these fill it when the
             // projects arrived after that.
             // A folder dragged from Finder is where the chat starts; this Mac's folders only.
@@ -213,7 +207,7 @@ struct NewChatView: View {
     }
 
     private func chooseFolder() {
-        if connection?.host.isLocal == true { choosingLocalFolder = true } else { choosingRemoteFolder = true }
+        choosingFolder = true
     }
 
     private func start(_ connection: HostConnection, _ input: [UserInput]) async {

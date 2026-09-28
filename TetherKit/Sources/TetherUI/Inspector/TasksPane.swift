@@ -2,7 +2,9 @@ import SwiftUI
 import TetherKit
 
 /// The subagents and workflows this chat has started. Reads `thread.taskEntries`, which is stored
-/// and rebuilt only on task events, so streamed message deltas never touch this pane.
+/// and rebuilt only on task events, so streamed message deltas never touch this pane. A task's
+/// detail replaces the list, with its own back button: not a `NavigationStack`, whose Back button
+/// went to the window's toolbar, over the chat, rather than over the pane.
 struct TasksPane: View {
     let thread: ThreadModel
     let connection: HostConnection

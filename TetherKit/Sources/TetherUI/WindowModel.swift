@@ -121,8 +121,10 @@ public final class WindowModel {
     public let prompts = PromptNavigator()
 
     /// The chat Rename… or Delete… is acting on, from the Chat menu or a sidebar row's context menu.
-    public private(set) var renaming: ThreadModel?
+    public internal(set) var renaming: ThreadModel?
     public var deleting: ThreadModel?
+    /// The chat whose sidebar row is being renamed in place (its context menu's Rename).
+    var renamingInPlace: ThreadModel?
     /// Starts a task Claude suggested in `thread` as a new chat, where it said, or in `thread`'s folder.
     /// Opens a task Claude suggested as New Chat, in the folder it named (or `thread`'s), with its
     /// prompt as a draft to read and edit before sending: Claude wrote it, so it isn't sent unseen.
@@ -133,8 +135,8 @@ public final class WindowModel {
         app.deliverDraft(task.prompt, for: "new-chat:\(hostID)")
     }
 
-    /// Chat ▸ Ask a Side Question… (⌥⌘;) is showing its sheet.
-    var askingSideQuestion = false
+    /// The chat Chat ▸ Ask a Side Question… (⌥⌘;) is asking about, while its sheet is up.
+    var sideQuestion: ThreadModel?
 
     /// A worktree to offer removing, once the chat that worked in it is archived or deleted, and
     /// what removing it would lose that the host asked about.
@@ -144,15 +146,18 @@ public final class WindowModel {
 
     struct WorktreeRemoval: Equatable {
         let path: String
+        /// A second ask, after the host said removing it would lose something.
+        var losesWork: Bool { force || discardCommits }
         /// Discard uncommitted changes: the host said there are some, and the second ask was answered.
         var force = false
         /// Delete the branch's commits that are merged nowhere else, likewise.
         var discardCommits = false
     }
 
-    /// After archiving or deleting `thread`: if it worked in a worktree Tether made, offer to remove it.
+    /// After archiving or deleting `thread`: if it worked in a worktree Tether made, offer to remove
+    /// it, unless the offer was turned off (its Don't Ask Again, or Settings ▸ General).
     func offerWorktreeRemoval(for thread: ThreadModel) {
-        guard let root = thread.cwd.flatMap(Self.tetherWorktree) else { return }
+        guard app.appearance.offersWorktreeRemoval, let root = thread.cwd.flatMap(Self.tetherWorktree) else { return }
         worktreeToRemove = WorktreeRemoval(path: root)
     }
 
@@ -168,7 +173,8 @@ public final class WindowModel {
     /// Restore Code to Here…: the prompt whose files are being put back, and what that changes.
     var restoring: Restore?
 
-    struct Restore {
+    struct Restore: Identifiable {
+        var id: String { messageID }
         let thread: ThreadModel
         let messageID: String
         let result: Result<RewindResult, Error>

@@ -25,7 +25,14 @@ struct ChatActionItems: View {
             if let thread { window.togglePin(thread) }
         }
         .keyboardShortcut("p", modifiers: [.command, .option])
-        item("Rename…", enabled: thread != nil) { window.rename(thread) }
+        // In place on the row from its context menu, as Finder renames; in an alert from the Chat
+        // menu, which may be used with the sidebar hidden.
+        if hidesUnavailable, let thread {
+            RenameButton()
+                .renameAction { window.renamingInPlace = thread }
+        } else {
+            item("Rename…", enabled: thread != nil) { window.rename(thread) }
+        }
         item("Duplicate", enabled: thread != nil && connection != nil) {
             guard let thread, let connection else { return }
             Task { if let fork = await connection.fork(thread) { window.open(threadID: fork.id) } }
@@ -55,48 +62,70 @@ struct ChatActionAlerts: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .alert("Rename Chat", isPresented: Binding(get: { window.renaming != nil }, set: { if !$0 { window.rename(nil) } })) {
+            .alert("Rename Chat", isPresented: presented(\.renaming), presenting: window.renaming) { thread in
                 TextField("Title", text: $window.renameTitle)
                 Button("Rename") {
                     let title = window.renameTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let thread = window.renaming, let connection = window.connection, !title.isEmpty {
+                    if let connection = window.connection, !title.isEmpty {
                         Task { await connection.rename(thread, title) }
                     }
                     window.rename(nil)
                 }
                 Button("Cancel", role: .cancel) { window.rename(nil) }
             }
-            // Deleting a chat removes its transcript from the host for good, so it's confirmed. The
-            // button isn't styled destructive: deleting is what the person just chose.
-            .alert(deleteTitle, isPresented: presented(\.deleting)) {
-                Button("Delete") { delete() }
-                Button("Cancel", role: .cancel) { window.deleting = nil }
-            } message: {
-                Text("Its transcript is removed from \(window.host?.name ?? "the host"). This can’t be undone.")
+            // Each dialog on a view of its own, so its severity or suppression toggle reaches it and
+            // not the window's other dialogs, which the environment would pass them on to.
+            .background {
+                // Deleting a chat removes its transcript from the host for good.
+                Color.clear
+                    .confirmationDialog("Delete “\(window.deleting?.title ?? "Chat")”?", isPresented: presented(\.deleting),
+                                        titleVisibility: .visible, presenting: window.deleting) { thread in
+                        Button("Delete", role: .destructive) { delete(thread) }
+                    } message: { _ in
+                        Text("Its transcript is removed from \(window.host?.name ?? "the host"). This can’t be undone.")
+                    }
+                    .dialogSeverity(.critical)
             }
-            .alert(worktreeTitle,
-                   isPresented: Binding(get: { window.worktreeToRemove != nil }, set: { if !$0 { window.worktreeToRemove = nil } })) {
-                Button(worktreeAction, role: window.worktreeToRemove.map { $0.force || $0.discardCommits } == true ? .destructive : nil) {
-                    removeWorktree()
-                }
-                Button("Keep", role: .cancel) { window.worktreeToRemove = nil }
-            } message: {
-                Text(worktreeMessage)
+            .background {
+                // The first offer, which Don't Ask Again turns off.
+                Color.clear
+                    .confirmationDialog("Remove Its Worktree?", isPresented: worktreePresented(losesWork: false),
+                                        titleVisibility: .visible, presenting: window.worktreeToRemove) { target in
+                        Button("Remove Worktree") { removeWorktree(target) }
+                        Button("Keep", role: .cancel) { window.worktreeToRemove = nil }
+                    } message: { target in
+                        Text("The chat worked in \(name(target)), a worktree of its own. Removing it deletes the directory and its branch.")
+                    }
+                    .dialogSuppressionToggle(isSuppressed: Binding(get: { !window.app.appearance.offersWorktreeRemoval },
+                                                                   set: { window.app.appearance.offersWorktreeRemoval = !$0 }))
             }
-            .alert("Couldn’t Remove the Worktree",
-                   isPresented: Binding(get: { window.worktreeError != nil }, set: { if !$0 { window.worktreeError = nil } })) {
+            .background {
+                // Asked again, plainly, when removing it would lose work.
+                Color.clear
+                    .confirmationDialog(losingTitle, isPresented: worktreePresented(losesWork: true),
+                                        titleVisibility: .visible, presenting: window.worktreeToRemove) { target in
+                        Button("Remove Anyway", role: .destructive) { removeWorktree(target) }
+                        Button("Keep", role: .cancel) { window.worktreeToRemove = nil }
+                    } message: { target in
+                        Text(target.discardCommits
+                             ? "Removing \(name(target)) deletes its branch and the commits on it that aren’t merged anywhere else."
+                             : "Removing \(name(target)) discards the changes in it that weren’t committed.")
+                    }
+                    .dialogSeverity(.critical)
+            }
+            .alert("Couldn’t Remove the Worktree", isPresented: presented(\.worktreeError), presenting: window.worktreeError) { _ in
                 Button("OK", role: .cancel) {}
-            } message: {
-                Text(window.worktreeError ?? "")
+            } message: { error in
+                Text(error)
             }
-            .sheet(isPresented: $window.askingSideQuestion) {
-                if let thread = window.selectedThread, let connection = window.connection {
+            .sheet(item: $window.sideQuestion) { thread in
+                if let connection = window.connection {
                     SideQuestionSheet(thread: thread, connection: connection)
                 }
             }
-            .alert(restoreTitle, isPresented: Binding(get: { window.restoring != nil }, set: { if !$0 { window.restoring = nil } })) {
+            .alert(restoreTitle, isPresented: presented(\.restoring), presenting: window.restoring) { _ in
                 restoreActions()
-            } message: {
+            } message: { _ in
                 Text(restoreMessage)
             }
     }
@@ -149,8 +178,8 @@ struct ChatActionAlerts: ViewModifier {
         }
     }
 
-    private func removeWorktree() {
-        guard let target = window.worktreeToRemove, let connection = window.connection else { return }
+    private func removeWorktree(_ target: WindowModel.WorktreeRemoval) {
+        guard let connection = window.connection else { return }
         window.worktreeToRemove = nil
         Task {
             do {
@@ -171,38 +200,25 @@ struct ChatActionAlerts: ViewModifier {
         }
     }
 
-    private var worktreeName: String { ((window.worktreeToRemove?.path ?? "") as NSString).lastPathComponent }
+    private func name(_ target: WindowModel.WorktreeRemoval) -> String { (target.path as NSString).lastPathComponent }
 
-    private var worktreeTitle: String {
-        guard let target = window.worktreeToRemove else { return "Remove Its Worktree?" }
-        if target.discardCommits { return "Its Branch Has Commits Nowhere Else" }
-        if target.force { return "The Worktree Has Uncommitted Changes" }
-        return "Remove Its Worktree?"
+    private var losingTitle: String {
+        window.worktreeToRemove?.discardCommits == true ? "Its Branch Has Commits Nowhere Else" : "The Worktree Has Uncommitted Changes"
     }
 
-    private var worktreeAction: String {
-        guard let target = window.worktreeToRemove else { return "Remove Worktree" }
-        return target.force || target.discardCommits ? "Remove Anyway" : "Remove Worktree"
+    /// The first offer, or a second ask that would lose work.
+    private func worktreePresented(losesWork: Bool) -> Binding<Bool> {
+        Binding(get: { window.worktreeToRemove.map { $0.losesWork == losesWork } ?? false },
+                set: { if !$0 { window.worktreeToRemove = nil } })
     }
 
-    private var worktreeMessage: String {
-        guard let target = window.worktreeToRemove else { return "" }
-        if target.discardCommits { return "Removing \(worktreeName) deletes its branch and the commits on it that aren’t merged anywhere else." }
-        if target.force { return "Removing \(worktreeName) discards the changes in it that weren’t committed." }
-        return "The chat worked in \(worktreeName), a worktree of its own. Removing it deletes the directory and its branch."
-    }
-
-    private var deleteTitle: String {
-        "Delete “\(window.deleting?.title ?? "Chat")”?"
-    }
-
-    private func presented(_ key: ReferenceWritableKeyPath<WindowModel, ThreadModel?>) -> Binding<Bool> {
+    /// Shown while `key` holds something; dismissing clears it.
+    private func presented<Value>(_ key: ReferenceWritableKeyPath<WindowModel, Value?>) -> Binding<Bool> {
         Binding(get: { window[keyPath: key] != nil }, set: { if !$0 { window[keyPath: key] = nil } })
     }
 
-
-    private func delete() {
-        guard let thread = window.deleting, let connection = window.connection else { return }
+    private func delete(_ thread: ThreadModel) {
+        guard let connection = window.connection else { return }
         window.deleting = nil
         // Every window showing it moves to New Chat first, so none is left on a deleted chat.
         for other in window.app.openWindows where other.selectedThread === thread { other.newChat() }

@@ -285,7 +285,7 @@ public struct ChatCommands: View {
             .disabled(!settings.isEnabled)
             Divider()
             // Not ⌘;, which is Edit ▸ Spelling and Grammar ▸ Check Document Now.
-            Button("Ask a Side Question…") { window.askingSideQuestion = true }
+            Button("Ask a Side Question…") { window.sideQuestion = window.selectedThread }
                 .keyboardShortcut(";", modifiers: [.command, .option])
                 .disabled(window.selectedThread == nil)
             Divider()

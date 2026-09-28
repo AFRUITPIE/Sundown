@@ -18,6 +18,22 @@ struct ThreadView: View {
             // Find in Chat's bar, over the transcript while it's open.
             .safeAreaBar(edge: .top) { FindBarHost(thread: thread) }
             .task(id: thread.id) { await connection.open(thread) }
+            .modifier(ProxyIcon(directory: connection.host.isLocal ? thread.cwd : nil))
+    }
+}
+
+/// The chat's directory as the window's proxy icon, on this Mac: dragged, it's the directory, and
+/// ⌘-clicking the title shows its path. Here rather than on the shell, which keeps one identity
+/// while the chat changes.
+private struct ProxyIcon: ViewModifier {
+    let directory: String?
+
+    func body(content: Content) -> some View {
+        if let directory {
+            content.navigationDocument(URL(filePath: directory, directoryHint: .isDirectory))
+        } else {
+            content
+        }
     }
 }
 

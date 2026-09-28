@@ -19,6 +19,8 @@ struct GeneralSettings: View {
                     ForEach(Appearance.NewChatFolder.allCases) { Text($0.label).tag($0) }
                 }
                 Toggle("Start in a New Worktree", isOn: $app.appearance.worktreeByDefault)
+                // Also turned off by the offer's own Don't Ask Again; here to turn it back on.
+                Toggle("Offer to Remove Worktrees", isOn: $app.appearance.offersWorktreeRemoval)
             }
             Section("Chats") {
                 Picker("Send With", selection: $app.appearance.sendShortcut) {

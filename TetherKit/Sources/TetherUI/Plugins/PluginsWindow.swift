@@ -36,15 +36,15 @@ public struct PluginsWindow: View {
 
     public var body: some View {
         decorated
-            .alert("Couldn’t Change the Plugin", isPresented: showingError) {
+            .alert("Couldn’t Change the Plugin", isPresented: showingError, presenting: error) { _ in
                 Button("OK", role: .cancel) {}
-            } message: {
-                Text(error ?? "")
+            } message: { error in
+                Text(error)
             }
-            .alert(uninstallTitle, isPresented: showingUninstall) {
-                Button("Uninstall", action: uninstall)
-                Button("Cancel", role: .cancel) { uninstalling = nil }
-            } message: {
+            .confirmationDialog(uninstallTitle, isPresented: showingUninstall, titleVisibility: .visible,
+                                presenting: uninstalling) { plugin in
+                Button("Uninstall", role: .destructive) { uninstall(plugin) }
+            } message: { _ in
                 Text("New chats won’t have its skills, agents or commands.")
             }
             .frame(minWidth: 560, minHeight: 420)
@@ -82,8 +82,8 @@ public struct PluginsWindow: View {
 
     private var uninstallTitle: String { "Uninstall \(uninstalling?.name ?? "")?" }
 
-    private func uninstall() {
-        if let plugin = uninstalling { change(plugin.id) { try await $0.uninstallPlugin(plugin, cwd: folder) } }
+    private func uninstall(_ plugin: InstalledPlugin) {
+        change(plugin.id) { try await $0.uninstallPlugin(plugin, cwd: folder) }
         uninstalling = nil
     }
 

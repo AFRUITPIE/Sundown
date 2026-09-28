@@ -49,15 +49,14 @@ struct SideQuestionSheet: View {
                     .keyboardShortcut(.defaultAction)
                     .disabled(asking || question.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            HStack {
-                Spacer()
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-            }
         }
-        .padding(20)
-        .frame(width: 520)
-        .onAppear { focused = true }
+        .scenePadding()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+        }
+        // A form sheet's width, as tall as the questions asked so far.
+        .presentationSizing(.form.fitted(horizontal: false, vertical: true))
+        .defaultFocus($focused, true)
     }
 
     private func ask() {

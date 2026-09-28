@@ -12,6 +12,8 @@ public struct Appearance: Codable, Equatable, Sendable {
     public var sendShortcut: SendShortcut = .returnKey
     public var newChatFolder: NewChatFolder = .recent
     public var worktreeByDefault = false
+    /// Archiving or deleting a chat that worked in a worktree of Tether's offers to remove it.
+    public var offersWorktreeRemoval = true
     public var sessionTools = false
     /// Off by default, as in Claude Code: Bypass Permissions has to be asked for.
     public var offerBypass = false
@@ -146,6 +148,7 @@ public struct Appearance: Codable, Equatable, Sendable {
         sendShortcut = value(.sendShortcut, d.sendShortcut)
         newChatFolder = value(.newChatFolder, d.newChatFolder)
         worktreeByDefault = value(.worktreeByDefault, d.worktreeByDefault)
+        offersWorktreeRemoval = value(.offersWorktreeRemoval, d.offersWorktreeRemoval)
         sessionTools = value(.sessionTools, d.sessionTools)
         offerBypass = value(.offerBypass, d.offerBypass)
         openFilesWith = value(.openFilesWith, d.openFilesWith)

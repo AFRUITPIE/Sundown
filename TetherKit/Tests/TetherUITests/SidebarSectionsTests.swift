@@ -108,7 +108,7 @@ struct SidebarSectionsTests {
             chat("some", cwd: "/Users/hayden/Code/tether-app", daysAgo: 2),
         ], .directory)
 
-        #expect(result.map(\.title) == ["No Folder", "tether-app"])
+        #expect(result.map(\.title) == ["No Directory", "tether-app"])
         #expect(result[0].help == nil)
     }
 

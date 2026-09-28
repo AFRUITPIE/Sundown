@@ -10,8 +10,6 @@ struct ChangesPane: View {
     let connection: HostConnection
     @State private var state: Loaded<WorkingChanges?>
     @State private var comments: [ReviewComment] = []
-    @State private var commenting: ReviewComment?
-    @State private var draft = ""
     /// Where the repository is on this Mac, which git's paths are relative to, for Open and Show
     /// in Finder; nil on another host. Found when the changes are read, not in a body.
     @State private var repository: String?
@@ -41,20 +39,6 @@ struct ChangesPane: View {
                 guard fetches else { return }
                 await refresh()
             }
-            .alert("Comment on Line \(commenting?.line ?? 0)", isPresented: Binding(get: { commenting != nil }, set: { if !$0 { commenting = nil } })) {
-                TextField("Comment", text: $draft)
-                Button("Add") {
-                    let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if var comment = commenting, !text.isEmpty {
-                        comment.text = text
-                        comments.append(comment)
-                    }
-                    commenting = nil
-                }
-                Button("Cancel", role: .cancel) { commenting = nil }
-            } message: {
-                Text(commenting?.path ?? "")
-            }
     }
 
     private struct Key: Equatable { let thread: String; let turn: String? }
@@ -82,10 +66,7 @@ struct ChangesPane: View {
                     ForEach(changes.files) { file in
                         FileSection(file: file, location: repository.map { ($0 as NSString).appendingPathComponent(file.path) },
                                     comments: comments.filter { $0.path == file.path },
-                                    comment: { line in
-                                        draft = ""
-                                        commenting = ReviewComment(path: file.path, line: line, text: "")
-                                    },
+                                    add: { line, text in comments.append(ReviewComment(path: file.path, line: line, text: text)) },
                                     remove: { c in comments.removeAll { $0.id == c.id } })
                     }
                 }
@@ -161,7 +142,7 @@ private struct FileSection: View {
     /// The file on this Mac; nil on another host.
     let location: String?
     let comments: [ChangesPane.ReviewComment]
-    let comment: (Int) -> Void
+    let add: (Int, String) -> Void
     let remove: (ChangesPane.ReviewComment) -> Void
     @State private var expanded = true
     @State private var showsAll = false
@@ -190,6 +171,8 @@ private struct FileSection: View {
                 Text("Binary File").font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
             } else {
                 let byLine = Dictionary(grouping: comments, by: \.line)
+                // The widest line number, whose width every number is given, so the code lines up.
+                let widest = file.hunks.flatMap(\.lines).compactMap { $0.newNumber ?? $0.oldNumber }.max().map(String.init) ?? ""
                 VStack(alignment: .leading, spacing: 6) {
                     // Code keeps its shape: a long line scrolls sideways rather than wrapping. A
                     // plain stack, bounded by `lineLimit`: a lazy one in here sized itself to the
@@ -205,7 +188,7 @@ private struct FileSection: View {
                                     .lineLimit(1)
                                     .padding(.vertical, 3)
                                 ForEach(part.lines) { line in
-                                    LineRow(line: line, comment: comment)
+                                    LineRow(line: line, widest: widest, add: add)
                                     ForEach(byLine[line.newNumber ?? line.oldNumber ?? -1] ?? []) { c in
                                         CommentRow(comment: c) { remove(c) }
                                     }
@@ -267,32 +250,43 @@ private struct FileSection: View {
     }
 }
 
+/// A line of the diff, a button that leaves a comment on it in a popover beside the line.
 private struct LineRow: View {
     let line: FileDiff.Line
-    let comment: (Int) -> Void
+    /// The file's widest line number, which sets the numbers' column.
+    let widest: String
+    let add: (Int, String) -> Void
+    @State private var commenting = false
 
-    private var number: Int? { line.newNumber ?? line.oldNumber }
+    private var number: Int { line.newNumber ?? line.oldNumber ?? 0 }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(number.map(String.init) ?? "")
-                .foregroundStyle(.tertiary)
-                .frame(width: 30, alignment: .trailing)
-            Text(sign).foregroundStyle(.secondary)
-            Text(line.text.isEmpty ? " " : line.text)
-                .fixedSize()
-                .frame(maxWidth: .infinity, alignment: .leading)
+        Button { commenting = true } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                ZStack(alignment: .trailing) {
+                    Text(widest).hidden()
+                    Text(String(number)).foregroundStyle(.tertiary)
+                }
+                Text(sign).foregroundStyle(.secondary)
+                Text(line.text.isEmpty ? " " : line.text)
+                    .fixedSize()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.caption.monospaced())
+            .padding(.trailing, 6)
+            .padding(.vertical, 1)
+            .background(background)
+            .contentShape(.rect)
         }
-        .font(.caption.monospaced())
-        .padding(.trailing, 6)
-        .padding(.vertical, 1)
-        .background(background)
-        .contentShape(.rect)
-        .onTapGesture { if let number { comment(number) } }
-        .contextMenu {
-            if let number { Button("Comment on Line \(number)…") { comment(number) } }
+        .buttonStyle(.plain)
+        .popover(isPresented: $commenting, arrowEdge: .leading) {
+            LineCommentEditor(line: number) { add(number, $0) }
         }
+        .contextMenu { Button("Comment on Line \(number)…") { commenting = true } }
         .help("Comment")
+        .accessibilityLabel("Line \(number)")
+        .accessibilityValue(line.text)
+        .accessibilityHint("Comments on the line")
     }
 
     private var sign: String {
@@ -309,6 +303,39 @@ private struct LineRow: View {
         case .removed: .red.opacity(0.15)
         case .context: .clear
         }
+    }
+}
+
+/// A comment being written on one line, in the popover beside it.
+private struct LineCommentEditor: View {
+    let line: Int
+    let add: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Comment on Line \(line)").font(.headline)
+            TextField("Comment", text: $text, axis: .vertical)
+                .lineLimit(2...8)
+                .focused($focused)
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Add") {
+                    add(trimmed)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(trimmed.isEmpty)
+            }
+        }
+        .frame(minWidth: 260)
+        .padding()
+        .defaultFocus($focused, true)
     }
 }
 

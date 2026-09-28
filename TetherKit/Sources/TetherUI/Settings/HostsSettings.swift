@@ -31,15 +31,14 @@ struct HostsSettings: View {
                 selection = host.id
             }
         }
-        .alert("Remove “\(hostToRemove?.name ?? "")”?", isPresented: Binding(
+        .confirmationDialog("Remove “\(hostToRemove?.name ?? "")”?", isPresented: Binding(
             get: { hostToRemove != nil },
             set: { if !$0 { hostToRemove = nil } }
-        ), presenting: hostToRemove) { host in
+        ), titleVisibility: .visible, presenting: hostToRemove) { host in
             Button("Remove", role: .destructive) {
                 app.removeHost(host.id)
                 selection = HostConfig.local.id
             }
-            Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("Its chats stay on the host.")
         }
@@ -58,23 +57,13 @@ struct HostsSettings: View {
 
             // The add/remove pair: one control, so the thinner minus glyph gets the plus's height.
             ControlGroup {
-                Button {
-                    addingHost = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .accessibilityLabel("Add SSH Host")
-                .help("Add SSH Host")
-
-                Button {
-                    hostToRemove = removableHost
-                } label: {
-                    Image(systemName: "minus")
-                }
-                .disabled(removableHost == nil)
-                .accessibilityLabel("Remove Host")
-                .help("Remove Host")
+                Button("Add SSH Host", systemImage: "plus") { addingHost = true }
+                    .help("Add SSH Host")
+                Button("Remove Host", systemImage: "minus") { hostToRemove = removableHost }
+                    .disabled(removableHost == nil)
+                    .help("Remove Host")
             }
+            .labelStyle(.iconOnly)
         }
         .padding()
         .background(Color(nsColor: .windowBackgroundColor))

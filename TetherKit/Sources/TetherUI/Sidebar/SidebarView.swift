@@ -39,6 +39,13 @@ struct SidebarView: View {
                 } header: {
                     header(section)
                 }
+                // New Chat Here, shown on hover over a directory's section, as the system shows a
+                // section's actions.
+                .sectionActions {
+                    if let folder = section.folder {
+                        Button("New Chat Here", systemImage: "square.and.pencil") { newChat(in: folder) }
+                    }
+                }
             }
         }
         .listStyle(.sidebar)
@@ -56,13 +63,10 @@ struct SidebarView: View {
             newChat(in: folder.path)
             return true
         }
-        .alert(archiveTitle, isPresented: Binding(get: { archivingFolder != nil }, set: { if !$0 { archivingFolder = nil } })) {
-            Button("Archive") {
-                if let archive = archivingFolder { window.setArchived(archive.threads, true) }
-                archivingFolder = nil
-            }
-            Button("Cancel", role: .cancel) { archivingFolder = nil }
-        } message: {
+        .confirmationDialog(archiveTitle, isPresented: Binding(get: { archivingFolder != nil }, set: { if !$0 { archivingFolder = nil } }),
+                            titleVisibility: .visible, presenting: archivingFolder) { archive in
+            Button("Archive") { window.setArchived(archive.threads, true) }
+        } message: { _ in
             Text("View ▸ Show ▸ Archived lists them again.")
         }
     }
@@ -97,6 +101,14 @@ struct SidebarView: View {
     }
 
     @ViewBuilder private func rowView(_ row: ResolvedRow, in section: ResolvedSection) -> some View {
+        if window.renamingInPlace === row.thread {
+            ChatRenameField(window: window, thread: row.thread)
+        } else {
+            chatRow(row, in: section)
+        }
+    }
+
+    @ViewBuilder private func chatRow(_ row: ResolvedRow, in section: ResolvedSection) -> some View {
         switch appearance.sidebar {
         case .activity:
             ActivityRow(thread: row.thread, isPinned: row.isPinned)
@@ -119,7 +131,8 @@ struct SidebarView: View {
 
     @ViewBuilder private func header(_ section: ResolvedSection) -> some View {
         if let folder = section.folder {
-            FolderHeader(title: section.title, help: section.help, newChat: { newChat(in: folder) })
+            Text(section.title)
+                .help(section.help ?? "")
                 .contextMenu { folderMenu(folder, section) }
         } else if let help = section.help {
             Text(section.title).help(help)
@@ -216,6 +229,35 @@ struct SidebarView: View {
     }
 }
 
+/// A chat's row while it's renamed in place: its title in a field, committed on Return or when the
+/// field loses focus, and put back on Esc.
+struct ChatRenameField: View {
+    let window: WindowModel
+    let thread: ThreadModel
+    @State private var title = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("Title", text: $title)
+            .focused($focused)
+            .onSubmit(commit)
+            .onExitCommand { window.renamingInPlace = nil }
+            .onChange(of: focused) { if !focused { commit() } }
+            .onAppear {
+                title = thread.title
+                focused = true
+            }
+    }
+
+    private func commit() {
+        guard window.renamingInPlace === thread else { return }
+        window.renamingInPlace = nil
+        let new = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !new.isEmpty, new != thread.title, let connection = window.connection else { return }
+        Task { await connection.rename(thread, new) }
+    }
+}
+
 /// A host that isn’t connected, and how to connect it: the sidebar’s empty state, and the Scheduled
 /// Tasks window’s. A chat and New Chat say it with `ConnectionStatusCard` instead.
 /// Empty while the host is connected or connecting.
@@ -241,41 +283,6 @@ struct NotConnectedView: View {
         case .connecting, .connected:
             EmptyView()
         }
-    }
-}
-
-/// A folder section's header: New Chat Here appears on hover, as a section's actions do in a
-/// Finder or Mail sidebar. VoiceOver reaches it as the header's action instead.
-struct FolderHeader: View {
-    let title: String
-    let help: String?
-    let newChat: () -> Void
-    @State private var hovering: Bool
-
-    /// `hovering` is a parameter only so a preview can show the button.
-    init(title: String, help: String?, hovering: Bool = false, newChat: @escaping () -> Void) {
-        self.title = title
-        self.help = help
-        self.newChat = newChat
-        _hovering = State(initialValue: hovering)
-    }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Text(title)
-            Spacer(minLength: 0)
-            Button("New Chat Here", systemImage: "square.and.pencil", action: newChat)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .help("New Chat Here")
-                .opacity(hovering ? 1 : 0)
-                .allowsHitTesting(hovering)
-                .accessibilityHidden(true)
-        }
-        .help(help ?? "")
-        .onHover { hovering = $0 }
-        .accessibilityElement(children: .combine)
-        .accessibilityAction(named: "New Chat Here", newChat)
     }
 }
 
@@ -335,22 +342,19 @@ private func pinningSample(_ app: AppModel = .sample()) -> AppModel {
     return sidebarPreview(app)
 }
 
-#Preview("Folder header (hovered)") {
+/// New Chat Here is a section action: the system shows it while the pointer is over the section,
+/// which a preview can't do.
+#Preview("Directory sections") {
     List {
         Section {
             ChatRow(thread: .sampleIdleChat(), grouping: .directory)
         } header: {
-            FolderHeader(title: "tether-app", help: "~/Code/tether-app", hovering: true) {}
+            Text("tether-app")
         }
-        Section {
-            ChatRow(thread: .sampleListed(title: "Trace the reconnect path", cwd: "/Users/hayden/Code/tether-server",
-                                          secondsAgo: 90_000), grouping: .directory)
-        } header: {
-            FolderHeader(title: "tether-server", help: "~/Code/tether-server") {}
-        }
+        .sectionActions { Button("New Chat Here", systemImage: "square.and.pencil") {} }
     }
     .listStyle(.sidebar)
-    .frame(width: 280, height: 200)
+    .frame(width: 280, height: 120)
 }
 
 #Preview("Sidebar (two hosts)") {

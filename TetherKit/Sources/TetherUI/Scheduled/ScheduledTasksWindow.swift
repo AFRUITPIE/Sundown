@@ -207,6 +207,7 @@ private struct ScheduledTaskEditor: View {
     @State private var enabled: Bool
     @State private var error: String?
     @State private var confirmingDelete = false
+    @State private var choosingFolder = false
     @State private var running = false
     @FocusState private var promptFocused: Bool
 
@@ -234,8 +235,11 @@ private struct ScheduledTaskEditor: View {
             Section {
                 TextField("Name", text: $name)
                     .onSubmit(save)
-                Picker("Directory", selection: $cwd) {
-                    ForEach(folders, id: \.self) { Text($0.abbreviatingHome).tag($0) }
+                // Recent directories, then Choose Directory… for any other, as New Chat offers them.
+                Picker("Directory", selection: Binding<String?>(get: { cwd }, set: { if let new = $0 { cwd = new } else { choosingFolder = true } })) {
+                    ForEach(folders, id: \.self) { Text($0.abbreviatingHome).tag(Optional($0)) }
+                    Divider()
+                    Text("Choose Directory…").tag(String?.none)
                 }
             }
             Section("Prompt") {
@@ -314,17 +318,18 @@ private struct ScheduledTaskEditor: View {
         .onChange(of: enabled) { save() }
         .onChange(of: promptFocused) { if !promptFocused { save() } }
         .onDisappear(perform: save)
-        .alert("Delete “\(task.name)”?", isPresented: $confirmingDelete) {
-            Button("Delete") {
+        .directoryChooser(isPresented: $choosingFolder, connection: connection, current: cwd) { cwd = $0 }
+        .confirmationDialog("Delete “\(task.name)”?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
                 Task {
                     try? await connection.deleteScheduledTask(task.id)
                     deleted()
                 }
             }
-            Button("Cancel", role: .cancel) {}
         } message: {
             Text("It won’t run again. Chats it already started are kept.")
         }
+        .dialogSeverity(.critical)
     }
 
     /// The host's recent folders, and the task's own if it isn't one.
