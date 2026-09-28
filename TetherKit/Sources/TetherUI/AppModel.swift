@@ -212,12 +212,15 @@ public final class AppModel {
     private let defaults: UserDefaults
     private let draftStore: DraftStore
     private static let hostsKey = "tether.hosts.v1"
+    private static let windowKey = "tether.window.v1"
     private static let draftsKey = "tether.drafts.v1"
     private static let appearanceKey = "tether.appearance.v1"
     private static let alertsKey = "tether.alerts.v1"
     /// `didSet` runs while `load()` restores values; saving then would write half-restored state.
     private var isLoading = false
     private var connectedAll = false
+    /// What each defaults key was last written with, or read as, so the same bytes aren't written again.
+    @ObservationIgnored private var written: [String: Data] = [:]
 
     /// Whether decorative motion is left out to save energy (`ReducedEffects`), put in the
     /// environment beside the settings.
@@ -300,6 +303,7 @@ public final class AppModel {
         if lastHostID == id { lastHostID = HostConfig.local.id; lastThreadID = nil }
         for window in openWindows { window.hostRemoved(id) }
         save()
+        saveWindow()
     }
 
     // MARK: windows
@@ -326,7 +330,7 @@ public final class AppModel {
         lastThreadID = window.threadID
         lastShowInspector = window.showInspector
         lastInspectorPane = window.inspectorPane
-        save()
+        saveWindow()
     }
 
     /// A window started showing `thread`.
@@ -397,6 +401,7 @@ public final class AppModel {
         var defaultEffort: String?
         var defaultPermissionMode: String?
         var transcriptWidth: String?
+        /// Where the last window was: in `LastWindow` now, read from here once.
         var showInspector: Bool?
         var inspectorPane: String?
         var hostID: UUID?
@@ -408,10 +413,29 @@ public final class AppModel {
         var pinnedChats: [String: [String]]?
     }
 
+    /// Where the most recently used window was, under a key of its own: it changes with every chat
+    /// switch and inspector change, and with the rest it wrote the hosts, pins and preferences again
+    /// each time.
+    private struct LastWindow: Codable {
+        var hostID: UUID?
+        var threadID: String?
+        var showInspector: Bool?
+        var inspectorPane: String?
+    }
+
+    /// Sorted keys, so the same values are the same bytes and an unchanged save writes nothing.
+    private static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return encoder
+    }()
+
     private func load() {
         isLoading = true
         defer { isLoading = false }
-        let stored = defaults.data(forKey: Self.hostsKey).flatMap { try? JSONDecoder().decode(Stored.self, from: $0) }
+        let storedData = defaults.data(forKey: Self.hostsKey)
+        written[Self.hostsKey] = storedData
+        let stored = storedData.flatMap { try? JSONDecoder().decode(Stored.self, from: $0) }
         hosts = stored?.hosts ?? []
         if !hosts.contains(where: { $0.id == HostConfig.local.id }) { hosts.insert(.local, at: 0) }
         for i in hosts.indices {
@@ -432,23 +456,35 @@ public final class AppModel {
         }
         appearance = defaults.data(forKey: Self.appearanceKey).flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
         alerts = defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode(AlertPreferences.self, from: $0) } ?? AlertPreferences()
-        guard let s = stored else { return }
-        defaultModel = s.defaultModel
-        defaultEffort = s.defaultEffort
-        defaultPermissionMode = s.defaultPermissionMode ?? "default"
-        transcriptWidth = s.transcriptWidth.flatMap(TranscriptWidth.init(rawValue:)) ?? .narrow
-        lastShowInspector = s.showInspector ?? false
-        lastInspectorPane = s.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
-        sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
-        textScale = s.textScale.map { CGFloat($0) } ?? 1
-        sidebarFilter = s.sidebarFilter.flatMap(SidebarFilter.init(rawValue:)) ?? .all
-        for (host, ids) in s.pinnedChats ?? [:] {
-            if let id = UUID(uuidString: host), !ids.isEmpty { pinnedChats[id] = Set(ids) }
+        if let s = stored {
+            defaultModel = s.defaultModel
+            defaultEffort = s.defaultEffort
+            defaultPermissionMode = s.defaultPermissionMode ?? "default"
+            transcriptWidth = s.transcriptWidth.flatMap(TranscriptWidth.init(rawValue:)) ?? .narrow
+            sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
+            textScale = s.textScale.map { CGFloat($0) } ?? 1
+            sidebarFilter = s.sidebarFilter.flatMap(SidebarFilter.init(rawValue:)) ?? .all
+            for (host, ids) in s.pinnedChats ?? [:] {
+                if let id = UUID(uuidString: host), !ids.isEmpty { pinnedChats[id] = Set(ids) }
+            }
         }
+        let windowData = defaults.data(forKey: Self.windowKey)
+        written[Self.windowKey] = windowData
+        let window = windowData.flatMap { try? JSONDecoder().decode(LastWindow.self, from: $0) }
+            // Kept with the rest by an older build: taken from there, once.
+            ?? stored.map { LastWindow(hostID: $0.hostID, threadID: $0.threadID, showInspector: $0.showInspector, inspectorPane: $0.inspectorPane) }
+        lastShowInspector = window?.showInspector ?? false
+        lastInspectorPane = window?.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
         // A remembered host can disappear between launches; this Mac is always configured.
-        if let id = s.hostID, hosts.contains(where: { $0.id == id }) {
+        if let id = window?.hostID, hosts.contains(where: { $0.id == id }) {
             lastHostID = id
-            lastThreadID = s.threadID
+            lastThreadID = window?.threadID
+        }
+        // Moved to its own key now, not when a window next changes: an older build's fields go
+        // with the next save of the rest.
+        if windowData == nil, stored?.hostID != nil {
+            isLoading = false
+            saveWindow()
         }
     }
 
@@ -468,11 +504,24 @@ public final class AppModel {
         }
         let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
                        defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
-                       showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue, hostID: lastHostID,
-                       sidebarGrouping: sidebarGrouping.rawValue, threadID: lastThreadID, textScale: Double(textScale),
+                       sidebarGrouping: sidebarGrouping.rawValue, textScale: Double(textScale),
                        sidebarFilter: sidebarFilter.rawValue,
                        pinnedChats: Dictionary(uniqueKeysWithValues: pinnedChats.map { ($0.key.uuidString, $0.value.sorted()) }))
-        if let data = try? JSONEncoder().encode(s) { defaults.set(data, forKey: Self.hostsKey) }
+        write(try? Self.encoder.encode(s), forKey: Self.hostsKey)
+    }
+
+    private func saveWindow() {
+        guard !isLoading else { return }
+        let window = LastWindow(hostID: lastHostID, threadID: lastThreadID,
+                                showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue)
+        write(try? Self.encoder.encode(window), forKey: Self.windowKey)
+    }
+
+    /// Writes `data` under `key` unless it's what the key already holds.
+    private func write(_ data: Data?, forKey key: String) {
+        guard let data, data != written[key] else { return }
+        written[key] = data
+        defaults.set(data, forKey: key)
     }
 }
 
@@ -521,6 +570,9 @@ extension AppModel {
             app.lastHostID = connections.first?.id ?? HostConfig.local.id
             app.lastThreadID = nil
         }
+        // A kept store has these hosts, as adding them in Settings would, so the last window's
+        // host is still there on relaunch.
+        if defaults != nil { app.save() }
         return app
     }
 }
