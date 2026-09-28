@@ -49,7 +49,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .searchable(text: $search, placement: .sidebar, prompt: "Search Chats")
+        .searchable(text: $search, isPresented: $window.searchingChats, placement: .sidebar, prompt: "Search Chats")
         // One menu for the list: the row's when a row was hit, the list's own when the empty area was.
         .contextMenu(forSelectionType: String.self) { menu(for: $0, in: byID) } primaryAction: { ids in
             // Double-click, as Mail opens a message: in a window of its own.

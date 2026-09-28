@@ -117,6 +117,8 @@ public final class WindowModel {
 
     /// Find in Chat for this window's transcript.
     public let find = TranscriptFind()
+    /// The sidebar's Search Chats field has the keyboard (Edit ▸ Find ▸ Search Chats, ⌥⌘F).
+    public var searchingChats = false
     /// Chat ▸ Previous Prompt and Next Prompt, for this window's transcript.
     public let prompts = PromptNavigator()
 

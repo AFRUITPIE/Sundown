@@ -50,13 +50,16 @@ public struct PluginsWindow: View {
             .frame(minWidth: 560, minHeight: 420)
     }
 
+    /// In a navigation stack, which is where search belongs.
     private var decorated: some View {
-        content
-            .navigationTitle("Plugins")
-            .navigationSubtitle(connection?.host.name ?? "")
-            .searchable(text: $search, prompt: "Search Plugins")
-            .toolbar { toolbar }
-            .task(id: folder) { await reload() }
+        NavigationStack {
+            content
+                .navigationTitle("Plugins")
+                .navigationSubtitle(connection?.host.name ?? "")
+                .searchable(text: $search, prompt: "Search Plugins")
+                .toolbar { toolbar }
+        }
+        .task(id: folder) { await reload() }
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {

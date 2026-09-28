@@ -286,7 +286,8 @@ public struct FileCommands: View {
 }
 
 /// Edit ▸ Find, for the frontmost window's chat: Find… opens the bar over the transcript, and Find
-/// Next and Previous step through what it matched. Dimmed on New Chat, where there's nothing to find.
+/// Next and Previous step through what it matched, dimmed on New Chat, where there's nothing to
+/// find; and Search Chats, the sidebar's field.
 public struct FindCommands: View {
     @FocusedValue(\.window) private var window
 
@@ -295,14 +296,21 @@ public struct FindCommands: View {
     public var body: some View {
         let find = window?.selectedThread == nil ? nil : window?.find
         Menu("Find") {
-            Button("Find…") { find?.show() }
-                .keyboardShortcut("f")
-            Button("Find Next") { if find?.isPresented == true { find?.next() } else { find?.show() } }
-                .keyboardShortcut("g")
-            Button("Find Previous") { if find?.isPresented == true { find?.previous() } else { find?.show() } }
-                .keyboardShortcut("g", modifiers: [.command, .shift])
+            Group {
+                Button("Find…") { find?.show() }
+                    .keyboardShortcut("f")
+                Button("Find Next") { if find?.isPresented == true { find?.next() } else { find?.show() } }
+                    .keyboardShortcut("g")
+                Button("Find Previous") { if find?.isPresented == true { find?.previous() } else { find?.show() } }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+            }
+            .disabled(find == nil)
+            Divider()
+            // The sidebar's search field, as Mail's Mailbox Search is ⌥⌘F.
+            Button("Search Chats") { window?.searchingChats = true }
+                .keyboardShortcut("f", modifiers: [.command, .option])
+                .disabled(window == nil)
         }
-        .disabled(find == nil)
     }
 }
 

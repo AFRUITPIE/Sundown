@@ -95,18 +95,18 @@ struct FindBar: View {
             .disabled(find.matches.isEmpty)
             Spacer(minLength: 0)
             Button("Done") { find.dismiss() }
-                .keyboardShortcut(.cancelAction)
         }
         .controlSize(.small)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        // Esc closes the bar from within it; from the message field it's still the field's (it
+        // stops a running turn), not the bar's.
+        .onExitCommand { find.dismiss() }
         .onAppear { find.update(rows: rows) }
-        // Typing goes straight into the field: ⌘F is how people start a search. Deferred until the
-        // bar is in the window, which it isn't yet when it appears.
-        .task(id: find.focusRequest) {
-            try? await Task.sleep(for: .milliseconds(100))
-            focused = true
-        }
+        // Typing goes straight into the field: ⌘F is how people start a search, even from the
+        // message field.
+        .defaultFocus($focused, true, priority: .userInitiated)
+        .onChange(of: find.focusRequest) { focused = true }
         .onChange(of: find.query) { find.update(rows: rows) }
         .onChange(of: rows.count) { find.update(rows: rows) }
     }
