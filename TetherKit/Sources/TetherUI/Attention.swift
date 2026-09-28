@@ -167,7 +167,7 @@ final class AttentionCenter: NSObject {
         let thread = connection.thread(id)
         let request = thread.pending.first { $0.id == info.requestID }?.request
         guard Self.shouldNotify(.needsInput, prefs: app.alerts, appIsActive: app.isActive, chatIsShown: isShown(thread)) else {
-            if isShown(thread) { announce(Self.describe(request)) }
+            if isShown(thread) { announce(Self.describe(request), urgent: true) }
             return
         }
         post(id: "request-\(info.requestID ?? id)", title: thread.title, body: Self.describe(request),
@@ -211,10 +211,12 @@ final class AttentionCenter: NSObject {
     }
 
     /// Spoken by VoiceOver, for what happens in the chat on screen while the reader is elsewhere
-    /// in it.
-    private func announce(_ text: String) {
+    /// in it: a request, which waits on them, before whatever is being read; a finished reply after it.
+    private func announce(_ text: String, urgent: Bool = false) {
         guard NSWorkspace.shared.isVoiceOverEnabled else { return }
-        AccessibilityNotification.Announcement(text).post()
+        var announcement = AttributedString(text)
+        announcement.accessibilitySpeechAnnouncementPriority = urgent ? .high : .low
+        AccessibilityNotification.Announcement(announcement).post()
     }
 
     // MARK: delivering

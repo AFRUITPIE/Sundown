@@ -81,6 +81,7 @@ struct NewChatView: View {
             .dropDestination(for: URL.self, isEnabled: connection?.host.isLocal == true) { urls, _ in
                 if let folder = urls.first(where: \.hasDirectoryPath) { choose(folder.path) }
             }
+            .accessibilityDropPoint(.center, description: Text("Work in Directory"))
             .onAppear { useFirstProjectIfUnset() }
             .onChange(of: connection?.projects.first?.cwd) { useFirstProjectIfUnset() }
             // Read again when the window comes back to the front, since the branch may have been

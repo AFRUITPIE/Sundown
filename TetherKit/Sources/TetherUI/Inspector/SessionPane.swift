@@ -43,8 +43,9 @@ struct SessionPane: View {
                         } currentValueLabel: {
                             Text("\(Int((used * 100).rounded()))%")
                         }
-                        // The accent color until the limit is near.
+                        // The accent color until the limit is near, and said in words as well.
                         .tint(limit.status == .allowed ? nil : limit.status == .warning ? .orange : .red)
+                        .accessibilityValue("\(Int((used * 100).rounded())) percent\(limit.status == .allowed ? "" : limit.status == .warning ? ", near the limit" : ", limit reached")")
                     }
                     if let reset = limit.resetsAt {
                         LabeledContent("Resets", value: reset.formatted(date: .abbreviated, time: .shortened))

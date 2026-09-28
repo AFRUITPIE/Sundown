@@ -101,6 +101,10 @@ private struct MessageMenu: ViewModifier {
             .animation(.easeOut(duration: 0.12), value: hovering)
             // After the overlay, so moving onto the bar doesn't hide it.
             .onHover { hovering = $0 }
+            // A reply is one element, as a prompt's bubble is, so its actions are the reply's and not
+            // each paragraph's; and says when it was sent, which the eye gets from the hover bar.
+            .modifier(ReplyElement(isReply: isMarkdown))
+            .accessibilityCustomContent(Text("Sent"), Text(Format.messageTime(msSinceEpoch: sentAt)))
             .accessibilityAction(named: "Copy", copyText)
             .accessibilityAction(named: "Fork from Here") { forkChat(id) }
             .accessibilityActions {
@@ -165,6 +169,20 @@ struct CopyButton: View {
 extension View {
     func messageMenu(id: String, text: String, isMarkdown: Bool, sentAt: Double) -> some View {
         modifier(MessageMenu(id: id, text: text, isMarkdown: isMarkdown, sentAt: sentAt))
+    }
+}
+
+/// A reply as one VoiceOver element holding its paragraphs, named for who wrote it. A prompt's
+/// bubble already is one.
+private struct ReplyElement: ViewModifier {
+    let isReply: Bool
+
+    func body(content: Content) -> some View {
+        if isReply {
+            content.accessibilityElement(children: .contain).accessibilityLabel("Claude")
+        } else {
+            content
+        }
     }
 }
 
@@ -302,6 +320,8 @@ struct UserMessageView: View {
                         if let ns = images.image(for: img.data) {
                             Image(nsImage: ns).resizable().scaledToFit().frame(maxWidth: 240, maxHeight: 180)
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
+                                .accessibilityLabel("Attached Image")
+                                .accessibilityIgnoresInvertColors()
                         }
                     case .fileRef(let f):
                         Label(f.path, systemImage: "doc").scaledFont(.callout)

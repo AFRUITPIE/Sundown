@@ -78,6 +78,7 @@ struct FindBar: View {
                 .textFieldStyle(.roundedBorder)
                 .focused($focused)
                 .onSubmit { find.next() }
+                .accessibilityValue(status)
                 .accessibilityIdentifier("find.field")
                 .frame(maxWidth: 280)
             Text(status)
@@ -108,6 +109,8 @@ struct FindBar: View {
         .defaultFocus($focused, true, priority: .userInitiated)
         .onChange(of: find.focusRequest) { focused = true }
         .onChange(of: find.query) { find.update(rows: rows) }
+        // Where Next and Previous landed, said, since the match moves out of sight of the field.
+        .onChange(of: find.step) { AccessibilityNotification.Announcement(status).post() }
         .onChange(of: rows.count) { find.update(rows: rows) }
     }
 

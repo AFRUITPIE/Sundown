@@ -60,6 +60,7 @@ struct SidebarView: View {
         .dropDestination(for: URL.self, isEnabled: window.connection?.host.isLocal == true) { urls, _ in
             if let folder = urls.first(where: \.hasDirectoryPath) { newChat(in: folder.path) }
         }
+        .accessibilityDropPoint(.center, description: Text("New Chat in Directory"))
         // ⌫ archives the selected chat, as Mail's does a message; Edit ▸ Undo brings it back.
         .onDeleteCommand {
             if let thread = window.selectedThread { window.setArchived([thread], true) }

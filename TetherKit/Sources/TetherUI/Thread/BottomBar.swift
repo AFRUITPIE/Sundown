@@ -62,7 +62,8 @@ struct SuggestedTasksBar: View {
                     }
                     .buttonStyle(.glass)
                     .help("Open in New Chat")
-                    Button("Dismiss", systemImage: "xmark") { thread.dismissSuggestedTask(task.id) }
+                    // Named for its task: several of these can be listed at once.
+                    Button("Dismiss “\(task.title)”", systemImage: "xmark") { thread.dismissSuggestedTask(task.id) }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
                         .foregroundStyle(.secondary)
@@ -147,6 +148,9 @@ struct AuthStatusView: View {
                     Link(line, destination: url).font(.caption.monospaced())
                 } else {
                     Text(line).font(.caption.monospaced()).textSelection(.enabled)
+                        // A device code is read letter by letter, as it has to be typed.
+                        .accessibilityTextContentType(.console)
+                        .speechSpellsOutCharacters()
                 }
             }
             if let e = status.error { Text(e).font(.caption).foregroundStyle(.secondary) }

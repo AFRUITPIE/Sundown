@@ -16,8 +16,10 @@ struct DateSeparatorView: View {
             .frame(maxWidth: .infinity)
             // Nearer the prompt it dates than the reply above it.
             .padding(.top, 8)
-            // A heading, so VoiceOver's rotor moves through the chat by when it happened.
+            // The top heading, so VoiceOver's rotor moves through the chat by when it happened; a
+            // reply's own headings sit a level under it.
             .accessibilityAddTraits(.isHeader)
+            .accessibilityHeading(.h1)
             .accessibilityIdentifier("transcript.date")
     }
 }

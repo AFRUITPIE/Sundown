@@ -15,7 +15,7 @@ struct PendingRequestView: View {
             case .planApprove(let p): PlanPrompt(params: p) { thread.answer(pending, with: $0) }
             case .elicitationRequest(let e): ElicitationPrompt(params: e) { thread.answer(pending, with: $0) }
             case .dialogRequest(let d):
-                PromptCard(title: "Claude needs a decision", symbol: "questionmark.circle") {
+                PromptCard(title: "Claude Needs a Decision", symbol: "questionmark.circle") {
                     Text(d.dialogKind).scaledFont(.callout, design: .monospaced)
                     Text(d.payload.pretty).scaledFont(.caption, design: .monospaced).lineLimit(10)
                     HStack {
@@ -24,7 +24,7 @@ struct PendingRequestView: View {
                     }
                 }
             case .unknown(let method, _):
-                PromptCard(title: "Unsupported request", symbol: "questionmark.circle") {
+                PromptCard(title: "Unsupported Request", symbol: "questionmark.circle") {
                     Text(method).scaledFont(.callout, design: .monospaced)
                 }
             }
@@ -32,17 +32,25 @@ struct PendingRequestView: View {
     }
 }
 
+/// A request that waits on an answer: a heading, what's asked, and the answers. VoiceOver goes to
+/// its heading when it arrives, since nothing else can happen in the chat until it's answered.
 struct PromptCard<Content: View>: View {
     let title: String
     let symbol: String
     var tint: Color = .orange
     @ViewBuilder var content: Content
+    @AccessibilityFocusState private var headingFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: symbol).scaledFont(.headline).foregroundStyle(tint)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityFocused($headingFocused)
             content
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(title)
+        .onAppear { headingFocused = true }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(.regular.tint(tint.opacity(0.12)), in: .rect(cornerRadius: Layout.cardCornerRadius))
@@ -152,7 +160,7 @@ struct QuestionPrompt: View {
     @State private var other: [String: String] = [:]
 
     var body: some View {
-        PromptCard(title: "Claude has a question", symbol: "questionmark.bubble", tint: .blue) {
+        PromptCard(title: "Claude Has a Question", symbol: "questionmark.bubble", tint: .blue) {
             ForEach(params.questions, id: \.question) { q in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(q.question).scaledFont(.body, weight: .medium)
@@ -235,7 +243,7 @@ struct PlanPrompt: View {
     @State private var feedback = ""
 
     var body: some View {
-        PromptCard(title: "Ready to proceed with this plan?", symbol: "list.bullet.clipboard", tint: .purple) {
+        PromptCard(title: "Ready to Proceed with This Plan?", symbol: "list.bullet.clipboard", tint: .purple) {
             ScrollView { plan }
                 .frame(maxHeight: 280)
             TextField("Feedback (Optional)", text: $feedback, axis: .vertical)
@@ -289,7 +297,7 @@ struct ElicitationPrompt: View {
     }
 
     var body: some View {
-        PromptCard(title: "\(params.serverName) needs input", symbol: "puzzlepiece.extension", tint: .teal) {
+        PromptCard(title: "\(params.serverName) Needs Input", symbol: "puzzlepiece.extension", tint: .teal) {
             Text(params.message).scaledFont(.callout)
             if let urlString = params.url, let url = URL(string: urlString) {
                 Link(urlString, destination: url).scaledFont(.callout)

@@ -44,13 +44,19 @@ struct TaskRow: View {
                 Text(statusText).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            if SubagentLifecycle.isRunning(call: entry.call, task: entry.task) {
-                ProgressView().controlSize(.small)
-            } else {
-                Image(systemName: statusSymbol).foregroundStyle(.secondary)
+            // The status line says it in words; the spinner and glyphs are for the eye, or the
+            // row would read as a progress indicator.
+            Group {
+                if SubagentLifecycle.isRunning(call: entry.call, task: entry.task) {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: statusSymbol).foregroundStyle(.secondary)
+                }
+                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
             }
-            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
         }
+        .accessibilityElement(children: .combine)
     }
 
     private var statusText: String {
@@ -142,6 +148,7 @@ struct InspectorTaskDetail: View {
                     Text(entry.task?.description ?? entry.call?.input.string("description") ?? "Task")
                         .font(.headline)
                         .lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
                     Spacer()
                 }
                 .padding(.horizontal, 12)

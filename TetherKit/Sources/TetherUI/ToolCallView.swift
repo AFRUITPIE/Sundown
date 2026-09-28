@@ -484,6 +484,10 @@ struct DiffView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 8)
                     .background(l.sign == "-" ? Color.red.opacity(0.14) : l.sign == "+" ? Color.green.opacity(0.14) : .clear)
+                    // The sign and the tint, in words.
+                    .accessibilityLabel(l.sign == "-" ? "Removed" : l.sign == "+" ? "Added" : "Unchanged")
+                    .accessibilityValue(l.text)
+                    .accessibilityTextContentType(.sourceCode)
             }
             if all.count > lineLimit {
                 Button(expanded ? "Show Less" : "Show All \(all.count) Lines") { expanded.toggle() }

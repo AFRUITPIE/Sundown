@@ -46,7 +46,7 @@ struct ChangesPane: View {
     @ViewBuilder private var content: some View {
         switch state {
         case .loading:
-            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            ProgressView("Reading Changes").labelsHidden().frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed(let message):
             ContentUnavailableView {
                 Label("Couldn’t Read Changes", systemImage: "exclamationmark.triangle")
@@ -286,8 +286,9 @@ private struct LineRow: View {
         }
         .contextMenu { Button("Comment on Line \(number)…") { commenting = true } }
         .help("Comment")
-        .accessibilityLabel("Line \(number)")
+        .accessibilityLabel("Line \(number), \(line.kind == .added ? "added" : line.kind == .removed ? "removed" : "unchanged")")
         .accessibilityValue(line.text)
+        .accessibilityTextContentType(.sourceCode)
         .accessibilityHint("Comments on the line")
     }
 

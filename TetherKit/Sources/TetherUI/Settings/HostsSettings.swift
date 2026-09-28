@@ -101,7 +101,8 @@ struct HostStatusLabel: View {
         }
         .labelStyle(.titleAndIcon)
         .help(state.help)
-        .accessibilityLabel(state.help)
+        // Read as it's written ("Connected"); the help says more for the pointer.
+        .accessibilityElement(children: .combine)
     }
 }
 

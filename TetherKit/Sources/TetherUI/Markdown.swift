@@ -212,7 +212,8 @@ struct MarkdownBlockView: View, Equatable {
                 .padding(.top, 6)
                 // So VoiceOver's headings rotor steps through a long reply.
                 .accessibilityAddTraits(.isHeader)
-                .accessibilityHeading(level == 1 ? .h1 : level == 2 ? .h2 : level == 3 ? .h3 : .h4)
+                // A level under the dates, which head the chat's parts.
+                .accessibilityHeading(level <= 1 ? .h2 : level == 2 ? .h3 : level == 3 ? .h4 : level == 4 ? .h5 : .h6)
         case .paragraph:
             line
         case .bullet(let indent, let marker, _):
@@ -229,6 +230,8 @@ struct MarkdownBlockView: View, Equatable {
             }
             // Deeper levels step in by the text's size.
             .padding(.leading, (6 + CGFloat(indent) * 18) * textScale)
+            // Read as one item, marker and all.
+            .accessibilityElement(children: .combine)
         case .quote:
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 1).fill(.tertiary).frame(width: 3)
@@ -243,6 +246,7 @@ struct MarkdownBlockView: View, Equatable {
                     GridRow {
                         ForEach(0..<header.count, id: \.self) { c in
                             inline(c).scaledFont(.body, weight: .bold)
+                                .accessibilityAddTraits(.isHeader)
                         }
                     }
                     // Only as wide as the columns, so a narrow table hugs its content.
@@ -434,6 +438,8 @@ struct CodeBlock: View {
             .scaledFont(.callout, design: .monospaced)
             .lineLimit(expanded ? nil : lineLimit)
             .textSelection(.enabled)
+            // Read as code, punctuation and all.
+            .accessibilityTextContentType(.sourceCode)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 

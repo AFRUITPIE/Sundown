@@ -56,6 +56,14 @@ struct Composer: View {
         let id = UUID()
         let kind: Kind
 
+        /// What it's called, to VoiceOver and in its Remove button.
+        var title: String {
+            switch kind {
+            case .image: "Image"
+            case .pdf(_, let name), .text(_, let name): name
+            }
+        }
+
         enum Kind {
             /// PNG data.
             case image(Data)
@@ -175,6 +183,7 @@ struct Composer: View {
         }
         // Files and images, dropped on the field, pasted, or taken with Continuity Camera.
         .dropDestination(for: Incoming.self) { items, _ in take(items) }
+        .accessibilityDropPoint(.center, description: Text("Attach to Message"))
         .onDropSessionUpdated { session in
             switch session.phase {
             case .entering, .active: dropTargeted = true
@@ -340,7 +349,8 @@ struct Composer: View {
                 ForEach(images) { attachment in
                     chip(attachment)
                         .overlay(alignment: .topTrailing) {
-                            Button("Remove", systemImage: "xmark.circle.fill") { images.removeAll { $0.id == attachment.id } }
+                            // Named for what it removes: several can be attached.
+                            Button("Remove \(attachment.title)", systemImage: "xmark.circle.fill") { images.removeAll { $0.id == attachment.id } }
                                 .labelStyle(.iconOnly)
                                 .buttonStyle(.borderless)
                         }
@@ -360,6 +370,8 @@ struct Composer: View {
                     .scaledToFill()
                     .frame(width: 56, height: 56)
                     .clipShape(.rect(cornerRadius: 8))
+                    .accessibilityLabel("Attached Image")
+                    .accessibilityIgnoresInvertColors()
             }
         case .pdf(_, let name), .text(_, let name):
             VStack(spacing: 4) {

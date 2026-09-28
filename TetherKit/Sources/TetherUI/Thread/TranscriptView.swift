@@ -41,6 +41,7 @@ struct TranscriptView: View {
         // Opens at the end and keeps it pinned through content and size changes. A transcript shorter
         // than the window sits at the top: aligned to the bottom, it was pushed down by a scroll offset
         // and the toolbar's edge effect followed its top edge down the window.
+        .accessibilityLabel("Transcript")
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .defaultScrollAnchor(.top, for: .alignment)
@@ -94,7 +95,7 @@ struct TranscriptView: View {
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
                     .controlSize(.large)
-                    .help("Scroll to Bottom")
+                    .help("Jump to Latest")
                     .padding(.bottom, 8)
                     .transition(.moving(.move(edge: .bottom).combined(with: .opacity), reduceMotion: reduceMotion))
                 }
@@ -200,6 +201,7 @@ private struct TranscriptContent: View {
     @Environment(\.appearance) private var appearance
 
     var body: some View {
+        let rows = thread.rows(appearance.toolCalls.folding)
         LazyVStack(alignment: .leading, spacing: 14) {
             if !thread.historyLoaded {
                 TranscriptUnavailable(thread: thread, connection: connection)
@@ -209,17 +211,34 @@ private struct TranscriptContent: View {
             }
             // One plain view per row, identified by the ForEach alone: an `.id()` here adds a node
             // to every row, and the lazy stack walks every row on each layout pass.
-            ForEach(thread.rows(appearance.toolCalls.folding), id: \.id) { row in
+            ForEach(rows, id: \.id) { row in
                 TranscriptRowView(row: row, thread: thread)
             }
             TranscriptTail(thread: thread)
         }
+        // VoiceOver's way from prompt to prompt, which reaches the ones the lazy stack hasn't built.
+        .accessibilityRotor("Prompts", entries: Self.prompts(rows), entryID: \.id, entryLabel: \.label)
         // Rows are scroll targets by their ids, so an older page can keep the reader where they were.
         .scrollTargetLayout()
         // The size every row's text starts from; View ▸ Bigger and Smaller change it.
         .scaledFont(.body)
         .padding(.vertical, 16)
         .readingColumn()
+    }
+}
+
+extension TranscriptContent {
+    struct PromptEntry: Identifiable {
+        let id: String
+        let label: String
+    }
+
+    /// The reader's own prompts, by their rows' ids, with their first words.
+    static func prompts(_ rows: [TranscriptRow]) -> [PromptEntry] {
+        rows.compactMap { row in
+            guard case .item(.userMessage(let m)) = row, m.synthetic != true else { return nil }
+            return PromptEntry(id: row.id, label: String(m.plainText.prefix(80)))
+        }
     }
 }
 
@@ -230,7 +249,8 @@ private struct OlderHistoryTrigger: View {
     @State private var visible = false
 
     var body: some View {
-        ProgressView()
+        ProgressView("Loading Earlier Messages")
+            .labelsHidden()
             .controlSize(.small)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
@@ -342,7 +362,8 @@ struct TranscriptUnavailable: View {
                 if let connection { Button("Try Again") { Task { await connection.open(thread) } } }
             }
         } else {
-            ProgressView()
+            ProgressView("Loading Chat")
+                .labelsHidden()
                 .frame(maxWidth: .infinity)
                 .padding(40)
         }

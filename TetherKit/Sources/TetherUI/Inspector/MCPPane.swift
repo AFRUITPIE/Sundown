@@ -50,7 +50,8 @@ struct MCPPane: View {
             Text(server.name)
             if let detail = detail(server) { Text(detail) }
         }
-        .accessibilityValue(Self.statusLabel(server.status))
+        // Only when the row doesn't already say it: a failed server shows Reconnect instead.
+        .accessibilityValue(server.status == "failed" ? Self.statusLabel(server.status) : "")
         .contextMenu { actions(server) }
         .accessibilityActions { actions(server) }
     }

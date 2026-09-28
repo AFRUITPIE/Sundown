@@ -38,6 +38,8 @@ struct ConnectionLogView: View {
                     Text(text)
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
+                        // Read as a terminal's output, punctuation and all.
+                        .accessibilityTextContentType(.console)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(12)
                 }
@@ -55,7 +57,6 @@ struct ConnectionLogView: View {
             .help("Copy Log")
         }
         .frame(minWidth: 480, minHeight: 280)
-        .accessibilityLabel("Connection Log for \(host)")
     }
 }
 

@@ -21,6 +21,7 @@ struct SideQuestionSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Ask a Side Question").font(.headline)
+                .accessibilityAddTraits(.isHeader)
             Text("Answered from this chat, but not added to it.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -73,6 +74,8 @@ struct SideQuestionSheet: View {
             }
             exchanges.append(Exchange(question: q, answer: answer))
             asking = false
+            // Arrives while the reader is in the field; said, so it isn't missed.
+            AccessibilityNotification.Announcement(MarkdownView.plainText(answer)).post()
         }
     }
 }
