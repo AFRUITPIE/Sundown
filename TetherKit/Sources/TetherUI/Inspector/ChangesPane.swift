@@ -294,13 +294,10 @@ private struct FileSection: View {
             .contextMenu {
                 if let location {
                     Button(editor.openTitle) { editor.open(location) }
-                    Button("Show in Finder") { NSWorkspace.shared.selectFile(location, inFileViewerRootedAtPath: "") }
+                    Button("Show in Finder") { Finder.reveal(location) }
                     Divider()
                 }
-                Button("Copy Path") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(location ?? file.path, forType: .string)
-                }
+                Button("Copy Path") { Clipboard.copy(location ?? file.path) }
             }
         }
     }

@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import Observation
 import SwiftUI
 
@@ -6,12 +6,13 @@ import SwiftUI
 /// glide, a reply's words fading in, Thinking's shimmer — because the Mac is saving energy (Low
 /// Power Mode), is running hot (serious or critical), or has another app in front. Each ran every
 /// frame while a turn did. Treated as Reduce Motion is, where the effect is drawn
-/// (`EnvironmentValues.reducesEffects`).
+/// (`EnvironmentValues.reducesEffects`). This follows the Mac's power and heat; whether the app is
+/// in front is `AppModel.isActive`, which the app delegate keeps.
 @MainActor
 @Observable
 final class ReducedEffects {
-    private(set) var isOn = false
-    @ObservationIgnored private var appIsActive = true
+    /// Low Power Mode, or a serious or critical thermal state.
+    private(set) var savingEnergy = false
     @ObservationIgnored private var observers: [any NSObjectProtocol] = []
 
     init() {
@@ -22,22 +23,14 @@ final class ReducedEffects {
         observers = [
             center.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main, using: refresh),
             center.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main, using: refresh),
-            center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.appIsActive = true; self?.update() }
-            },
-            center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.appIsActive = false; self?.update() }
-            },
         ]
-        // Unit tests have no application: they count as in front.
-        appIsActive = NSApp?.isActive ?? true
         update()
     }
 
     private func update() {
         let info = ProcessInfo.processInfo
-        let on = Self.reduces(lowPower: info.isLowPowerModeEnabled, thermal: info.thermalState, appIsActive: appIsActive)
-        if on != isOn { isOn = on }
+        let on = Self.reduces(lowPower: info.isLowPowerModeEnabled, thermal: info.thermalState, appIsActive: true)
+        if on != savingEnergy { savingEnergy = on }
     }
 
     nonisolated static func reduces(lowPower: Bool, thermal: ProcessInfo.ThermalState, appIsActive: Bool) -> Bool {

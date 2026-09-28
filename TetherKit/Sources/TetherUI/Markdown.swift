@@ -601,10 +601,7 @@ struct CodeBlock: View {
                     Button(expanded ? "Show Less" : "Show All \(measure.lines) Lines") { expanded.toggle() }
                         .buttonStyle(.link)
                 }
-                CopyButton {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(code, forType: .string)
-                }
+                CopyButton { Clipboard.copy(code) }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
             }

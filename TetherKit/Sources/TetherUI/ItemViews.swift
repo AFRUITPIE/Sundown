@@ -85,7 +85,7 @@ private struct MessageMenu: ViewModifier {
             .contentShape(.rect)
             .contextMenu {
                 Button("Copy", action: copyText)
-                if isMarkdown { Button("Copy as Markdown") { copy(text) } }
+                if isMarkdown { Button("Copy as Markdown") { Clipboard.copy(text) } }
                 Divider()
                 Button("Fork from Here") { forkChat(id) }
                 // Files go back to a prompt's checkpoint; a reply has none of its own.
@@ -139,12 +139,7 @@ private struct MessageMenu: ViewModifier {
     }
 
     // Converted when chosen, not per update: a streaming reply's body runs every frame.
-    private func copyText() { copy(isMarkdown ? MarkdownView.plainText(text) : text) }
-
-    private func copy(_ string: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(string, forType: .string)
-    }
+    private func copyText() { Clipboard.copy(isMarkdown ? MarkdownView.plainText(text) : text) }
 }
 
 /// Copy, which turns into a checkmark for a moment once it has copied.
@@ -370,14 +365,14 @@ private struct PeerSessionLink: View {
 private struct MessageImage: View {
     let key: String
     let base64: String
-    @State private var image: NSImage?
+    @State private var image: MessageImages.Decoded?
     @State private var unreadable = false
 
     var body: some View {
         if let image = image ?? MessageImages.cached(key) {
-            Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: 240, maxHeight: 180)
+            Image(image.cgImage, scale: image.scale, label: Text("Attached Image"))
+                .resizable().scaledToFit().frame(maxWidth: 240, maxHeight: 180)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
-                .accessibilityLabel("Attached Image")
                 .accessibilityIgnoresInvertColors()
         } else if !unreadable {
             RoundedRectangle(cornerRadius: 6)
@@ -395,24 +390,35 @@ private struct MessageImage: View {
 /// Prompts' images, scaled to the most a prompt shows, by message id and part.
 @MainActor
 enum MessageImages {
-    private static let cache: NSCache<NSString, NSImage> = {
-        let cache = NSCache<NSString, NSImage>()
+    /// An image as drawn: its pixels, and how many of them make a point.
+    final class Decoded: Sendable {
+        let cgImage: CGImage
+        let scale: CGFloat
+
+        init(_ cgImage: CGImage, size: CGSize) {
+            self.cgImage = cgImage
+            scale = CGFloat(cgImage.width) / max(size.width, 1)
+        }
+    }
+
+    private static let cache: NSCache<NSString, Decoded> = {
+        let cache = NSCache<NSString, Decoded>()
         cache.totalCostLimit = 64 << 20 // decoded bytes
         return cache
     }()
 
-    static func cached(_ key: String) -> NSImage? { cache.object(forKey: key as NSString) }
+    static func cached(_ key: String) -> Decoded? { cache.object(forKey: key as NSString) }
 
-    static func load(_ key: String, base64: String) async -> NSImage? {
+    static func load(_ key: String, base64: String) async -> Decoded? {
         if let image = cached(key) { return image }
         guard let decoded = await decode(base64) else { return nil }
-        let image = NSImage(cgImage: decoded.image, size: decoded.size)
+        let image = Decoded(decoded.image, size: decoded.size)
         cache.setObject(image, forKey: key as NSString, cost: decoded.image.bytesPerRow * decoded.image.height)
         return image
     }
 
     /// At most 480 pixels on the long edge, 240 points at 2x, and upright. Its size in points is the
-    /// whole image's, as `NSImage(data:)` gave it, so a prompt lays out as it did.
+    /// whole image's (its pixels at its DPI), so a prompt lays out as a full-size image would.
     @concurrent
     nonisolated static func decode(_ base64: String) async -> (image: CGImage, size: CGSize)? {
         guard let data = Data(base64Encoded: base64), let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -474,6 +480,38 @@ struct NoticeView: View {
             .frame(maxWidth: 920)
     }
     .frame(width: 640, height: 160)
+}
+
+/// A prompt with a screenshot, decoded off the main actor the first time it's shown.
+#Preview("User message (image)") {
+    ScrollView {
+        ItemView(item: .userMessage(.init(id: "image-1", createdAt: 0, content: [
+            .text(.init(text: "The sidebar clips here — can you take a look?")),
+            .image(.init(mediaType: .imagePng, data: previewScreenshot())),
+        ])), thread: .sampleIdleChat())
+        .padding(28)
+    }
+    .frame(width: 640, height: 320)
+}
+
+/// A 1280×800 "screenshot": a window's sidebar and content, as a PNG in base64.
+private func previewScreenshot() -> String {
+    let width = 1280, height = 800
+    guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return "" }
+    context.setFillColor(CGColor(srgbRed: 0.96, green: 0.96, blue: 0.97, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    context.setFillColor(CGColor(srgbRed: 0.88, green: 0.89, blue: 0.91, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: 320, height: height))
+    context.setFillColor(CGColor(srgbRed: 0.2, green: 0.47, blue: 0.96, alpha: 1))
+    context.fill(CGRect(x: 24, y: height - 140, width: 272, height: 44))
+    let data = NSMutableData()
+    guard let image = context.makeImage(),
+          let destination = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil) else { return "" }
+    CGImageDestinationAddImage(destination, image, nil)
+    CGImageDestinationFinalize(destination)
+    return (data as Data).base64EncodedString()
 }
 
 /// A message from another session: its link opens the sender's chat when this host lists it, and

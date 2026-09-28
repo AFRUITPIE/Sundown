@@ -28,22 +28,17 @@ struct ToolCallView: View {
         if let path = filePath {
             if hostIsLocal {
                 Button(editor.openTitle) { editor.open(path) }
-                Button("Show in Finder") { NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "") }
+                Button("Show in Finder") { Finder.reveal(path) }
                 Divider()
             }
-            Button("Copy Path") { copy(path) }
+            Button("Copy Path") { Clipboard.copy(path) }
         }
         if call.kind == .bash, let command = input.string("command") {
-            Button("Copy Command") { copy(command) }
+            Button("Copy Command") { Clipboard.copy(command) }
         }
         if let output = call.outputText, !output.isEmpty {
-            Button("Copy Output") { copy(output) }
+            Button("Copy Output") { Clipboard.copy(output) }
         }
-    }
-
-    private func copy(_ string: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(string, forType: .string)
     }
 
     var body: some View {

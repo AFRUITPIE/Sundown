@@ -79,6 +79,9 @@ struct ComposerAttachmentTests {
         let decoded = try #require(await MessageImages.decode(data.base64EncodedString()))
         #expect(decoded.image.width == 480 && decoded.image.height == 240)
         #expect(decoded.size == CGSize(width: 1_000, height: 500))
+        // Drawn at the whole image's size in points: 480 pixels over 1,000 points.
+        let drawn = MessageImages.Decoded(decoded.image, size: decoded.size)
+        #expect(abs(drawn.scale - 0.48) < 0.001)
         #expect(await MessageImages.decode("not base64") == nil)
     }
 

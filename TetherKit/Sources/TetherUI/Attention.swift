@@ -214,7 +214,6 @@ final class AttentionCenter: NSObject {
     /// Spoken by VoiceOver, for a reply finishing in the chat on screen while the reader is
     /// elsewhere in it: after whatever is being read, not over it.
     private func announce(_ text: String) {
-        guard NSWorkspace.shared.isVoiceOverEnabled else { return }
         var announcement = AttributedString(text)
         announcement.accessibilitySpeechAnnouncementPriority = .low
         AccessibilityNotification.Announcement(announcement).post()

@@ -55,7 +55,7 @@ struct OpensFileLinks: ViewModifier {
                   FileManager.default.fileExists(atPath: path) else { return .systemAction }
             let file = URL(filePath: path)
             if Self.runs(file) {
-                NSWorkspace.shared.activateFileViewerSelecting([file])
+                Finder.reveal(path)
             } else {
                 editor.open(path)
             }

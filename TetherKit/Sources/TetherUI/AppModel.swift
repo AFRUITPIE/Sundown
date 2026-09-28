@@ -170,9 +170,10 @@ public final class AppModel {
     public func dockMenu() -> NSMenu? { attention?.dockMenu() }
 
     /// Whether the app is frontmost, which the app delegate sets. A notification is for when it
-    /// isn't, or the chat isn't the one in front. Not the scene phase: on the Mac that stays active
-    /// while a window is visible, with another app in front.
-    @ObservationIgnored public var isActive = true
+    /// isn't, or the chat isn't the one in front, and decorative motion stops while it isn't. Not
+    /// the scene phase: on the Mac that stays active while a window is visible, with another app
+    /// in front.
+    public var isActive = true
 
     /// Opens a URL with the app's own action, for `open(_:)`.
     @ObservationIgnored public var openURL: ((URL) -> Void)?
@@ -239,7 +240,7 @@ public final class AppModel {
 
     /// Whether decorative motion is left out to save energy (`ReducedEffects`), put in the
     /// environment beside the settings.
-    public var reducesEffects: Bool { effects.isOn }
+    public var reducesEffects: Bool { effects.savingEnergy || !isActive }
     private let effects = ReducedEffects()
     /// How many windows show each thread: a followed thread is let go only when none does.
     @ObservationIgnored private var viewers: [ObjectIdentifier: Int] = [:]

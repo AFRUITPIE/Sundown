@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 import TetherKit
 
@@ -147,7 +146,7 @@ struct SidebarView: View {
     @ViewBuilder private func folderMenu(_ folder: String, _ section: ResolvedSection) -> some View {
         Button("New Chat Here") { newChat(in: folder) }
         if window.connection?.host.isLocal == true {
-            Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder) }
+            Button("Show in Finder") { Finder.show(directory: folder) }
         }
         // What's listed under the header; none of it when the list shows only archived chats.
         let unarchived = section.rows.map(\.thread).filter { !$0.isArchived }

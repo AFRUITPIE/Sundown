@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 import TetherKit
 
@@ -40,7 +39,7 @@ struct ChatActionItems: View {
             Task { if let fork = await connection.fork(thread) { window.open(threadID: fork.id) } }
         }
         item("Show in Finder", enabled: folder != nil) {
-            if let folder { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder) }
+            if let folder { Finder.show(directory: folder) }
         }
         // Out of the list without deleting anything; View ▸ Show ▸ Archived brings it back.
         item(thread?.isArchived == true ? "Unarchive" : "Archive", enabled: thread != nil && connection != nil) {

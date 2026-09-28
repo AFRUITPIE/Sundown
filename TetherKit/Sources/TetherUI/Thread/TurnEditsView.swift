@@ -80,13 +80,10 @@ private struct EditedFileRow: View {
             .contextMenu {
                 if hostIsLocal {
                     Button(editor.openTitle) { editor.open(file.path) }
-                    Button("Show in Finder") { NSWorkspace.shared.selectFile(file.path, inFileViewerRootedAtPath: "") }
+                    Button("Show in Finder") { Finder.reveal(file.path) }
                     Divider()
                 }
-                Button("Copy Path") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(file.path, forType: .string)
-                }
+                Button("Copy Path") { Clipboard.copy(file.path) }
             }
         }
         .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.editedFile",

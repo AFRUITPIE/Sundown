@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 /// Settings ▸ Notifications: when Tether tells you a chat needs you, and what the Dock shows.

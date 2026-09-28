@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 import TetherKit
 
@@ -49,10 +48,7 @@ struct ConnectionLogView: View {
             }
         }
         .toolbar {
-            Button("Copy Log", systemImage: "doc.on.doc") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
-            }
+            Button("Copy Log", systemImage: "doc.on.doc") { Clipboard.copy(text) }
             .disabled(lines.isEmpty)
             .help("Copy Log")
         }
