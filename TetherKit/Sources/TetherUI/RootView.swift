@@ -13,6 +13,7 @@ public struct WindowRoot: View {
     @Environment(\.appearsActive) private var appearsActive
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.undoManager) private var undoManager
 
     public init(app: AppModel, target: Binding<WindowTarget>) {
         _target = target
@@ -27,6 +28,8 @@ public struct WindowRoot: View {
                 let restored = storedShowInspector.map { ($0, storedInspectorPane ?? .tasks) }
                 window.start(inspector: restored)
             }
+            // The window's own, so Edit ▸ Undo takes back an archive, a pin or a rename made in it.
+            .onChange(of: undoManager, initial: true) { window.undoManager = undoManager }
             .onChange(of: window.hostID) { target = window.target(keeping: target.id) }
             .onChange(of: window.threadID) { target = window.target(keeping: target.id) }
             // Not initial: `start()` reads the stored values first.

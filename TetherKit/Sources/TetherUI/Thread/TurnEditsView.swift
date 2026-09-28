@@ -76,6 +76,7 @@ private struct EditedFileRow: View {
             }
             .scaledFont(.callout)
             .help(file.path.abbreviatingHome)
+            .draggableFile(hostIsLocal ? file.path : nil)
             .contextMenu {
                 if hostIsLocal {
                     Button(editor.openTitle) { editor.open(file.path) }

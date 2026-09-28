@@ -235,6 +235,7 @@ private struct FileSection: View {
             .monospacedDigit()
             .help(file.oldPath.map { "Renamed from \($0)" } ?? file.path)
             .onHover { hovering = $0 }
+            .draggableFile(location)
             .contextMenu {
                 if let location {
                     Button(editor.openTitle) { editor.open(location) }

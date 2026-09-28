@@ -117,6 +117,7 @@ struct ToolCallView: View {
         .scaledFont(.callout)
         .contextMenu { menu }
         .help(ToolCallText.fullObject(call) ?? "")
+        .draggableFile(hostIsLocal ? filePath : nil)
     }
 
     /// A spinner while it runs, a glyph when it went wrong, and nothing once it's done.

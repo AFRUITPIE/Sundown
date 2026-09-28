@@ -104,7 +104,7 @@ final class ReadingUITests: XCTestCase {
             "File": ["New Chat", "New Window", "Close"],
             "Edit": ["Find…", "Find Next", "Find Previous"],
             "View": ["Bigger", "Smaller", "Actual Size", "Show Inspector", "Show Toolbar"],
-            "Chat": ["Open in New Window", "Pin", "Rename…", "Duplicate", "Show in Finder", "Archive", "Delete…"],
+            "Chat": ["Stop", "Open in New Window", "Pin", "Rename…", "Duplicate", "Show in Finder", "Archive", "Delete…"],
             "Help": ["Tether Help", "Claude Code Documentation"],
         ]
         for (menu, items) in expected {

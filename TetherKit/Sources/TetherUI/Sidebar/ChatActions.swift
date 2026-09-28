@@ -66,10 +66,7 @@ struct ChatActionAlerts: ViewModifier {
             .alert("Rename Chat", isPresented: presented(\.renaming), presenting: window.renaming) { thread in
                 TextField("Title", text: $window.renameTitle)
                 Button("Rename") {
-                    let title = window.renameTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if let connection = window.connection, !title.isEmpty {
-                        Task { await connection.rename(thread, title) }
-                    }
+                    window.rename(thread, to: window.renameTitle)
                     window.rename(nil)
                 }
                 Button("Cancel", role: .cancel) { window.rename(nil) }

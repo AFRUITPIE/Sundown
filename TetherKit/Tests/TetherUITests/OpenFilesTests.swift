@@ -4,6 +4,18 @@ import Testing
 
 @Suite
 struct OpenFilesTests {
+    /// A reply's link to a file names it relative to the chat's directory, with or without a line.
+    @Test func fileLinksResolveAgainstTheChatsDirectory() {
+        let cwd = "/Users/me/Code/app"
+        #expect(OpensFileLinks.path(of: URL(string: "Sources/App.swift")!, in: cwd) == "/Users/me/Code/app/Sources/App.swift")
+        #expect(OpensFileLinks.path(of: URL(string: "Sources/App.swift:42")!, in: cwd) == "/Users/me/Code/app/Sources/App.swift")
+        #expect(OpensFileLinks.path(of: URL(string: "Sources/App.swift:42:7")!, in: cwd) == "/Users/me/Code/app/Sources/App.swift")
+        #expect(OpensFileLinks.path(of: URL(fileURLWithPath: "/tmp/x.txt"), in: cwd) == "/tmp/x.txt")
+        #expect(OpensFileLinks.path(of: URL(string: "My%20File.md")!, in: cwd) == "/Users/me/Code/app/My File.md")
+        #expect(OpensFileLinks.path(of: URL(string: "https://claude.ai")!, in: cwd) == nil)
+        #expect(OpensFileLinks.path(of: URL(string: "Sources/App.swift")!, in: nil) == nil)
+    }
+
     @Test func openSaysWhereOnceAnEditorIsChosen() {
         #expect(Appearance.FileEditor.defaultApp.openTitle == "Open")
         #expect(Appearance.FileEditor.visualStudioCode.openTitle == "Open in Visual Studio Code")

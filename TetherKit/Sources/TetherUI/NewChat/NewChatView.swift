@@ -60,7 +60,9 @@ struct NewChatView: View {
                                 Composer(connection: connection, cwd: window.draftDirectory,
                                          draftKey: "new-chat:\(window.hostID)",
                                          placeholder: window.draftDirectory == nil ? "Choose a directory, then ask Claude…" : "Ask Claude…",
-                                         submit: { input in await start(connection, input) })
+                                         submit: { input in await start(connection, input) },
+                                         // Dropped on the field too, a directory is where the chat starts.
+                                         takesDirectory: connection.host.isLocal ? { choose($0) } : nil)
                             }
                         }
                         // The chips are controls, so they keep the system's size; what's written here scales.
@@ -76,10 +78,8 @@ struct NewChatView: View {
             // `AppModel` seeds the folder with the host's first project; these fill it when the
             // projects arrived after that.
             // A folder dragged from Finder is where the chat starts; this Mac's folders only.
-            .dropDestination(for: URL.self) { urls, _ in
-                guard connection?.host.isLocal == true, let folder = urls.first(where: \.hasDirectoryPath) else { return false }
-                choose(folder.path)
-                return true
+            .dropDestination(for: URL.self, isEnabled: connection?.host.isLocal == true) { urls, _ in
+                if let folder = urls.first(where: \.hasDirectoryPath) { choose(folder.path) }
             }
             .onAppear { useFirstProjectIfUnset() }
             .onChange(of: connection?.projects.first?.cwd) { useFirstProjectIfUnset() }

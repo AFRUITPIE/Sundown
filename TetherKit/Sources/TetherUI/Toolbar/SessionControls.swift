@@ -288,6 +288,14 @@ public struct ChatCommands: View {
             Button("Ask a Side Question…") { window.sideQuestion = window.selectedThread }
                 .keyboardShortcut(";", modifiers: [.command, .option])
                 .disabled(window.selectedThread == nil)
+            // Here, not on the Stop button, which is Send again once there's text in the field.
+            Button("Stop") {
+                if let thread = window.selectedThread, let connection = window.connection {
+                    Task { await connection.interrupt(thread) }
+                }
+            }
+            .keyboardShortcut(".")
+            .disabled(window.selectedThread?.isRunning != true)
             Divider()
             // ⌥⌘, not ⌘ or ⌃⌘: a text field keeps ⌘↑ and ⌘↓ (start and end of the text) and ⌃⌘↓
             // (writing direction); it has nothing on ⌥⌘↑ or ⌥⌘↓, so these work from the composer.
@@ -312,6 +320,7 @@ public struct ChatCommands: View {
                 ForEach(["Model", "Fast Mode", "Effort", "Permissions"], id: \.self) { Button($0) {} }
                 Divider()
                 Button("Ask a Side Question…") {}
+                Button("Stop") {}
                 Divider()
                 ForEach(["Previous Prompt", "Next Prompt"], id: \.self) { Button($0) {} }
                 Divider()

@@ -7,8 +7,6 @@ import TetherKit
 struct SidebarView: View {
     @Bindable var window: WindowModel
     @State private var search: String
-    /// The folder whose chats Archive Chats in Folder… is asking about.
-    @State private var archivingFolder: FolderArchive?
     @Environment(\.openWindow) private var openWindow
     @Environment(\.appearance) private var appearance
 
@@ -58,17 +56,13 @@ struct SidebarView: View {
             openWindow(value: WindowTarget(hostID: window.hostID, threadID: id))
         }
         .overlay { emptyState(isEmpty: sections.isEmpty) }
-        // A folder dragged from Finder onto the list starts a new chat in it.
-        .dropDestination(for: URL.self) { urls, _ in
-            guard window.connection?.host.isLocal == true, let folder = urls.first(where: \.hasDirectoryPath) else { return false }
-            newChat(in: folder.path)
-            return true
+        // A directory dragged from Finder onto the list starts a new chat in it; this Mac's only.
+        .dropDestination(for: URL.self, isEnabled: window.connection?.host.isLocal == true) { urls, _ in
+            if let folder = urls.first(where: \.hasDirectoryPath) { newChat(in: folder.path) }
         }
-        .confirmationDialog(archiveTitle, isPresented: Binding(get: { archivingFolder != nil }, set: { if !$0 { archivingFolder = nil } }),
-                            titleVisibility: .visible, presenting: archivingFolder) { archive in
-            Button("Archive") { window.setArchived(archive.threads, true) }
-        } message: { _ in
-            Text("View ▸ Show ▸ Archived lists them again.")
+        // ⌫ archives the selected chat, as Mail's does a message; Edit ▸ Undo brings it back.
+        .onDeleteCommand {
+            if let thread = window.selectedThread { window.setArchived([thread], true) }
         }
     }
 
@@ -144,16 +138,6 @@ struct SidebarView: View {
 
     // MARK: folders
 
-    private struct FolderArchive {
-        let name: String
-        let threads: [ThreadModel]
-    }
-
-    private var archiveTitle: Text {
-        let count = archivingFolder?.threads.count ?? 0
-        return Text("Archive ^[\(count) Chat](inflect: true) in “\(archivingFolder?.name ?? "")”?")
-    }
-
     private func newChat(in folder: String) {
         window.newChat()
         window.draftDirectory = folder
@@ -168,7 +152,8 @@ struct SidebarView: View {
         let unarchived = section.rows.map(\.thread).filter { !$0.isArchived }
         if !unarchived.isEmpty, window.connection != nil {
             Divider()
-            Button("Archive Chats in Directory…") { archivingFolder = FolderArchive(name: section.title, threads: unarchived) }
+            // No confirmation: Edit ▸ Undo brings them all back.
+            Button("Archive Chats in Directory") { window.setArchived(unarchived, true) }
         }
     }
 
@@ -253,9 +238,7 @@ struct ChatRenameField: View {
     private func commit() {
         guard window.renamingInPlace === thread else { return }
         window.renamingInPlace = nil
-        let new = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !new.isEmpty, new != thread.title, let connection = window.connection else { return }
-        Task { await connection.rename(thread, new) }
+        window.rename(thread, to: title)
     }
 }
 

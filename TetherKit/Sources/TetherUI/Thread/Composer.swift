@@ -23,6 +23,8 @@ struct Composer: View {
     let submit: ([UserInput]) async -> Void
     /// Told when the message field gains or loses focus.
     var onFocusChange: ((Bool) -> Void)?
+    /// Takes a directory dropped on the field, as New Chat's directory, instead of mentioning it.
+    var takesDirectory: ((String) -> Void)?
 
     @Environment(\.composerDraft) private var composerDraft
     @Environment(\.composerDrafts) private var drafts
@@ -42,6 +44,10 @@ struct Composer: View {
     @State private var suggestionsClosedFor: String?
     @FocusState private var focused: Bool
     @Namespace private var glass
+    /// Something is being dragged over the field.
+    @State private var dropTargeted = false
+    /// Where the cursor is, so a new line goes there.
+    @State private var selection: TextSelection?
 
     private enum GlassID: Hashable { case field }
 
@@ -158,17 +164,34 @@ struct Composer: View {
                 // A capsule at one line; the same corner radius as the text grows makes it a rounded
                 // rectangle, the way Messages' field grows.
                 .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
+                // Says a drop here will be taken.
+                .overlay {
+                    if dropTargeted {
+                        RoundedRectangle(cornerRadius: Layout.cardCornerRadius).strokeBorder(.tint, lineWidth: 2)
+                    }
+                }
                 // The status card morphs into the field when the host connects, and back.
                 .glassEffectID(GlassID.field, in: glass)
         }
-        .onDrop(of: [.image, .fileURL], isTargeted: nil, perform: drop)
+        // Files and images, dropped on the field, pasted, or taken with Continuity Camera.
+        .dropDestination(for: Incoming.self) { items, _ in take(items) }
+        .onDropSessionUpdated { session in
+            switch session.phase {
+            case .entering, .active: dropTargeted = true
+            default: dropTargeted = false
+            }
+        }
         .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             for url in (try? result.get()) ?? [] { add(file: url) }
         }
         .fileDialogConfirmationLabel("Attach")
         // From the chat's directory, on this Mac; elsewhere wherever the panel was last.
         .fileDialogDefaultDirectory(connection.host.isLocal ? cwd.map { URL(filePath: $0, directoryHint: .isDirectory) } : nil)
-        .onPasteCommand(of: [.png, .tiff, .jpeg], perform: { _ = drop($0) })
+        .pasteDestination(for: Incoming.self) { take($0) }
+        .importableFromServices(for: Incoming.self) { items in
+            take(items)
+            return !items.isEmpty
+        }
         // The field is where focus goes when the window opens or focus has nowhere else to be, as
         // on a chat switch; not taken from the sidebar or search while someone is using them.
         .defaultFocus($focused, true)
@@ -231,7 +254,7 @@ struct Composer: View {
     }
 
     private var textField: some View {
-        TextField(thread?.isRunning == true ? "Queue a message…" : placeholder, text: $text, axis: .vertical)
+        TextField(thread?.isRunning == true ? "Queue a message…" : placeholder, text: $text, selection: $selection, axis: .vertical)
             .accessibilityIdentifier("composer.input")
             .textFieldStyle(.plain)
             .lineLimit(1...12)
@@ -275,7 +298,6 @@ struct Composer: View {
                     .labelStyle(.iconOnly)
                     .modifier(RoundAction())
                     .tint(.red)
-                    .keyboardShortcut(".", modifiers: .command)
                     .help("Stop")
                     .transition(.moving(.scale(scale: 0.5).combined(with: .opacity), reduceMotion: reduceMotion))
             } else {
@@ -407,7 +429,7 @@ struct Composer: View {
     /// Return and its modifiers, as Settings ▸ General ▸ Send With has them: Return sends and
     /// Shift- or Option-Return starts a line, or Command-Return sends and Return starts a line.
     private func returnPressed(_ press: KeyPress) -> KeyPress.Result {
-        let newLine = { _ = NSApp.sendAction(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), to: nil, from: nil) }
+        let newLine = insertNewline
         switch appearance.sendShortcut {
         case .returnKey:
             // Plain Return reaches `onSubmit`; Option-Return is the field's own new line.
@@ -426,6 +448,18 @@ struct Composer: View {
         }
     }
 
+    /// Starts a line where the cursor is, in place of any selected text; at the end when there's no
+    /// cursor to go by.
+    private func insertNewline() {
+        guard case .selection(let range) = selection?.indices, range.upperBound <= text.endIndex else {
+            text += "\n"
+            return
+        }
+        let offset = text.distance(from: text.startIndex, to: range.lowerBound)
+        text.replaceSubrange(range, with: "\n")
+        selection = TextSelection(insertionPoint: text.index(text.startIndex, offsetBy: offset + 1))
+    }
+
     private func send() {
         guard canSend, !awaitingAnswer else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -438,21 +472,30 @@ struct Composer: View {
         Task { await submit(input) }
     }
 
-    private func drop(_ providers: [NSItemProvider]) -> Bool {
-        for p in providers {
-            if p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                _ = p.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url else { return }
-                    Task { @MainActor in add(file: url) }
-                }
-            } else if p.canLoadObject(ofClass: NSImage.self) {
-                _ = p.loadObject(ofClass: NSImage.self) { obj, _ in
-                    guard let img = obj as? NSImage, let tiff = img.tiffRepresentation else { return }
-                    Task { @MainActor in add(image: tiff) }
-                }
+    /// What the field takes from outside it: a file (by URL), or an image that isn't one, such as
+    /// a screenshot's thumbnail or a photo from Continuity Camera.
+    enum Incoming: Transferable {
+        case file(URL)
+        case image(Data)
+
+        static var transferRepresentation: some TransferRepresentation {
+            ProxyRepresentation(importing: { (url: URL) in Incoming.file(url) })
+            DataRepresentation(importedContentType: .image) { Incoming.image($0) }
+        }
+    }
+
+    private func take(_ items: [Incoming]) {
+        for item in items {
+            switch item {
+            case .file(let url) where url.isFileURL:
+                if url.hasDirectoryPath, let takesDirectory { takesDirectory(url.path) } else { add(file: url) }
+            case .file(let url):
+                // A web link, written into the message.
+                text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + url.absoluteString + " "
+            case .image(let data):
+                add(image: data)
             }
         }
-        return true
     }
 
     /// An image is attached; any other file is mentioned by path, for Claude to read.

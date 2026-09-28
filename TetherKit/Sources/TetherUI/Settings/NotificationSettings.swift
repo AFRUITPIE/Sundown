@@ -11,11 +11,8 @@ struct NotificationSettings: View {
             if systemDenied {
                 Section {
                     LabeledContent {
-                        Button("Open System Settings…") {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
+                        Link("Open System Settings…", destination: URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!)
+                            .buttonStyle(.bordered)
                     } label: {
                         Text("Notifications Are Off for Tether")
                     }

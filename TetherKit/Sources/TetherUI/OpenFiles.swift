@@ -38,6 +38,54 @@ extension Appearance.FileEditor {
     }
 }
 
+/// Links in a reply that name a file — `Sources/App.swift`, `Sources/App.swift:42`, a `file:` URL —
+/// open it in Settings ▸ General ▸ Open Files With, found relative to the chat's directory, on this
+/// Mac. Any other link, or one on another host, goes where the system sends it.
+struct OpensFileLinks: ViewModifier {
+    let cwd: String?
+    @Environment(\.hostIsLocal) private var hostIsLocal
+    @Environment(\.openFilesWith) private var editor
+
+    func body(content: Content) -> some View {
+        content.environment(\.openURL, OpenURLAction { url in
+            guard hostIsLocal, let path = Self.path(of: url, in: cwd),
+                  FileManager.default.fileExists(atPath: path) else { return .systemAction }
+            editor.open(path)
+            return .handled
+        })
+    }
+
+    /// The file a link names, if it names one: a `file:` URL, or a path with no scheme, relative to
+    /// `cwd` unless it's absolute, without a trailing `:line` or `:line:column`.
+    static func path(of url: URL, in cwd: String?) -> String? {
+        let raw: String
+        if url.isFileURL {
+            raw = url.path
+        } else if url.scheme == nil {
+            raw = url.relativeString.removingPercentEncoding ?? url.relativeString
+        } else {
+            return nil
+        }
+        let trimmed = raw.replacing(/(:\d+){1,2}$/, with: "")
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.hasPrefix("/") { return trimmed }
+        if trimmed.hasPrefix("~") { return (trimmed as NSString).expandingTildeInPath }
+        guard let cwd else { return nil }
+        return (cwd as NSString).appendingPathComponent(trimmed)
+    }
+}
+
+extension View {
+    /// Dragged, the file at `path` on this Mac, as Finder drags it; nothing on another host.
+    @ViewBuilder func draggableFile(_ path: String?) -> some View {
+        if let path {
+            draggable(URL(filePath: path))
+        } else {
+            self
+        }
+    }
+}
+
 /// An editor Settings can offer, with the icon Finder shows for it.
 struct InstalledEditor: Identifiable {
     let editor: Appearance.FileEditor

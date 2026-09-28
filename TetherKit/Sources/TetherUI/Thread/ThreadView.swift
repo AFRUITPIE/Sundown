@@ -19,6 +19,7 @@ struct ThreadView: View {
             .safeAreaBar(edge: .top) { FindBarHost(thread: thread) }
             .task(id: thread.id) { await connection.open(thread) }
             .modifier(ProxyIcon(directory: connection.host.isLocal ? thread.cwd : nil))
+            .modifier(OpensFileLinks(cwd: thread.cwd))
     }
 }
 

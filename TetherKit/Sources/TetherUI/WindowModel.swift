@@ -119,6 +119,8 @@ public final class WindowModel {
     public let find = TranscriptFind()
     /// The sidebar's Search Chats field has the keyboard (Edit ▸ Find ▸ Search Chats, ⌥⌘F).
     public var searchingChats = false
+    /// The window's undo manager, for the chat actions Edit ▸ Undo takes back.
+    @ObservationIgnored weak var undoManager: UndoManager?
     /// Chat ▸ Previous Prompt and Next Prompt, for this window's transcript.
     public let prompts = PromptNavigator()
 
@@ -386,16 +388,32 @@ extension WindowModel {
 
     /// Chat ▸ Pin or Unpin.
     public func togglePin(_ thread: ThreadModel) {
-        app.setPinned(!isPinned(thread), thread.id, on: hostID)
+        let pinned = !isPinned(thread)
+        app.setPinned(pinned, thread.id, on: hostID)
+        undoManager?.registerUndo(withTarget: self) { $0.togglePin(thread) }
+        undoManager?.setActionName(pinned ? "Pin" : "Unpin")
     }
 
-    /// Archives or unarchives chats on this window's host; nothing is deleted. Leaves a chat being
-    /// archived for New Chat, and offers to remove the worktree of the one chat archived on its own.
+    /// Archives or unarchives chats on this window's host; nothing is deleted, and Edit ▸ Undo puts
+    /// them back. Leaves a chat being archived for New Chat, and offers to remove the worktree of
+    /// the one chat archived on its own.
     func setArchived(_ threads: [ThreadModel], _ archived: Bool) {
         guard let connection, !threads.isEmpty else { return }
         if archived, let open = selectedThread, threads.contains(where: { $0 === open }) { newChat() }
         Task { for thread in threads { await connection.setArchived(thread, archived) } }
-        if archived, threads.count == 1 { offerWorktreeRemoval(for: threads[0]) }
+        undoManager?.registerUndo(withTarget: self) { $0.setArchived(threads, !archived) }
+        undoManager?.setActionName(archived ? "Archive" : "Unarchive")
+        if archived, threads.count == 1, undoManager?.isUndoing != true { offerWorktreeRemoval(for: threads[0]) }
+    }
+
+    /// Gives `thread` a new title, which Edit ▸ Undo takes back.
+    func rename(_ thread: ThreadModel, to title: String) {
+        let new = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let old = thread.title
+        guard let connection, !new.isEmpty, new != old else { return }
+        Task { await connection.rename(thread, new) }
+        undoManager?.registerUndo(withTarget: self) { $0.rename(thread, to: old) }
+        undoManager?.setActionName("Rename")
     }
 
     /// The chat above or below this one in the sidebar's order (Chat ▸ Next Chat, ⌥⌘]); from New
