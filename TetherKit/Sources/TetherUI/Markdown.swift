@@ -560,8 +560,6 @@ struct CodeBlock: View {
     @State private var expanded = false
     @Environment(\.appearance) private var appearance
 
-    private var codeText: Text { Text(verbatim: code) }
-
     private func styled(_ text: some View) -> some View {
         text
             .scaledFont(.callout, design: .monospaced)
@@ -572,16 +570,35 @@ struct CodeBlock: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var lineCount: Int { code.reduce(1) { $1 == "\n" ? $0 + 1 : $0 } }
-    private var isTruncated: Bool { lineLimit.map { lineCount > $0 } ?? false }
+    /// How many lines the code has, and, when it has more than `limit` and one, where its first
+    /// `limit` and one end. Collapsed, only those are drawn: a tool's output can be megabytes, and
+    /// Text laid all of it out to show 14 lines. The one past the limit keeps the last line shown
+    /// ending in an ellipsis, as it did. One pass over the bytes, not two over the Characters.
+    nonisolated static func measure(_ code: String, limit: Int?) -> (lines: Int, collapsedEnd: String.Index?) {
+        let utf8 = code.utf8
+        var lines = 1
+        var end: String.Index?
+        var i = utf8.startIndex
+        while i != utf8.endIndex {
+            if utf8[i] == UInt8(ascii: "\n") {
+                if let limit, lines == limit + 1 { end = i }
+                lines += 1
+            }
+            utf8.formIndex(after: &i)
+        }
+        return (lines, end)
+    }
 
     var body: some View {
+        let measure = Self.measure(code, limit: lineLimit)
+        let isTruncated = lineLimit.map { measure.lines > $0 } ?? false
+        let codeText = Text(verbatim: !expanded ? measure.collapsedEnd.map { String(code[..<$0]) } ?? code : code)
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(language.isEmpty ? "code" : language)
                 Spacer()
                 if isTruncated {
-                    Button(expanded ? "Show Less" : "Show All \(lineCount) Lines") { expanded.toggle() }
+                    Button(expanded ? "Show Less" : "Show All \(measure.lines) Lines") { expanded.toggle() }
                         .buttonStyle(.link)
                 }
                 CopyButton {

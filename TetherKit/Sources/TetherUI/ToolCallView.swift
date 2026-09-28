@@ -182,7 +182,7 @@ struct ToolCallView: View {
         default:
             VStack(alignment: .leading, spacing: 6) {
                 if input.objectValue?.isEmpty == false {
-                    CodeBlock(code: input.pretty, language: "input", lineLimit: 12)
+                    CodeBlock(code: PrettyInput.text(for: call.id, input), language: "input", lineLimit: 12)
                 }
                 output
             }
@@ -450,18 +450,48 @@ struct TodoListView: View {
 }
 
 /// Line diff between two strings (removed in red, added in green); collapses past `lineLimit` lines.
+/// Each run of lines of one kind is one text on one tint, not a view per line.
 struct DiffView: View {
     let old: String
     let new: String
     var lineLimit = 24
     @State private var expanded = false
-    // Cached: the diff is O(old × new) and the transcript redraws on every streamed delta.
+    /// A large diff, worked out off the main actor: it's O(old × new).
+    @State private var loaded: Loaded?
+    // Cached: the transcript redraws on every streamed delta.
     @State private var cache = DiffCache()
 
     struct Line: Hashable { let sign: Character; let text: String }
 
+    /// Consecutive lines of one kind.
+    struct Run: Hashable, Identifiable, Sendable {
+        let id: Int
+        let sign: Character
+        /// The lines as drawn, each with its sign.
+        let text: String
+        /// The lines without their signs, for VoiceOver, which says the kind instead.
+        let spoken: String
+    }
+
+    /// The diff's runs, whole and as shown collapsed.
+    struct Diff: Sendable {
+        let lineCount: Int
+        let all: [Run]
+        let collapsed: [Run]
+    }
+
+    struct Key: Equatable, Sendable {
+        let old: String
+        let new: String
+    }
+
+    private struct Loaded {
+        let key: Key
+        let diff: Diff
+    }
+
     /// The same comparison the edited-files row counts with (`LineDiff`), as signed lines.
-    static func diff(old: String, new: String) -> [Line] {
+    nonisolated static func diff(old: String, new: String) -> [Line] {
         LineDiff.lines(old: old, new: new).map { line in
             switch line.kind {
             case .removed: Line(sign: "-", text: line.text)
@@ -471,22 +501,55 @@ struct DiffView: View {
         }
     }
 
+    nonisolated static func runs(_ lines: some Collection<Line>) -> [Run] {
+        var runs: [Run] = []
+        var current: [Line] = []
+        func close() {
+            guard let sign = current.first?.sign else { return }
+            runs.append(Run(id: runs.count, sign: sign,
+                            text: current.map { "\($0.sign) \($0.text)" }.joined(separator: "\n"),
+                            spoken: current.map(\.text).joined(separator: "\n")))
+            current = []
+        }
+        for line in lines {
+            if line.sign != current.first?.sign { close() }
+            current.append(line)
+        }
+        close()
+        return runs
+    }
+
+    nonisolated static func diff(_ key: Key, lineLimit: Int) -> Diff {
+        let lines = diff(old: key.old, new: key.new)
+        return Diff(lineCount: lines.count, all: runs(lines), collapsed: runs(lines.prefix(lineLimit)))
+    }
+
+    @concurrent
+    private nonisolated static func diffOffMain(_ key: Key, lineLimit: Int) async -> Diff {
+        diff(key, lineLimit: lineLimit)
+    }
+
+    /// Nearly every edit is a few lines, worked out at once so it's drawn with its row; a larger one
+    /// is worked out off the main actor.
+    private static func isSmall(_ key: Key) -> Bool { key.old.utf8.count + key.new.utf8.count <= 16 * 1024 }
+
     var body: some View {
-        let all = cache.lines(old: old, new: new)
+        let key = Key(old: old, new: new)
+        let diff = Self.isSmall(key) ? cache.diff(key, lineLimit: lineLimit) : loaded.flatMap { $0.key == key ? $0.diff : nil }
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array((expanded ? all : Array(all.prefix(lineLimit))).enumerated()), id: \.offset) { _, l in
-                Text(verbatim: "\(l.sign) \(l.text)")
+            ForEach(diff.map { expanded ? $0.all : $0.collapsed } ?? []) { run in
+                Text(verbatim: run.text)
                     .scaledFont(.callout, design: .monospaced)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 8)
-                    .background(l.sign == "-" ? Color.red.opacity(0.14) : l.sign == "+" ? Color.green.opacity(0.14) : .clear)
+                    .background(run.sign == "-" ? Color.red.opacity(0.14) : run.sign == "+" ? Color.green.opacity(0.14) : .clear)
                     // The sign and the tint, in words.
-                    .accessibilityLabel(l.sign == "-" ? "Removed" : l.sign == "+" ? "Added" : "Unchanged")
-                    .accessibilityValue(l.text)
+                    .accessibilityLabel(run.sign == "-" ? "Removed" : run.sign == "+" ? "Added" : "Unchanged")
+                    .accessibilityValue(run.spoken)
                     .accessibilityTextContentType(.sourceCode)
             }
-            if all.count > lineLimit {
-                Button(expanded ? "Show Less" : "Show All \(all.count) Lines") { expanded.toggle() }
+            if let diff, diff.lineCount > lineLimit {
+                Button(expanded ? "Show Less" : "Show All \(diff.lineCount) Lines") { expanded.toggle() }
                     .buttonStyle(.link)
                     .scaledFont(.caption)
                     .padding(8)
@@ -495,20 +558,46 @@ struct DiffView: View {
         .textSelection(.enabled)
         .padding(.vertical, 6)
         .background(.fill.quinary, in: .rect(cornerRadius: 8))
+        .task(id: key) {
+            guard !Self.isSmall(key), loaded?.key != key else { return }
+            let diff = await Self.diffOffMain(key, lineLimit: lineLimit)
+            guard !Task.isCancelled else { return }
+            loaded = Loaded(key: key, diff: diff)
+        }
     }
 }
 
 /// Memoizes one diff for the life of its view.
 @MainActor
 final class DiffCache {
-    private var key: (old: String, new: String)?
-    private var cached: [DiffView.Line] = []
+    private var key: DiffView.Key?
+    private var cached: DiffView.Diff?
 
-    func lines(old: String, new: String) -> [DiffView.Line] {
-        if let key, key.old == old, key.new == new { return cached }
-        cached = DiffView.diff(old: old, new: new)
-        key = (old, new)
-        return cached
+    func diff(_ key: DiffView.Key, lineLimit: Int) -> DiffView.Diff {
+        if let cached, self.key == key { return cached }
+        let diff = DiffView.diff(key, lineLimit: lineLimit)
+        self.key = key
+        cached = diff
+        return diff
+    }
+}
+
+/// Pretty-printed JSON for a tool call's or a request's input, made once per id rather than in every
+/// body that shows it: encoding with sorted keys is the slow part of drawing an open call.
+@MainActor
+enum PrettyInput {
+    private static var cache: [String: (input: JSONValue, text: String)] = [:]
+    private static var order: [String] = []
+
+    static func text(for id: String, _ input: JSONValue) -> String {
+        // Compared, since a running call's input can still change; equal values usually share storage.
+        if let hit = cache[id], hit.input == input { return hit.text }
+        let text = input.pretty
+        if cache.updateValue((input, text), forKey: id) == nil {
+            order.append(id)
+            if order.count > 200 { cache[order.removeFirst()] = nil }
+        }
+        return text
     }
 }
 
