@@ -207,6 +207,7 @@ public final class AppModel {
     /// The pending write of `drafts`: made once typing pauses, not per keystroke.
     @ObservationIgnored private var draftsSave: Task<Void, Never>?
     @ObservationIgnored private var terminationObserver: (any NSObjectProtocol)?
+    @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
 
     private let defaults: UserDefaults
     private let draftStore: DraftStore
@@ -245,6 +246,12 @@ public final class AppModel {
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.saveDrafts() }
         }
+        // A host that dropped while the Mac slept is tried again at once, not at the end of a wait
+        // that may have grown long.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.retryConnections() }
+        }
     }
 
     public func connection(_ id: UUID) -> HostConnection? { connections[id] }
@@ -254,6 +261,11 @@ public final class AppModel {
         guard !connectedAll else { return }
         connectedAll = true
         for c in connections.values { Task { await c.connect() } }
+    }
+
+    /// Hosts that dropped are tried again now, their backoff started over: the Mac woke.
+    func retryConnections() {
+        for c in connections.values { c.retryNow() }
     }
 
     public func addHost(_ h: HostConfig) {

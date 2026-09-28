@@ -30,7 +30,15 @@ public final class HostConnection: Identifiable {
     private var threads: [String: ThreadModel] = [:]
     private var client: RPCClient?
     private var notificationTask: Task<Void, Never>?
-    private var reconnectAttempt = 0
+    /// Failed attempts in a row, for `ReconnectBackoff`.
+    @ObservationIgnored private(set) var reconnectAttempt = 0
+    /// The wait before the next attempt, cancelled by one that starts sooner.
+    @ObservationIgnored private var reconnectTask: Task<Void, Never>?
+    /// Whether the last failure is worth trying again: a protocol mismatch isn't, until one side
+    /// is updated.
+    @ObservationIgnored private var retryable = true
+    /// Nil for the test seam, whose hosts don't wait for the network.
+    @ObservationIgnored private let network: NetworkPath?
     private var wantsConnection = false
     private var subscribed = Set<String>()
     /// Threads a view has asked to open, whether or not we were connected at the time.
@@ -48,13 +56,18 @@ public final class HostConnection: Identifiable {
         self.host = host
         self.id = host.id
         self.transportProvider = nil
+        self.network = .shared
+        NetworkPath.shared.watch(self)
     }
 
-    /// Test seam for reconnect/replay coverage.
-    init(host: HostConfig, transportProvider: @escaping TransportProvider) {
+    /// Test seam for reconnect/replay coverage. `network` is the path a test drives; without one
+    /// the host never waits for the network.
+    init(host: HostConfig, network: NetworkPath? = nil, transportProvider: @escaping TransportProvider) {
         self.host = host
         self.id = host.id
         self.transportProvider = transportProvider
+        self.network = network
+        network?.watch(self)
     }
 
     public func update(host: HostConfig) {
@@ -138,7 +151,8 @@ public final class HostConnection: Identifiable {
             await tearDown()
             state = .failed(error.localizedDescription)
             // Trying again can't fix a protocol mismatch; one side has to be updated first.
-            if !(error is Incompatible) { scheduleReconnect() }
+            retryable = !(error is Incompatible)
+            if retryable { scheduleReconnect() }
         }
     }
 
@@ -153,14 +167,37 @@ public final class HostConnection: Identifiable {
 
     public func disconnect() async {
         wantsConnection = false
+        reconnectTask?.cancel()
+        reconnectTask = nil
         await tearDown()
         state = .disconnected
     }
 
+    /// Asked for: the backoff starts over.
     public func reconnect() async {
+        reconnectAttempt = 0
         await disconnect()
         await connect()
     }
+
+    /// Tries a dropped connection again now, with the backoff started over: the Mac woke, or
+    /// someone asked. Nothing for a connection that's up, under way, or not wanted.
+    public func retryNow() {
+        reconnectAttempt = 0
+        guard wantsConnection, retryable, case .failed = state else { return }
+        if needsNetwork, network?.isSatisfied == false { return }
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in await self?.connect() }
+    }
+
+    /// The network came back, or moved to another interface: an SSH host is worth trying again.
+    func networkChanged() {
+        guard needsNetwork else { return }
+        retryNow()
+    }
+
+    /// Only an SSH host needs the network; this Mac's daemon is a process away.
+    private var needsNetwork: Bool { host.sshDestination != nil }
 
     /// Only for the client that closed: a `reconnect()` can have replaced it by the time this runs.
     private func connectionLost(_ closed: RPCClient, _ error: any Error) {
@@ -189,13 +226,23 @@ public final class HostConnection: Identifiable {
         for t in threads.values { t.clearPending() }
     }
 
+    /// Tries again after `ReconnectBackoff`'s wait, or, for an SSH host while the Mac is off the
+    /// network, once the network is back (`networkChanged`) rather than on a timer.
     private func scheduleReconnect() {
         guard wantsConnection else { return }
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        if needsNetwork, network?.isSatisfied == false {
+            appendLog("Waiting for the network")
+            return
+        }
         reconnectAttempt += 1
-        let delay = min(30.0, pow(2.0, Double(min(reconnectAttempt, 5))))
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(delay))
-            guard let self, self.wantsConnection else { return }
+        let delay = ReconnectBackoff.delay(afterFailures: reconnectAttempt, jitter: .random(in: 0..<1))
+        appendLog("Trying again in \(delay.formatted(.units(allowed: [.minutes, .seconds], width: .abbreviated)))")
+        reconnectTask = Task { [weak self] in
+            // Some slack, so the wake can share one with other timers.
+            try? await Task.sleep(for: delay, tolerance: delay / 10)
+            guard !Task.isCancelled, let self, self.wantsConnection else { return }
             if case .failed = self.state { await self.connect() }
         }
     }
