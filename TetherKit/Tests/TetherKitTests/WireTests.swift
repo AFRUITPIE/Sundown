@@ -67,3 +67,193 @@ struct LineSplitterTests {
         }
     }
 }
+
+/// The members of a JSON-RPC message, found without decoding it.
+@Suite
+struct WireMessageTests {
+    private func message(_ line: String) -> WireMessage? { WireMessage(Data(line.utf8)) }
+    private func text(_ data: Data?) -> String? { data.map { String(decoding: $0, as: UTF8.self) } }
+
+    @Test func aResponse() throws {
+        let m = try #require(message(#"{"id":7,"result":{"a":[1,2,{"b":"}]"}],"c":null}}"#))
+        #expect(text(m.id) == "7")
+        #expect(text(m.result) == #"{"a":[1,2,{"b":"}]"}],"c":null}"#)
+        #expect(m.method == nil && m.params == nil && m.error == nil)
+    }
+
+    @Test func anErrorResponse() throws {
+        let m = try #require(message(#"{"id":12,"error":{"code":-32010,"message":"Thread \"x\" not found"}}"#))
+        #expect(text(m.id) == "12")
+        #expect(text(m.error) == #"{"code":-32010,"message":"Thread \"x\" not found"}"#)
+        #expect(m.result == nil)
+    }
+
+    @Test func aNotificationDecodesStraightFromItsParams() throws {
+        let line = #"{"method":"item/agentMessage/delta","params":{"threadId":"t","seq":3,"itemId":"i","delta":"a \"quote\", {brace} [x] \\ back\\\\"}}"#
+        let m = try #require(message(line))
+        #expect(m.method == "item/agentMessage/delta")
+        #expect(m.id == nil)
+        let n = try ServerNotification(method: m.method!, params: try #require(m.params))
+        guard case .itemAgentMessageDelta(let delta) = n else {
+            Issue.record("expected a delta, got \(n)")
+            return
+        }
+        #expect(delta.delta == #"a "quote", {brace} [x] \ back\\"#)
+        #expect(delta.seq == 3)
+    }
+
+    @Test func aServerRequestKeepsItsID() throws {
+        let m = try #require(message(#"{"id":"req-1","method":"permission/request","params":{"threadId":"t"}}"#))
+        #expect(text(m.id) == #""req-1""#)
+        #expect(m.method == "permission/request")
+        #expect(text(m.params) == #"{"threadId":"t"}"#)
+    }
+
+    @Test func membersInAnyOrderWithSpaceBetween() throws {
+        let m = try #require(message(" { \"params\" : [ ] ,\t\"unknown\" : true , \"method\" : \"x/y\" , \"n\": -1.5e3 }\r"))
+        #expect(m.method == "x/y")
+        #expect(text(m.params) == "[ ]")
+    }
+
+    @Test func escapesInKeysAndMethodsAreRead() throws {
+        let m = try #require(message(#"{"id":3,"method":"thread\/started","s":"ends in a backslash\\","result":{}}"#))
+        #expect(text(m.id) == "3")
+        #expect(m.method == "thread/started")
+        #expect(text(m.result) == "{}")
+    }
+
+    @Test func aMethodThatIsntAStringIsNone() throws {
+        let m = try #require(message(#"{"id":1,"method":42,"result":null}"#))
+        #expect(m.method == nil)
+        #expect(text(m.result) == "null")
+    }
+
+    @Test func linesThatArentOneObjectAreDropped() {
+        for line in ["", "[1,2]", #"{"id":1"#, #"{"id":}"#, #"{"id":1} x"#, #"{"a":"unterminated}"#,
+                     #"{"a":{"b":1}"#, #"{"a":1,}"#, #"{id:1}"#, #"{"a":x}"#] {
+            #expect(message(line) == nil, "\(line)")
+        }
+        #expect(message("{}") != nil)
+    }
+}
+
+/// The client over a transport that answers its calls.
+@Suite
+struct RPCClientTests {
+    @Test func aCallSendsItsTypedParamsAndDecodesItsResult() async throws {
+        let transport = WireTransport { method, params in
+            guard method == "thread/list" else { return nil }
+            return ["threads": [["threadId": "a", "cwd": "/w", "updatedAt": 5, "status": "idle", "title": "One"]]]
+        }
+        let client = RPCClient(transport: transport)
+        await client.start()
+
+        let result = try await client.call(Methods.ThreadList.self, .init(limit: 20))
+
+        #expect(result.threads.map(\.threadId) == ["a"])
+        #expect(result.threads.first?.title == "One")
+        let sent = try #require(await transport.sent.first)
+        #expect(sent["id"]?.intValue == 1)
+        #expect(sent["method"]?.stringValue == "thread/list")
+        #expect(sent["params"]?["limit"]?.intValue == 20)
+        await client.close()
+    }
+
+    @Test func anErrorResponseThrowsItsCodeAndMessage() async throws {
+        let transport = WireTransport { _, _ in nil }
+        let client = RPCClient(transport: transport)
+        await client.start()
+
+        let error = await #expect(throws: RPCError.self) {
+            _ = try await client.call(Methods.ThreadDelete.self, .init(threadId: "gone"))
+        }
+        #expect(error?.code == -32601)
+        #expect(error?.message == "not scripted")
+        await client.close()
+    }
+
+    @Test func aServerRequestIsAnsweredWithItsOwnID() async throws {
+        let transport = WireTransport { _, _ in nil }
+        let client = RPCClient(transport: transport)
+        let received = Received<ServerRequest>()
+        await client.setServerRequestHandler { request in
+            await received.append(request)
+            return ["behavior": "allow"]
+        }
+        await client.start()
+
+        transport.emit(#"{"id":"req-7","method":"permission/request","params":{"threadId":"t","requestId":"r","toolUseId":"u","toolName":"Bash","input":{"command":"ls"}}}"#)
+        transport.emit(#"{"id":8,"method":"something/new","params":{"threadId":"t","requestId":"r2"}}"#)
+        try await waitUntil { await transport.sent.count == 2 }
+
+        let requests = await received.values
+        guard case .permissionRequest(let p) = requests.first else {
+            Issue.record("expected a permission request, got \(requests)")
+            return
+        }
+        #expect(p.input["command"]?.stringValue == "ls")
+        guard case .unknown(let method, let params) = requests.last else {
+            Issue.record("expected an unknown request, got \(requests)")
+            return
+        }
+        #expect(method == "something/new")
+        #expect(params["requestId"]?.stringValue == "r2")
+        let answers = await transport.sent
+        #expect(Set(answers.compactMap { $0["id"] }) == [.string("req-7"), .number(8)])
+        #expect(answers.allSatisfy { $0["result"]?["behavior"]?.stringValue == "allow" && $0["method"] == nil })
+        await client.close()
+    }
+}
+
+/// Lines in and out: what the client sent, and a responder for its calls (nil answers with an error).
+private actor WireTransport: Transport {
+    typealias Responder = @Sendable (_ method: String, _ params: JSONValue) -> JSONValue?
+
+    private let responder: Responder
+    private let stream: AsyncThrowingStream<Data, any Error>
+    private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
+    private(set) var sent: [JSONValue] = []
+
+    init(responder: @escaping Responder) {
+        self.responder = responder
+        (stream, continuation) = AsyncThrowingStream.makeStream()
+    }
+
+    nonisolated func lines() -> AsyncThrowingStream<Data, any Error> { stream }
+
+    func send(_ line: Data) async throws {
+        let message = try JSONDecoder().decode(JSONValue.self, from: line)
+        sent.append(message)
+        guard let id = message["id"], let method = message["method"]?.stringValue else { return }
+        if let result = responder(method, message["params"] ?? [:]) {
+            emit(["id": id, "result": result])
+        } else {
+            emit(["id": id, "error": ["code": -32601, "message": "not scripted"]])
+        }
+    }
+
+    func close() async { continuation.finish() }
+
+    nonisolated func emit(_ line: String) {
+        continuation.yield(Data(line.utf8))
+    }
+
+    nonisolated func emit(_ message: JSONValue) {
+        continuation.yield(try! JSONEncoder().encode(message))
+    }
+}
+
+private actor Received<Value: Sendable> {
+    private(set) var values: [Value] = []
+    func append(_ value: Value) { values.append(value) }
+}
+
+private enum WireTestError: Error { case timeout }
+
+private func waitUntil(_ condition: () async -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(2)
+    while await !condition() {
+        if ContinuousClock.now > deadline { throw WireTestError.timeout }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+}
