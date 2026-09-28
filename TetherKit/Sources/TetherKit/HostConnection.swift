@@ -149,6 +149,8 @@ public final class HostConnection: Identifiable {
             }
             appendLog("Connection failed: \(error.localizedDescription)")
             await tearDown()
+            // The server may be gone from the host since it was checked: check again next time.
+            HostBootstrapper.forgetInstall(on: host)
             state = .failed(error.localizedDescription)
             // Trying again can't fix a protocol mismatch; one side has to be updated first.
             retryable = !(error is Incompatible)

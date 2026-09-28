@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Locates bundled server binaries and installs the right one on a host, then
 /// builds the command that connects to that host's Tether daemon.
@@ -62,10 +63,11 @@ public struct HostBootstrapper: Sendable {
     /// Returns the argv to launch for this host, installing the server first if needed.
     public func connectCommand(for host: HostConfig) async throws -> (executable: String, arguments: [String]) {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let ssh = Self.sshOptions + Self.sharedConnectionOptions()
         if let custom = host.serverCommand, !custom.isEmpty {
             switch host.kind {
             case .local: return (shell, ["-lc", custom])
-            case .ssh(let dest): return ("/usr/bin/ssh", Self.sshOptions + [dest, custom])
+            case .ssh(let dest): return ("/usr/bin/ssh", ssh + [dest, custom])
             }
         }
         let all = availableBinaries()
@@ -92,24 +94,40 @@ public struct HostBootstrapper: Sendable {
             return (shell, ["-lc", "exec \(dest.path) connect"])
 
         case .ssh(let destHost):
-            log("Checking \(destHost)")
-            let probe = try await Self.run("/usr/bin/ssh", Self.sshOptions + [destHost, "uname -sm; test -x \(remotePath) && echo TETHER_PRESENT; true"])
-            let lines = probe.split(separator: "\n").map(String.init)
-            guard let uname = lines.first else { throw BootstrapError.command("ssh", "no output from \(destHost)") }
-            let platform = try Self.platform(fromUname: uname)
-            if !lines.contains("TETHER_PRESENT") {
-                guard let bin = binaries.first(where: { $0.platform == platform }) else { throw BootstrapError.unsupportedPlatform(platform) }
-                log("Uploading Tether \(version) (\(platform)) to \(destHost)")
-                _ = try await Self.run("/usr/bin/ssh", Self.sshOptions + [destHost, "mkdir -p ~/.tether/bin"])
-                _ = try await Self.run("/usr/bin/scp", ["-q", "-o", "BatchMode=yes", bin.url.path, "\(destHost):.tether/bin/tether-\(version).tmp"])
-                // A dev build replaces the previous one rather than piling up beside it.
-                let prune = version.contains("-dev.") ? " && find ~/.tether/bin -name 'tether-*-dev.*' ! -name 'tether-\(version)' -delete" : ""
-                _ = try await Self.run("/usr/bin/ssh", Self.sshOptions + [destHost, "chmod +x \(remotePath).tmp && mv -f \(remotePath).tmp \(remotePath)\(prune)"])
+            // Checked once a session: a reconnect goes straight to `connect`, one SSH login rather
+            // than two. A failed attempt forgets it (`forgetInstall`), so a server gone since is put back.
+            let key = "\(destHost) \(version)"
+            if !Self.installed.withLock({ $0.contains(key) }) {
+                log("Checking \(destHost)")
+                let probe = try await Self.run("/usr/bin/ssh", ssh + [destHost, "uname -sm; test -x \(remotePath) && echo TETHER_PRESENT; true"])
+                let lines = probe.split(separator: "\n").map(String.init)
+                guard let uname = lines.first else { throw BootstrapError.command("ssh", "no output from \(destHost)") }
+                let platform = try Self.platform(fromUname: uname)
+                if !lines.contains("TETHER_PRESENT") {
+                    guard let bin = binaries.first(where: { $0.platform == platform }) else { throw BootstrapError.unsupportedPlatform(platform) }
+                    log("Uploading Tether \(version) (\(platform)) to \(destHost)")
+                    _ = try await Self.run("/usr/bin/ssh", ssh + [destHost, "mkdir -p ~/.tether/bin"])
+                    _ = try await Self.run("/usr/bin/scp", ["-q", "-o", "BatchMode=yes"] + Self.sharedConnectionOptions()
+                                           + [bin.url.path, "\(destHost):.tether/bin/tether-\(version).tmp"])
+                    // A dev build replaces the previous one rather than piling up beside it.
+                    let prune = version.contains("-dev.") ? " && find ~/.tether/bin -name 'tether-*-dev.*' ! -name 'tether-\(version)' -delete" : ""
+                    _ = try await Self.run("/usr/bin/ssh", ssh + [destHost, "chmod +x \(remotePath).tmp && mv -f \(remotePath).tmp \(remotePath)\(prune)"])
+                }
+                Self.installed.withLock { _ = $0.insert(key) }
             }
             // Run under the remote user's login shell so PATH (and the first `claude`) match their terminal.
             let remote = "exec \"$SHELL\" -lc 'exec \(remotePath) connect'"
-            return ("/usr/bin/ssh", Self.sshOptions + [destHost, remote])
+            return ("/usr/bin/ssh", ssh + [destHost, remote])
         }
+    }
+
+    /// Destinations and versions found installed this session, as "<destination> <version>".
+    private static let installed = Mutex<Set<String>>([])
+
+    /// The next connection to `host` checks again for the server before starting it.
+    public static func forgetInstall(on host: HostConfig) {
+        guard let destination = host.sshDestination else { return }
+        installed.withLock { $0 = $0.filter { !$0.hasPrefix(destination + " ") } }
     }
 
     /// Local development compiles a new `-dev.<time>` build whenever the server changes; each would
@@ -123,7 +141,31 @@ public struct HostBootstrapper: Sendable {
         }
     }
 
-    public static let sshOptions = ["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", "-o", "ConnectTimeout=15"]
+    /// A keepalive every 30 s, not 15: each wakes the radio on both ends, and a connection that died
+    /// quietly is still noticed within two minutes.
+    public static let sshOptions = ["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4", "-o", "ConnectTimeout=15"]
+
+    /// One SSH connection per host for the check, the upload and the session, kept a minute after
+    /// the last of them: each was a login of its own (a TCP and SSH handshake, and the host's
+    /// authentication). The socket goes in `~/.ssh`, private to the user. Nothing when that isn't
+    /// a folder, or the path would be too long for a socket: ssh stops rather than going on
+    /// without one.
+    static func sharedConnectionOptions(home: String = NSHomeDirectory(),
+                                        isFolder: (String) -> Bool = folderExists) -> [String] {
+        let folder = (home as NSString).appendingPathComponent(".ssh")
+        // Written into ssh's own option syntax: a space or a quote would need quoting there.
+        guard !home.contains(where: { $0.isWhitespace || "%\"'".contains($0) }), isFolder(folder) else { return [] }
+        let path = folder + "/tether-%C"
+        // %C is 40 characters, and ssh adds 17 to the name while it makes the socket; a socket's
+        // path is at most 103 bytes.
+        guard path.utf8.count - 2 + 40 + 17 <= 103 else { return [] }
+        return ["-o", "ControlMaster=auto", "-o", "ControlPath=\(path)", "-o", "ControlPersist=60"]
+    }
+
+    static func folderExists(_ path: String) -> Bool {
+        var isFolder: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isFolder) && isFolder.boolValue
+    }
 
     static var localArch: String {
         #if arch(arm64)

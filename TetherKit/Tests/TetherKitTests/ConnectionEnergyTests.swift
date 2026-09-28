@@ -224,3 +224,24 @@ struct NetworkRetryTests {
         await c.disconnect()
     }
 }
+
+@Suite
+struct SSHOptionsTests {
+    @Test func keepalivesEveryThirtySeconds() {
+        #expect(HostBootstrapper.sshOptions.contains("ServerAliveInterval=30"))
+    }
+
+    /// The check, the upload and the session share one SSH connection, through a socket in ~/.ssh.
+    @Test func oneConnectionPerHostWhenThereIsASocketFolder() {
+        let options = HostBootstrapper.sharedConnectionOptions(home: "/Users/hayden", isFolder: { $0 == "/Users/hayden/.ssh" })
+        #expect(options == ["-o", "ControlMaster=auto", "-o", "ControlPath=/Users/hayden/.ssh/tether-%C", "-o", "ControlPersist=60"])
+    }
+
+    /// Where ssh couldn't make the socket it would stop rather than go on without it: no sharing.
+    @Test func noSharingWhereSSHCouldntMakeTheSocket() {
+        #expect(HostBootstrapper.sharedConnectionOptions(home: "/Users/hayden", isFolder: { _ in false }).isEmpty)
+        let long = "/Users/" + String(repeating: "h", count: 40)
+        #expect(HostBootstrapper.sharedConnectionOptions(home: long, isFolder: { _ in true }).isEmpty)
+        #expect(HostBootstrapper.sharedConnectionOptions(home: "/Users/Jo Smith", isFolder: { _ in true }).isEmpty)
+    }
+}
