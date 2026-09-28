@@ -153,15 +153,18 @@ public final class ThreadModel: Identifiable {
 
     // MARK: loading
 
+    // Assigned only when they differ: an observed property tells its views even when it's given the
+    // same value, and every chat's summary comes again after each turn.
+
     func setInfo(_ i: ThreadInfo) {
-        info = i
-        status = i.status
+        if info != i { info = i }
+        if status != i.status { status = i.status }
         refreshTitle()
     }
 
     func setSummary(_ s: ThreadSummary) {
-        summary = s
-        if info == nil { status = s.status }
+        if summary != s { summary = s }
+        if info == nil, status != s.status { status = s.status }
         refreshTitle()
     }
 
@@ -252,12 +255,13 @@ public final class ThreadModel: Identifiable {
         switch n {
         case .threadStarted(let e): setInfo(e.thread)
         case .threadUpdated(let e):
-            info = e.thread
+            if info != e.thread { info = e.thread }
             refreshTitle()
         case .threadStatusChanged(let e):
-            status = e.status
-            activity = e.activity?.rawValue
-            if e.status == .idle { apiRetry = nil }
+            // The sidebar reads the status: only a change of it redraws the rows.
+            if status != e.status { status = e.status }
+            if activity != e.activity?.rawValue { activity = e.activity?.rawValue }
+            if e.status == .idle, apiRetry != nil { apiRetry = nil }
         case .threadClosed:
             status = .closed
             settleTasks()

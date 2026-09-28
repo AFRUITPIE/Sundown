@@ -251,7 +251,7 @@ public final class HostConnection: Identifiable {
             try? await Task.sleep(for: .seconds(2))
             guard let self, !Task.isCancelled else { return }
             self.chatsRefreshTask = nil
-            await self.loadChats()
+            await self.refreshRecentChats()
         }
     }
 
@@ -334,19 +334,38 @@ public final class HostConnection: Identifiable {
         if let a = try? await accountR { account = a.account }
     }
 
+    /// The host's chats, most recent first: the list the host has now, which drops chats deleted
+    /// elsewhere or past the limit.
     public func loadChats(limit: Int = 200) async {
+        await loadChats(limit: limit, recentOnly: false)
+    }
+
+    /// How many chats the refresh after a turn asks for: the ones that just changed are the latest.
+    static let recentChatsLimit = 5
+
+    /// After a turn: the few most recent chats, for Claude's names for them and their new order,
+    /// merged into the list held rather than fetching all of it again.
+    func refreshRecentChats() async {
+        await loadChats(limit: Self.recentChatsLimit, recentOnly: true)
+    }
+
+    private func loadChats(limit: Int, recentOnly: Bool) async {
         guard let client else { return }
         do {
             let r = try await client.call(Methods.ThreadList.self, .init(limit: limit))
-            var list: [ThreadModel] = []
-            for s in r.threads {
+            var listed: [ThreadModel] = []
+            var ids = Set<String>()
+            for s in r.threads where ids.insert(s.threadId).inserted {
                 let m = thread(s.threadId)
                 m.setSummary(s)
-                list.append(m)
+                listed.append(m)
             }
-            // Keep live chats that are not persisted yet (no first message on disk).
-            for m in chats where !list.contains(where: { $0 === m }) { list.insert(m, at: 0) }
-            chats = list
+            // Live chats that are not persisted yet (no first message on disk), on top.
+            var next = chats.filter { $0.summary == nil && !ids.contains($0.id) } + listed
+            // Only the most recent came back: the rest keep their places below them.
+            if recentOnly { next += chats.filter { $0.summary != nil && !ids.contains($0.id) } }
+            // The sidebar regroups whenever this is set.
+            if !next.elementsEqual(chats, by: ===) { chats = next }
         } catch {
             appendLog("thread/list failed: \(error.localizedDescription)")
         }
