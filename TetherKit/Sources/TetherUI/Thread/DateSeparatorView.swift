@@ -1,3 +1,4 @@
+import Synchronization
 import SwiftUI
 import TetherKit
 
@@ -53,15 +54,28 @@ enum TranscriptDate {
         }
     }
 
-    /// "Today" or "Yesterday", capitalized as the locale starts a sentence.
+    /// "Today" or "Yesterday", capitalized as the locale starts a sentence. Kept once made: a
+    /// formatter for every separator was most of drawing one.
     private static func relativeDay(_ offset: Int, calendar: Calendar, locale: Locale) -> String {
+        let key = RelativeDay(offset: offset, locale: locale.identifier, calendar: calendar.identifier)
+        if let known = relativeDays.withLock({ $0[key] }) { return known }
         let formatter = RelativeDateTimeFormatter()
         formatter.locale = locale
         formatter.calendar = calendar
         formatter.dateTimeStyle = .named
         formatter.formattingContext = .beginningOfSentence
-        return formatter.localizedString(from: DateComponents(day: offset))
+        let day = formatter.localizedString(from: DateComponents(day: offset))
+        relativeDays.withLock { $0[key] = day }
+        return day
     }
+
+    private struct RelativeDay: Hashable, Sendable {
+        let offset: Int
+        let locale: String
+        let calendar: Calendar.Identifier
+    }
+
+    private static let relativeDays = Mutex<[RelativeDay: String]>([:])
 }
 
 #if DEBUG
