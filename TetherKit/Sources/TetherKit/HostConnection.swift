@@ -662,18 +662,36 @@ public final class HostConnection: Identifiable {
         openRequested.remove(model.id)
     }
 
+    /// What asking for an older page came to, so a caller asking again knows whether to.
+    public enum OlderHistoryOutcome: Sendable, Equatable {
+        /// A page went in above the items held.
+        case loaded
+        /// Nothing older to load.
+        case complete
+        /// A page is already on its way.
+        case busy
+        /// Not connected: nothing to ask until the host is back.
+        case unavailable
+        /// The host couldn't send it; asking again at once would likely fail the same way.
+        case failed
+    }
+
     /// Fetch the page before the items already held, one page at a time.
-    public func loadOlderHistory(_ model: ThreadModel) async {
-        guard let client, model.hasMoreHistory, !model.loadingOlder else { return }
-        guard let oldest = model.items.first?.id else { return }
+    @discardableResult
+    public func loadOlderHistory(_ model: ThreadModel) async -> OlderHistoryOutcome {
+        guard model.hasMoreHistory, let oldest = model.items.first?.id else { return .complete }
+        guard !model.loadingOlder else { return .busy }
+        guard let client else { return .unavailable }
         model.loadingOlder = true
         defer { model.loadingOlder = false }
         do {
             let r = try await client.call(Methods.ThreadRead.self, .init(
                 threadId: model.id, cwd: model.cwd, limit: Self.olderHistoryPageSize, before: oldest))
             model.prependHistory(items: r.items, hasMore: r.hasMore ?? false)
+            return .loaded
         } catch {
             appendLog("Loading older history for \(model.id) failed: \(error.localizedDescription)")
+            return .failed
         }
     }
 

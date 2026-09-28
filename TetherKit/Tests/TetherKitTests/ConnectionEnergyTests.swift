@@ -346,6 +346,40 @@ struct CommandCacheTests {
     }
 }
 
+@MainActor
+@Suite(.serialized)
+struct OlderHistoryTests {
+    /// Each ask for an older page says how it went, so the transcript knows whether to ask again.
+    @Test func anOlderPageSaysHowItWent() async throws {
+        let daemon = FakeDaemon()
+        await daemon.enqueue("thread/read", page(["m3"], hasMore: true))
+        let c = connection(daemon, host: .local)
+        await c.connect()
+        let t = c.thread("t")
+        t.setSummary(summary("t", cwd: "/work/app"))
+        await c.open(t)
+        #expect(t.hasMoreHistory)
+
+        await daemon.enqueue("thread/read", .error(code: -1, message: "The host is busy"))
+        #expect(await c.loadOlderHistory(t) == .failed)
+        #expect(t.hasMoreHistory)
+
+        t.loadingOlder = true
+        #expect(await c.loadOlderHistory(t) == .busy)
+        t.loadingOlder = false
+
+        await c.disconnect()
+        #expect(await c.loadOlderHistory(t) == .unavailable)
+
+        await c.connect()
+        await daemon.enqueue("thread/read", page(["m2"], hasMore: false))
+        #expect(await c.loadOlderHistory(t) == .loaded)
+        #expect(t.items.map(\.id) == ["m2", "m3"])
+        #expect(await c.loadOlderHistory(t) == .complete)
+        await c.disconnect()
+    }
+}
+
 @Suite
 struct SSHOptionsTests {
     @Test func keepalivesEveryThirtySeconds() {
