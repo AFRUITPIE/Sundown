@@ -59,29 +59,41 @@ struct ThreadInspector: View {
     }
 }
 
-/// The panes as a row of their symbols over the pane, as Xcode shows its inspectors': the open
-/// one in the accent color, the others secondary. Plain borderless buttons, each named for
+/// The panes as a row of their symbols over the pane, in one Liquid Glass capsule as a toolbar
+/// control would be: the open one in the accent color on a tinted pill that slides to the tab
+/// chosen, the others secondary. Plain buttons inside the glass, not glass on glass; each named for
 /// VoiceOver and its help tag, and marked selected when it's the open pane.
 struct InspectorTabBar: View {
     @Binding var pane: InspectorPane
+    @Namespace private var selection
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(InspectorPane.allCases) { tab in
                 Button {
-                    pane = tab
+                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.25)) { pane = tab }
                 } label: {
                     Label(tab.label, systemImage: tab.symbol)
                         .labelStyle(.iconOnly)
-                        .frame(width: 32, height: 24)
-                        .contentShape(Rectangle())
+                        .frame(width: 34, height: 26)
                         .foregroundStyle(pane == tab ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                        .background {
+                            if pane == tab {
+                                Capsule()
+                                    .fill(.tint.opacity(0.15))
+                                    .matchedGeometryEffect(id: "selection", in: selection)
+                            }
+                        }
+                        .contentShape(Capsule())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .help(tab.label)
                 .accessibilityAddTraits(pane == tab ? .isSelected : [])
             }
         }
+        .padding(4)
+        .glassEffect(.regular, in: .capsule)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
         .accessibilityElement(children: .contain)
