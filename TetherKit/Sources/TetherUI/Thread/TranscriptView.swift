@@ -217,6 +217,8 @@ private struct TranscriptContent: View {
             TranscriptTail(thread: thread)
         }
         // VoiceOver's way from prompt to prompt, which reaches the ones the lazy stack hasn't built.
+        // On a container element, as a rotor has to be.
+        .accessibilityElement(children: .contain)
         .accessibilityRotor("Prompts", entries: Self.prompts(rows), entryID: \.id, entryLabel: \.label)
         // Rows are scroll targets by their ids, so an older page can keep the reader where they were.
         .scrollTargetLayout()
@@ -237,7 +239,9 @@ extension TranscriptContent {
     static func prompts(_ rows: [TranscriptRow]) -> [PromptEntry] {
         rows.compactMap { row in
             guard case .item(.userMessage(let m)) = row, m.synthetic != true else { return nil }
-            return PromptEntry(id: row.id, label: String(m.plainText.prefix(80)))
+            // The first words of its first text, not the whole prompt joined: a pasted log is long.
+            let first = m.content.lazy.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.first ?? ""
+            return PromptEntry(id: row.id, label: String(first.prefix(80)))
         }
     }
 }

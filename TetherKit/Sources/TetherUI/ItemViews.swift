@@ -104,7 +104,9 @@ private struct MessageMenu: ViewModifier {
             // A reply is one element, as a prompt's bubble is, so its actions are the reply's and not
             // each paragraph's; and says when it was sent, which the eye gets from the hover bar.
             .modifier(ReplyElement(isReply: isMarkdown))
-            .accessibilityCustomContent(Text("Sent"), Text(Format.messageTime(msSinceEpoch: sentAt)))
+            // A date and a style, formatted only when VoiceOver reads it, not per streamed delta.
+            .accessibilityCustomContent(Text("Sent"), Text(Date(timeIntervalSince1970: sentAt / 1000),
+                                                            format: .dateTime.month(.abbreviated).day().hour().minute()))
             .accessibilityAction(named: "Copy", copyText)
             .accessibilityAction(named: "Fork from Here") { forkChat(id) }
             .accessibilityActions {
@@ -277,6 +279,12 @@ struct UserMessageView: View {
         }
     }
 
+    /// Whether a part has something to show, so an unknown one takes no space.
+    static func draws(_ part: UserInput) -> Bool {
+        if case .unknown = part { return false }
+        return true
+    }
+
     /// Who a message not typed here came from, in words rather than the SDK's kind.
     static func originLabel(_ origin: String?) -> String {
         switch origin {
@@ -308,7 +316,7 @@ struct UserMessageView: View {
                 }
                 .scaledFont(.caption2).foregroundStyle(.secondary)
             }
-            ForEach(Array(message.content.enumerated()), id: \.offset) { _, part in
+            ForEach(Array(message.content.enumerated()).filter { Self.draws($0.element) }, id: \.offset) { _, part in
                 // One view a part, even one that shows nothing, so SwiftUI can count them.
                 VStack(alignment: .trailing, spacing: 0) {
                     switch part {

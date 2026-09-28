@@ -264,7 +264,8 @@ struct TranscriptDisclosureStyle: DisclosureGroupStyle {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityValue([value, configuration.isExpanded ? "Expanded" : "Collapsed"].compactMap { $0 }.joined(separator: ", "))
+                .accessibilityValue([value, configuration.isExpanded ? "Expanded" : "Collapsed"]
+                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
                 .accessibilityIdentifier(identifier)
                 if let note {
                     Text(note)
@@ -432,6 +433,8 @@ struct TodoListView: View {
                     Image(systemName: status == "completed" ? "checkmark.circle.fill" : status == "in_progress" ? "circle.dotted.circle" : "circle")
                         .foregroundStyle(status == "completed" ? .green : status == "in_progress" ? .blue : .secondary)
                         .contentTransition(.symbolEffect(.replace))
+                        // The row's value says it, once.
+                        .accessibilityHidden(true)
                     Text(status == "in_progress" ? (t.string("activeForm") ?? t.string("content") ?? "") : (t.string("content") ?? ""))
                         .strikethrough(status == "completed")
                         .foregroundStyle(status == "completed" ? .secondary : .primary)

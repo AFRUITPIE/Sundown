@@ -148,9 +148,10 @@ struct AuthStatusView: View {
                     Link(line, destination: url).font(.caption.monospaced())
                 } else {
                     Text(line).font(.caption.monospaced()).textSelection(.enabled)
-                        // A device code is read letter by letter, as it has to be typed.
                         .accessibilityTextContentType(.console)
-                        .speechSpellsOutCharacters()
+                        // A device code ("ABCD-EFGH") is read letter by letter, as it has to be
+                        // typed; the rest of the output as words.
+                        .speechSpellsOutCharacters(line.contains(/\b[A-Z0-9]{4,}-[A-Z0-9]{4,}\b/))
                 }
             }
             if let e = status.error { Text(e).font(.caption).foregroundStyle(.secondary) }

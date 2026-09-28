@@ -11,6 +11,7 @@ struct ChatActionItems: View {
     /// The context menu hides unavailable items; the menu bar dims them.
     var hidesUnavailable = false
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var connection: HostConnection? { window.connection }
     private var folder: String? { connection?.host.isLocal == true ? thread?.cwd : nil }
@@ -23,7 +24,7 @@ struct ChatActionItems: View {
         // Pinned in this app, per host; ⌥⌘P from the menu bar.
         item(thread.map { window.isPinned($0) } == true ? "Unpin" : "Pin", enabled: thread != nil) {
             // Animated, so the row is seen to move to Pinned and back.
-            if let thread { withAnimation { window.togglePin(thread) } }
+            if let thread { withAnimation(reduceMotion ? nil : .default) { window.togglePin(thread) } }
         }
         .keyboardShortcut("p", modifiers: [.command, .option])
         // In place on the row from its context menu, as Finder renames; in an alert from the Chat

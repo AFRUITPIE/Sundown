@@ -230,8 +230,6 @@ struct MarkdownBlockView: View, Equatable {
             }
             // Deeper levels step in by the text's size.
             .padding(.leading, (6 + CGFloat(indent) * 18) * textScale)
-            // Read as one item, marker and all.
-            .accessibilityElement(children: .combine)
         case .quote:
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 1).fill(.tertiary).frame(width: 3)

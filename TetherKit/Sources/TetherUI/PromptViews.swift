@@ -49,7 +49,6 @@ struct PromptCard<Content: View>: View {
             content
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(title)
         .onAppear { headingFocused = true }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -289,8 +288,6 @@ struct ElicitationPrompt: View {
     let params: ElicitationRequestParams
     let respond: (JSONValue) -> Void
     @State private var values: [String: String] = [:]
-    /// Number and integer fields, as numbers: typed in the reader's locale, sent as JSON numbers.
-    @State private var numbers: [String: Double] = [:]
 
     private var fields: [(key: String, schema: JSONValue)] {
         (params.requestedSchema?["properties"]?.objectValue ?? [:]).sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
@@ -316,8 +313,8 @@ struct ElicitationPrompt: View {
                     for f in fields {
                         let v = values[f.key, default: ""]
                         switch f.schema.string("type") {
-                        case "number": content[f.key] = numbers[f.key].map { .number($0) }
-                        case "integer": content[f.key] = numbers[f.key].map { .number($0.rounded()) }
+                        case "number": content[f.key] = Self.number(v).map { .number($0) }
+                        case "integer": content[f.key] = Self.number(v).map { .number($0.rounded()) }
                         case "boolean": content[f.key] = .bool(["true", "yes", "1"].contains(v.lowercased()))
                         default: content[f.key] = .string(v)
                         }
@@ -332,8 +329,8 @@ struct ElicitationPrompt: View {
         // Seeded so `complete` can tell an untouched required field from one left off.
         .onAppear {
             for f in fields where values[f.key] == nil {
-                values[f.key] = f.schema.string("type") == "boolean" ? "false" : (f.schema["default"]?.stringValue ?? "")
-                if numbers[f.key] == nil { numbers[f.key] = f.schema["default"]?.doubleValue }
+                values[f.key] = f.schema.string("type") == "boolean" ? "false"
+                    : (f.schema["default"]?.stringValue ?? f.schema["default"]?.doubleValue?.formatted(.number.grouping(.never)) ?? "")
             }
         }
     }
@@ -346,9 +343,15 @@ struct ElicitationPrompt: View {
     private var complete: Bool {
         required.allSatisfy { key in
             let type = fields.first { $0.key == key }?.schema.string("type")
-            if type == "number" || type == "integer" { return numbers[key] != nil }
+            if type == "number" || type == "integer" { return Self.number(values[key, default: ""]) != nil }
             return !values[key, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+    }
+
+    /// A number as the reader writes it ("1,5" in French), or as written plainly.
+    static func number(_ text: String) -> Double? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        return (try? Double(trimmed, format: .number)) ?? Double(trimmed)
     }
 
     /// The control that matches the declared type.
@@ -360,8 +363,9 @@ struct ElicitationPrompt: View {
             Toggle(title, isOn: Binding(get: { values[f.key] == "true" },
                                         set: { values[f.key] = $0 ? "true" : "false" }))
         case "number", "integer":
-            TextField(title, value: Binding(get: { numbers[f.key] }, set: { numbers[f.key] = $0 }),
-                      format: .number, prompt: Text("Number"))
+            // Text, read as a number when sent: a value binding took what was typed only once Return
+            // or Tab committed it, so clicking Continue dropped it.
+            TextField(title, text: text, prompt: Text("Number"))
                 .textFieldStyle(.roundedBorder)
                 .monospacedDigit()
         default:

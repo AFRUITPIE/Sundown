@@ -14,6 +14,8 @@ struct RemoteFolderPicker: View {
     @State private var opened: [String] = []
     /// The selection in the directory being shown; cleared as another is shown.
     @State private var selection: String?
+    /// Directories that couldn't be listed, which can't be chosen either.
+    @State private var unreadable: Set<String> = []
 
     private var current: String { opened.last ?? root }
 
@@ -38,13 +40,14 @@ struct RemoteFolderPicker: View {
     }
 
     private func level(_ path: String) -> some View {
-        DirectoryLevel(connection: connection, path: path, selection: $selection) { opened.append($0) }
+        DirectoryLevel(connection: connection, path: path, selection: $selection,
+                       failed: { unreadable.insert($0) }) { opened.append($0) }
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     // Above where browsing started; Back covers the rest.
                     Button("Enclosing Directory", systemImage: "chevron.up") {
                         root = (root as NSString).deletingLastPathComponent
-                        opened = []
+                        selection = nil
                     }
                     .disabled(!opened.isEmpty || root == "/")
                 }
@@ -54,6 +57,7 @@ struct RemoteFolderPicker: View {
                         done(selection ?? current)
                         dismiss()
                     }
+                    .disabled(selection == nil && unreadable.contains(current))
                 }
             }
     }
@@ -64,6 +68,7 @@ private struct DirectoryLevel: View {
     let connection: HostConnection
     let path: String
     @Binding var selection: String?
+    let failed: (String) -> Void
     let open: (String) -> Void
     @State private var entries: [FsListResult.Entry]?
     @State private var error: String?
@@ -86,11 +91,14 @@ private struct DirectoryLevel: View {
         }
         .navigationTitle(path.abbreviatingHome)
         .task(id: path) {
+            // Not the last directory's entries under this one's title while it loads.
+            entries = nil
+            error = nil
             do {
                 entries = try await connection.listDirectory(path)
-                error = nil
             } catch {
                 self.error = error.localizedDescription
+                failed(path)
             }
         }
     }

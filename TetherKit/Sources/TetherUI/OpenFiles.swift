@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 extension Appearance.FileEditor {
     /// Newest first; the first one installed is the one used. Zed and Sublime Text each have more
@@ -38,9 +39,11 @@ extension Appearance.FileEditor {
     }
 }
 
-/// Links in a reply that name a file — `Sources/App.swift`, `Sources/App.swift:42`, a `file:` URL —
-/// open it in Settings ▸ General ▸ Open Files With, found relative to the chat's directory, on this
-/// Mac. Any other link, or one on another host, goes where the system sends it.
+/// Links in a reply that name a file — `Sources/App.swift`, `App.swift:42`, `README.md#install`,
+/// a `file:` URL — open it in Settings ▸ General ▸ Open Files With, found relative to the chat's
+/// directory, on this Mac. Anything that would run rather than open (an app, a script, a Terminal
+/// file, an installer) is shown in Finder instead: a link's words don't show where it goes. Any
+/// other link, or one on another host, goes where the system sends it.
 struct OpensFileLinks: ViewModifier {
     let cwd: String?
     @Environment(\.hostIsLocal) private var hostIsLocal
@@ -50,28 +53,46 @@ struct OpensFileLinks: ViewModifier {
         content.environment(\.openURL, OpenURLAction { url in
             guard hostIsLocal, let path = Self.path(of: url, in: cwd),
                   FileManager.default.fileExists(atPath: path) else { return .systemAction }
-            editor.open(path)
+            let file = URL(filePath: path)
+            if Self.runs(file) {
+                NSWorkspace.shared.activateFileViewerSelecting([file])
+            } else {
+                editor.open(path)
+            }
             return .handled
         })
     }
 
-    /// The file a link names, if it names one: a `file:` URL, or a path with no scheme, relative to
-    /// `cwd` unless it's absolute, without a trailing `:line` or `:line:column`.
-    static func path(of url: URL, in cwd: String?) -> String? {
-        let raw: String
+    /// The file a link names, if it names one: a `file:` URL, or a path with no scheme (a file name
+    /// with a line, `App.swift:42`, reads as one), relative to `cwd` unless it's absolute, without
+    /// a `#fragment`, `?query` or trailing `:line` or `:line:column`.
+    nonisolated static func path(of url: URL, in cwd: String?) -> String? {
+        var raw: String
         if url.isFileURL {
             raw = url.path
-        } else if url.scheme == nil {
-            raw = url.relativeString.removingPercentEncoding ?? url.relativeString
+        } else if url.scheme == nil || url.scheme?.contains(".") == true {
+            raw = url.absoluteString.removingPercentEncoding ?? url.absoluteString
         } else {
             return nil
         }
+        if let cut = raw.firstIndex(where: { $0 == "#" || $0 == "?" }) { raw = String(raw[..<cut]) }
         let trimmed = raw.replacing(/(:\d+){1,2}$/, with: "")
         guard !trimmed.isEmpty else { return nil }
         if trimmed.hasPrefix("/") { return trimmed }
         if trimmed.hasPrefix("~") { return (trimmed as NSString).expandingTildeInPath }
         guard let cwd else { return nil }
         return (cwd as NSString).appendingPathComponent(trimmed)
+    }
+
+    /// Whether opening `file` would run something: an app or other bundle, an executable, a script,
+    /// or a file macOS hands to Terminal or Installer.
+    nonisolated static func runs(_ file: URL) -> Bool {
+        let values = try? file.resourceValues(forKeys: [.isPackageKey, .isApplicationKey, .isExecutableKey, .isDirectoryKey, .contentTypeKey])
+        if values?.isApplication == true || values?.isPackage == true { return true }
+        if values?.isDirectory != true, values?.isExecutable == true { return true }
+        if let type = values?.contentType, type.conforms(to: .executable) || type.conforms(to: .script) { return true }
+        let runnable: Set<String> = ["command", "terminal", "tool", "pkg", "mpkg", "workflow", "action", "scpt", "applescript", "inetloc", "webloc", "fileloc"]
+        return runnable.contains(file.pathExtension.lowercased())
     }
 }
 

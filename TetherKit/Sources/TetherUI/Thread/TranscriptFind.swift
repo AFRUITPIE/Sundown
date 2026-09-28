@@ -14,6 +14,8 @@ public final class TranscriptFind {
     public private(set) var index = 0
     /// Bumped by Next and Previous, so the transcript scrolls even when the match doesn't change.
     public private(set) var step = 0
+    /// Bumped by Next and Previous alone, not by a new search, for what's announced.
+    public private(set) var moves = 0
 
     public var current: String? { matches.indices.contains(index) ? matches[index] : nil }
 
@@ -34,12 +36,14 @@ public final class TranscriptFind {
         guard !matches.isEmpty else { return }
         index = (index + 1) % matches.count
         step += 1
+        moves += 1
     }
 
     public func previous() {
         guard !matches.isEmpty else { return }
         index = (index - 1 + matches.count) % matches.count
         step += 1
+        moves += 1
     }
 
     /// Bumped by Find… so the field takes the keyboard again when the bar is already open.
@@ -78,7 +82,6 @@ struct FindBar: View {
                 .textFieldStyle(.roundedBorder)
                 .focused($focused)
                 .onSubmit { find.next() }
-                .accessibilityValue(status)
                 .accessibilityIdentifier("find.field")
                 .frame(maxWidth: 280)
             Text(status)
@@ -107,10 +110,10 @@ struct FindBar: View {
         // Typing goes straight into the field: ⌘F is how people start a search, even from the
         // message field.
         .defaultFocus($focused, true, priority: .userInitiated)
-        .onChange(of: find.focusRequest) { focused = true }
+        .onChange(of: find.focusRequest, initial: true) { focused = true }
         .onChange(of: find.query) { find.update(rows: rows) }
         // Where Next and Previous landed, said, since the match moves out of sight of the field.
-        .onChange(of: find.step) { AccessibilityNotification.Announcement(status).post() }
+        .onChange(of: find.moves) { AccessibilityNotification.Announcement(status).post() }
         .onChange(of: rows.count) { find.update(rows: rows) }
     }
 

@@ -287,7 +287,7 @@ struct ThreadModelTests {
         #expect(thread.streamingReplyID == nil)
     }
 
-    /// What refreshes after a turn (the Changes pane, the context ring) does so when it ends, not
+    /// What refreshes after a turn (the Changes pane, the Session pane's context) does so when it ends, not
     /// when the next one starts.
     @Test func theLastFinishedTurnChangesWhenATurnEnds() {
         let thread = ThreadModel(id: threadID)

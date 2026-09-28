@@ -14,6 +14,23 @@ struct OpenFilesTests {
         #expect(OpensFileLinks.path(of: URL(string: "My%20File.md")!, in: cwd) == "/Users/me/Code/app/My File.md")
         #expect(OpensFileLinks.path(of: URL(string: "https://claude.ai")!, in: cwd) == nil)
         #expect(OpensFileLinks.path(of: URL(string: "Sources/App.swift")!, in: nil) == nil)
+        // A bare file name with a line reads as a URL scheme; it's still a file.
+        #expect(OpensFileLinks.path(of: URL(string: "App.swift:42")!, in: cwd) == "/Users/me/Code/app/App.swift")
+        #expect(OpensFileLinks.path(of: URL(string: "README.md#install")!, in: cwd) == "/Users/me/Code/app/README.md")
+        #expect(OpensFileLinks.path(of: URL(string: "src/a.ts?plain=1#L42")!, in: cwd) == "/Users/me/Code/app/src/a.ts")
+    }
+
+    /// A link to something that would run is shown in Finder rather than opened.
+    @Test func runnableFilesAreNotOpened() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "links-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let text = dir.appending(path: "notes.md"), script = dir.appending(path: "run.command"), tool = dir.appending(path: "tool")
+        for file in [text, script, tool] { try Data("echo hi".utf8).write(to: file) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+        #expect(!OpensFileLinks.runs(text))
+        #expect(OpensFileLinks.runs(script))
+        #expect(OpensFileLinks.runs(tool))
     }
 
     @Test func openSaysWhereOnceAnEditorIsChosen() {

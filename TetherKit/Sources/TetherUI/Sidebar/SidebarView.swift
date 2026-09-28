@@ -63,7 +63,7 @@ struct SidebarView: View {
         .accessibilityDropPoint(.center, description: Text("New Chat in Directory"))
         // ⌫ archives the selected chat, as Mail's does a message; Edit ▸ Undo brings it back.
         .onDeleteCommand {
-            if let thread = window.selectedThread { window.setArchived([thread], true) }
+            if let thread = window.selectedThread, !thread.isArchived { window.setArchived([thread], true) }
         }
     }
 

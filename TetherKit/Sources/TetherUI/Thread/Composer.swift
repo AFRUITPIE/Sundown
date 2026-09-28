@@ -46,8 +46,6 @@ struct Composer: View {
     @Namespace private var glass
     /// Something is being dragged over the field.
     @State private var dropTargeted = false
-    /// Where the cursor is, so a new line goes there.
-    @State private var selection: TextSelection?
 
     private enum GlassID: Hashable { case field }
 
@@ -157,6 +155,8 @@ struct Composer: View {
             }
         }
         .animation(.snappy, value: thread?.promptSuggestion)
+        // The status card and the field morph into each other as the host connects and drops.
+        .animation(reduceMotion ? nil : .snappy, value: status == nil)
     }
 
     /// Laid out like Messages: a round + outside the field, and the field a capsule that grows with
@@ -166,7 +166,7 @@ struct Composer: View {
         // thing being asked of you: its contents dim, under the glass rather than over it.
         let dim = awaitingAnswer ? 0.7 : 1
         return HStack(alignment: .bottom, spacing: 10) {
-            addButton.opacity(dim)
+            addButton(dim: dim)
             oneRowField
                 .opacity(dim)
                 // A capsule at one line; the same corner radius as the text grows makes it a rounded
@@ -194,6 +194,8 @@ struct Composer: View {
             for url in (try? result.get()) ?? [] { add(file: url) }
         }
         .fileDialogConfirmationLabel("Attach")
+        // Its own, not New Chat's directory chooser's around it.
+        .fileDialogMessage("Choose files to attach to the message.")
         // From the chat's directory, on this Mac; elsewhere wherever the panel was last.
         .fileDialogDefaultDirectory(connection.host.isLocal ? cwd.map { URL(filePath: $0, directoryHint: .isDirectory) } : nil)
         .pasteDestination(for: Incoming.self) { take($0) }
@@ -263,7 +265,7 @@ struct Composer: View {
     }
 
     private var textField: some View {
-        TextField(thread?.isRunning == true ? "Queue a message…" : placeholder, text: $text, selection: $selection, axis: .vertical)
+        TextField(thread?.isRunning == true ? "Queue a message…" : placeholder, text: $text, axis: .vertical)
             .accessibilityIdentifier("composer.input")
             .textFieldStyle(.plain)
             .lineLimit(1...12)
@@ -393,7 +395,7 @@ struct Composer: View {
 
     /// The + menu, as the desktop app has it: attach, mention a file, or browse the commands
     /// that typing / offers, for someone who doesn't know them yet.
-    private var addButton: some View {
+    private func addButton(dim: Double) -> some View {
         Menu {
             Button("Attach Files…", systemImage: "paperclip") { choosingFiles = true }
             Button("Mention a File", systemImage: "at") { insert("@") }
@@ -414,6 +416,7 @@ struct Composer: View {
             Label("Add", systemImage: "plus")
                 .labelStyle(.iconOnly)
                 .font(.system(size: 15, weight: .medium))
+                .opacity(dim)
                 .frame(width: 34, height: 34)
                 .contentShape(.circle)
                 .glassEffect(.regular.interactive(), in: .circle)
@@ -441,7 +444,9 @@ struct Composer: View {
     /// Return and its modifiers, as Settings ▸ General ▸ Send With has them: Return sends and
     /// Shift- or Option-Return starts a line, or Command-Return sends and Return starts a line.
     private func returnPressed(_ press: KeyPress) -> KeyPress.Result {
-        let newLine = insertNewline
+        // The field's own new line, so it's an edit the field can undo and an input method's
+        // marked text is committed first; setting the text around it did neither.
+        let newLine = { _ = NSApp.sendAction(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), to: nil, from: nil) }
         switch appearance.sendShortcut {
         case .returnKey:
             // Plain Return reaches `onSubmit`; Option-Return is the field's own new line.
@@ -458,18 +463,6 @@ struct Composer: View {
             }
             return .handled
         }
-    }
-
-    /// Starts a line where the cursor is, in place of any selected text; at the end when there's no
-    /// cursor to go by.
-    private func insertNewline() {
-        guard case .selection(let range) = selection?.indices, range.upperBound <= text.endIndex else {
-            text += "\n"
-            return
-        }
-        let offset = text.distance(from: text.startIndex, to: range.lowerBound)
-        text.replaceSubrange(range, with: "\n")
-        selection = TextSelection(insertionPoint: text.index(text.startIndex, offsetBy: offset + 1))
     }
 
     private func send() {
@@ -490,9 +483,11 @@ struct Composer: View {
         case file(URL)
         case image(Data)
 
+        /// An image first: an image dragged from a web page carries its URL too, and would
+        /// otherwise arrive as a link.
         static var transferRepresentation: some TransferRepresentation {
-            ProxyRepresentation(importing: { (url: URL) in Incoming.file(url) })
             DataRepresentation(importedContentType: .image) { Incoming.image($0) }
+            ProxyRepresentation(importing: { (url: URL) in Incoming.file(url) })
         }
     }
 

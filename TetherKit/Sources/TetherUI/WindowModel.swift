@@ -106,7 +106,8 @@ public final class WindowModel {
     /// Chat ▸ Previous Prompt and Next Prompt, for this window's transcript.
     public let prompts = PromptNavigator()
 
-    /// The chat Rename… or Delete… is acting on, from the Chat menu or a sidebar row's context menu.
+    /// The chat Chat ▸ Rename… or Delete… is acting on (a row's context menu renames in place, and
+    /// deletes through this too).
     public internal(set) var renaming: ThreadModel?
     public var deleting: ThreadModel?
     /// The chat whose sidebar row is being renamed in place (its context menu's Rename).
@@ -383,9 +384,14 @@ extension WindowModel {
 
     /// Chat ▸ Pin or Unpin.
     public func togglePin(_ thread: ThreadModel) {
-        let pinned = !isPinned(thread)
-        app.setPinned(pinned, thread.id, on: hostID)
-        undoManager?.registerUndo(withTarget: self) { $0.togglePin(thread) }
+        setPinned(!isPinned(thread), thread, on: hostID)
+    }
+
+    /// Pins or unpins on the host the chat is on, which Edit ▸ Undo keeps to whatever the window
+    /// shows by then.
+    private func setPinned(_ pinned: Bool, _ thread: ThreadModel, on host: UUID) {
+        app.setPinned(pinned, thread.id, on: host)
+        undoManager?.registerUndo(withTarget: self) { $0.setPinned(!pinned, thread, on: host) }
         undoManager?.setActionName(pinned ? "Pin" : "Unpin")
     }
 
@@ -393,21 +399,38 @@ extension WindowModel {
     /// them back. Leaves a chat being archived for New Chat, and offers to remove the worktree of
     /// the one chat archived on its own.
     func setArchived(_ threads: [ThreadModel], _ archived: Bool) {
-        guard let connection, !threads.isEmpty else { return }
-        if archived, let open = selectedThread, threads.contains(where: { $0 === open }) { newChat() }
-        Task { for thread in threads { await connection.setArchived(thread, archived) } }
-        undoManager?.registerUndo(withTarget: self) { $0.setArchived(threads, !archived) }
-        undoManager?.setActionName(archived ? "Archive" : "Unarchive")
-        if archived, threads.count == 1, undoManager?.isUndoing != true { offerWorktreeRemoval(for: threads[0]) }
+        guard let connection else { return }
+        setArchived(threads, archived, via: connection)
     }
 
-    /// Gives `thread` a new title, which Edit ▸ Undo takes back.
+    /// On `connection`, the host the chats are on, whichever the window shows when it's undone.
+    private func setArchived(_ threads: [ThreadModel], _ archived: Bool, via connection: HostConnection) {
+        guard !threads.isEmpty else { return }
+        if archived, connection === self.connection, let open = selectedThread, threads.contains(where: { $0 === open }) {
+            newChat()
+        }
+        Task { for thread in threads { await connection.setArchived(thread, archived) } }
+        undoManager?.registerUndo(withTarget: self) { $0.setArchived(threads, !archived, via: connection) }
+        undoManager?.setActionName(archived ? "Archive" : "Unarchive")
+        // Only when it's asked for, not when an undo or a redo archives it again.
+        let replaying = undoManager?.isUndoing == true || undoManager?.isRedoing == true
+        if archived, threads.count == 1, !replaying { offerWorktreeRemoval(for: threads[0]) }
+    }
+
+    /// Gives `thread` a new title. Edit ▸ Undo puts back a title the person gave it; a title
+    /// Claude made isn't one to set, so renaming one of those can't be undone.
     func rename(_ thread: ThreadModel, to title: String) {
+        guard let connection else { return }
+        rename(thread, to: title, via: connection)
+    }
+
+    private func rename(_ thread: ThreadModel, to title: String, via connection: HostConnection) {
         let new = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let old = thread.title
-        guard let connection, !new.isEmpty, new != old else { return }
+        guard !new.isEmpty, new != thread.title else { return }
+        let given = thread.summary?.customTitle.flatMap { $0.isEmpty ? nil : $0 }
         Task { await connection.rename(thread, new) }
-        undoManager?.registerUndo(withTarget: self) { $0.rename(thread, to: old) }
+        guard let given else { return }
+        undoManager?.registerUndo(withTarget: self) { $0.rename(thread, to: given, via: connection) }
         undoManager?.setActionName("Rename")
     }
 

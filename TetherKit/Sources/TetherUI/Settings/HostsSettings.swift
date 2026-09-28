@@ -94,7 +94,8 @@ struct HostStatusLabel: View {
             Text(state.detailLabel)
         } icon: {
             if case .connecting = state {
-                ProgressView().controlSize(.small)
+                // The words say it; a spinner in the element made it read as a progress indicator.
+                ProgressView().controlSize(.small).accessibilityHidden(true)
             } else {
                 Image(systemName: state.symbol).foregroundStyle(state.tint)
             }

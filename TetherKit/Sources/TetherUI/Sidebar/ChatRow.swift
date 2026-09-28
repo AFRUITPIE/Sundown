@@ -7,6 +7,7 @@ struct ChatRow: View {
     let thread: ThreadModel
     /// The second line says what the section header doesn't.
     var grouping: SidebarGrouping = .date
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -14,7 +15,7 @@ struct ChatRow: View {
                 ChatStatusGlyph(thread: thread)
                 Text(thread.title).lineLimit(1)
             }
-            .animation(.default, value: thread.status)
+            .animation(reduceMotion ? nil : .default, value: thread.status)
             secondary
                 .font(.caption)
                 .foregroundStyle(.secondary)

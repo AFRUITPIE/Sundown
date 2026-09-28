@@ -319,17 +319,21 @@ private struct ScheduledTaskEditor: View {
         .onChange(of: promptFocused) { if !promptFocused { save() } }
         .onDisappear(perform: save)
         .directoryChooser(isPresented: $choosingFolder, connection: connection, current: cwd) { cwd = $0 }
-        .confirmationDialog("Delete “\(task.name)”?", isPresented: $confirmingDelete, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
-                Task {
-                    try? await connection.deleteScheduledTask(task.id)
-                    deleted()
+        // On a view of its own, so its severity reaches this dialog and no other.
+        .background {
+            Color.clear
+                .confirmationDialog("Delete “\(task.name)”?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+                    Button("Delete", role: .destructive) {
+                        Task {
+                            try? await connection.deleteScheduledTask(task.id)
+                            deleted()
+                        }
+                    }
+                } message: {
+                    Text("It won’t run again. Chats it already started are kept.")
                 }
-            }
-        } message: {
-            Text("It won’t run again. Chats it already started are kept.")
+                .dialogSeverity(.critical)
         }
-        .dialogSeverity(.critical)
     }
 
     /// The host's recent folders, and the task's own if it isn't one.
