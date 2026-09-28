@@ -235,6 +235,7 @@ struct WindowModelTests {
         #expect(file.read()["old"] == "from before")
 
         app.forgetDraft(for: "old")
+        app.waitForDraftWrites()
         #expect(file.read()["old"] == nil)
     }
 

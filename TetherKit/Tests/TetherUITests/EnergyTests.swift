@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import Synchronization
 import Testing
 import TetherKit
 @testable import TetherUI
@@ -53,6 +55,52 @@ struct PreferenceWriteTests {
     }
 }
 
+@MainActor
+@Suite
+struct DraftWriteTests {
+    /// A save with nothing new writes nothing, and the same drafts are the same bytes, not written again.
+    @Test func draftsAreWrittenOnlyWhenTheyChanged() throws {
+        let defaults = try #require(UserDefaults(suiteName: "tether.tests.\(UUID().uuidString)"))
+        let store = CountingDrafts()
+        let app = AppModel(defaults: defaults, secrets: DefaultsSecrets(defaults), draftStore: store)
+
+        // Quitting with nothing typed.
+        app.saveDrafts()
+        #expect(store.writes == 0)
+
+        app.setDraft("half a thought", for: "a")
+        app.saveDrafts()
+        #expect(store.writes == 1)
+        app.saveDrafts()
+        #expect(store.writes == 1)
+
+        app.setDraft("half a thought, then more", for: "a")
+        app.setDraft("half a thought", for: "a")
+        app.saveDrafts()
+        #expect(store.writes == 1)
+    }
+
+    /// Written off the main thread, but at quit before the app goes.
+    @Test func draftsAreWrittenInTheBackgroundExceptAtQuit() throws {
+        let defaults = try #require(UserDefaults(suiteName: "tether.tests.\(UUID().uuidString)"))
+        let store = CountingDrafts()
+        let app = AppModel(defaults: defaults, secrets: DefaultsSecrets(defaults), draftStore: store)
+        app.setDraft("one", for: "a")
+        app.setDraft("two", for: "b")
+
+        app.forgetDraft(for: "a")
+        app.waitForDraftWrites()
+        #expect(store.writes == 1)
+        #expect(store.onMainThread == [false])
+        #expect(store.read() == ["b": "two"])
+
+        app.setDraft("three", for: "c")
+        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
+        #expect(store.writes == 2)
+        #expect(store.read()["c"] == "three")
+    }
+}
+
 @Suite
 struct ReducedEffectsTests {
     @Test func energySavingHeatAndTheBackgroundReduceEffects() {
@@ -72,5 +120,20 @@ private final class CountingDefaults: UserDefaults, @unchecked Sendable {
     override func set(_ value: Any?, forKey defaultName: String) {
         keys.append(defaultName)
         super.set(value, forKey: defaultName)
+    }
+}
+
+/// Drafts in memory, counting writes and where they happened.
+private final class CountingDrafts: DraftStore, @unchecked Sendable {
+    private let state = Mutex<(data: Data?, writes: Int, onMain: [Bool])>((nil, 0, []))
+    var writes: Int { state.withLock { $0.writes } }
+    var onMainThread: [Bool] { state.withLock { $0.onMain } }
+
+    func readData() -> Data? { state.withLock { $0.data } }
+
+    func write(_ data: Data) -> Bool {
+        let main = Thread.isMainThread
+        state.withLock { $0.data = data; $0.writes += 1; $0.onMain.append(main) }
+        return true
     }
 }

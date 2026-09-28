@@ -191,8 +191,20 @@ public final class AppModel {
     /// Each chat's unsent composer text, by thread id (persisted), so switching chats, closing a
     /// window or quitting doesn't lose it. Not observed: it changes on every keystroke, and a
     /// composer reads it only when it appears. Text put in a field from outside goes through
-    /// `draftDeliveries` instead.
-    @ObservationIgnored public private(set) var drafts: [String: String] = [:]
+    /// `draftDeliveries` instead. Read from the store the first time a composer asks (the file is
+    /// read ahead off the main thread as the app starts).
+    private var drafts: [String: String] {
+        get {
+            if let loadedDrafts { return loadedDrafts }
+            let drafts = loadDrafts()
+            loadedDrafts = drafts
+            return drafts
+        }
+        set { loadedDrafts = newValue }
+    }
+    @ObservationIgnored private var loadedDrafts: [String: String]?
+    /// Changed since last written: a quit with nothing typed writes nothing.
+    @ObservationIgnored private var draftsChanged = false
 
     /// A draft put in a composer from outside it (Shortcuts' Start a Chat), by draft key. Each
     /// composer showing that key applies a new one once, by its id; observed, and changed only by a
@@ -210,7 +222,7 @@ public final class AppModel {
     @ObservationIgnored private var wakeObserver: (any NSObjectProtocol)?
 
     private let defaults: UserDefaults
-    private let draftStore: DraftStore
+    private let draftQueue: DraftQueue
     private static let hostsKey = "tether.hosts.v1"
     private static let windowKey = "tether.window.v1"
     private static let draftsKey = "tether.drafts.v1"
@@ -245,7 +257,7 @@ public final class AppModel {
     init(defaults: UserDefaults, secrets: SecretStore, draftStore: DraftStore? = nil) {
         self.defaults = defaults
         self.secrets = secrets
-        self.draftStore = draftStore ?? DefaultsDrafts(defaults: defaults, key: Self.draftsKey)
+        self.draftQueue = DraftQueue(store: draftStore ?? DefaultsDrafts(defaults: defaults, key: Self.draftsKey))
         load()
         for h in hosts { connections[h.id] = HostConnection(host: h) }
         for c in connections.values { c.offersSessionTools = appearance.sessionTools }
@@ -365,11 +377,12 @@ public final class AppModel {
         let next = trimmed.isEmpty ? nil : text
         guard drafts[threadID] != next else { return }
         drafts[threadID] = next
+        draftsChanged = true
         draftsSave?.cancel()
         draftsSave = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { return }
-            self?.saveDrafts()
+            self?.writeDrafts()
         }
     }
 
@@ -379,17 +392,44 @@ public final class AppModel {
         draftDeliveries[key] = DraftDelivery(text: text)
     }
 
-    /// Writes the drafts now rather than when typing pauses.
+    /// Writes the drafts in the background, if they changed: encoded and written off the main
+    /// thread, after any write before it.
+    private func writeDrafts() {
+        draftsSave?.cancel()
+        draftsSave = nil
+        guard draftsChanged, let loadedDrafts else { return }
+        draftsChanged = false
+        draftQueue.write(loadedDrafts)
+    }
+
+    /// Writes the drafts now, rather than when typing pauses, and waits: at quit. Nothing if they
+    /// haven't changed since they were last written.
     public func saveDrafts() {
         draftsSave?.cancel()
         draftsSave = nil
-        draftStore.write(drafts)
+        guard let loadedDrafts, draftsChanged || draftQueue.lastWriteFailed else { return }
+        draftsChanged = !draftQueue.writeAndWait(loadedDrafts)
     }
+
+    /// Returns once the drafts' background writes so far are done.
+    func waitForDraftWrites() { draftQueue.waitForWrites() }
 
     /// A deleted chat's draft goes with it.
     public func forgetDraft(for threadID: String) {
         guard drafts.removeValue(forKey: threadID) != nil else { return }
-        saveDrafts()
+        draftsChanged = true
+        writeDrafts()
+    }
+
+    /// The store's drafts, and any the defaults file kept before drafts had a file of their own,
+    /// which move to it, once.
+    private func loadDrafts() -> [String: String] {
+        var drafts = draftQueue.read()
+        guard !(draftQueue.store is DefaultsDrafts), let old = defaults.data(forKey: Self.draftsKey) else { return drafts }
+        let legacy = (try? JSONDecoder().decode([String: String].self, from: old)) ?? [:]
+        drafts.merge(legacy) { current, _ in current }
+        if draftQueue.writeAndWait(drafts) { defaults.removeObject(forKey: Self.draftsKey) }
+        return drafts
     }
 
     // MARK: persistence
@@ -446,13 +486,6 @@ public final class AppModel {
                 hosts[i].env = env
                 writtenEnv[hosts[i].id] = env
             }
-        }
-        drafts = draftStore.read()
-        // Drafts kept in the defaults file before they had one of their own move to it, once.
-        if !(draftStore is DefaultsDrafts), let old = defaults.data(forKey: Self.draftsKey) {
-            let legacy = (try? JSONDecoder().decode([String: String].self, from: old)) ?? [:]
-            drafts.merge(legacy) { current, _ in current }
-            if draftStore.write(drafts) { defaults.removeObject(forKey: Self.draftsKey) }
         }
         appearance = defaults.data(forKey: Self.appearanceKey).flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
         alerts = defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode(AlertPreferences.self, from: $0) } ?? AlertPreferences()
