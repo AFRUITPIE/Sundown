@@ -68,3 +68,15 @@ struct HostPicker: View {
         }
     }
 }
+
+#if DEBUG
+/// The Host menu's host list, as a pop-up: a preview can't open the menu bar.
+#Preview("Host picker") {
+    let app = AppModel.sample(connections: [.sample(), .sampleFailed()])
+    Form {
+        HostPicker(window: .sample(app))
+    }
+    .formStyle(.grouped)
+    .frame(width: 360)
+}
+#endif

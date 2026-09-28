@@ -84,8 +84,8 @@ The daemon, not the app, owns live Claude queries. Closing or disconnecting the 
 - `ThreadModel.title` and `taskEntries` are stored, not derived from `items`: anything the sidebar, toolbar or inspector chrome reads must not change per streamed delta. Only `TranscriptView` and its rows read `rows`/`items`.
 - A view takes the narrowest model it needs, and each inspector pane is its own view, so a delta redraws at most the transcript and the open pane.
 - State that changes every frame of a resize or an animation (the transcript's scroll position) lives in a view whose body holds no rows: `TranscriptView` owns the scroll state and `TranscriptContent` the rows. Environment values are compared by value, so one that holds a closure is `Equatable` by its owner (`InspectSubagentAction`); a new closure on every shell update redrew every tool call.
-- Persisted preferences are plain stored properties on `AppModel` saved through `Stored`. No `@AppStorage` inside an `@Observable`.
-- Composer drafts (`AppModel.drafts`) are not observed and are written a second after typing pauses (and on quit): observed, every keystroke redrew every composer in every window. A composer reads its draft when it appears; text put in from outside (Shortcuts' Start a Chat) goes through `deliverDraft`, a token each composer showing that key applies once.
+- Persisted preferences are plain stored properties on `AppModel` saved through `Stored`. No `@AppStorage` inside an `@Observable`. The app-wide values views read (`appearance`, `textScale`, `openFilesWith`, `readingWidth`) are set once per scene (`Scene.appEnvironment`); a preview sets them with `View.appEnvironment`. Custom environment values are `@Entry`; `@Bindable` only where a binding is made.
+- Composer drafts (`AppModel.drafts`) live in a file of their own (`Drafts.json` in Application Support, `DraftStore`), go when their chat is deleted, are not observed, and are written a second after typing pauses (and on quit): observed, every keystroke redrew every composer in every window. A composer reads its draft when it appears; text put in from outside (Shortcuts' Start a Chat) goes through `deliverDraft`, a token each composer showing that key applies once.
 
 ## UI and HIG decisions
 
@@ -150,7 +150,7 @@ The product should feel like a standard current macOS app. Prefer native SwiftUI
 - Notifications are for a chat you aren't looking at: a finished reply (per Settings), and a request, whose notification has Allow and Deny. A request is told about once, though the daemon re-sends a waiting one on every reconnect (`RequestSightings`); its notification is withdrawn when it's resolved anywhere (`tetherRequestResolved`), and Allow or Deny on one answered since quietly says Already answered. A chat on screen gets a VoiceOver announcement instead. UI tests never reach Notification Center.
 - A running task's detail in the Tasks inspector offers Stop Task, and Move to Background while it still holds up its turn (the CLI registers a foreground command as a task a few seconds in). A background task settling is a notice in the transcript, never the CLI's raw `<task-notification>` message.
 - Progress indicators are transient. Every failed, unavailable, disconnected, or not-loaded path needs an explanatory state and a useful recovery action.
-- Previews are part of the product-development workflow. Add representative `#Preview` coverage when adding or materially changing a view; seed samples through the real reducers where practical.
+- Previews are part of the product-development workflow; state a preview's canvas should be able to change is `@Previewable @State`, and a preview that varies one setting takes it as `arguments:`. Add representative `#Preview` coverage when adding or materially changing a view; seed samples through the real reducers where practical.
 
 ## Task tracking
 

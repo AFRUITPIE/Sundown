@@ -148,8 +148,10 @@ private func sessionPreview(_ usage: Loaded<JSONValue?>) -> some View {
 
 /// The live pane: this preview's connection has no loaded thread, so it shows that state.
 #Preview("Session") {
+    // Live, so the preview canvas can switch tabs.
+    @Previewable @State var pane = InspectorPane.session
     inspectorPreview {
-        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), pane: .constant(.session))
+        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), pane: $pane)
     }
 }
 

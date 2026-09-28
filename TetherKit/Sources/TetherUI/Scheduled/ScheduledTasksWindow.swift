@@ -51,8 +51,6 @@ public struct ScheduledTasksWindow: View {
         }
         .task(id: isConnected) { await reload() }
         .frame(minWidth: 640, minHeight: 420)
-        // A scene of its own, so it doesn't get the chat windows' environment.
-        .environment(\.appearance, app.appearance)
     }
 
     @ViewBuilder private var list: some View {

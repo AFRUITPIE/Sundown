@@ -65,7 +65,7 @@ public struct WindowRoot: View {
 }
 
 public struct RootView: View {
-    @Bindable var window: WindowModel
+    let window: WindowModel
 
     public init(window: WindowModel) {
         self.window = window
@@ -91,11 +91,7 @@ public struct RootView: View {
             guard let thread = window.selectedThread, let connection = window.connection else { return }
             Task { if let fork = await connection.fork(thread, at: messageID) { window.open(threadID: fork.id) } }
         })
-        .environment(\.readingWidth, app.transcriptWidth.points)
-        .environment(\.textScale, app.textScale)
-        .environment(\.appearance, app.appearance)
         .environment(\.hostIsLocal, window.connection?.host.isLocal == true)
-        .environment(\.openFilesWith, app.appearance.openFilesWith)
         .environment(\.transcriptFind, window.find)
         .environment(\.promptNavigator, window.prompts)
         .environment(\.composerDrafts, ComposerDrafts(app: app))
@@ -216,7 +212,7 @@ private struct InspectorColumn: ViewModifier {
 
 /// The selected chat, or the New Chat screen. One container, so the detail column is never torn down.
 struct DetailView: View {
-    @Bindable var window: WindowModel
+    let window: WindowModel
 
     var body: some View {
         // The column's root keeps one identity. When the root itself changed (the branch, or the
@@ -331,7 +327,7 @@ public struct HelpCommands: View {
 
 /// View ▸ Bigger, Smaller and Actual Size, for the transcript and composer's text.
 public struct TextSizeCommands: View {
-    @Bindable var app: AppModel
+    let app: AppModel
 
     public init(app: AppModel) {
         self.app = app
@@ -404,6 +400,12 @@ public struct ShellViewCommands: View {
 }
 
 #if DEBUG
+/// RootView as its scene shows it, with the app-wide values the scene sets.
+private struct RootPreview: View {
+    let window: WindowModel
+    var body: some View { RootView(window: window).appEnvironment(window.app) }
+}
+
 // #Preview bodies are result-builder closures (no `if`/control flow), so the selection is set here.
 @MainActor
 private func rootPreviewWindow() -> WindowModel {
@@ -412,73 +414,51 @@ private func rootPreviewWindow() -> WindowModel {
 }
 
 #Preview("RootView") {
-    RootView(window: rootPreviewWindow())
+    RootPreview(window: rootPreviewWindow())
         .frame(width: 1100, height: 760)
 }
 
 #Preview("RootView (default new chat)") {
-    RootView(window: .sample())
+    RootPreview(window: .sample())
         .frame(width: 1100, height: 760)
 }
 
-#Preview("RootView (inspector open)") {
+/// Settings ▸ Advanced ▸ Show Panes In, open, one placement to a preview.
+@MainActor
+private func placementPreview(_ placement: Appearance.InspectorPlacement, pane: InspectorPane = .tasks) -> some View {
     let window = rootPreviewWindow()
-    window.app.appearance.inspector = .column
-    window.showInspector = true
-    return RootView(window: window)
+    window.app.appearance.inspector = placement
+    window.openInspector(on: pane)
+    return RootPreview(window: window)
         .frame(width: 1160, height: 760)
 }
 
-/// Settings ▸ Advanced ▸ Inspector: under the chat, and over it.
-#Preview("RootView (inspector drawer)") {
-    let window = rootPreviewWindow()
-    window.app.appearance.inspector = .drawer
-    window.showInspector = true
-    return RootView(window: window)
-        .frame(width: 1100, height: 760)
-}
-
-#Preview("RootView (inspector tabs)") {
-    let window = rootPreviewWindow()
-    window.app.appearance.inspector = .tabs
-    return RootView(window: window)
-        .frame(width: 1100, height: 760)
+#Preview("RootView (inspector placements)", arguments: Appearance.InspectorPlacement.allCases) { placement in
+    placementPreview(placement)
 }
 
 #Preview("RootView (inspector tabs, Changes)") {
-    let window = rootPreviewWindow()
-    window.app.appearance.inspector = .tabs
-    window.openInspector(on: .changes)
-    return RootView(window: window)
-        .frame(width: 1100, height: 760)
-}
-
-#Preview("RootView (inspector over the chat)") {
-    let window = rootPreviewWindow()
-    window.app.appearance.inspector = .overlay
-    window.showInspector = true
-    return RootView(window: window)
-        .frame(width: 1100, height: 760)
+    placementPreview(.tabs, pane: .changes)
 }
 
 #Preview("RootView (wide transcript)") {
     let window = rootPreviewWindow()
     window.app.transcriptWidth = .wide
-    return RootView(window: window)
+    return RootPreview(window: window)
         .frame(width: 1400, height: 760)
 }
 
 #Preview("RootView (bigger text)") {
     let window = rootPreviewWindow()
     window.app.textScale = 1.5
-    return RootView(window: window)
+    return RootPreview(window: window)
         .frame(width: 1100, height: 760)
 }
 
 // The narrowest window without the inspector: every toolbar item must still fit.
 // The inspector preview uses the wider minimum that TetherApp applies while it is open.
 #Preview("RootView (narrow window)") {
-    RootView(window: rootPreviewWindow())
+    RootPreview(window: rootPreviewWindow())
         .frame(width: 900, height: 600)
 }
 

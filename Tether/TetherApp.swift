@@ -44,6 +44,7 @@ struct TetherApp: App {
         // which it prefers (`WindowRoot`), and one opens when none is open.
         .handlesExternalEvents(matching: ["*"])
         .defaultSize(width: 1100, height: 760)
+        .appEnvironment(app)
         // The system restores each window to what it showed (its value and scene storage), as
         // the person's "close windows when quitting" setting says; with nothing to restore, a window.
         .defaultLaunchBehavior(.presented)
@@ -72,6 +73,7 @@ struct TetherApp: App {
             ToolbarCommands()
         }
         HostWindows(app: app)
+            .appEnvironment(app)
         // The Settings view supplies the split window's minimum size.
         Settings { SettingsView(app: app) }
         // No menu bar extra: declared at all, even hidden, it kept SwiftUI updating its label in a

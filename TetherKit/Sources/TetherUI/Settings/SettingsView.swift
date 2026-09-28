@@ -3,7 +3,7 @@ import TetherKit
 
 /// Settings areas are selected from the sidebar; host management stays in its own pane.
 public struct SettingsView: View {
-    @Bindable var app: AppModel
+    let app: AppModel
     @AppStorage("tether.settingsPane") private var storedSelection = SettingsDestination.general.storedValue
 
     public init(app: AppModel) {

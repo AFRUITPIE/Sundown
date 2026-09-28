@@ -134,3 +134,21 @@ struct FindBarHost: View {
         }
     }
 }
+
+#if DEBUG
+/// A search under way: the field, where the current match is among them, and Previous and Next.
+#Preview("Find bar") {
+    let thread = ThreadModel.sampleWorkChat()
+    let find = TranscriptFind()
+    find.show(query: "inspector")
+    return FindBar(find: find, rows: thread.rows(Appearance().toolCalls.folding))
+        .frame(width: 640)
+}
+
+#Preview("Find bar (not found)") {
+    let find = TranscriptFind()
+    find.show(query: "nothing like this")
+    return FindBar(find: find, rows: ThreadModel.sampleWorkChat().rows(Appearance().toolCalls.folding))
+        .frame(width: 640)
+}
+#endif

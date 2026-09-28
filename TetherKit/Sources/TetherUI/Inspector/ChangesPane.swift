@@ -383,8 +383,10 @@ extension WorkingChanges {
 }
 
 #Preview("Changes") {
+    // Live, so the preview canvas can switch tabs.
+    @Previewable @State var pane = InspectorPane.changes
     inspectorPreview {
-        ThreadInspector(thread: .sampleIdleChat(), connection: .sample(), pane: .constant(.changes))
+        ThreadInspector(thread: .sampleIdleChat(), connection: .sample(), pane: $pane)
             .environment(\.previewChanges, .sample)
     }
 }
@@ -402,8 +404,10 @@ extension WorkingChanges {
 /// A diff too big to show whole: each file shows its first lines with Show All, and a file past
 /// what's kept says how much was left out.
 #Preview("Changes (large diff)") {
+    // Live, so the preview canvas can switch tabs.
+    @Previewable @State var pane = InspectorPane.changes
     inspectorPreview {
-        ThreadInspector(thread: .sampleIdleChat(), connection: .sample(), pane: .constant(.changes))
+        ThreadInspector(thread: .sampleIdleChat(), connection: .sample(), pane: $pane)
             .environment(\.previewChanges, .large)
     }
 }

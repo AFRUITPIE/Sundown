@@ -228,6 +228,23 @@ struct WindowModelTests {
         #expect(restored.draft(for: "b") == "")
     }
 
+    /// Drafts live in a file of their own; ones from the defaults file move there once, and a
+    /// deleted chat's draft goes with it.
+    @Test func draftsMoveToTheirFileAndAreForgottenWithTheirChat() throws {
+        let defaults = isolatedDefaults()
+        defaults.set(try JSONEncoder().encode(["old": "from before"]), forKey: "tether.drafts.v1")
+        let file = FileDrafts(url: FileManager.default.temporaryDirectory.appending(path: "drafts-\(UUID().uuidString).json"))
+        defer { try? FileManager.default.removeItem(at: file.url) }
+
+        let app = AppModel(defaults: defaults, secrets: DefaultsSecrets(defaults), draftStore: file)
+        #expect(app.draft(for: "old") == "from before")
+        #expect(defaults.data(forKey: "tether.drafts.v1") == nil)
+        #expect(file.read()["old"] == "from before")
+
+        app.forgetDraft(for: "old")
+        #expect(file.read()["old"] == nil)
+    }
+
     /// Typing keeps the draft at once but writes the store only once it pauses (or the app quits),
     /// and tells no view: composers read a draft when they appear.
     @Test func draftsAreWrittenOnceTypingPausesAndObservedByNoOne() {

@@ -103,7 +103,7 @@ struct PaneTab: View {
 /// is open. Declared by the inspector column, so it sits above it, and stays in the toolbar when
 /// the inspector is elsewhere (Settings ▸ Advanced ▸ Inspector).
 struct InspectorToggle: View {
-    @Bindable var window: WindowModel
+    let window: WindowModel
 
     var body: some View {
         Button("Inspector", systemImage: window.app.appearance.inspector.symbol) {
@@ -147,9 +147,6 @@ public struct InspectorPanel: View {
             }
         }
         .frame(minWidth: 280, idealWidth: 320, maxWidth: .infinity, minHeight: 320, idealHeight: 540, maxHeight: .infinity)
-        .environment(\.appearance, app.appearance)
-        .environment(\.textScale, app.textScale)
-        .environment(\.openFilesWith, app.appearance.openFilesWith)
         .onAppear { app.inspectorPanelShown = true }
         .onDisappear { app.inspectorPanelShown = false }
     }

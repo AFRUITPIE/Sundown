@@ -205,6 +205,7 @@ public final class AppModel {
     @ObservationIgnored private var terminationObserver: (any NSObjectProtocol)?
 
     private let defaults: UserDefaults
+    private let draftStore: DraftStore
     private static let hostsKey = "tether.hosts.v1"
     private static let draftsKey = "tether.drafts.v1"
     private static let appearanceKey = "tether.appearance.v1"
@@ -223,12 +224,15 @@ public final class AppModel {
     private var writtenEnv: [UUID: [String: String]] = [:]
 
     public convenience init(defaults: UserDefaults = .standard) {
-        self.init(defaults: defaults, secrets: defaults === UserDefaults.standard ? KeychainSecrets() : DefaultsSecrets(defaults))
+        let standard = defaults === UserDefaults.standard
+        self.init(defaults: defaults, secrets: standard ? KeychainSecrets() : DefaultsSecrets(defaults),
+                  draftStore: standard ? FileDrafts.standard : DefaultsDrafts(defaults: defaults, key: Self.draftsKey))
     }
 
-    init(defaults: UserDefaults, secrets: SecretStore) {
+    init(defaults: UserDefaults, secrets: SecretStore, draftStore: DraftStore? = nil) {
         self.defaults = defaults
         self.secrets = secrets
+        self.draftStore = draftStore ?? DefaultsDrafts(defaults: defaults, key: Self.draftsKey)
         load()
         for h in hosts { connections[h.id] = HostConnection(host: h) }
         for c in connections.values { c.offersSessionTools = appearance.sessionTools }
@@ -364,7 +368,13 @@ public final class AppModel {
     public func saveDrafts() {
         draftsSave?.cancel()
         draftsSave = nil
-        if let data = try? JSONEncoder().encode(drafts) { defaults.set(data, forKey: Self.draftsKey) }
+        draftStore.write(drafts)
+    }
+
+    /// A deleted chat's draft goes with it.
+    public func forgetDraft(for threadID: String) {
+        guard drafts.removeValue(forKey: threadID) != nil else { return }
+        saveDrafts()
     }
 
     // MARK: persistence
@@ -402,7 +412,14 @@ public final class AppModel {
                 writtenEnv[hosts[i].id] = env
             }
         }
-        drafts = defaults.data(forKey: Self.draftsKey).flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        drafts = draftStore.read()
+        // Drafts kept in the defaults file before they had one of their own move to it, once.
+        if !(draftStore is DefaultsDrafts), let old = defaults.data(forKey: Self.draftsKey) {
+            let legacy = (try? JSONDecoder().decode([String: String].self, from: old)) ?? [:]
+            drafts.merge(legacy) { current, _ in current }
+            draftStore.write(drafts)
+            defaults.removeObject(forKey: Self.draftsKey)
+        }
         appearance = defaults.data(forKey: Self.appearanceKey).flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
         alerts = defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode(AlertPreferences.self, from: $0) } ?? AlertPreferences()
         guard let s = stored else { return }

@@ -352,6 +352,26 @@ extension View {
     }
 }
 
+/// The app's settings every view reads from the environment, set once for each scene.
+extension Scene {
+    public func appEnvironment(_ app: AppModel) -> some Scene {
+        environment(\.appearance, app.appearance)
+            .environment(\.textScale, app.textScale)
+            .environment(\.openFilesWith, app.appearance.openFilesWith)
+            .environment(\.readingWidth, app.transcriptWidth.points)
+    }
+}
+
+extension View {
+    /// The same, for a preview, which has no scene to set them.
+    func appEnvironment(_ app: AppModel) -> some View {
+        environment(\.appearance, app.appearance)
+            .environment(\.textScale, app.textScale)
+            .environment(\.openFilesWith, app.appearance.openFilesWith)
+            .environment(\.readingWidth, app.transcriptWidth.points)
+    }
+}
+
 extension AnyTransition {
     /// `transition`, which moves or scales something, or a plain fade under Reduce Motion.
     static func moving(_ transition: AnyTransition, reduceMotion: Bool) -> AnyTransition {

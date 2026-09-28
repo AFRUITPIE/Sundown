@@ -3,7 +3,7 @@ import TetherKit
 
 /// Host management stays in one Settings pane. A picker chooses which host's form is shown.
 struct HostsSettings: View {
-    @Bindable var app: AppModel
+    let app: AppModel
     @State private var selection: UUID?
     @State private var addingHost = false
     @State private var hostToRemove: HostConfig?

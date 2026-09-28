@@ -212,15 +212,8 @@ struct InspectSubagentAction: Sendable, Equatable {
     static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
 }
 
-private struct InspectSubagentKey: EnvironmentKey {
-    static let defaultValue = InspectSubagentAction(owner: nil, open: { _ in })
-}
-
 extension EnvironmentValues {
-    var inspectSubagent: InspectSubagentAction {
-        get { self[InspectSubagentKey.self] }
-        set { self[InspectSubagentKey.self] = newValue }
-    }
+    @Entry var inspectSubagent = InspectSubagentAction(owner: nil, open: { _ in })
 
     /// The row id of the turn's work a row is shown inside, for Find in Chat.
     @Entry var findFold: String?

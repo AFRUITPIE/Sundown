@@ -113,3 +113,12 @@ struct FadeInRenderer: TextRenderer {
         }
     }
 }
+
+#if DEBUG
+/// A reply being streamed into: its last block fades new words in, the ones before it are settled.
+#Preview("Streaming reply") {
+    MarkdownView(text: "Reading how the split view sets its widths.\n\nThe inspector column declares its minimum, so opening it", streams: true)
+        .padding()
+        .frame(width: 520)
+}
+#endif

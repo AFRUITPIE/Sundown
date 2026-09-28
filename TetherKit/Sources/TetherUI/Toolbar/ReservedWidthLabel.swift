@@ -40,3 +40,22 @@ private extension Array where Element: Hashable {
         return filter { seen.insert($0).inserted }
     }
 }
+
+#if DEBUG
+/// Each label as wide as its widest value, so choosing another never resizes it: the outlines
+/// match across each pair.
+#Preview("ReservedWidthLabel") {
+    VStack(alignment: .leading, spacing: 12) {
+        ForEach(["Opus 5", "Sonnet 5"], id: \.self) { name in
+            ReservedWidthLabel(name, systemImage: "sparkle", widestOf: ["Opus 5", "Sonnet 5", "Haiku 4.5"])
+                .border(.quaternary)
+        }
+        ForEach(["gauge.with.dots.needle.0percent", "gauge.with.dots.needle.100percent"], id: \.self) { symbol in
+            ReservedWidthLabel("Effort", systemImage: symbol, symbols: ["gauge.with.dots.needle.0percent", "gauge.with.dots.needle.100percent", "a.circle"])
+                .labelStyle(.iconOnly)
+                .border(.quaternary)
+        }
+    }
+    .padding()
+}
+#endif

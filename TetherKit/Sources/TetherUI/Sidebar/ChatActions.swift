@@ -221,6 +221,7 @@ struct ChatActionAlerts: ViewModifier {
         // Every window showing it moves to New Chat first, so none is left on a deleted chat.
         for other in window.app.openWindows where other.selectedThread === thread { other.newChat() }
         window.app.setPinned(false, thread.id, on: window.hostID)
+        window.app.forgetDraft(for: thread.id)
         Task { await connection.delete(thread) }
         window.offerWorktreeRemoval(for: thread)
     }
@@ -231,3 +232,15 @@ extension View {
         modifier(ChatActionAlerts(window: window))
     }
 }
+
+#if DEBUG
+/// The Chat menu's actions for a chat, as buttons: a preview can't open a menu.
+#Preview("Chat actions") {
+    let window = WindowModel.sample()
+    VStack(alignment: .leading) {
+        ChatActionItems(window: window, thread: window.connection?.chats.first)
+    }
+    .buttonStyle(.borderless)
+    .padding()
+}
+#endif

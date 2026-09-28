@@ -171,16 +171,18 @@ struct InspectorTaskDetail: View {
 }
 
 #Preview("Tasks (subagent detail)") {
+    // Live, so All Tasks goes back to the list in the canvas.
+    @Previewable @State var selection: String? = "tool-subagent-explore"
     inspectorPreview {
-        ThreadInspector(thread: .sampleToolCalls(), connection: .sample(),
-                        selectedTaskID: .constant("tool-subagent-explore"))
+        ThreadInspector(thread: .sampleToolCalls(), connection: .sample(), selectedTaskID: $selection)
     }
 }
 
 /// A task still running: it can be stopped from here.
 #Preview("Tasks (running task detail)") {
+    @Previewable @State var selection: String? = "task:task-1"
     inspectorPreview {
-        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), selectedTaskID: .constant("task:task-1"))
+        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), selectedTaskID: $selection)
     }
 }
 
