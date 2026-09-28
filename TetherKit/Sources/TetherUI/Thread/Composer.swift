@@ -1,3 +1,4 @@
+import ImageIO
 import SwiftUI
 import TetherKit
 import TetherProtocol
@@ -46,13 +47,18 @@ struct Composer: View {
     @Namespace private var glass
     /// Something is being dragged over the field.
     @State private var dropTargeted = false
+    /// Files being read and images prepared, off the main actor: the message waits for them.
+    @State private var attaching = 0
 
     private enum GlassID: Hashable { case field }
 
-    /// Something going with the message besides its text.
-    struct Attachment: Identifiable {
+    /// Something going with the message besides its text. Made off the main actor, ready to send.
+    struct Attachment: Identifiable, Sendable {
         let id = UUID()
         let kind: Kind
+        /// An image's picture for its chip, made when it was attached: decoding the image in the
+        /// chip's body did it again on every keystroke.
+        var thumbnail: CGImage?
 
         /// What it's called, to VoiceOver and in its Remove button.
         var title: String {
@@ -62,21 +68,21 @@ struct Composer: View {
             }
         }
 
-        enum Kind {
-            /// PNG data.
-            case image(Data)
-            /// A PDF, sent as a document Claude reads.
-            case pdf(Data, name: String)
+        enum Kind: Sendable {
+            /// An image as it's sent: base64, and PNG, JPEG, GIF or WebP.
+            case image(base64: String, mediaType: UserInput.Image.MediaType)
+            /// A PDF, base64, sent as a document Claude reads.
+            case pdf(base64: String, name: String)
             /// A text file's contents, for a host that can't read the file where it is.
             case text(String, name: String)
         }
 
         var input: UserInput {
             switch kind {
-            case .image(let data):
-                .image(.init(mediaType: .init(rawValue: "image/png"), data: data.base64EncodedString()))
-            case .pdf(let data, let name):
-                .document(.init(mediaType: .applicationPdf, data: data.base64EncodedString(), name: name))
+            case .image(let base64, let mediaType):
+                .image(.init(mediaType: mediaType, data: base64))
+            case .pdf(let base64, let name):
+                .document(.init(mediaType: .applicationPdf, data: base64, name: name))
             case .text(let content, let name):
                 .text(.init(text: "Contents of \(name):\n```\n\(content)\n```"))
             }
@@ -191,7 +197,7 @@ struct Composer: View {
             }
         }
         .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-            for url in (try? result.get()) ?? [] { add(file: url) }
+            attach(((try? result.get()) ?? []).map(Incoming.file))
         }
         .fileDialogConfirmationLabel("Attach")
         // Its own, not New Chat's directory chooser's around it.
@@ -253,7 +259,10 @@ struct Composer: View {
     private var oneRowField: some View {
         HStack(alignment: .lastTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 8) {
-                if !images.isEmpty { attachments }
+                if !images.isEmpty {
+                    AttachmentStrip(attachments: images) { id in images.removeAll { $0.id == id } }
+                        .equatable()
+                }
                 textField
             }
             sendOrStop
@@ -320,7 +329,8 @@ struct Composer: View {
                     .contentTransition(.symbolEffect(.replace))
                     .animation(.default, value: thread?.isRunning == true)
                     .modifier(RoundAction())
-                    .disabled(!canSend || awaitingAnswer)
+                    // Not while an attachment is still being read.
+                    .disabled(!canSend || awaitingAnswer || attaching > 0)
                     .help(sendHelp)
                     .transition(.moving(.scale(scale: 0.5).combined(with: .opacity), reduceMotion: reduceMotion))
             }
@@ -343,49 +353,6 @@ struct Composer: View {
     private var sendHelp: String {
         if awaitingAnswer { return "Answer the request above first" }
         return thread?.isRunning == true ? "Add your message to the current turn" : "Send your message"
-    }
-
-    private var attachments: some View {
-        ScrollView(.horizontal) {
-            HStack {
-                ForEach(images) { attachment in
-                    chip(attachment)
-                        .overlay(alignment: .topTrailing) {
-                            // Named for what it removes: several can be attached.
-                            Button("Remove \(attachment.title)", systemImage: "xmark.circle.fill") { images.removeAll { $0.id == attachment.id } }
-                                .labelStyle(.iconOnly)
-                                .buttonStyle(.borderless)
-                        }
-                }
-            }
-        }
-        // Still while the chips fit.
-        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-    }
-
-    @ViewBuilder private func chip(_ attachment: Attachment) -> some View {
-        switch attachment.kind {
-        case .image(let data):
-            if let ns = NSImage(data: data) {
-                Image(nsImage: ns)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: 56, height: 56)
-                    .clipShape(.rect(cornerRadius: 8))
-                    .accessibilityLabel("Attached Image")
-                    .accessibilityIgnoresInvertColors()
-            }
-        case .pdf(_, let name), .text(_, let name):
-            VStack(spacing: 4) {
-                Image(systemName: { if case .pdf = attachment.kind { "doc.richtext" } else { "doc.text" } }())
-                    .font(.title2)
-                Text(name).font(.caption2).lineLimit(1).truncationMode(.middle)
-            }
-            .foregroundStyle(.secondary)
-            .frame(width: 72, height: 56)
-            .background(.fill.tertiary, in: .rect(cornerRadius: 8))
-            .help(name)
-        }
     }
 
     private func refreshSuggestions() {
@@ -466,7 +433,7 @@ struct Composer: View {
     }
 
     private func send() {
-        guard canSend, !awaitingAnswer else { return }
+        guard canSend, !awaitingAnswer, attaching == 0 else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var input: [UserInput] = []
         if !trimmed.isEmpty { input.append(.text(.init(text: trimmed))) }
@@ -492,42 +459,199 @@ struct Composer: View {
     }
 
     private func take(_ items: [Incoming]) {
+        var reads: [Incoming] = []
         for item in items {
             switch item {
             case .file(let url) where url.isFileURL:
-                if url.hasDirectoryPath, let takesDirectory { takesDirectory(url.path) } else { add(file: url) }
+                if url.hasDirectoryPath, let takesDirectory { takesDirectory(url.path) } else { reads.append(item) }
             case .file(let url):
                 // A web link, written into the message.
                 text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + url.absoluteString + " "
-            case .image(let data):
-                add(image: data)
+            case .image:
+                reads.append(item)
             }
+        }
+        attach(reads)
+    }
+
+    /// Reads files and prepares images off the main actor, taking them in the order given: a file
+    /// read, or a photo decoded and encoded again, held up the main thread for as long as it took.
+    private func attach(_ items: [Incoming]) {
+        guard !items.isEmpty else { return }
+        let hostIsLocal = connection.host.isLocal
+        attaching += 1
+        Task {
+            for item in items {
+                switch await Self.prepare(item, hostIsLocal: hostIsLocal) {
+                case .attachment(let attachment): images.append(attachment)
+                case .mention(let path): text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + "@" + path + " "
+                case .nothing: break
+                }
+            }
+            attaching -= 1
+        }
+    }
+
+    /// What a dropped, pasted or chosen file or image becomes.
+    enum Prepared: Sendable {
+        case attachment(Attachment)
+        /// Mentioned by path, for Claude to read.
+        case mention(String)
+        /// An image that couldn't be read.
+        case nothing
+    }
+
+    @concurrent
+    private nonisolated static func prepare(_ item: Incoming, hostIsLocal: Bool) async -> Prepared {
+        switch item {
+        case .file(let url): read(file: url, hostIsLocal: hostIsLocal)
+        case .image(let data): prepareImage(data).map { .attachment($0) } ?? .nothing
         }
     }
 
     /// An image is attached; any other file is mentioned by path, for Claude to read.
-    private func add(file url: URL) {
+    nonisolated static func read(file url: URL, hostIsLocal: Bool) -> Prepared {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
         let type = UTType(filenameExtension: url.pathExtension)
         if let type, type.conforms(to: .image), let data = try? Data(contentsOf: url) {
-            add(image: data)
+            return prepareImage(data).map { .attachment($0) } ?? .nothing
         } else if type?.conforms(to: .pdf) == true, let data = try? Data(contentsOf: url) {
-            images.append(Attachment(kind: .pdf(data, name: url.lastPathComponent)))
-        } else if connection.host.isLocal {
+            return .attachment(Attachment(kind: .pdf(base64: data.base64EncodedString(), name: url.lastPathComponent)))
+        } else if hostIsLocal {
             // This Mac's Claude reads the file where it is.
-            text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + "@" + url.path + " "
-        } else if let content = try? String(contentsOf: url, encoding: .utf8), content.utf8.count <= 256 * 1024 {
-            // Another host can't see this Mac's paths, so the text goes with the message.
-            images.append(Attachment(kind: .text(content, name: url.lastPathComponent)))
+            return .mention(url.path)
+        } else if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= maxTextAttachment,
+                  let content = try? String(contentsOf: url, encoding: .utf8), content.utf8.count <= maxTextAttachment {
+            // Another host can't see this Mac's paths, so the text goes with the message. Its size
+            // is checked before it's read: a log can be gigabytes.
+            return .attachment(Attachment(kind: .text(content, name: url.lastPathComponent)))
         } else {
-            text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + "@" + url.path + " "
+            return .mention(url.path)
         }
     }
 
-    private func add(image data: Data) {
-        guard let rep = NSBitmapImageRep(data: data), let png = rep.representation(using: .png, properties: [:]) else { return }
-        images.append(Attachment(kind: .image(png)))
+    /// The most text sent with a message in place of a file another host can't read.
+    nonisolated static let maxTextAttachment = 256 * 1024
+    /// The long edge Claude reads an image at; a larger one is scaled down to it before it's sent.
+    nonisolated static let maxImageEdge = 1568
+    /// A chip is 56 points square: its picture's short edge, at 2x.
+    nonisolated static let chipPixels = 112
+
+    enum ImagePlan: Equatable {
+        /// Sent as it came.
+        case keep(UserInput.Image.MediaType)
+        /// Drawn again with this long edge, and encoded as JPEG or PNG.
+        case scale(longEdge: Int, jpeg: Bool)
+    }
+
+    /// An image Claude reads is sent as it came, unless it's larger than Claude reads: it used to be
+    /// decoded and sent as a full-size PNG, and a 12-megapixel photo was tens of megabytes. Anything
+    /// else, or larger, is drawn again at most that size: a photo as JPEG, the rest as PNG.
+    nonisolated static func imagePlan(type: UTType?, width: Int, height: Int) -> ImagePlan {
+        let longEdge = max(width, height)
+        let sent: UserInput.Image.MediaType? = switch type {
+        case .png?: .imagePng
+        case .jpeg?: .imageJpeg
+        case .gif?: .imageGif
+        case .webP?: .imageWebp
+        default: nil
+        }
+        if let sent, longEdge <= maxImageEdge { return .keep(sent) }
+        let photo = type.map { $0.conforms(to: .jpeg) || $0.conforms(to: .heic) || $0.conforms(to: .heif) } ?? false
+        return .scale(longEdge: min(longEdge, maxImageEdge), jpeg: photo)
+    }
+
+    /// The image as it's sent, with its chip's picture; nil when it isn't an image ImageIO reads.
+    nonisolated static func prepareImage(_ data: Data) -> Attachment? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) > 0,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int, width > 0, height > 0 else { return nil }
+        let type = (CGImageSourceGetType(source) as String?).flatMap { UTType($0) }
+        // Its short edge fills the chip, so a panorama's is wider than 112.
+        let chip = downsampled(source, longEdge: min(max(width, height),
+                                                     chipPixels * max(width, height) / min(width, height), 1024))
+        switch imagePlan(type: type, width: width, height: height) {
+        case .keep(let mediaType):
+            return Attachment(kind: .image(base64: data.base64EncodedString(), mediaType: mediaType), thumbnail: chip)
+        case .scale(let longEdge, let jpeg):
+            guard let image = downsampled(source, longEdge: longEdge), let encoded = encode(image, jpeg: jpeg) else { return nil }
+            return Attachment(kind: .image(base64: encoded.base64EncodedString(), mediaType: jpeg ? .imageJpeg : .imagePng),
+                              thumbnail: chip)
+        }
+    }
+
+    /// The image at most `longEdge` pixels on its long edge, upright, decoded now rather than when
+    /// it's first drawn.
+    nonisolated static func downsampled(_ source: CGImageSource, longEdge: Int) -> CGImage? {
+        CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: longEdge,
+            kCGImageSourceShouldCacheImmediately: true,
+        ] as CFDictionary)
+    }
+
+    private nonisolated static func encode(_ image: CGImage, jpeg: Bool) -> Data? {
+        let data = NSMutableData()
+        let type = (jpeg ? UTType.jpeg : UTType.png).identifier as CFString
+        guard let destination = CGImageDestinationCreateWithData(data, type, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, jpeg ? [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary : nil)
+        return CGImageDestinationFinalize(destination) ? data as Data : nil
+    }
+}
+
+/// The attachments over the text, each with its Remove button. Its own view, compared by the
+/// attachments' ids, so typing in the field doesn't build the chips again.
+private struct AttachmentStrip: View, Equatable {
+    let attachments: [Composer.Attachment]
+    let remove: (UUID) -> Void
+
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        a.attachments.elementsEqual(b.attachments) { $0.id == $1.id }
+    }
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack {
+                ForEach(attachments) { attachment in
+                    chip(attachment)
+                        .overlay(alignment: .topTrailing) {
+                            // Named for what it removes: several can be attached.
+                            Button("Remove \(attachment.title)", systemImage: "xmark.circle.fill") { remove(attachment.id) }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                        }
+                }
+            }
+        }
+        // Still while the chips fit.
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+    }
+
+    @ViewBuilder private func chip(_ attachment: Composer.Attachment) -> some View {
+        switch attachment.kind {
+        case .image:
+            if let thumbnail = attachment.thumbnail {
+                Image(thumbnail, scale: 2, label: Text("Attached Image"))
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 56, height: 56)
+                    .clipShape(.rect(cornerRadius: 8))
+                    .accessibilityIgnoresInvertColors()
+            }
+        case .pdf(_, let name), .text(_, let name):
+            VStack(spacing: 4) {
+                Image(systemName: { if case .pdf = attachment.kind { "doc.richtext" } else { "doc.text" } }())
+                    .font(.title2)
+                Text(name).font(.caption2).lineLimit(1).truncationMode(.middle)
+            }
+            .foregroundStyle(.secondary)
+            .frame(width: 72, height: 56)
+            .background(.fill.tertiary, in: .rect(cornerRadius: 8))
+            .help(name)
+        }
     }
 }
 
