@@ -26,6 +26,11 @@ struct TranscriptView: View {
     var body: some View {
         ScrollView {
             TranscriptContent(thread: thread, connection: connection)
+                // A different Tool Calls folding is a different list of rows, made new: the lazy
+                // stack kept the rows it had built for the old one, and once the content had shrunk
+                // to the new one's height they lay outside what it showed, so the transcript stayed
+                // blank until the reader scrolled.
+                .id(appearance.toolCalls.folding)
                 .keyframeAnimator(initialValue: 0, trigger: glide.count) { content, y in
                     // Drawing only: an offset moves the content's geometry, and the lazy stack
                     // worked out again which rows it shows on every frame of the glide.

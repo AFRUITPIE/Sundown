@@ -106,14 +106,14 @@ final class AppearanceUITests: XCTestCase {
         choose(settings, "Tool Calls", "Every Call")
         XCTAssertTrue(groups.firstMatch.waitForNonExistence(timeout: 5))
 
+        // The rows are laid out again from the end of the chat, with no scrolling needed: the reply
+        // that ends it is on screen, not merely built somewhere above, and so is a fold.
         choose(settings, "Tool Calls", "Summarized")
-        // Only rows the transcript has built are there to find, and a short window may hold none
-        // of the folds: look further up.
-        let transcript = mainWindow(app).coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
-        for _ in 0..<10 where !groups.firstMatch.waitForExistence(timeout: 1) {
-            transcript.scroll(byDeltaX: 0, deltaY: 600)
-        }
-        XCTAssertTrue(groups.firstMatch.exists)
+        let reply = app.staticTexts["Section 29: tightening the renderer"].firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 5))
+        let window = mainWindow(app).frame
+        XCTAssertTrue(window.contains(CGPoint(x: reply.frame.midX, y: reply.frame.midY)), "the chat is blank: its last reply is at \(reply.frame), not in \(window)")
     }
 
     /// With Send With set to Command-Return, Return starts a new line and Command-Return sends.
