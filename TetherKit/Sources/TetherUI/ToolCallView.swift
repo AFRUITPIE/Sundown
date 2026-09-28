@@ -437,11 +437,16 @@ struct TodoListView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: status == "completed" ? "checkmark.circle.fill" : status == "in_progress" ? "circle.dotted.circle" : "circle")
                         .foregroundStyle(status == "completed" ? .green : status == "in_progress" ? .blue : .secondary)
+                        .contentTransition(.symbolEffect(.replace))
                     Text(status == "in_progress" ? (t.string("activeForm") ?? t.string("content") ?? "") : (t.string("content") ?? ""))
                         .strikethrough(status == "completed")
                         .foregroundStyle(status == "completed" ? .secondary : .primary)
                 }
                 .scaledFont(.callout)
+                .animation(.default, value: status)
+                // Said, not only drawn: the glyph and the strikethrough are all a row has for it.
+                .accessibilityElement(children: .combine)
+                .accessibilityValue(status == "completed" ? "Done" : status == "in_progress" ? "In Progress" : "To Do")
             }
         }
     }

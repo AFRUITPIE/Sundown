@@ -283,6 +283,9 @@ struct Composer: View {
                     .accessibilityIdentifier("composer.send")
                     .labelStyle(.iconOnly)
                     .symbolEffect(.bounce.up, options: reduceMotion ? .nonRepeating.speed(0) : .default, value: sends)
+                    // Send's arrow turns into Add to Turn's and back as a turn starts and ends.
+                    .contentTransition(.symbolEffect(.replace))
+                    .animation(.default, value: thread?.isRunning == true)
                     .modifier(RoundAction())
                     .disabled(!canSend || awaitingAnswer)
                     .help(sendHelp)
@@ -322,6 +325,8 @@ struct Composer: View {
                 }
             }
         }
+        // Still while the chips fit.
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
     }
 
     @ViewBuilder private func chip(_ attachment: Attachment) -> some View {

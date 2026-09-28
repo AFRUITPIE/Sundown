@@ -22,7 +22,8 @@ struct ChatActionItems: View {
         Divider()
         // Pinned in this app, per host; ⌥⌘P from the menu bar.
         item(thread.map { window.isPinned($0) } == true ? "Unpin" : "Pin", enabled: thread != nil) {
-            if let thread { window.togglePin(thread) }
+            // Animated, so the row is seen to move to Pinned and back.
+            if let thread { withAnimation { window.togglePin(thread) } }
         }
         .keyboardShortcut("p", modifiers: [.command, .option])
         // In place on the row from its context menu, as Finder renames; in an alert from the Chat

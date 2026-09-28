@@ -43,7 +43,7 @@ struct ConnectionLogView: View {
                 }
                 // The newest line is what's worth reading; it stays in view as more arrive.
                 .defaultScrollAnchor(.bottom)
-                .background(.background)
+                .scrollContentBackground(.visible)
             }
         }
         .toolbar {

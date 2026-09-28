@@ -25,8 +25,11 @@ struct ReservedWidthLabel: View {
         } icon: {
             ZStack {
                 ForEach(symbols, id: \.self) { Image(systemName: $0).hidden().accessibilityHidden(true) }
+                // One symbol turns into the next (the effort gauge's needle, the permission mode).
                 Image(systemName: systemImage)
+                    .contentTransition(.symbolEffect(.replace))
             }
+            .animation(.default, value: systemImage)
         }
     }
 }

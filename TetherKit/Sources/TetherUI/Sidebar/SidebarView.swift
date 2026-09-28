@@ -30,7 +30,8 @@ struct SidebarView: View {
             ForEach(sections) { section in
                 Section {
                     ForEach(section.rows) { row in
-                        rowView(row, in: section)
+                        // In a stack, so each element is one row SwiftUI can count without building it.
+                        HStack { rowView(row, in: section) }
                             .tag(row.id)
                             // The full title, for one the column truncates.
                             .help(row.thread.title)

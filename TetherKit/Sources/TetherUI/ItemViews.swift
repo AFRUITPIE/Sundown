@@ -291,22 +291,25 @@ struct UserMessageView: View {
                 .scaledFont(.caption2).foregroundStyle(.secondary)
             }
             ForEach(Array(message.content.enumerated()), id: \.offset) { _, part in
-                switch part {
-                case .text(let t):
-                    Text(t.text)
-                        .textSelection(.enabled)
-                        .lineLimit(message.synthetic == true ? 6 : nil)
-                case .image(let img):
-                    if let ns = images.image(for: img.data) {
-                        Image(nsImage: ns).resizable().scaledToFit().frame(maxWidth: 240, maxHeight: 180)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                // One view a part, even one that shows nothing, so SwiftUI can count them.
+                VStack(alignment: .trailing, spacing: 0) {
+                    switch part {
+                    case .text(let t):
+                        Text(t.text)
+                            .textSelection(.enabled)
+                            .lineLimit(message.synthetic == true ? 6 : nil)
+                    case .image(let img):
+                        if let ns = images.image(for: img.data) {
+                            Image(nsImage: ns).resizable().scaledToFit().frame(maxWidth: 240, maxHeight: 180)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                    case .fileRef(let f):
+                        Label(f.path, systemImage: "doc").scaledFont(.callout)
+                    case .document(let d):
+                        Label(d.name ?? "PDF Document", systemImage: "doc.richtext").scaledFont(.callout)
+                    case .unknown:
+                        EmptyView()
                     }
-                case .fileRef(let f):
-                    Label(f.path, systemImage: "doc").scaledFont(.callout)
-                case .document(let d):
-                    Label(d.name ?? "PDF Document", systemImage: "doc.richtext").scaledFont(.callout)
-                case .unknown:
-                    EmptyView()
                 }
             }
             if message.queued == true {

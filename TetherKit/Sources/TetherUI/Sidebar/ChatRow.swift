@@ -14,6 +14,7 @@ struct ChatRow: View {
                 ChatStatusGlyph(thread: thread)
                 Text(thread.title).lineLimit(1)
             }
+            .animation(.default, value: thread.status)
             secondary
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -43,6 +44,9 @@ struct ChatStatusGlyph: View {
             let needsYou = thread.status == .requiresAction
             Image(systemName: needsYou ? "exclamationmark.circle.fill" : "circle.dotted")
                 .foregroundStyle(needsYou ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
+                // Swaps as the chat starts waiting on you, and comes and goes with the turn.
+                .contentTransition(.symbolEffect(.replace))
+                .transition(.symbolEffect)
                 .symbolEffect(.rotate, isActive: thread.status == .running && !reduceMotion)
                 // Said, not only drawn: the glyph and its color are all a row has for it.
                 .accessibilityLabel(needsYou ? "Needs You" : "Running")

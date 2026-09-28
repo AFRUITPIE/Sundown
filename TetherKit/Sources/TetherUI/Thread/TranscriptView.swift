@@ -207,8 +207,8 @@ private struct TranscriptContent: View {
             if thread.historyLoaded, thread.hasMoreHistory {
                 OlderHistoryTrigger(thread: thread, connection: connection)
             }
-            // One plain view per row, identified by the ForEach alone: a `switch` or `.id()` here
-            // adds a node to every row, and the lazy stack walks every row on each layout pass.
+            // One plain view per row, identified by the ForEach alone: an `.id()` here adds a node
+            // to every row, and the lazy stack walks every row on each layout pass.
             ForEach(thread.rows(appearance.toolCalls.folding), id: \.id) { row in
                 TranscriptRowView(row: row, thread: thread)
             }
@@ -270,7 +270,9 @@ struct TranscriptRowView: View, Equatable {
     }
 
     var body: some View {
-        Group {
+        // A stack, not a Group: one view for every row, whatever it holds, so the transcript's
+        // ForEach can count its rows without building them (a Group left it on SwiftUI's slow path).
+        VStack(alignment: .leading, spacing: 0) {
             switch row {
             case .item(let item):
                 LiveItemView(box: thread.box(for: item), thread: thread)

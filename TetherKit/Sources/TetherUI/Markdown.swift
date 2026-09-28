@@ -183,7 +183,9 @@ struct MarkdownBlockView: View, Equatable {
     }
 
     var body: some View {
-        content.padding(.top, topPadding)
+        // A stack, so every block is one view SwiftUI can count without building it.
+        VStack(alignment: .leading, spacing: 0) { content }
+            .padding(.top, topPadding)
     }
 
     private func inline(_ i: Int) -> Text {
@@ -237,14 +239,22 @@ struct MarkdownBlockView: View, Equatable {
         case .table(let rows):
             let columns = rows.first?.count ?? 0
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-                ForEach(rows.indices, id: \.self) { r in
+                if let header = rows.first {
                     GridRow {
-                        ForEach(0..<rows[r].count, id: \.self) { c in
-                            inline(r * columns + c).scaledFont(.body, weight: r == 0 ? .bold : nil)
+                        ForEach(0..<header.count, id: \.self) { c in
+                            inline(c).scaledFont(.body, weight: .bold)
                         }
                     }
                     // Only as wide as the columns, so a narrow table hugs its content.
-                    if r == 0 { Divider().gridCellUnsizedAxes(.horizontal) }
+                    Divider().gridCellUnsizedAxes(.horizontal)
+                }
+                // One row per element, which lets SwiftUI count them without building each.
+                ForEach(rows.indices.dropFirst(), id: \.self) { r in
+                    GridRow {
+                        ForEach(0..<rows[r].count, id: \.self) { c in
+                            inline(r * columns + c).scaledFont(.body)
+                        }
+                    }
                 }
             }
             .padding(8)
