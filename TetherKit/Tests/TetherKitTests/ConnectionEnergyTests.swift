@@ -225,6 +225,45 @@ struct NetworkRetryTests {
     }
 }
 
+@MainActor
+@Suite(.serialized)
+struct CatalogRefreshTests {
+    /// Back on the same daemon, only the chats are asked for again: models and the account start
+    /// a Claude Code process, and projects read every session. A restarted daemon gets all of it.
+    @Test func reconnectingToTheSameDaemonAsksOnlyForTheChats() async throws {
+        let daemon = FakeDaemon()
+        let c = connection(daemon)
+        await c.connect()
+        #expect(await daemon.count("model/list") == 1)
+        #expect(await daemon.count("project/list") == 1)
+        #expect(!c.models.isEmpty)
+
+        await daemon.resetCalls()
+        await c.reconnect()
+        #expect(await daemon.count("thread/list") == 1)
+        #expect(await daemon.count("model/list") == 0)
+        #expect(await daemon.count("account/read") == 0)
+        #expect(await daemon.count("project/list") == 0)
+
+        await daemon.setPID(2)
+        await c.reconnect()
+        #expect(await daemon.count("model/list") == 1)
+        #expect(await daemon.count("project/list") == 1)
+        await c.disconnect()
+    }
+
+    /// Folders of chats started while the app was away still reach New Chat's list.
+    @Test func foldersNewSinceComeFromTheChats() async throws {
+        let daemon = FakeDaemon()
+        let c = connection(daemon)
+        await c.connect()
+        await daemon.set("thread/list", .result(encoded(ThreadListResult(threads: [summary("new", cwd: "/work/new")]))))
+        await c.reconnect()
+        #expect(c.projects.map(\.cwd) == ["/work/new"])
+        await c.disconnect()
+    }
+}
+
 @Suite
 struct SSHOptionsTests {
     @Test func keepalivesEveryThirtySeconds() {

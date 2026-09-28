@@ -135,13 +135,16 @@ public final class HostConnection: Identifiable {
             if initResult.protocolVersion < Self.minServerProtocol {
                 throw Incompatible(message: "\(host.name) runs Tether \(initResult.serverInfo.version), which is too old for this app. Update the server there.")
             }
+            // The same daemon still running: what it said about models, the account and projects
+            // still holds, and asking again started a Claude Code process for models and account.
+            let sameDaemon = serverInfo.map { Self.isSameDaemon($0, initResult) } ?? false
             serverInfo = initResult
             appendLog("Connected: \(initResult.host.hostname), claude \(initResult.claude.version) at \(initResult.claude.path)")
             state = .connected
             reconnectAttempt = 0
             await resubscribeAll()
             await openRequestedThreads()
-            await refreshCatalog()
+            await refreshCatalog(full: !sameDaemon || models.isEmpty)
         } catch {
             var error = error
             if let e = error as? RPCError, e.code == RPCError.incompatibleProtocol {
@@ -156,6 +159,12 @@ public final class HostConnection: Identifiable {
             retryable = !(error is Incompatible)
             if retryable { scheduleReconnect() }
         }
+    }
+
+    /// Whether `new` is the daemon `old` described, still running: same host, process and version.
+    static func isSameDaemon(_ old: InitializeResult, _ new: InitializeResult) -> Bool {
+        old.host.hostname == new.host.hostname && old.host.pid == new.host.pid
+            && old.serverInfo.version == new.serverInfo.version
     }
 
     /// The oldest server protocol this app talks to.
@@ -324,24 +333,31 @@ public final class HostConnection: Identifiable {
     }
 
     /// After reconnecting, catch every open thread up from its last seen seq (the daemon kept running).
+    /// All at once rather than one after another: each is a round trip, over SSH a slow one.
     private func resubscribeAll() async {
         guard let client else { return }
-        for model in threads.values where model.historyLoaded {
-            do {
-                let r = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: model.lastSeq))
-                if r.gap || r.thread.lastSeq < model.lastSeq {
-                    // Server restarted or buffer overflowed: reload the transcript.
-                    try await loadHistory(model, force: true)
-                } else {
-                    model.setInfo(r.thread)
-                }
-                subscribed.insert(model.id)
-            } catch let e as RPCError where e.code == RPCError.threadNotLoaded {
-                // Thread was unloaded (idle eviction / daemon restart); it resumes on next send.
-                model.setError(nil)
-            } catch {
-                appendLog("Resubscribe \(model.id) failed: \(error.localizedDescription)")
+        await withTaskGroup(of: Void.self) { group in
+            for model in threads.values where model.historyLoaded {
+                group.addTask { await self.resubscribe(model, client) }
             }
+        }
+    }
+
+    private func resubscribe(_ model: ThreadModel, _ client: RPCClient) async {
+        do {
+            let r = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: model.lastSeq))
+            if r.gap || r.thread.lastSeq < model.lastSeq {
+                // Server restarted or buffer overflowed: reload the transcript.
+                try await loadHistory(model, force: true)
+            } else {
+                model.setInfo(r.thread)
+            }
+            subscribed.insert(model.id)
+        } catch let e as RPCError where e.code == RPCError.threadNotLoaded {
+            // Thread was unloaded (idle eviction / daemon restart); it resumes on next send.
+            model.setError(nil)
+        } catch {
+            appendLog("Resubscribe \(model.id) failed: \(error.localizedDescription)")
         }
     }
 
@@ -372,8 +388,16 @@ public final class HostConnection: Identifiable {
 
     // MARK: catalog
 
-    public func refreshCatalog() async {
+    /// Projects, chats, models and the account. Not `full` (back on the same daemon), only the chats:
+    /// models and the account start a Claude Code process to ask, and listing projects reads every
+    /// session on the host. Folders new since are taken from the chats instead.
+    public func refreshCatalog(full: Bool = true) async {
         guard let client else { return }
+        guard full else {
+            await loadChats()
+            addProjectsFromChats()
+            return
+        }
         async let projectsR = client.call(Methods.ProjectList.self, .init(limit: 200))
         async let modelsR = client.call(Methods.ModelList.self, .init())
         async let accountR = client.call(Methods.AccountRead.self, .init())
@@ -381,6 +405,18 @@ public final class HostConnection: Identifiable {
         await loadChats()
         if let m = try? await modelsR { models = m.models }
         if let a = try? await accountR { account = a.account }
+    }
+
+    /// Folders of chats started while this app was away, most recent first with the rest.
+    private func addProjectsFromChats() {
+        var known = Set(projects.map(\.cwd))
+        var added: [ProjectListResult.Project] = []
+        for chat in chats {
+            guard let cwd = chat.cwd, known.insert(cwd).inserted else { continue }
+            added.append(.init(cwd: cwd, lastActivity: chat.summary?.updatedAt ?? 0, threadCount: 1))
+        }
+        guard !added.isEmpty else { return }
+        projects = (projects + added).sorted { $0.lastActivity > $1.lastActivity }
     }
 
     public func loadChats(limit: Int = 200) async {
