@@ -294,6 +294,8 @@ Micro-benchmarks (Markdown parsing, rows, Find, diffs, a streamed reply) are ski
 `TETHER_BENCH=1`: `TETHER_BENCH=1 swift test -c release -Xswiftc -DDEBUG -Xswiftc -enable-testing
 --package-path TetherKit --filter Benchmark`, compared with the parent commit on the same Mac.
 
+Installing a server, end to end: serve a compiled release (`mise run compile` in tether-server; `<base>/v<version>/` holding its `dist/` files) and run `TETHER_INSTALL_E2E=1 TETHER_DOWNLOAD_BASE=<base> TETHER_INSTALL_DIR=<scratch>/bin swift test --package-path TetherKit --filter ServerInstallEndToEnd`. It installs into that folder both ways the app does (the command shown, and this Mac downloading and checking it), never into `~/.tether`.
+
 Live tests use a real Claude CLI session and can incur cost:
 
 ```sh
