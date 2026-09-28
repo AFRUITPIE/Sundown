@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import TetherProtocol
 
 /// A process-free JSON-RPC server for XCTest UI runs. In every build, inert unless the app is
@@ -11,15 +12,61 @@ public enum UITestFixture {
     /// seconds of retries, long enough to press its Reconnect.
     @MainActor
     public static func connection(host: HostConfig = .local, failedConnects: Int = 0,
-                                  pendingPermission: Bool = false, performance: Bool = false) -> HostConnection {
+                                  pendingPermission: Bool = false, performance: Bool = false,
+                                  server: FixtureServer.Scenario? = nil) -> HostConnection {
         let attempts = FixtureAttempts()
-        return HostConnection(host: host, transportProvider: { _ in
+        return HostConnection(host: host, provisioner: server.map(FixtureServer.init), transportProvider: { _ in
             if await attempts.next() <= failedConnects {
                 throw TransportError.launchFailed("Fixture connection unavailable")
             }
             return FixtureTransport(pendingPermission: pendingPermission, performance: performance)
         })
     }
+}
+
+/// A fixture host's Tether server, as the UI tests need it: not installed, too old or too new for
+/// this app, or failing to install. Installing takes a moment and says so, as a real host does.
+public final class FixtureServer: ServerProvisioning {
+    public enum Scenario: String, Sendable {
+        case missing = "server-missing"
+        case outdated = "server-outdated"
+        case tooNew = "server-too-new"
+        case installFails = "server-install-failed"
+    }
+
+    private let scenario: Scenario
+    private let installed: Mutex<InstalledServer?>
+
+    init(_ scenario: Scenario) {
+        self.scenario = scenario
+        let start: InstalledServer? = switch scenario {
+        case .missing, .installFails: nil
+        case .outdated: InstalledServer(version: "0.4.0", protocolVersion: 0, minClientProtocol: 0)
+        case .tooNew: InstalledServer(version: "0.9.0", protocolVersion: tetherProtocolVersion + 1, minClientProtocol: tetherProtocolVersion + 1)
+        }
+        installed = Mutex(start)
+    }
+
+    public func probe(_ host: HostConfig) async throws -> ServerProbe {
+        ServerProbe(platform: "darwin-arm64", installed: installed.withLock { $0 })
+    }
+
+    public func downloadSize(of offer: ServerOffer) async -> Int64? { 70_400_000 }
+
+    public func install(_ offer: ServerOffer, on host: HostConfig, progress: @escaping @Sendable (String) -> Void) async throws {
+        progress("Downloading Tether \(offer.version) for \(offer.platform)")
+        try await Task.sleep(for: .milliseconds(400))
+        if scenario == .installFails {
+            throw HostBootstrapper.BootstrapError.install("Couldn’t download tether-\(offer.version)-\(offer.platform) (404).")
+        }
+        progress("Verifying")
+        try await Task.sleep(for: .milliseconds(200))
+        installed.withLock { $0 = InstalledServer(version: offer.version, protocolVersion: tetherProtocolVersion, minClientProtocol: 1) }
+        progress("Installed Tether \(offer.version)")
+    }
+
+    /// Unused: the fixture's transport stands in for the process.
+    public func connectCommand(for host: HostConfig) -> (executable: String, arguments: [String]) { ("/usr/bin/false", []) }
 }
 
 private actor FixtureAttempts {

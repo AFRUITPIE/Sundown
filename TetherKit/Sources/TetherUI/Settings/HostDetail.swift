@@ -8,6 +8,8 @@ struct HostDetail: View {
     let connection: HostConnection?
     let update: (HostConfig) -> Void
     @State private var editingEnvironment = false
+    /// The server install or update being asked about.
+    @State private var asking: ServerOffer?
 
     var body: some View {
         Form {
@@ -32,6 +34,11 @@ struct HostDetail: View {
             advancedSection
         }
         .formStyle(.grouped)
+        .sheet(item: $asking) { offer in
+            ServerInstallSheet(offer: offer, host: host.name, isLocal: host.isLocal) { chosen in
+                Task { await connection?.installServer(chosen) }
+            }
+        }
         .sheet(isPresented: $editingEnvironment) {
             EnvironmentVariablesSheet(environment: host.env) { environment in
                 var updated = host
@@ -51,7 +58,22 @@ struct HostDetail: View {
                         // The state is the row's point; the button gives way to it.
                         HostStatusLabel(state: connection.state)
                             .layoutPriority(1)
-                        ConnectButton(connection: connection)
+                        if case .needsServer(let offer) = connection.state {
+                            Button(offer.askTitle) { asking = offer }
+                        } else {
+                            ConnectButton(connection: connection)
+                        }
+                    }
+                }
+                if let server = connection.serverInfo, host.serverCommand?.isEmpty ?? true {
+                    LabeledContent("Tether") {
+                        HStack(spacing: 10) {
+                            Text(server.serverInfo.version).foregroundStyle(.secondary)
+                            if let update = connection.availableUpdate {
+                                Button(update.failure == nil ? "Update to \(update.version)…" : "Try Updating Again…") { asking = update }
+                                    .disabled(connection.isInstalling)
+                            }
+                        }
                     }
                 }
                 if let server = connection.serverInfo {
@@ -194,4 +216,18 @@ enum HostField {
     return HostDetail(host: connection.host, connection: connection) { _ in }
         .frame(width: 472, height: 440)
 }
+/// A connected host with an older server that still works: its version, and the update offered.
+#Preview("Host with an update") {
+    let connection = HostConnection.sampleUpdateAvailable()
+    return HostDetail(host: connection.host, connection: connection) { _ in }
+        .frame(width: 520, height: 520)
+}
+
+/// A host without the server: Install… in place of Connect.
+#Preview("Host without Tether") {
+    let connection = HostConnection.sampleNeedsServer()
+    return HostDetail(host: connection.host, connection: connection) { _ in }
+        .frame(width: 520, height: 420)
+}
+
 #endif

@@ -640,5 +640,30 @@ extension HostConnection {
         connection.previewSeed(state: .failed(reason))
         return connection
     }
+
+    /// A host without the Tether server, or with one too old for this app, or whose install
+    /// failed: asked about before anything is installed.
+    public static func sampleNeedsServer(_ reason: ServerOffer.Reason = .missing, failure: String? = nil) -> HostConnection {
+        let connection = HostConnection(host: .init(name: "claude-box", kind: .ssh(destination: "claude-box")))
+        connection.previewSeed(state: .needsServer(ServerOffer(reason: reason, platform: "linux-x64", size: 98_300_000, failure: failure)))
+        return connection
+    }
+
+    /// A host whose server is newer than this app can talk to.
+    public static func sampleAppTooOld() -> HostConnection {
+        let connection = HostConnection(host: .init(name: "claude-box", kind: .ssh(destination: "claude-box")))
+        connection.previewSeed(state: .appTooOld(serverVersion: "0.9.0"))
+        return connection
+    }
+
+    /// A connected host with an older server that still works, and a newer one offered.
+    public static func sampleUpdateAvailable() -> HostConnection {
+        let connection = sampleConnectedSSH()
+        connection.previewSeed(
+            state: .connected, client: RPCClient(transport: PreviewTransport()), serverInfo: connection.serverInfo,
+            account: connection.account, models: connection.models,
+            availableUpdate: ServerOffer(reason: .newer(installed: "0.4.0"), platform: "linux-x64", size: 98_300_000))
+        return connection
+    }
 }
 #endif

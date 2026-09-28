@@ -116,7 +116,8 @@ extension HostConnection.State {
         switch self {
         case .connected: "Connected"
         case .connecting: "Connecting"
-        case .failed, .disconnected: "Not Connected"
+        case .failed, .disconnected, .appTooOld: "Not Connected"
+        case .needsServer(let offer): offer.isUpdate ? "Needs an Update" : "Not Installed"
         }
     }
 
@@ -130,23 +131,31 @@ extension HostConnection.State {
         switch self {
         case .connected: "checkmark.circle.fill"
         case .connecting: "ellipsis.circle"
-        case .failed: "exclamationmark.triangle"
+        case .failed, .appTooOld: "exclamationmark.triangle"
         case .disconnected: "bolt.horizontal.circle"
+        case .needsServer(let offer): offer.isUpdate ? "arrow.triangle.2.circlepath.circle" : "arrow.down.circle"
         }
     }
 
     var tint: Color {
         switch self {
         case .connected: .green
-        case .failed: .orange
+        case .failed, .appTooOld, .needsServer: .orange
         default: .secondary
         }
     }
 
     /// Why the last attempt failed — the only part of a state the user can act on.
     var failureMessage: String? {
-        if case .failed(let message) = self { return message }
-        return nil
+        switch self {
+        case .failed(let message): return message
+        case .needsServer(let offer):
+            if let failure = offer.failure { return failure }
+            if case .outdated(let installed) = offer.reason { return "This host runs Tether \(installed), which is too old for this app." }
+            return nil
+        case .appTooOld(let version): return "This host runs Tether \(version), which needs a newer version of this app."
+        default: return nil
+        }
     }
 
     var help: String {

@@ -196,7 +196,7 @@ struct SidebarView: View {
             switch connection.state {
             case .connecting(let message):
                 ContentUnavailableView { ProgressView() } description: { Text(message) }
-            case .failed, .disconnected:
+            case .failed, .disconnected, .needsServer, .appTooOld:
                 NotConnectedView(connection: connection)
             case .connected:
                 if search.isEmpty, app.sidebarFilter != .all {
@@ -247,8 +247,13 @@ struct ChatRenameField: View {
 /// Empty while the host is connected or connecting.
 struct NotConnectedView: View {
     let connection: HostConnection
+    @State private var asking: ServerOffer?
 
     var body: some View {
+        states.serverInstallSheet($asking, connection: connection)
+    }
+
+    @ViewBuilder private var states: some View {
         switch connection.state {
         case .failed(let message):
             ContentUnavailableView {
@@ -263,6 +268,23 @@ struct NotConnectedView: View {
                 Label("Not Connected", systemImage: "bolt.horizontal.circle")
             } actions: {
                 Button("Connect") { Task { await connection.connect() } }
+            }
+        case .needsServer(let offer):
+            ContentUnavailableView {
+                Label(offer.isUpdate ? "Tether Needs an Update" : "Tether Isn’t Installed",
+                      systemImage: offer.isUpdate ? "arrow.triangle.2.circlepath.circle" : "arrow.down.circle")
+            } description: {
+                if let failure = offer.failure { Text(failure) }
+            } actions: {
+                Button(offer.askTitle) { asking = offer }
+            }
+        case .appTooOld(let version):
+            ContentUnavailableView {
+                Label("Not Connected", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text("\(connection.host.name) runs Tether \(version), which needs a newer version of this app.")
+            } actions: {
+                Button("Try Again") { Task { await connection.reconnect() } }
             }
         case .connecting, .connected:
             EmptyView()
@@ -361,6 +383,12 @@ private func pinningSample(_ app: AppModel = .sample()) -> AppModel {
 
 #Preview("Sidebar (host disconnected)") {
     sidebarPreview(.sample(connections: [.sampleDisconnected()]))
+}
+
+/// A host without the Tether server: Install… asks first.
+#Preview("Sidebar (host without Tether)") {
+    let host = HostConnection.sampleNeedsServer()
+    return sidebarPreview(.sample(connections: [.sample(), host]), host: host.id)
 }
 
 #Preview("Sidebar (no search results)") {

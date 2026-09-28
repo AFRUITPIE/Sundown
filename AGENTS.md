@@ -7,8 +7,8 @@ Tether is a native macOS SwiftUI client for Claude Code. It is intentionally a t
 This repository builds on its own. Clone it, open `Tether.xcodeproj`, and build:
 
 - `TetherKit/Package.swift` depends on the `TetherProtocol` package published by `AFRUITPIE/tether-server`, pinned by version. The generated sources are committed there, so nothing has to be generated to consume them.
-- The app target's build phase (`Scripts/fetch-server-binaries.sh`) puts the standalone server binaries in the bundle, downloading the pinned version's GitHub release once and caching it under `DERIVED_FILE_DIR`.
-- `.tether-server-version` is the pin. Bump it when the app needs a newer server, after that version has been released.
+- The app carries no server. A host installs it from tether-server's public releases (`install.sh`, one binary per platform and `SHA256SUMS`) into `~/.tether/bin`, when the user says so: the app checks what's there first (`tether version --json`) and asks before installing or updating (see Runtime flow).
+- `ServerRelease.version` (`ServerInstall.swift`) is the server this app installs and offers, the release its protocol package is pinned to. Bump both together, after that version has been released.
 
 `tether-server` is public, so SwiftPM can resolve the protocol package without credentials. The app repository remains private.
 
@@ -17,21 +17,22 @@ This repository builds on its own. Clone it, open `Tether.xcodeproj`, and build:
 With a `tether-server` checkout beside this one, the app builds against it and no release is involved:
 
 - `TetherKit/Package.swift` takes the protocol package from `../tether-server` by path, so a protocol change is seen on the next build, in Xcode and in `swift test` alike.
-- The build phase compiles that checkout (`mise run compile -- --dev`) whenever its sources changed since the last dev build. Dev builds are versioned `<version>-dev.<time>`, so the running daemon replaces itself on the next connect, and `Bootstrap` deletes older dev builds from `~/.tether/bin` (and on SSH hosts).
+- To run that checkout's server, set This Mac's Server Command (Settings ▸ Hosts ▸ Advanced) to `<bun> run <path>/tether-server/src/cli.ts connect`, with bun's and the checkout's full paths. A host with a Server Command runs it as it is, never checked, installed or updated. `TETHER_DOWNLOAD_BASE` (install.sh's own override) points installs at a mirror or a local server.
 - A path dependency has no pin, so SwiftPM empties `Package.resolved`. Both copies are marked `git update-index --skip-worktree` in this clone so that churn stays out of commits; `--no-skip-worktree` before bumping the pin.
 - The server's manifest names its package `tether-server`, the same as the folder: Xcode keys a local package by that name and a remote one by the folder-derived identity, and the product lookup fails when they differ.
-- `TETHER_USE_RELEASE=1` (for SwiftPM and the build phase) uses the published package and the pinned release instead, which is what CI and a fresh clone get.
+- `TETHER_USE_RELEASE=1` makes SwiftPM use the published package at its pin instead, which is what CI and a fresh clone get.
 
-Work on local branches and commit there; releases, pin bumps and PRs happen together when the owner asks to ship: release the server, bump `.tether-server-version` and the pin, then open the PRs.
+Work on local branches and commit there; releases, pin bumps and PRs happen together when the owner asks to ship: release the server, bump `ServerRelease.version` and the pin, then open the PRs.
 
 ## Repository map
 
-- `Tether.xcodeproj`: macOS app target, shared `Tether` scheme, signing, and the server-binary copy phase.
+- `Tether.xcodeproj`: macOS app target, shared `Tether` scheme, and signing.
 - `Tether/TetherApp.swift`: app entry point, the chat window group (one `WindowTarget` value per window), commands, settings scene, the host windows (Plugins, Scheduled Tasks, Connection Log), and the debug-only `TETHER_OPEN_THREAD` launch hook.
 - `Tether/TetherIntents.swift`: the Start a Chat shortcut (App Intents live in the app target), which opens a `tether://` link (`OpenURLIntent`).
 - `Tether/Info.plist`: the `tether` URL scheme.
 - `TetherKit/Sources/TetherKit`: transport and state layer.
-  - `Bootstrap.swift`: selects a bundled binary, installs it locally or over SSH, and builds the `tether connect` command.
+  - `Bootstrap.swift`: `HostBootstrapper`, the real `ServerProvisioning`: checks a host's server (`tether version --json`, with `uname` over SSH), installs it by running the command the user was shown (or downloads, verifies and copies it from this Mac when the host can't), and builds the `tether connect` command.
+  - `ServerInstall.swift`: `ServerRelease` (the version installed and where it comes from), what a check found, the install or update offered (`ServerOffer`), and the decision (`ServerAssessment`).
   - `Transport.swift`: process-backed JSONL byte transport (`LineSplitter`: each byte looked at once, a long line's buffer let go).
   - `RPCClient.swift`: actor that correlates JSON-RPC calls, finds each message's members without decoding it (`WireMessage`, then one typed decode), delivers notifications in order in batches of up to a frame, and answers server-to-client requests.
   - `HostConnection.swift`: one host connection, reconnect/replay behavior, catalogs, thread operations, and server-request routing.
@@ -60,6 +61,7 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
   - `NewChat/`: the new-chat screen (directory, branch and Work In above the composer), and Choose Directory… (`DirectoryChooser`: the open panel on this Mac, the remote picker, a navigation stack of `fs/list` pages, elsewhere), which Scheduled Tasks uses too.
   - `Scheduled/`: a host's Scheduled Tasks window (Host ▸ Scheduled Tasks…), over the daemon's `schedule/*` methods.
   - `Plugins/`: a host's Plugins window (Host ▸ Plugins…), over the daemon's `plugin/*` methods (the host's `claude plugin`). A grouped Form, not a List: an inset List trapped in SwiftUI's outline code on its rows.
+  - `ServerInstallSheet.swift`: the question before a host's server is installed or updated, with the command it runs.
   - `Settings/`: General, Notifications, Hosts and Advanced panes, host detail, the environment sheet, and the connection log window.
   - `PromptViews.swift`: permission, question, plan, and elicitation requests.
   - `ItemViews.swift`, `ToolCallView.swift`, `Markdown.swift`: transcript rendering. Markdown's blocks are parsed by the app, inline styling by `AttributedString(markdown:)`: Foundation's `presentationIntent` drops a numbered list's own numbers and can't parse the streamed tail on its own the way `MarkdownCache` does.
@@ -68,7 +70,7 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
 ## Runtime flow
 
 1. `AppModel` creates a `HostConnection` for each configured host and initiates connections.
-2. `HostBootstrapper` finds the matching `tether-<version>-<platform>` binary, installs it under `~/.tether/bin`, and launches `tether connect` locally or through system `ssh`.
+2. `HostConnection` checks the host's server. Missing or too old to talk to is `State.needsServer`, which asks before installing or updating; too new is `State.appTooOld`; an older one that still works connects, with the update offered in Settings ▸ Hosts. Once it's there, `~/.tether/bin/tether connect` runs locally or through system `ssh` (a host's Server Command instead, as it is).
 3. `RPCClient` performs the initialize handshake and carries newline-delimited JSON-RPC.
 4. `HostConnection` loads the host catalog, maps summaries to stable `ThreadModel` instances, subscribes with `afterSeq`, and batches streaming deltas to roughly one UI update per frame. `RPCClient` holds streamed output for up to a frame and sends anything else at once, with what came before it; `HostConnection.route` applies each batch, joining a reply's consecutive text deltas into one.
 5. `ThreadModel` applies snapshots and notifications. SwiftUI renders its cached top-level items, rows, turns, tasks, pending requests, and status.
@@ -131,6 +133,7 @@ The product should feel like a standard current macOS app. Prefer native SwiftUI
 - New Chat has no form: one row of plain borderless menus sits above the composer, where a chat's status strip goes, so nothing scrolls under the toolbar and the detail column looks the same as a chat's. Not glass, since the composer under them is. The row is the directory (recent directories, Choose Directory…), the branch checked out there (read-only, from `git/status`, only in a repository), and Work In (This Directory or New Worktree, starting from Settings ▸ General ▸ Start in a New Worktree). Work In is last: its label changes width with the choice, since a menu button's label can't reserve width the way a toolbar item's does, and nothing should move when it does. A host that isn't connected shows the status card in the composer's place, as a chat does, and hides the row until it is.
 - The composer stays mounted under a pending prompt (Send disabled) so a draft survives it. A prompt card's default button is the window's default only while the message field doesn't have focus (`composerHasFocus`): a default button takes Return from the whole window, and Return in a draft would otherwise have pressed Allow. The field takes focus by `defaultFocus`, when the window opens or focus has nowhere else to go, never from the sidebar or search.
 - While the host isn't connected (disconnected, connecting, failed), the composer's field row is a status card (`ConnectionStatusCard`): "Not Connected", "Connecting…" or "Couldn’t Connect", the host's name or the failure's reason, and Connect or Reconnect (nothing while connecting). Glass, as a control card; its button is `.bordered`. The composer stays mounted behind it, so the draft and attachments come back with the field. It's said once: the transcript's placeholder shows nothing while the host is down, and New Chat has no overlay.
+- A host's server is never installed or updated unasked. A missing or too-old one shows in the status card's place ("Tether Isn’t Installed", "Tether Needs an Update"), the sidebar and Settings ▸ Hosts, with Install… or Update…, which opens a sheet: what it downloads, its size and where it goes, and the exact command that runs on the host, with Copy, so it can be run by hand instead. Progress goes to the host's connection log. A failure says why, with Try Again…. An update to an older server that still works is offered in Settings ▸ Hosts only; the daemon moves onto it once its running chats finish.
 - The composer is laid out like Messages: a round + (a menu: attach, mention, commands) beside a capsule field with a round Send or Stop inside it, on the last line's baseline, so one line sits level with Send and Send stays by the last line as the text grows. The + is a `Menu` with glass on its label: the glass button style draws a flat circle on a `Menu` on macOS 27. Nothing else sits in the field: how full the context is lives in the Session pane. Return sends and Shift-Return starts a line (or ⌘Return sends, per Settings); Esc closes an open `/` or `@` list first, and otherwise stops a running turn, as Chat ▸ Stop (⌘.) does. Files and images come in through one `Transferable` (`Composer.Incoming`): dropped on the field (outlined while a drag is over it), pasted, or from Continuity Camera; a directory dropped on New Chat's field is where the chat starts. Shift-Return puts its new line at the cursor (the field's `TextSelection`).
 - A finished turn that edited files ends with one quiet row after its last reply: "Edited 3 files" and "+42 −7" (the diff colors), counted from the turn's own Edit/MultiEdit/Write/NotebookEdit inputs — a subagent's included, failed calls not — never the working tree (`TurnEdits`). Open, one line per file (name, directory, counts), each opening to its edits in `DiffView`, and Restore Files…, which is Restore Code to Here… for the turn's prompt. No Undo. Summarized in `ThreadModel.rows(_:)`, cached per turn with the rows (each finished call's changes counted off the main actor and memoized), in every Tool Calls mode; never for the running turn.
 - The date goes above a prompt, centered and quiet, as Messages does: the first prompt shown, a prompt on a new day, or one more than an hour after the last item (`DateSeparators`, a row of its own). "Today 2:14 PM", "Yesterday …", the weekday within the week, then the date, in the reader's locale (`TranscriptDate`).
@@ -217,12 +220,12 @@ Change the Zod protocol definitions and implementation in `tether-server`, run `
 
 ## Build and verification
 
-Prepare the bundled server artifacts when server code or packaging changes:
+Server releases, when server code changes:
 
 ```sh
 cd ../tether-server
-mise run compile -- --dev # into dist/ with a -dev stamp; the app's build phase runs this itself
-mise run release          # tag, publish the binaries, and record the Agent SDK version
+mise run compile -- --dev # into dist/ with a -dev stamp
+mise run release          # tag, publish the binaries, install.sh and SHA256SUMS, and record the Agent SDK version
 ```
 
 `TETHER_VERSION` comes from `package.json`, and the daemon replaces a running one only when that string differs. It is deliberately not the Agent SDK version: a server fix has to be able to ship without waiting for an SDK release. `AGENT_SDK_VERSION` is exported and reported separately.

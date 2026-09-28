@@ -86,7 +86,6 @@
 				000000000000000120000000 /* Sources */,
 				000000000000000130000000 /* Frameworks */,
 				000000000000000140000000 /* Resources */,
-				000000000000000170000001 /* Bundle Tether server binaries */,
 			);
 			buildRules = (
 			);
@@ -173,18 +172,6 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
-/* Begin PBXShellScriptBuildPhase section */
-		000000000000000170000001 /* Bundle Tether server binaries */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			name = "Bundle Tether server binaries";
-			shellPath = /bin/sh;
-			shellScript = (
-				"\"$SRCROOT/Scripts/fetch-server-binaries.sh\"",
-				"",
-			);
-		};
-/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		000000000000000120000000 /* Sources */ = {

@@ -670,11 +670,13 @@ extension AppModel {
         let failedConnects = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "connect-failure" ? 2 : 0
         let pendingPermission = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "permission"
         let performance = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"] == "performance"
+        let server = ProcessInfo.processInfo.environment["TETHER_UI_TEST_SCENARIO"].flatMap(FixtureServer.Scenario.init)
         let ssh = HostConfig(name: "Fixture SSH", kind: .ssh(destination: "fixture.invalid"))
         // A fresh store each launch, unless a test that relaunches names one to keep.
         let suite = ProcessInfo.processInfo.environment["TETHER_UI_TEST_DEFAULTS"]
         let app = sample(connections: [
-            UITestFixture.connection(failedConnects: failedConnects, pendingPermission: pendingPermission, performance: performance),
+            UITestFixture.connection(failedConnects: failedConnects, pendingPermission: pendingPermission, performance: performance,
+                                     server: server),
             UITestFixture.connection(host: ssh)
         ], defaults: suite.flatMap(UserDefaults.init(suiteName:)))
         // The first window opens on the fixture's chat, or where the kept store says it was.
