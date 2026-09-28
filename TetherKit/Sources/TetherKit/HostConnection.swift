@@ -115,8 +115,7 @@ public final class HostConnection: Identifiable {
             let initResult = try await client.call(Methods.Initialize.self, .init(
                 clientInfo: .init(name: "tether-app", title: "Tether", version: Self.appVersion),
                 protocolVersion: tetherProtocolVersion,
-                // Reasoning isn't shown, so its per-token deltas are only cost.
-                capabilities: .init(experimentalApi: true, optOutNotificationMethods: ["item/reasoning/delta"]),
+                capabilities: .init(experimentalApi: true, optOutNotificationMethods: Self.unreadNotifications),
                 env: host.env.isEmpty ? nil : host.env))
             try await client.notify("initialized")
             if initResult.protocolVersion < Self.minServerProtocol {
@@ -199,6 +198,15 @@ public final class HostConnection: Identifiable {
             if case .failed = self.state { await self.connect() }
         }
     }
+
+    /// Notifications nothing here reads, which the daemon then doesn't send: reasoning isn't shown,
+    /// a tool's input comes whole with its call rather than per token, and the rest go unused. A
+    /// chat's seqs skip them, which `ThreadModel.apply` takes in its stride: it drops only a seq it
+    /// has already seen.
+    static let unreadNotifications = [
+        "item/reasoning/delta", "item/toolCall/inputDelta", "thread/tokenUsage/updated", "thread/queuedInput",
+        "thread/commandsChanged", "thread/notification", "thread/hook", "thread/rawEvent", "thread/stderr",
+    ]
 
     private func startNotificationPump(_ client: RPCClient) {
         notificationTask?.cancel()

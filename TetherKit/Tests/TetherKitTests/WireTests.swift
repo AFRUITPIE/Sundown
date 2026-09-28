@@ -205,6 +205,62 @@ struct RPCClientTests {
     }
 }
 
+/// A host's connection over the wire: what it asks the daemon for, and what it makes of what comes back.
+@MainActor
+@Suite(.serialized)
+struct HostWireTests {
+    @Test func itOptsOutOfWhatNothingReads() async throws {
+        let transport = WireTransport(responder: daemon)
+        let connection = connection(transport)
+        await connection.connect()
+
+        let initialize = try #require(await transport.sent.first { $0["method"]?.stringValue == "initialize" })
+        let optedOut = initialize["params"]?["capabilities"]?["optOutNotificationMethods"]?.arrayValue?.compactMap(\.stringValue)
+        #expect(Set(optedOut ?? []) == [
+            "item/reasoning/delta", "item/toolCall/inputDelta", "thread/tokenUsage/updated", "thread/queuedInput",
+            "thread/commandsChanged", "thread/notification", "thread/hook", "thread/rawEvent", "thread/stderr",
+        ])
+        await connection.disconnect()
+    }
+
+    /// What the daemon leaves out still takes its seqs: the next one a chat gets skips them.
+    @Test func aChatTakesTheSeqsSkippedForIt() async throws {
+        let transport = WireTransport(responder: daemon)
+        let connection = connection(transport)
+        await connection.connect()
+        let thread = connection.thread("t")
+
+        transport.emit(["method": "thread/status/changed", "params": ["threadId": "t", "seq": 3, "status": "running"]])
+        transport.emit(["method": "thread/status/changed", "params": ["threadId": "t", "seq": 9, "status": "idle"]])
+        try await waitUntil { thread.lastSeq == 9 }
+
+        #expect(thread.status == .idle)
+        await connection.disconnect()
+    }
+
+    private func connection(_ transport: WireTransport) -> HostConnection {
+        HostConnection(host: HostConfig(name: "wire", kind: .ssh(destination: "wire")), transportProvider: { _ in transport })
+    }
+}
+
+/// Enough of a daemon for a connection to come up.
+@Sendable private func daemon(_ method: String, _ params: JSONValue) -> JSONValue? {
+    switch method {
+    case "initialize":
+        let result = InitializeResult(
+            serverInfo: .init(name: "tether", version: "test"),
+            protocolVersion: tetherProtocolVersion,
+            host: .init(hostname: "wire", platform: "linux", arch: "arm64", home: "/home/dev", pid: 1, mode: .daemon),
+            claude: .init(path: "/usr/bin/claude", version: "test"))
+        return try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(result))
+    case "thread/list": return ["threads": []]
+    case "project/list": return ["projects": []]
+    case "model/list": return ["models": []]
+    case "thread/delete": return [:]
+    default: return nil
+    }
+}
+
 /// Lines in and out: what the client sent, and a responder for its calls (nil answers with an error).
 private actor WireTransport: Transport {
     typealias Responder = @Sendable (_ method: String, _ params: JSONValue) -> JSONValue?
@@ -250,7 +306,7 @@ private actor Received<Value: Sendable> {
 
 private enum WireTestError: Error { case timeout }
 
-private func waitUntil(_ condition: () async -> Bool) async throws {
+private func waitUntil(isolation: isolated (any Actor)? = #isolation, _ condition: () async -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(2)
     while await !condition() {
         if ContinuousClock.now > deadline { throw WireTestError.timeout }
