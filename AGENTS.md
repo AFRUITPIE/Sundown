@@ -223,12 +223,12 @@ Server releases, when server code changes:
 ```sh
 cd ../tether-server
 mise run compile -- --dev # into dist/ with a -dev stamp
-mise run release          # tag and publish the GitHub release, which publishes the npm package
+# release: bump package.json's version and merge; approve the staged version on npmjs.com
 ```
 
 `TETHER_VERSION` comes from `package.json`, and the daemon replaces a running one only when that string differs. It is deliberately not the Agent SDK version: a server fix has to be able to ship without waiting for an SDK release. `AGENT_SDK_VERSION` is exported and reported separately.
 
-App releases, for the Homebrew cask (`brew install --cask afruitpie/tap/tether`, `Casks/tether.rb` in `AFRUITPIE/homebrew-tap`): bump `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`, push, then run `Scripts/release.sh`. It archives a Release build against the pinned protocol package, exports it signed with Developer ID (hardened runtime is on; the sandbox is off, since the app runs `ssh` and login shells), notarizes and staples it, and uploads `Tether-<version>.zip` as the GitHub release `v<version>`. It prints the zip's SHA-256: put that and the version in the cask. It needs, once per Mac, a Developer ID Application certificate and `xcrun notarytool store-credentials tether`.
+Releases happen on merge, down a chain: a new Agent SDK becomes a tether-server PR (its `sdk-update.yml`); merging a server version bump releases it to npm, staged until approved; a newly published server becomes a PR here (`server-update.yml`, daily: `ServerRelease.version`, both `Package.resolved` pins, and the app's next patch version and build); merging an app version bump releases the app (`release.yml`: `Scripts/release.sh` on a macOS runner, signed with Developer ID and notarized); and the tap (`AFRUITPIE/homebrew-tap`, `brew install --cask afruitpie/tap/tether`) updates its cask from the newest release on its own. `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are set only on the app target, which the workflows read. `release.yml` needs the secrets it lists (the Developer ID certificate as .p12, and an App Store Connect API key for notarizing); `Scripts/release.sh` also runs locally, with a Developer ID certificate and `xcrun notarytool store-credentials tether`. Hardened runtime is on; the sandbox is off, since the app runs `ssh` and login shells.
 
 Use Xcode 27 MCP as the primary app workflow. Open `Tether.xcodeproj`, then use the Xcode tools rather than raw `xcodebuild` or a separately launched LLDB session:
 
