@@ -248,8 +248,9 @@ swift test --package-path TetherKit
 
 The shared Xcode scheme also contains `TetherAppUITests`. Its launch sets
 `TETHER_UI_TEST_MODE=1`, which uses an in-process JSON-RPC fixture and fails closed before any
-daemon or SSH launch. The PR workflow runs it on `xcode-27` and resolves the public
-SwiftPM protocol package without a repository secret.
+daemon or SSH launch. Xcode Cloud runs it on each pull request (the workflow is set up in
+App Store Connect, not in the repository) and resolves the public SwiftPM protocol package
+without a secret.
 
 `TetherPerformanceUITests` (in the same target) measures hitches with
 `XCTHitchMetric` while it drives the inspector, its tabs, the sidebar, chat switching, a window

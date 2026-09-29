@@ -12,6 +12,14 @@ TetherKit/           Swift package
 
 Protocol types come from `TetherProtocol`, which is generated in `../tether-server`. Both repos sit side by side in `~/Code`.
 
+## Install
+
+```sh
+brew install --cask afruitpie/tap/tether
+```
+
+Tether needs macOS 27, and on each host Node.js 18 or later and Claude Code.
+
 ## Develop
 
 1. Open `Tether.xcodeproj` and run the **Tether** scheme. The app carries no server: each host runs tether-server's npm package with its own `npx` (Node.js 18 or later), at the version the app pins.
@@ -28,8 +36,8 @@ the local daemon or SSH for any host without a fixture transport. It exercises S
 management, chat streaming, and reconnection without inference calls. Run it locally with Xcode's
 **Test** action. `TETHER_E2E=1` is the separate, opt-in live suite and can incur cost.
 
-The PR workflow runs both suites on the `xcode-27` GitHub runner and uploads the `.xcresult`
-bundle. SwiftPM resolves the pinned `TetherProtocol` package from the public
+Xcode Cloud runs both suites on each pull request (its workflow lives in App Store Connect;
+`Tether.xcodeproj/xcshareddata/xcodecloud` ties the project to it). SwiftPM resolves the pinned `TetherProtocol` package from the public
 `AFRUITPIE/tether-server` repository. No Claude credentials are supplied to CI.
 
 ## License
