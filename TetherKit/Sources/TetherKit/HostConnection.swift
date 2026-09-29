@@ -566,11 +566,13 @@ public final class HostConnection: Identifiable {
     }
 
     /// Transcripts load from the end, a page at a time.
-    /// Kept small: a chat opens at its end, and the lazy transcript measures every loaded row above
-    /// the end to get there, on every open and every resize. 150 items made switching to a long chat
-    /// cost about 0.5 s of main-thread work; older items load a page at a time on scrolling up.
+    /// The first is kept small: a chat opens at its end, and the lazy transcript measures every loaded
+    /// row above the end to get there. 150 items made switching to a long chat cost about 0.5 s of
+    /// main-thread work. Older pages are big: each one going in above the reader shows the wrong rows
+    /// for a few frames (`TranscriptView.keepPlace`), and at 50 items, a few turns of tool calls, that
+    /// was every couple of screens. With 550 items loaded, a resize took 5% more CPU than with 50.
     public static let initialHistoryLimit = 50
-    public static let olderHistoryPageSize = 50
+    public static let olderHistoryPageSize = 500
 
     private func loadHistory(_ model: ThreadModel, force: Bool) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
@@ -764,9 +766,11 @@ public final class HostConnection: Identifiable {
         case failed
     }
 
-    /// Fetch the page before the items already held, one page at a time.
+    /// Fetch the page before the items already held, one page at a time. It goes in once `whenReady`
+    /// returns: the transcript holds it until the reader stops scrolling. Cancelled meanwhile, it
+    /// doesn't go in.
     @discardableResult
-    public func loadOlderHistory(_ model: ThreadModel) async -> OlderHistoryOutcome {
+    public func loadOlderHistory(_ model: ThreadModel, whenReady: @MainActor () async -> Void = {}) async -> OlderHistoryOutcome {
         guard model.hasMoreHistory, let oldest = model.items.first?.id else { return .complete }
         guard !model.loadingOlder else { return .busy }
         guard let client else { return .unavailable }
@@ -778,9 +782,10 @@ public final class HostConnection: Identifiable {
             let r = try await client.call(Methods.ThreadRead.self, .init(
                 threadId: model.id, cwd: model.cwd, limit: Self.olderHistoryPageSize, before: oldest))
             let changes = await FileChange.changes(ofCallsIn: r.items)
+            await whenReady()
             // Only onto what it was asked before: a chat trimmed or let go meanwhile would be left
             // with a gap between the page and what it now holds. Asked again, from what it holds.
-            guard model.itemIndex(of: oldest) == 0 else { return .busy }
+            guard !Task.isCancelled, model.itemIndex(of: oldest) == 0 else { return .busy }
             model.prependHistory(items: r.items, hasMore: r.hasMore ?? false, fileChanges: changes)
             return .loaded
         } catch {

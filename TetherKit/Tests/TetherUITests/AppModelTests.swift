@@ -302,16 +302,12 @@ struct WindowModelTests {
     @Test func defaultsRoundTripWithoutUsingStandardDefaults() {
         let defaults = isolatedDefaults()
         let app = AppModel.sample(connections: [.sample(), .sampleFailed()], defaults: defaults)
-        app.defaultModel = "sonnet"
-        app.defaultEffort = "high"
         app.defaultPermissionMode = "plan"
         app.transcriptWidth = .wide
         app.sidebarGrouping = .directory
 
         let restored = AppModel(defaults: defaults)
 
-        #expect(restored.defaultModel == "sonnet")
-        #expect(restored.defaultEffort == "high")
         #expect(restored.defaultPermissionMode == "plan")
         #expect(restored.transcriptWidth == .wide)
         #expect(restored.sidebarGrouping == .directory)
@@ -326,7 +322,6 @@ struct WindowModelTests {
 
         let app = AppModel(defaults: defaults)
 
-        #expect(app.defaultModel == "opus")
         #expect(app.transcriptWidth == .medium)
         #expect(!app.lastShowInspector)
         #expect(app.lastInspectorPane == .tasks)
@@ -435,17 +430,19 @@ struct WindowModelTests {
         #expect(w.draftDirectory == nil)
     }
 
-    @Test func newChatUsesTheConfiguredDefaults() {
+    /// Model and effort are left to the host's Claude Code, from its own settings; the permission
+    /// mode is the app's default.
+    @Test func newChatLeavesModelAndEffortToClaudeCode() {
         let app = AppModel(defaults: isolatedDefaults())
         let w = window(app)
-        app.defaultModel = "sonnet"
-        app.defaultEffort = "high"
         app.defaultPermissionMode = "plan"
+        w.draftModel = "sonnet"
+        w.draftEffort = .high
 
         w.newChat()
 
-        #expect(w.draftModel == "sonnet")
-        #expect(w.draftEffort == .high)
+        #expect(w.draftModel == nil)
+        #expect(w.draftEffort == nil)
         #expect(w.draftPermissionMode == .plan)
     }
 }
