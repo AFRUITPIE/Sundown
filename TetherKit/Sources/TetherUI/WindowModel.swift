@@ -314,9 +314,9 @@ public final class WindowModel {
 
     /// Picks the defaults up again after Settings changes them, if New Chat hasn't been touched.
     func seedDraft() {
-        // Always a concrete model: the Settings default, else the catalog's.
-        draftModel = app.defaultModel ?? app.connections[hostID]?.models.defaultValue
-        draftEffort = app.defaultEffort.map(EffortLevel.init(rawValue:))
+        // None chosen: the host's Claude Code picks, from its own settings (`model`, `effortLevel`).
+        draftModel = nil
+        draftEffort = nil
         draftPermissionMode = PermissionMode(rawValue: app.defaultPermissionMode)
         draftFastMode = false
         draftWorktree = app.appearance.worktreeByDefault

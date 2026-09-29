@@ -275,7 +275,7 @@ private struct ScheduledTaskEditor: View {
             Section("Runs With") {
                 Picker("Model", selection: $model) {
                     Text("Default").tag(String?.none)
-                    ForEach(connection.models.concrete, id: \.value) { Text($0.shortName).tag(Optional($0.value)) }
+                    ForEach(connection.models.concrete, id: \.value) { Text($0.displayName).tag(Optional($0.value)) }
                 }
                 PermissionModeFormPicker(selection: $permissionMode,
                                          modes: PermissionMode.offered(bypass: appearance.offerBypass, current: permissionMode))

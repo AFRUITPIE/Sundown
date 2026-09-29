@@ -142,18 +142,6 @@ enum Format {
 }
 
 extension ModelInfo {
-    /// Family and version from `resolvedModel` (the catalog's `displayName` has no version):
-    /// claude-opus-5 → "Opus 5", claude-haiku-4-5-20251001 → "Haiku 4.5".
-    var shortName: String {
-        guard let resolved = resolvedModel else { return displayName }
-        var parts = resolved.split(separator: "-").map(String.init)
-        if parts.first == "claude" { parts.removeFirst() }
-        if let last = parts.last, last.count == 8, last.allSatisfy(\.isNumber) { parts.removeLast() }
-        guard let family = parts.first, !family.isEmpty else { return displayName }
-        let version = parts.dropFirst().joined(separator: ".")
-        return version.isEmpty ? family.capitalized : "\(family.capitalized) \(version)"
-    }
-
     /// The CLI's "whatever I would pick" pseudo-model; `resolvedModel` names the real one.
     var isDefaultAlias: Bool { value == "default" }
 }
