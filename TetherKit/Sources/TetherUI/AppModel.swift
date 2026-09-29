@@ -186,8 +186,6 @@ public final class AppModel {
     }
 
     /// Defaults for new threads, per app (persisted).
-    public var defaultModel: String? { didSet { save() } }
-    public var defaultEffort: String? { didSet { save() } }
     public var defaultPermissionMode: String = "default" { didSet { save() } }
 
     /// Each chat's unsent composer text, by thread id (persisted), so switching chats, closing a
@@ -521,8 +519,6 @@ public final class AppModel {
     // Everything but `hosts` is optional, so a store written by an older build still decodes.
     private struct Stored: Codable {
         var hosts: [HostConfig]
-        var defaultModel: String?
-        var defaultEffort: String?
         var defaultPermissionMode: String?
         var transcriptWidth: String?
         /// Where the last window was: in `LastWindow` now, read from here once.
@@ -576,8 +572,6 @@ public final class AppModel {
         appearance = defaults.data(forKey: Self.appearanceKey).flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
         alerts = defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode(AlertPreferences.self, from: $0) } ?? AlertPreferences()
         if let s = stored {
-            defaultModel = s.defaultModel
-            defaultEffort = s.defaultEffort
             defaultPermissionMode = s.defaultPermissionMode ?? "default"
             transcriptWidth = s.transcriptWidth.flatMap(TranscriptWidth.init(rawValue:)) ?? .narrow
             sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
@@ -622,8 +616,7 @@ public final class AppModel {
             return h
         }
         let inKeychain = self.hosts.filter { unreadEnvironment.contains($0.id) || !(writtenEnv[$0.id] ?? [:]).isEmpty }
-        let s = Stored(hosts: hosts, defaultModel: defaultModel, defaultEffort: defaultEffort,
-                       defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
+        let s = Stored(hosts: hosts, defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
                        sidebarGrouping: sidebarGrouping.rawValue, textScale: Double(textScale),
                        sidebarFilter: sidebarFilter.rawValue,
                        pinnedChats: Dictionary(uniqueKeysWithValues: pinnedChats.map { ($0.key.uuidString, $0.value.sorted()) }),

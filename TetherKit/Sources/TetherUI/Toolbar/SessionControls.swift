@@ -35,7 +35,7 @@ struct SessionSettings {
     /// and nothing to set, so the menus stay on screen disabled.
     init(draft window: WindowModel, connection: HostConnection?) {
         // Resolved against the catalog here too: it usually lands after `newChat()` seeded the draft.
-        model = Binding(get: { connection?.models.concreteValue(for: window.draftModel ?? window.app.defaultModel) ?? window.draftModel },
+        model = Binding(get: { connection?.models.concreteValue(for: window.draftModel) ?? window.draftModel },
                         set: { window.draftModel = $0 })
         effort = Binding(get: { window.draftEffort }, set: { window.draftEffort = $0 })
         permissionMode = Binding(get: { window.draftPermissionMode }, set: { window.draftPermissionMode = $0 })
