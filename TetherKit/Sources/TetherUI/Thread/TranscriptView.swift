@@ -19,6 +19,8 @@ struct TranscriptView: View {
     @State private var onScreen = OnScreenRows()
     /// Where the reader is, for loading older pages.
     @State private var older = OlderPages()
+    /// Which message the pointer is over; see `MessageHover`.
+    @State private var hover = MessageHover()
     @Environment(\.transcriptFind) private var find
     @Environment(\.promptNavigator) private var promptNavigator
     @Environment(\.appearance) private var appearance
@@ -28,6 +30,12 @@ struct TranscriptView: View {
     var body: some View {
         ScrollView {
             TranscriptContent(thread: thread, connection: connection, older: older)
+                // One hover region for every message's bar: see `MessageHover`.
+                .coordinateSpace(.named(MessageHover.space))
+                .onContinuousHover(coordinateSpace: .named(MessageHover.space)) { phase in
+                    if case .active(let point) = phase { hover.move(to: point) } else { hover.move(to: nil) }
+                }
+                .environment(\.messageHover, hover)
                 // A different Tool Calls folding is a different list of rows, made new: the lazy
                 // stack kept the rows it had built for the old one, and once the content had shrunk
                 // to the new one's height they lay outside what it showed, so the transcript stayed
@@ -78,6 +86,7 @@ struct TranscriptView: View {
         }
         .onScrollPhaseChange { old, new, context in
             older.scrolling = new != .idle
+            hover.scroll(new != .idle)
             // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
             // Previous or Next last went to.
             if new == .interacting {
@@ -86,7 +95,10 @@ struct TranscriptView: View {
             }
             guard new == .idle, old == .interacting || old == .decelerating else { return }
             let g = context.geometry
-            followsEnd = g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 24
+            // The offset counts from under the toolbar, and the container is only what's between
+            // the toolbar and the composer: without the toolbar's inset the end never counted as
+            // reached, and Jump to Latest showed after any scroll.
+            followsEnd = g.contentOffset.y + g.contentInsets.top + g.containerSize.height >= g.contentSize.height - 24
         }
         // Offered once the reader has scrolled away, not whenever the end is off screen: a resize
         // pushes it off for a frame or two, and the button flickered in and out.

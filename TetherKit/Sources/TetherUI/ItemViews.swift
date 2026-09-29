@@ -73,12 +73,13 @@ private struct MessageMenu: ViewModifier {
     let sentAt: Double
     @Environment(\.forkChat) private var forkChat
     @Environment(\.restoreCode) private var restoreCode
-    @State private var hovering = false
+    @Environment(\.messageHover) private var hover
 
     /// A prompt's bubble sits at the trailing edge; a reply at the leading one.
     private var trailing: Bool { !isMarkdown }
 
     func body(content: Content) -> some View {
+        let hovering = hover?.message == id
         content
             // The blank beside a short line is the message too, so right-clicking there works.
             .contentShape(.rect)
@@ -90,19 +91,26 @@ private struct MessageMenu: ViewModifier {
                 // Files go back to a prompt's checkpoint; a reply has none of its own.
                 if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
             }
-            .overlay(alignment: trailing ? .topLeading : .topTrailing) {
+            .overlay(alignment: trailing ? .bottomTrailing : .bottomLeading) {
                 if hovering {
-                    // Centered on the message's top edge, however tall the bar is at this text size.
+                    // Hung just below the message, under where a reply's text starts or a prompt's
+                    // bubble ends, however tall the bar is at this text size, so it covers none of it.
                     // Glass that comes and goes does it the glass's way; scaling it in read as the
                     // bar resizing.
-                    bar.alignmentGuide(.top) { $0[VerticalAlignment.center] }
+                    bar
+                        // Where the bar is, so moving onto it, below the message, keeps it.
+                        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(MessageHover.space)) }) { hover?.bar = $0 }
                         .glassEffectTransition(.materialize)
                         .transition(.opacity)
+                        // A line at the message's bottom edge, which the bar hangs from: the overlay
+                        // didn't take an alignment guide from its conditional content.
+                        .frame(height: 0, alignment: .top)
                 }
             }
             .animation(.easeOut(duration: 0.12), value: hovering)
-            // After the overlay, so moving onto the bar doesn't hide it.
-            .onHover { hovering = $0 }
+            // Where the message is in the transcript, for `MessageHover` to find it under the pointer.
+            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(MessageHover.space)) }) { hover?.place(id, $0) }
+            .onDisappear { hover?.place(id, nil) }
             // A reply is one element, as a prompt's bubble is, so its actions are the reply's and not
             // each paragraph's; and says when it was sent, which the eye gets from the hover bar.
             .modifier(ReplyElement(isReply: isMarkdown))
@@ -209,7 +217,55 @@ struct ForkChatAction: Equatable {
     static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
 }
 
+/// Which message the pointer is over, for its hover bar. The transcript has one hover region
+/// (`TranscriptView`), not one per message: SwiftUI hit-tests every hover region on every frame the
+/// content moves under the pointer, and one per message was about half the frames the transcript
+/// dropped while scrolling. Each message leaves its frame here as it's laid out, in the content's
+/// own coordinates, which scrolling doesn't change; the pointer is looked up among them.
+@MainActor @Observable
+final class MessageHover {
+    static let space = "transcript.content"
+    /// The message under the pointer.
+    private(set) var message: String?
+    @ObservationIgnored private var frames: [String: CGRect] = [:]
+    @ObservationIgnored private var pointer: CGPoint?
+    /// The hovered message's bar, which reaches past a short message's edges and above its top.
+    @ObservationIgnored var bar: CGRect?
+    /// Whether the transcript is scrolling. No bar comes or goes meanwhile: each one's glass
+    /// appearing and fading as messages passed under a still pointer cost more frames than the rest
+    /// of the scroll; it shows again for the message under the pointer once the transcript stops.
+    @ObservationIgnored private var scrolling = false
+
+    func place(_ id: String, _ frame: CGRect?) {
+        frames[id] = frame
+        find()
+    }
+
+    func scroll(_ isScrolling: Bool) {
+        guard isScrolling != scrolling else { return }
+        scrolling = isScrolling
+        find()
+    }
+
+    func move(to point: CGPoint?) {
+        pointer = point
+        find()
+    }
+
+    private func find() {
+        let over = scrolling ? nil : pointer.flatMap { p in
+            if let message, bar?.contains(p) == true { return message }
+            return frames.first { $0.value.contains(p) }?.key
+        }
+        if over != message {
+            message = over
+            bar = nil
+        }
+    }
+}
+
 extension EnvironmentValues {
+    @Entry var messageHover: MessageHover?
     @Entry var forkChat = ForkChatAction(owner: nil) { _ in }
     /// Restore Code to Here…, for a prompt. The same shape as Fork from Here's.
     @Entry var restoreCode = ForkChatAction(owner: nil) { _ in }
