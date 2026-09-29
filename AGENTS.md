@@ -7,7 +7,7 @@ Tether is a native macOS SwiftUI client for Claude Code. It is intentionally a t
 This repository builds on its own. Clone it, open `Tether.xcodeproj`, and build:
 
 - `TetherKit/Package.swift` depends on the `TetherProtocol` package published by `AFRUITPIE/tether-server`, pinned by version. The generated sources are committed there, so nothing has to be generated to consume them.
-- The app carries no server and installs nothing. Every host has Node.js 18 or later, and runs tether-server's npm package with the first `npx` on its login shell's PATH: `npx --yes --prefer-offline tether-server@<version> connect`, at the version this app pins. A host without it fails to connect, with the shell's own error.
+- The app carries no server and installs nothing. Every host has Node.js 18 or later, and runs tether-server's npm package with the first `npx` on its login shell's PATH: `npx --yes tether-server@<version> connect`, at the version this app pins. A host without it fails to connect, with the shell's own error.
 - `ServerRelease.version` (`Bootstrap.swift`) is the server this app runs, the release its protocol package is pinned to. Bump both together, after that version has been published.
 
 `tether-server` is public, so SwiftPM can resolve the protocol package without credentials. The app repository remains private.

@@ -7,9 +7,9 @@ public enum ServerRelease {
     /// Moves with the protocol package's pin, which is the server this app was built against.
     public static let version = "0.5.7"
 
-    /// What connecting runs on a host. `--prefer-offline` takes the package from npm's cache once
-    /// it's there, so a reconnect doesn't wait on the registry.
-    static let npxCommand = "npx --yes --prefer-offline tether-server@\(version) connect"
+    /// What connecting runs on a host. Not `--prefer-offline`: npm then trusts a cached list of the
+    /// package's versions, which a new app's version isn't in yet.
+    static let npxCommand = "npx --yes tether-server@\(version) connect"
 }
 
 /// Builds the command that connects to a host's Tether daemon: this Mac, or an SSH destination
