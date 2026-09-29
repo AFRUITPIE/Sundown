@@ -347,13 +347,15 @@ enum PerformanceTranscript {
         var items: [Item] = [.userMessage(.init(id: "perf-user-\(turn)", createdAt: t,
                                                 content: [.text(.init(text: "Step \(turn): look at the next part of the renderer and tighten it up."))]))]
         var n = 0
-        for burst in 0..<3 {
+        // A long current turn exposes eager layout work that the usual small turns conceal.
+        let bursts = turn == 29 && ProcessInfo.processInfo.environment["TETHER_PERF_LONG_TURN"] == "1" ? 80 : 3
+        for burst in 0..<bursts {
             for _ in 0..<(2 + (turn + burst * 3) % 7) {
                 let status: ToolStatus = turn % 4 == 1 && burst == 1 && n % 5 == 2 ? .failed : .completed
                 items.append(toolCall(id: "perf-tool-\(turn)-\(n)", at: t + Double(n + 1), index: turn + n, status: status))
                 n += 1
             }
-            if burst < 2 {
+            if burst < bursts - 1 {
                 items.append(.agentMessage(.init(id: "perf-note-\(turn)-\(burst)", createdAt: t + Double(n + 1),
                                                  text: "Found it in `\(files[(turn + burst) % files.count])`. Checking the callers next.")))
             }

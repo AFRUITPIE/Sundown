@@ -247,11 +247,16 @@ private struct TranscriptContent: View {
     let older: OlderPages
     @Environment(\.appearance) private var appearance
 
+    /// Keep a small settled tail measured exactly, without eagerly laying out a whole long turn.
+    private static let eagerTailLimit = 8
+
     var body: some View {
         let folding = appearance.toolCalls.folding
         let rows = thread.rows(folding)
-        // The last turn's rows, from its prompt on, are built whether on screen or not: see below.
-        let split = thread.prompts(folding).last.flatMap { last in rows.lastIndex { $0.id == last.id } } ?? rows.count
+        // A live turn stays in one container as it grows: moving its rows across the split would
+        // discard their view state. Once settled, only a bounded tail needs exact measurements.
+        let turnStart = thread.prompts(folding).last.flatMap { last in rows.lastIndex { $0.id == last.id } } ?? rows.count
+        let split = thread.isRunning ? turnStart : max(turnStart, rows.count - Self.eagerTailLimit)
         VStack(alignment: .leading, spacing: 14) {
             if !thread.historyLoaded || thread.hasMoreHistory || split > 0 {
                 LazyVStack(alignment: .leading, spacing: 14) {
@@ -270,7 +275,7 @@ private struct TranscriptContent: View {
                 // Rows are scroll targets by their ids, so an older page can keep the reader where they were.
                 .scrollTargetLayout()
             }
-            // The turn at the end, where a reply streams in, built in full rather than lazily. The lazy
+            // The live turn, or a bounded tail of a settled turn, built in full rather than lazily. The lazy
             // stack counts a row it hasn't built at a guessed height; a row just added at the end was
             // counted that way until built, then at its own, a different total, and the scroll view's
             // anchor on the end moved the transcript by the difference, which changed which rows the
@@ -583,6 +588,20 @@ struct TurnOutcome: View {
 #if DEBUG
 #Preview("TranscriptView") {
     TranscriptView(thread: .sampleToolCalls())
+        .frame(width: 900, height: 760)
+}
+
+#Preview("TranscriptView (long settled turn)") {
+    var items: [Item] = [.sampleUserMessage("Check each part of the renderer.", secondsAgo: 100)]
+    for index in 0..<40 {
+        let ago = Double(90 - index * 2)
+        items.append(.sampleToolCall(name: "Read", kind: .fileRead,
+                                    input: ["file_path": .string("/tmp/Renderer\(index).swift")],
+                                    status: .completed, secondsAgo: ago))
+        items.append(.sampleAgentMessage("Checked renderer \(index). Continuing with the next part.", secondsAgo: ago - 1))
+    }
+    items.append(.sampleAgentMessage("## Finished\n\nThe renderer's checks are complete.", secondsAgo: 4))
+    return TranscriptView(thread: .sample(title: "Long settled turn", items: items, turns: [.sample()]))
         .frame(width: 900, height: 760)
 }
 

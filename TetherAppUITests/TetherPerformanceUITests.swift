@@ -27,7 +27,7 @@ final class TetherPerformanceUITests: XCTestCase {
     /// beforehand with the same environment: a profiler attached from its start, or another app to
     /// compare against.
     @MainActor
-    private func launch() -> XCUIApplication {
+    private func launch(longTurn: Bool = false) -> XCUIApplication {
         let app: XCUIApplication
         if let bundleID = ProcessInfo.processInfo.environment["TETHER_PERF_ATTACH"] {
             app = bundleID.hasPrefix("/") ? XCUIApplication(url: URL(fileURLWithPath: bundleID)) : XCUIApplication(bundleIdentifier: bundleID)
@@ -36,6 +36,7 @@ final class TetherPerformanceUITests: XCTestCase {
             app = XCUIApplication()
             app.launchEnvironment["TETHER_UI_TEST_MODE"] = "1"
             app.launchEnvironment["TETHER_UI_TEST_SCENARIO"] = "performance"
+            if longTurn { app.launchEnvironment["TETHER_PERF_LONG_TURN"] = "1" }
             app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
             app.launch()
         }
@@ -146,6 +147,37 @@ final class TetherPerformanceUITests: XCTestCase {
     @MainActor
     func testResizingTheWindow() {
         let app = launch()
+        measureResize(app)
+    }
+
+    /// The window shell and composer, without transcript content, under the identical drag.
+    @MainActor
+    func testResizingNewChat() {
+        let app = launch()
+        app.typeKey("n", modifierFlags: .command)
+        settle()
+        measureResize(app)
+    }
+
+    /// A tool-heavy final turn after its earlier pages are loaded, then viewed at the end.
+    @MainActor
+    func testResizingLongTurn() {
+        let app = launch(longTurn: true)
+        let transcript = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
+        let prompt = app.staticTexts["Step 29: look at the next part of the renderer and tighten it up."]
+        for _ in 0..<12 where !prompt.exists {
+            transcript.scroll(byDeltaX: 0, deltaY: 1800)
+            settle()
+        }
+        // Ensure the page containing the turn's prompt is loaded before measuring at its end.
+        XCTAssertTrue(prompt.exists)
+        if app.buttons["Jump to Latest"].exists { app.buttons["Jump to Latest"].click() }
+        settle()
+        measureResize(app)
+    }
+
+    @MainActor
+    private func measureResize(_ app: XCUIApplication) {
         let window = app.windows.firstMatch
         let width = window.frame.width
         func drag(by dx: CGFloat) {
@@ -154,12 +186,33 @@ final class TetherPerformanceUITests: XCTestCase {
             corner.click(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: dx, dy: 0)),
                          withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
         }
-        measureHitches(app) {
+        measureHitches(app, also: resources(app)) {
             drag(by: -200)
             XCTAssertEqual(window.frame.width, width - 200, accuracy: 2)
             drag(by: 200)
             XCTAssertEqual(window.frame.width, width, accuracy: 2)
         }
+    }
+
+    /// Scroll over the same loaded messages in both directions. Load and warm that region first
+    /// so this measures scrolling/layout rather than the timing of history requests.
+    @MainActor
+    func testScrollingTheTranscript() {
+        let app = launch()
+        let transcript = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
+        for _ in 0..<4 {
+            transcript.scroll(byDeltaX: 0, deltaY: 1800)
+            settle()
+        }
+        app.buttons["Jump to Latest"].click()
+        settle()
+        measureHitches(app, also: resources(app)) {
+            for _ in 0..<3 { transcript.scroll(byDeltaX: 0, deltaY: 600) }
+            for _ in 0..<3 { transcript.scroll(byDeltaX: 0, deltaY: -600) }
+        }
+        // The last answer can be taller than the viewport, so its heading needn't be hittable.
+        if app.buttons["Jump to Latest"].exists { app.buttons["Jump to Latest"].click() }
+        XCTAssertTrue(app.staticTexts["Section 29: tightening the renderer"].exists)
     }
 
     /// A prompt, then a working reply: tool calls starting and finishing between sections of
