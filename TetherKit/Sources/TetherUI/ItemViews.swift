@@ -73,7 +73,6 @@ private struct MessageMenu: ViewModifier {
     let sentAt: Double
     @Environment(\.forkChat) private var forkChat
     @Environment(\.restoreCode) private var restoreCode
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
 
     /// A prompt's bubble sits at the trailing edge; a reply at the leading one.
@@ -94,9 +93,11 @@ private struct MessageMenu: ViewModifier {
             .overlay(alignment: trailing ? .topLeading : .topTrailing) {
                 if hovering {
                     // Centered on the message's top edge, however tall the bar is at this text size.
+                    // Glass that comes and goes does it the glass's way; scaling it in read as the
+                    // bar resizing.
                     bar.alignmentGuide(.top) { $0[VerticalAlignment.center] }
-                        .transition(.moving(.opacity.combined(with: .scale(scale: 0.9, anchor: trailing ? .leading : .trailing)),
-                                            reduceMotion: reduceMotion))
+                        .glassEffectTransition(.materialize)
+                        .transition(.opacity)
                 }
             }
             .animation(.easeOut(duration: 0.12), value: hovering)
@@ -142,19 +143,20 @@ private struct MessageMenu: ViewModifier {
     private func copyText() { Clipboard.copy(isMarkdown ? MarkdownView.plainText(text) : text) }
 }
 
-/// Copy, which turns into a checkmark for a moment once it has copied.
+/// Copy, which turns into a checkmark for a moment once it has copied. As wide as the wider of the
+/// two, so turning into the checkmark doesn't resize the bar it's in and move the buttons beside it.
 struct CopyButton: View {
     let action: () -> Void
     @State private var copied = false
 
     var body: some View {
-        Button(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
+        Button {
             action()
             copied = true
+        } label: {
+            ReservedWidthLabel(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc",
+                               widestOf: ["Copy", "Copied"], symbols: ["doc.on.doc", "checkmark"])
         }
-        // A content transition needs an animation to run in.
-        .contentTransition(.symbolEffect(.replace))
-        .animation(.default, value: copied)
         .task(id: copied) {
             guard copied else { return }
             try? await Task.sleep(for: .seconds(1.2))
