@@ -75,9 +75,6 @@ private struct MessageMenu: ViewModifier {
     @Environment(\.restoreCode) private var restoreCode
     @Environment(\.messageHover) private var hover
 
-    /// A prompt's bubble sits at the trailing edge; a reply at the leading one.
-    private var trailing: Bool { !isMarkdown }
-
     func body(content: Content) -> some View {
         let hovering = hover?.message == id
         content
@@ -91,20 +88,19 @@ private struct MessageMenu: ViewModifier {
                 // Files go back to a prompt's checkpoint; a reply has none of its own.
                 if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
             }
-            .overlay(alignment: trailing ? .bottomTrailing : .bottomLeading) {
+            // At the message's bottom-left: beside a prompt's bubble, which sits at the trailing edge,
+            // and over the start of a reply's last line. Inside the message, not hung below it: past
+            // its row's bounds the transcript's AppKit hosting doesn't hit-test, and the buttons
+            // couldn't be clicked.
+            .overlay(alignment: .bottomLeading) {
                 if hovering {
-                    // Hung just below the message, under where a reply's text starts or a prompt's
-                    // bubble ends, however tall the bar is at this text size, so it covers none of it.
                     // Glass that comes and goes does it the glass's way; scaling it in read as the
                     // bar resizing.
                     bar
-                        // Where the bar is, so moving onto it, below the message, keeps it.
+                        // Where the bar is, so moving onto it keeps it.
                         .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(MessageHover.space)) }) { hover?.bar = $0 }
                         .glassEffectTransition(.materialize)
                         .transition(.opacity)
-                        // A line at the message's bottom edge, which the bar hangs from: the overlay
-                        // didn't take an alignment guide from its conditional content.
-                        .frame(height: 0, alignment: .top)
                 }
             }
             .animation(.easeOut(duration: 0.12), value: hovering)

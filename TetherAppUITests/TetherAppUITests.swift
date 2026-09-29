@@ -246,10 +246,20 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Section 29: tightening the renderer"].firstMatch.waitForExistence(timeout: 20))
         // Several pages back: each turn is about twenty items, a page fifty. The earliest section on
         // screen, since a scroll can carry the reader past any one of them as pages go in above.
+        // Read from one snapshot: querying each heading after listing them failed whenever a page
+        // went in between and took one away.
         func earliestSection() -> Int? {
-            app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH 'Section '")).allElementsBoundByIndex.compactMap { text in
-                (text.value as? String)?.dropFirst("Section ".count).split(separator: ":").first.flatMap { Int($0) }
-            }.min()
+            guard let window = try? app.windows.firstMatch.snapshot() else { return nil }
+            var sections: [Int] = []
+            func visit(_ element: XCUIElementSnapshot) {
+                if element.elementType == .staticText, let value = element.value as? String, value.hasPrefix("Section "),
+                   let n = value.dropFirst("Section ".count).split(separator: ":").first.flatMap({ Int($0) }) {
+                    sections.append(n)
+                }
+                element.children.forEach(visit)
+            }
+            visit(window)
+            return sections.min()
         }
         // A point in the transcript: a heading leaves the lazy stack once it scrolls away.
         let transcript = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
