@@ -212,26 +212,43 @@ private struct TranscriptContent: View {
     var body: some View {
         let folding = appearance.toolCalls.folding
         let rows = thread.rows(folding)
-        LazyVStack(alignment: .leading, spacing: 14) {
-            if !thread.historyLoaded {
-                TranscriptUnavailable(thread: thread, connection: connection)
+        // The last turn's rows, from its prompt on, are built whether on screen or not: see below.
+        let split = thread.prompts(folding).last.flatMap { last in rows.lastIndex { $0.id == last.id } } ?? rows.count
+        VStack(alignment: .leading, spacing: 14) {
+            if !thread.historyLoaded || thread.hasMoreHistory || split > 0 {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    if !thread.historyLoaded {
+                        TranscriptUnavailable(thread: thread, connection: connection)
+                    }
+                    if thread.historyLoaded, thread.hasMoreHistory {
+                        OlderHistoryTrigger(thread: thread, connection: connection)
+                    }
+                    // One plain view per row, identified by the ForEach alone: an `.id()` here adds a
+                    // node to every row, and the lazy stack walks every row on each layout pass.
+                    ForEach(rows[..<split], id: \.id) { row in
+                        TranscriptRowView(row: row, thread: thread)
+                    }
+                }
+                // Rows are scroll targets by their ids, so an older page can keep the reader where they were.
+                .scrollTargetLayout()
             }
-            if thread.historyLoaded, thread.hasMoreHistory {
-                OlderHistoryTrigger(thread: thread, connection: connection)
+            // The turn at the end, where a reply streams in, built in full rather than lazily. The lazy
+            // stack counts a row it hasn't built at a guessed height; a row just added at the end was
+            // counted that way until built, then at its own, a different total, and the scroll view's
+            // anchor on the end moved the transcript by the difference, which changed which rows the
+            // stack built, and so on: the transcript bounced between two places while a reply streamed.
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(rows[split...], id: \.id) { row in
+                    TranscriptRowView(row: row, thread: thread)
+                }
+                TranscriptTail(thread: thread)
             }
-            // One plain view per row, identified by the ForEach alone: an `.id()` here adds a node
-            // to every row, and the lazy stack walks every row on each layout pass.
-            ForEach(rows, id: \.id) { row in
-                TranscriptRowView(row: row, thread: thread)
-            }
-            TranscriptTail(thread: thread)
+            .scrollTargetLayout()
         }
         // VoiceOver's way from prompt to prompt, which reaches the ones the lazy stack hasn't built.
         // On a container element, as a rotor has to be. Made with the rows, not from them per draw.
         .accessibilityElement(children: .contain)
         .accessibilityRotor("Prompts", entries: thread.prompts(folding), entryID: \.id, entryLabel: \.label)
-        // Rows are scroll targets by their ids, so an older page can keep the reader where they were.
-        .scrollTargetLayout()
         // The size every row's text starts from; View ▸ Bigger and Smaller change it.
         .scaledFont(.body)
         .padding(.vertical, 16)
