@@ -292,13 +292,23 @@ struct Composer: View {
         .padding(.vertical, 6)
     }
 
+    /// The system's text field, or Markdown styled as it's typed (Settings ▸ Advanced ▸ Composer).
+    @ViewBuilder private var messageInput: some View {
+        let prompt = thread?.isRunning == true ? "Queue a message…" : placeholder
+        if appearance.composer == .liveMarkdown {
+            LiveMarkdownField(text: $text, placeholder: prompt)
+        } else {
+            TextField(prompt, text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(1...12)
+                .onSubmit { if appearance.sendShortcut == .returnKey { send() } }
+        }
+    }
+
     private var textField: some View {
-        TextField(thread?.isRunning == true ? "Queue a message…" : placeholder, text: $text, axis: .vertical)
+        messageInput
             .accessibilityIdentifier("composer.input")
-            .textFieldStyle(.plain)
-            .lineLimit(1...12)
             .focused($focused)
-            .onSubmit { if appearance.sendShortcut == .returnKey { send() } }
             .onKeyPress(.return, phases: .down, action: returnPressed)
             // Esc closes the suggestion list if it's open, and otherwise stops Claude, as in the
             // CLI; with nothing running it's the field's own.
@@ -450,6 +460,16 @@ struct Composer: View {
     /// Return and its modifiers, as Settings ▸ General ▸ Send With has them: Return sends and
     /// Shift- or Option-Return starts a line, or Command-Return sends and Return starts a line.
     private func returnPressed(_ press: KeyPress) -> KeyPress.Result {
+        // A text editor's own Return is a new line: only the press that sends is taken.
+        if appearance.composer == .liveMarkdown {
+            let sends = switch appearance.sendShortcut {
+            case .returnKey: !press.modifiers.contains(.shift) && !press.modifiers.contains(.option)
+            case .commandReturn: press.modifiers.contains(.command)
+            }
+            guard sends else { return .ignored }
+            send()
+            return .handled
+        }
         // The field's own new line, so it's an edit the field can undo and an input method's
         // marked text is committed first; setting the text around it did neither.
         let newLine = { _ = NSApp.sendAction(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), to: nil, from: nil) }

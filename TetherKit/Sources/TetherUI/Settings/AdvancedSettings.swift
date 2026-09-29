@@ -17,6 +17,11 @@ struct AdvancedSettings: View {
                     ForEach(Appearance.ToolCallDisplay.allCases) { Text($0.label).tag($0) }
                 }
             }
+            Section("Composer") {
+                Picker("Message Field", selection: $app.appearance.composer) {
+                    ForEach(Appearance.ComposerStyle.allCases) { Text($0.label).tag($0) }
+                }
+            }
             Section {
                 Button("Restore Defaults") { app.appearance.restoreAdvanced() }
                     .disabled(app.appearance.advancedIsDefault)
@@ -32,6 +37,7 @@ extension Appearance {
         let d = Appearance()
         toolCalls = d.toolCalls
         sidebar = d.sidebar
+        composer = d.composer
     }
 
     var advancedIsDefault: Bool {

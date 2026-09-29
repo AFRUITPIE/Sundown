@@ -22,8 +22,24 @@ public struct Appearance: Codable, Equatable, Sendable {
     // Advanced
     public var toolCalls: ToolCallDisplay = .summarized
     public var sidebar: SidebarStyle = .chats
+    public var composer: ComposerStyle = .plainText
 
     public init() {}
+
+    /// How the message field shows what's typed.
+    public enum ComposerStyle: String, Codable, CaseIterable, Identifiable, Sendable {
+        /// The system's text field, as typed.
+        case plainText
+        /// Markdown styled as it's typed, its markers dimmed (`LiveMarkdownField`).
+        case liveMarkdown
+        public var id: Self { self }
+        var label: String {
+            switch self {
+            case .plainText: "Plain Text"
+            case .liveMarkdown: "Live Markdown"
+            }
+        }
+    }
 
     /// What the sidebar lists, and how.
     public enum SidebarStyle: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -127,6 +143,7 @@ public struct Appearance: Codable, Equatable, Sendable {
         openFilesWith = value(.openFilesWith, d.openFilesWith)
         toolCalls = value(.toolCalls, d.toolCalls)
         sidebar = value(.sidebar, d.sidebar)
+        composer = value(.composer, d.composer)
     }
 }
 
