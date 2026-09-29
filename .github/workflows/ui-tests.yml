@@ -11,8 +11,6 @@ jobs:
   ui-tests:
     runs-on: xcode-27
     timeout-minutes: 30
-    env:
-      TETHER_SKIP_SERVER_BINARIES: "1"
     steps:
       - uses: actions/checkout@v4
 

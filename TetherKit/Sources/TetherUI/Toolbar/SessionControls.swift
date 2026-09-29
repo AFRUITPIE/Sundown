@@ -141,8 +141,8 @@ struct ModelMenu: View {
         }
         .disabled(!settings.isEnabled)
         .help("Model")
-        .accessibilityLabel("Model")
-        .accessibilityValue(settings.modelLabel)
+        // The choice in the label: in the toolbar's control group a value never reaches VoiceOver.
+        .accessibilityLabel("Model, \(settings.modelLabel)")
     }
 }
 
@@ -165,8 +165,8 @@ struct EffortMenu: View {
         }
         .disabled(!settings.isEnabled)
         .help("Effort")
-        .accessibilityLabel("Effort")
-        .accessibilityValue(value.label)
+        // The choice in the label: in the toolbar's control group a value never reaches VoiceOver.
+        .accessibilityLabel("Effort, \(value.label)")
     }
 }
 
@@ -193,8 +193,8 @@ struct PermissionsMenu: View {
         }
         .disabled(!settings.isEnabled)
         .help("Permissions")
-        .accessibilityLabel("Permissions")
-        .accessibilityValue(mode.longLabel)
+        // The choice in the label: in the toolbar's control group a value never reaches VoiceOver.
+        .accessibilityLabel("Permissions, \(mode.longLabel)")
     }
 }
 

@@ -124,6 +124,8 @@ struct NewChatView: View {
                     .truncationMode(.middle)
                     .foregroundStyle(.secondary)
                     .help("Branch")
+                    // One element, "Branch main": the icon and the name as separate ones read nothing.
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Branch \(branch)")
                     .accessibilityIdentifier("newChat.branch")
             }

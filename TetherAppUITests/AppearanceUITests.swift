@@ -99,15 +99,21 @@ final class AppearanceUITests: XCTestCase {
     func testEveryCallUnfoldsFinishedCalls() {
         let app = launch()
         waitForLongChat(app)
-        let groups = mainWindow(app).buttons.matching(identifier: "transcript.toolGroup")
+        let groups = mainWindow(app).disclosureTriangles.matching(identifier: "transcript.toolGroup")
         XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 5))
 
         let settings = openSettings(app, "Advanced")
         choose(settings, "Tool Calls", "Every Call")
         XCTAssertTrue(groups.firstMatch.waitForNonExistence(timeout: 5))
 
+        // The rows are laid out again from the end of the chat, with no scrolling needed: the reply
+        // that ends it is on screen, not merely built somewhere above, and so is a fold.
         choose(settings, "Tool Calls", "Summarized")
+        let reply = app.staticTexts["Section 29: tightening the renderer"].firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
         XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 5))
+        let window = mainWindow(app).frame
+        XCTAssertTrue(window.contains(CGPoint(x: reply.frame.midX, y: reply.frame.midY)), "the chat is blank: its last reply is at \(reply.frame), not in \(window)")
     }
 
     /// With Send With set to Command-Return, Return starts a new line and Command-Return sends.

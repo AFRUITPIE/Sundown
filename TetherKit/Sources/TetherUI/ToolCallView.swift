@@ -259,8 +259,12 @@ struct TranscriptDisclosureStyle: DisclosureGroupStyle {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityValue([value, configuration.isExpanded ? "Expanded" : "Collapsed"]
-                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
+                // After the row's words: a disclosure triangle's value is whether it's open, so a
+                // value set here never reached VoiceOver ("Running", a file's line counts).
+                .accessibilityLabel { label in
+                    label
+                    if let value, !value.isEmpty { Text(value) }
+                }
                 .accessibilityIdentifier(identifier)
                 if let note {
                     Text(note)

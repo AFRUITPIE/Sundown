@@ -199,13 +199,13 @@ final class WindowAndChatUITests: XCTestCase {
     @MainActor
     func testToolGroupsOpenToShowTheirCalls() {
         let app = launch()
-        let groups = app.buttons.matching(identifier: "transcript.toolGroup")
+        let groups = app.disclosureTriangles.matching(identifier: "transcript.toolGroup")
         XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 10))
         // One on screen: the chat opens at its end, and the first groups are far above.
         guard let group = groups.allElementsBoundByIndex.last(where: { $0.isHittable }) else {
             return XCTFail("no tool group on screen")
         }
-        let calls = app.buttons.matching(identifier: "transcript.toolCall")
+        let calls = app.disclosureTriangles.matching(identifier: "transcript.toolCall")
         let before = calls.count
 
         group.click()

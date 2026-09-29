@@ -78,6 +78,10 @@ final class ReadingUITests: XCTestCase {
 
         field.typeKey("a", modifierFlags: .command)
         field.typeText("tightening the renderer")
+        // The search runs a moment after typing stops, off the main thread.
+        _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { element, _ in
+            ((element as? XCUIElement)?.value as? String).map { $0.contains(" of ") } ?? false
+        }, object: status)], timeout: 5)
         let first = status.value as? String
         XCTAssertTrue(first?.hasSuffix("of \(first?.split(separator: " ").last ?? "")") == true)
         let parts = (first ?? "").split(separator: " ")

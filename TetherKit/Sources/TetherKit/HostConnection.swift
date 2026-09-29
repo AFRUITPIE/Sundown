@@ -122,8 +122,7 @@ public final class HostConnection: Identifiable {
             if let transportProvider {
                 transport = try await transportProvider(host)
             } else {
-                let boot = HostBootstrapper(log: { [weak self] m in Task { @MainActor in self?.appendLog(m); self?.state = .connecting(m) } })
-                let cmd = try await boot.connectCommand(for: host)
+                let cmd = HostBootstrapper().connectCommand(for: host)
                 appendLog("$ \(([cmd.executable] + cmd.arguments).joined(separator: " "))")
                 transport = ProcessTransport(executable: cmd.executable, arguments: cmd.arguments)
             }
@@ -166,8 +165,6 @@ public final class HostConnection: Identifiable {
             }
             appendLog("Connection failed: \(error.localizedDescription)")
             await tearDown()
-            // The server may be gone from the host since it was checked: check again next time.
-            HostBootstrapper.forgetInstall(on: host)
             state = .failed(error.localizedDescription)
             // Trying again can't fix a protocol mismatch; one side has to be updated first.
             retryable = !(error is Incompatible)
