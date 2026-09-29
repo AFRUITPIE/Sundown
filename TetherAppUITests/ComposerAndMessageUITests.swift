@@ -97,8 +97,15 @@ final class ComposerAndMessageUITests: XCTestCase {
         NSPasteboard.general.clearContents()
 
         prompt.hover()
+        let fork = windowButton(app, "Fork from Here")
+        XCTAssertTrue(fork.waitForExistence(timeout: 5))
+        let forkBefore = fork.frame
         windowButton(app, "Copy").click()
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Summarize this project")
+        // Turning into a checkmark, for a second, doesn't resize the bar: the buttons after Copy stay
+        // where they were. Read once the symbol has turned.
+        Thread.sleep(forTimeInterval: 0.4)
+        XCTAssertEqual(fork.frame.minX, forkBefore.minX, accuracy: 0.5)
 
         // A reply copies from its hover bar the same way. (Its text spans the reply's width, so
         // right-clicking it gives the text's own menu rather than the message's.)
