@@ -64,6 +64,45 @@ final class ReadingUITests: XCTestCase {
         }
     }
 
+    /// Native size-change anchoring must keep the end visible after returning from user
+    /// scrolling with Jump to Latest, without treating a resize or inspector animation as leaving the end.
+    @MainActor
+    func testResizingKeepsTheTranscriptAtItsEnd() {
+        let app = launch()
+        let window = app.windows.firstMatch
+        func resize(to width: CGFloat) {
+            let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -3, dy: -3))
+            corner.click(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: width - window.frame.width, dy: 740 - window.frame.height)),
+                         withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
+            XCTAssertEqual(window.frame.width, width, accuracy: 2)
+        }
+        func assertAtEnd() {
+            let footer = app.disclosureTriangles.matching(identifier: "transcript.edits").matching(NSPredicate(format: "label == %@", "Edited 1 file, 2 lines added, 2 removed")).firstMatch
+            XCTAssertTrue(footer.isHittable, "The last turn's footer must remain visible")
+            XCTAssertFalse(app.buttons["Jump to Latest"].exists)
+        }
+        resize(to: 1000)
+        assertAtEnd()
+        resize(to: 800)
+        assertAtEnd()
+        resize(to: 1000)
+        assertAtEnd()
+
+        let transcript = window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
+        transcript.scroll(byDeltaX: 0, deltaY: 2000)
+        XCTAssertTrue(app.buttons["Jump to Latest"].waitForExistence(timeout: 5))
+        app.buttons["Jump to Latest"].click()
+        XCTAssertTrue(app.buttons["Jump to Latest"].waitForNonExistence(timeout: 5))
+        resize(to: 800)
+        assertAtEnd()
+        resize(to: 1000)
+        assertAtEnd()
+        app.typeKey("i", modifierFlags: [.command, .option])
+        assertAtEnd()
+        app.typeKey("i", modifierFlags: [.command, .option])
+        assertAtEnd()
+    }
+
     @MainActor
     func testFindInChatStepsThroughMatches() {
         let app = launch()

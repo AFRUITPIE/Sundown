@@ -12,8 +12,6 @@ struct TranscriptView: View {
     /// Whether the reader left the transcript at its end. Only their own scrolling changes it, so a
     /// resize that briefly pushes the end off screen doesn't count as scrolling away.
     @State private var followsEnd = true
-    /// The last line or two the end grew by, eased away: see `follow`.
-    @State private var glide = Glide()
     /// The rows on screen, for Chat ▸ Previous and Next Prompt. Not observed: it changes as rows
     /// scroll in and out, and nothing is drawn from it.
     @State private var onScreen = OnScreenRows()
@@ -23,7 +21,6 @@ struct TranscriptView: View {
     @Environment(\.promptNavigator) private var promptNavigator
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.reducesEffects) private var reducesEffects
 
     var body: some View {
         ScrollView {
@@ -33,18 +30,6 @@ struct TranscriptView: View {
                 // to the new one's height they lay outside what it showed, so the transcript stayed
                 // blank until the reader scrolled.
                 .id(appearance.toolCalls.folding)
-                .keyframeAnimator(initialValue: 0, trigger: glide.count) { content, y in
-                    // Drawing only: an offset moves the content's geometry, and the lazy stack
-                    // worked out again which rows it shows on every frame of the glide.
-                    content.visualEffect { effect, _ in effect.offset(y: y) }
-                } keyframes: { current in
-                    // From where a glide still under way has got to, plus the new line: starting
-                    // over from the new line alone dropped what was left and the text jumped.
-                    KeyframeTrack {
-                        MoveKeyframe(min(current + glide.distance, Glide.limit))
-                        CubicKeyframe(0, duration: 0.3)
-                    }
-                }
         }
         // Opens at the end and keeps it pinned through content and size changes. A transcript shorter
         // than the window sits at the top: aligned to the bottom, it was pushed down by a scroll offset
@@ -73,9 +58,6 @@ struct TranscriptView: View {
         // Chat ▸ Previous and Next Prompt, from where the reader is.
         .onChange(of: promptNavigator?.step) { goToPrompt() }
         .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { onScreen.ids = Set($0) }
-        .onScrollGeometryChange(for: Extent.self, of: { Extent(content: $0.contentSize.height, container: $0.containerSize) }) {
-            follow(from: $0, to: $1)
-        }
         .onScrollPhaseChange { old, new, context in
             older.scrolling = new != .idle
             // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
@@ -114,12 +96,6 @@ struct TranscriptView: View {
 }
 
 extension TranscriptView {
-    /// What following the end depends on: how tall the content is, and the size of the view.
-    struct Extent: Equatable {
-        let content: CGFloat
-        let container: CGSize
-    }
-
     /// Where the reader is, and how tall what they're reading is.
     struct Place: Equatable {
         let content: CGFloat
@@ -207,35 +183,6 @@ extension TranscriptView {
         older.taken = true
         followsEnd = false
         withAnimation(reduceMotion ? nil : .default) { position.scrollTo(id: id, anchor: .top) }
-    }
-
-    /// A distance the content is drawn below where it is, easing back to nothing.
-    struct Glide {
-        /// Past this the end jumps: a whole block landing, not a line wrapping.
-        static let limit: CGFloat = 160
-        var distance: CGFloat = 0
-        var count = 0
-    }
-
-    /// Keeps the end in view while the reader is following it. The scroll view's anchor holds it
-    /// there, which moves the transcript up a whole line at once when a streamed reply wraps; so
-    /// the content is drawn that line lower and eased back up, and the new line glides into view.
-    /// Drawing only, no layout. Not for a resize, whose rows all re-measure, or a jump bigger than
-    /// a few lines, or with Reduce Motion, or while the Mac saves energy (`reducesEffects`): each
-    /// glide is a keyframe animation run every frame.
-    ///
-    /// Switching the anchor off for this instead (and scrolling to the end by hand) made every frame
-    /// of a resize slower, and switching it during layout made AppKit throw.
-    private func follow(from old: Extent, to new: Extent) {
-        guard followsEnd else { return }
-        // The anchor doesn't survive a width change: every row re-measures at the new width.
-        if old.container != new.container {
-            position.scrollTo(edge: .bottom)
-            return
-        }
-        let growth = new.content - old.content
-        guard growth > 0, growth < Glide.limit, !reduceMotion, !reducesEffects else { return }
-        glide = Glide(distance: growth, count: glide.count + 1)
     }
 }
 

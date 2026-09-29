@@ -27,7 +27,7 @@ final class TetherPerformanceUITests: XCTestCase {
     /// beforehand with the same environment: a profiler attached from its start, or another app to
     /// compare against.
     @MainActor
-    private func launch(longTurn: Bool = false) -> XCUIApplication {
+    private func launch(longTurn: Bool = false, replySections: Int? = nil) -> XCUIApplication {
         let app: XCUIApplication
         if let bundleID = ProcessInfo.processInfo.environment["TETHER_PERF_ATTACH"] {
             app = bundleID.hasPrefix("/") ? XCUIApplication(url: URL(fileURLWithPath: bundleID)) : XCUIApplication(bundleIdentifier: bundleID)
@@ -37,6 +37,7 @@ final class TetherPerformanceUITests: XCTestCase {
             app.launchEnvironment["TETHER_UI_TEST_MODE"] = "1"
             app.launchEnvironment["TETHER_UI_TEST_SCENARIO"] = "performance"
             if longTurn { app.launchEnvironment["TETHER_PERF_LONG_TURN"] = "1" }
+            if let replySections { app.launchEnvironment["TETHER_PERF_REPLY_SECTIONS"] = String(replySections) }
             app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
             app.launch()
         }
@@ -176,6 +177,20 @@ final class TetherPerformanceUITests: XCTestCase {
         measureResize(app)
     }
 
+    /// Resize after eight Markdown replies have accumulated in a still-growing turn. The fixture
+    /// keeps sending long enough that every measured drag happens while the turn is active.
+    @MainActor
+    func testResizingDuringLongLiveTurn() {
+        let app = launch(replySections: 40)
+        let input = app.descendants(matching: .any)["composer.input"]
+        input.click()
+        input.typeText("Keep going\r")
+        XCTAssertTrue(app.staticTexts["Section 107: tightening the renderer"].waitForExistence(timeout: 90))
+        XCTAssertTrue(app.buttons["Stop"].exists)
+        measureResize(app)
+        XCTAssertTrue(app.buttons["Stop"].exists, "The measured turn must still be streaming")
+    }
+
     @MainActor
     private func measureResize(_ app: XCUIApplication) {
         let window = app.windows.firstMatch
@@ -186,7 +201,7 @@ final class TetherPerformanceUITests: XCTestCase {
             corner.click(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: dx, dy: 0)),
                          withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
         }
-        measureHitches(app, also: resources(app)) {
+        measureHitches(app, also: resources(app) + [XCTClockMetric()]) {
             drag(by: -200)
             XCTAssertEqual(window.frame.width, width - 200, accuracy: 2)
             drag(by: 200)
