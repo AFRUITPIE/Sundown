@@ -627,6 +627,25 @@ extension HostConnection {
         return connection
     }
 
+    /// A Bedrock host whose Claude Code settings set `modelPicker`: provider IDs, under the labels
+    /// written there, as `model/list` returns them.
+    public static func sampleBedrockPicker() -> HostConnection {
+        let connection = sampleConnectedSSH()
+        connection.previewSeed(
+            state: .connected, client: RPCClient(transport: PreviewTransport()), serverInfo: connection.serverInfo,
+            account: connection.account, models: [
+                .init(value: "default", resolvedModel: "us.anthropic.claude-opus-4-6-v1", displayName: "Default",
+                      description: "Use the default model (currently Opus (production))"),
+                .init(value: "us.anthropic.claude-opus-4-6-v1", resolvedModel: "us.anthropic.claude-opus-4-6-v1",
+                      displayName: "Opus (production)", description: "Custom model (us.anthropic.claude-opus-4-6-v1)",
+                      supportsEffort: true, supportedEffortLevels: [.low, .medium, .high, .max]),
+                .init(value: "us.anthropic.claude-sonnet-4-6", resolvedModel: "us.anthropic.claude-sonnet-4-6",
+                      displayName: "Sonnet (production)", description: "Day-to-day work",
+                      supportsEffort: true, supportedEffortLevels: [.low, .medium, .high]),
+            ])
+        return connection
+    }
+
     /// A second host (an SSH box) mid-connection, to show the sidebar's other connection states.
     public static func sampleConnecting() -> HostConnection {
         let connection = HostConnection(host: .init(name: "build-box", kind: .ssh(destination: "build-box")))

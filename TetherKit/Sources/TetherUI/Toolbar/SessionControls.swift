@@ -35,7 +35,7 @@ struct SessionSettings {
     /// and nothing to set, so the menus stay on screen disabled.
     init(draft window: WindowModel, connection: HostConnection?) {
         // Resolved against the catalog here too: it usually lands after `newChat()` seeded the draft.
-        model = Binding(get: { connection?.models.concreteValue(for: window.draftModel ?? window.app.defaultModel) ?? window.draftModel },
+        model = Binding(get: { connection?.models.concreteValue(for: window.draftModel) ?? window.draftModel },
                         set: { window.draftModel = $0 })
         effort = Binding(get: { window.draftEffort }, set: { window.draftEffort = $0 })
         permissionMode = Binding(get: { window.draftPermissionMode }, set: { window.draftPermissionMode = $0 })
@@ -79,7 +79,7 @@ struct SessionSettings {
     }
 
     /// What the model control shows: "Opus 5", or the raw id of an unlisted (Bedrock) model.
-    var modelLabel: String { currentModel?.shortName ?? model.wrappedValue ?? "Model" }
+    var modelLabel: String { currentModel?.displayName ?? model.wrappedValue ?? "Model" }
 
     /// The levels this model offers; the gauge's needle is spread across them.
     var effortLevels: [EffortLevel] { currentModel?.supportedEffortLevels ?? EffortLevel.allCases }
@@ -134,7 +134,7 @@ struct ModelMenu: View {
             FastModeToggle(settings: settings)
         } label: {
             ReservedWidthLabel(settings.modelLabel, systemImage: SessionSymbol.model,
-                               widestOf: settings.models.concrete.map(\.shortName) + [settings.modelLabel])
+                               widestOf: settings.models.concrete.map(\.displayName) + [settings.modelLabel])
                 // Toolbar items are icon-only by default; this is the one that has to say a name.
                 // On the label, not the menu, which would pass it on to the menu's items.
                 .labelStyle(.titleAndIcon)
@@ -206,7 +206,7 @@ struct ModelPicker: View {
     var body: some View {
         Picker("Model", selection: settings.model) {
             ForEach(settings.models.concrete, id: \.value) { model in
-                Text(model.shortName).tag(Optional(model.value))
+                Text(model.displayName).tag(Optional(model.value))
             }
             // A custom or Bedrock id the CLI doesn't list stays selectable.
             if let id = settings.model.wrappedValue,
@@ -387,6 +387,12 @@ private struct SessionControlsPreview: View {
 #Preview("SessionControls (no fast mode)") {
     // Opus has no fast mode, so the toggle in the model menu is disabled with a reason.
     SessionControlsPreview(settings: previewSettings(thread: .sample(model: "opus", effort: nil)))
+}
+
+/// A Bedrock host with a `modelPicker`: the model reads as the label written there.
+#Preview("SessionControls (Bedrock model picker)") {
+    SessionControlsPreview(settings: previewSettings(
+        thread: .sample(model: "us.anthropic.claude-sonnet-4-6", effort: .medium), connection: .sampleBedrockPicker()))
 }
 
 /// A preview can't open a menu, so the same pickers are laid out here to check the rows'
