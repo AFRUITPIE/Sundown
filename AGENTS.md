@@ -228,6 +228,8 @@ mise run release          # tag and publish the GitHub release, which publishes 
 
 `TETHER_VERSION` comes from `package.json`, and the daemon replaces a running one only when that string differs. It is deliberately not the Agent SDK version: a server fix has to be able to ship without waiting for an SDK release. `AGENT_SDK_VERSION` is exported and reported separately.
 
+App releases, for the Homebrew cask (`brew install --cask afruitpie/tap/tether`, `Casks/tether.rb` in `AFRUITPIE/homebrew-tap`): bump `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`, push, then run `Scripts/release.sh`. It archives a Release build against the pinned protocol package, exports it signed with Developer ID (hardened runtime is on; the sandbox is off, since the app runs `ssh` and login shells), notarizes and staples it, and uploads `Tether-<version>.zip` as the GitHub release `v<version>`. It prints the zip's SHA-256: put that and the version in the cask. It needs, once per Mac, a Developer ID Application certificate and `xcrun notarytool store-credentials tether`.
+
 Use Xcode 27 MCP as the primary app workflow. Open `Tether.xcodeproj`, then use the Xcode tools rather than raw `xcodebuild` or a separately launched LLDB session:
 
 - `BuildProject` for app builds and diagnostics.
