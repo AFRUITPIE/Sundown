@@ -1,5 +1,7 @@
 #if DEBUG
+import AppKit
 import Foundation
+import SwiftUI
 import TetherProtocol
 import XCTest
 @testable import TetherKit
@@ -114,6 +116,32 @@ final class TranscriptBenchmark: XCTestCase {
         }
         measure(metrics: Bench.metrics) {
             for reply in replies { _ = MarkdownView.parse(reply) }
+        }
+    }
+}
+
+final class MarkdownBenchmark: XCTestCase {
+    /// The performance scenario's replies as one long reply, laid out at a new width each time, as a
+    /// live resize does; selectable, as the transcript's text is.
+    @MainActor
+    func testResizingAReply() throws {
+        try Bench.skipUnlessEnabled()
+        let text = PerformanceTranscript.history.compactMap { item -> String? in
+            if case .agentMessage(let m) = item { m.text } else { nil }
+        }.joined(separator: "\n\n")
+        let host = NSHostingView(rootView: MarkdownView(text: text).fixedSize(horizontal: false, vertical: true))
+        host.sizingOptions = []
+        let widths = Array(stride(from: 420.0, through: 1100, by: 10))
+        func layout(_ width: Double) {
+            host.frame = CGRect(x: 0, y: 0, width: width, height: 50_000)
+            host.layoutSubtreeIfNeeded()
+        }
+        for width in widths.prefix(5) { layout(width) }
+        var pass = 0.0
+        measure(metrics: Bench.metrics) {
+            // A fraction of a point off each time, so no width repeats: text caches its layout per width.
+            pass += 0.37
+            for width in widths { layout(width + pass) }
         }
     }
 }

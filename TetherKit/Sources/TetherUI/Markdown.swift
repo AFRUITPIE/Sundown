@@ -26,7 +26,7 @@ struct MarkdownView: View {
         let blocks = cache.blocks(for: text, streaming: streams)
         let _ = cache.hasDrawn = true
         let markers = Self.widestMarkers(blocks)
-        VStack(alignment: .leading, spacing: 0) {
+        BlockStack {
             ForEach(blocks.indices, id: \.self) { i in
                 MarkdownBlockView(rendered: blocks[i],
                                   topPadding: i == 0 ? 0 : Self.spacing(after: blocks[i - 1].block, before: blocks[i].block),
@@ -199,7 +199,7 @@ struct MarkdownBlockView: View, Equatable {
 
     var body: some View {
         // A stack, so every block is one view SwiftUI can count without building it.
-        VStack(alignment: .leading, spacing: 0) { content }
+        BlockStack { content }
             .padding(.top, topPadding)
     }
 
@@ -232,7 +232,7 @@ struct MarkdownBlockView: View, Equatable {
         case .paragraph:
             line
         case .bullet(let indent, let marker, _):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            GutterLayout(spacing: 8) {
                 // As wide as the list's widest marker, so "9." and "10." end at one edge.
                 ZStack(alignment: .trailing) {
                     Text(widestMarker ?? marker).hidden()
@@ -246,7 +246,7 @@ struct MarkdownBlockView: View, Equatable {
             // Deeper levels step in by the text's size.
             .padding(.leading, (6 + CGFloat(indent) * 18) * textScale)
         case .quote:
-            HStack(spacing: 8) {
+            GutterLayout(spacing: 8, stretches: true) {
                 RoundedRectangle(cornerRadius: 1).fill(.tertiary).frame(width: 3)
                 line.foregroundStyle(.secondary)
             }

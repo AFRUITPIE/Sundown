@@ -12,8 +12,6 @@ struct GeneralSettings: View {
     var body: some View {
         Form {
             Section("New Chats") {
-                modelRow
-                effortRow
                 permissionsRow
                 Picker("Directory", selection: $app.appearance.newChatFolder) {
                     ForEach(Appearance.NewChatFolder.allCases) { Text($0.label).tag($0) }
@@ -68,65 +66,10 @@ struct GeneralSettings: View {
 
     // MARK: new-chat defaults
 
-    /// The catalog of the most recently used window's host, falling back to this Mac's: the names
-    /// are the CLI's, so any connected host can supply them.
-    private var models: [ModelInfo] {
-        let current = app.connection(app.lastHostID)?.models ?? []
-        return current.isEmpty ? (app.connection(HostConfig.local.id)?.models ?? []) : current
-    }
-
-    /// With no catalog there is nothing to choose from, so the stored value is shown as it is
-    /// rather than as an empty pop-up.
-    @ViewBuilder private var modelRow: some View {
-        if models.isEmpty {
-            LabeledContent("Model") {
-                Text(app.defaultModel ?? "Not Connected")
-                    .foregroundStyle(.secondary)
-                    .truncationMode(.middle)
-            }
-        } else {
-            Picker("Model", selection: modelSelection) {
-                ForEach(models.concrete, id: \.value) { Text($0.shortName).tag(Optional($0.value)) }
-                // A Bedrock or otherwise unlisted id the user already stored stays selectable.
-                if let model = app.defaultModel,
-                   !models.contains(where: { $0.value == model || $0.resolvedModel == model }) {
-                    Text(model).tag(Optional(model))
-                }
-            }
-        }
-    }
-
-    private var effortRow: some View {
-        Picker("Effort", selection: effortSelection) {
-            Label("Automatic", systemImage: SessionSymbol.automaticEffort).tag(EffortLevel?.none)
-            ForEach(effortLevels, id: \.self) { level in
-                Label(level.label, systemImage: level.symbol(in: effortLevels)).tag(Optional(level))
-            }
-        }
-    }
-
     private var permissionsRow: some View {
         PermissionModeFormPicker(selection: permissionSelection,
                                  modes: PermissionMode.offered(bypass: app.appearance.offerBypass,
                                                                current: PermissionMode(rawValue: app.defaultPermissionMode)))
-    }
-
-    /// The levels the default model offers, so the gauges mean the same thing they do in the
-    /// toolbar; every level while no catalog says otherwise.
-    private var effortLevels: [EffortLevel] {
-        let value = models.concreteValue(for: app.defaultModel)
-        return models.concrete.first { $0.value == value }?.supportedEffortLevels ?? EffortLevel.allCases
-    }
-
-    /// Always a named model: with nothing stored, the one the catalog would pick.
-    private var modelSelection: Binding<String?> {
-        Binding(get: { models.concreteValue(for: app.defaultModel) },
-                set: { app.defaultModel = $0 })
-    }
-
-    private var effortSelection: Binding<EffortLevel?> {
-        Binding(get: { app.defaultEffort.map(EffortLevel.init(rawValue:)) },
-                set: { app.defaultEffort = $0?.rawValue })
     }
 
     private var permissionSelection: Binding<PermissionMode> {
@@ -168,13 +111,5 @@ struct PermissionModeFormPicker: View {
     app.defaultPermissionMode = PermissionMode.plan.rawValue
     return GeneralSettings(app: app)
         .frame(width: 560, height: 780)
-}
-
-/// No host has answered yet, so the model row shows what is stored instead of an empty pop-up.
-#Preview("General (no catalog)") {
-    let app = AppModel.sample(connections: [.sampleDisconnected()])
-    app.defaultModel = "claude-sonnet-5"
-    app.defaultEffort = "high"
-    return GeneralSettings(app: app)
 }
 #endif
