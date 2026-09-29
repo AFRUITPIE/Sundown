@@ -31,3 +31,7 @@ management, chat streaming, and reconnection without inference calls. Run it loc
 The PR workflow runs both suites on the `xcode-27` GitHub runner and uploads the `.xcresult`
 bundle. SwiftPM resolves the pinned `TetherProtocol` package from the public
 `AFRUITPIE/tether-server` repository. No Claude credentials are supplied to CI.
+
+## License
+
+MIT, in [LICENSE](LICENSE).
