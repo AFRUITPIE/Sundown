@@ -86,7 +86,7 @@ struct GeneralSettings: View {
             }
         } else {
             Picker("Model", selection: modelSelection) {
-                ForEach(models.concrete, id: \.value) { Text($0.shortName).tag(Optional($0.value)) }
+                ForEach(models.concrete, id: \.value) { Text($0.displayName).tag(Optional($0.value)) }
                 // A Bedrock or otherwise unlisted id the user already stored stays selectable.
                 if let model = app.defaultModel,
                    !models.contains(where: { $0.value == model || $0.resolvedModel == model }) {
