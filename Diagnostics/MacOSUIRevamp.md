@@ -1,6 +1,6 @@
 # macOS UI revamp
 
-The working branch descends from PR #69’s repaired head (`5391f95`). It keeps native transcript anchoring and bounded eager layout. This work adds no scroll glide or resize-driven scroll commands.
+The working branch descends from PR #69’s repaired head (`bd9078f`). It keeps native transcript anchoring and bounded eager layout. This work adds no scroll glide or resize-driven scroll commands.
 
 ## Design basis
 
@@ -11,16 +11,30 @@ The adversarial review challenged permanent glass bubbles, dominant message butt
 ## Result
 
 - Code uses primary text, a stronger semantic fill, and a border that strengthens with Increased Contrast. Selection, wrapping, horizontal scrolling, and cached measurement remain intact.
-- The composer is a standard multiline rounded-border field beside a full labeled glass Send/Stop button. Existing draft persistence, attachments, input methods, and Shift-Return handling remain in place.
+- The composer is a plain native multiline field on a padded interactive glass surface, beside an extra-large labeled glass Send/Stop button. Existing draft persistence, attachments, input methods, and Shift-Return handling remain in place.
 - Completion choices stay above the field inside the window, with bounded pages and pointer/keyboard controls. Commands use a terminal glyph.
 - Suggestions have explicit capsule borders. Glass remains on controls and the brief sending handoff, rather than settled transcript content.
 - Message actions live below the text: a labeled Copy and a regular More menu with Fork and Restore. They no longer float over selection.
 - Tool summaries are compact. Leading disclosure triangles reveal labeled input/output sections; expanded groups offer Expand All/Collapse All and separate calls with dividers.
 - Decorative symbols are faster and respect Reduce Motion and reduced effects.
-- A send is identified by the actual TurnStart message ID and sending window, with a once-only claim. New Chat’s initial input is restricted to its first human prompt because ThreadStart does not return a message ID. A streaming update cannot cancel the claimed handoff. Historical rows never take part in its shared geometry.
+- A send is identified by the actual TurnStart message ID and sending window, with a once-only claim. New Chat’s initial input is restricted to its first human prompt because ThreadStart does not return a message ID. A streaming update cannot cancel the claimed handoff. Historical rows never read the send geometry or create glass renderers.
 
 ## Validation
 
 The Swift package suite passes 179 tests, including ID matching, competing clients/windows, duplicate echoes, failed/superseded sends, and new-chat ordering. UI checks cover Copy, Fork, Restore confirmation, attachments, Send availability, Return/Command-Return/Shift-Return, draft preservation, suggested tasks, compact/expanded tools, scripted existing/new chat sends, and resize/inspector bottom-follow behavior.
 
-Code blocks were rendered and inspected in light appearance and dark Increased Contrast. Expanded command/output sections and the complete chat/completion layout were inspected visually. Fixture runs are in-process and do not send Claude requests. Retained XCTest recordings of existing-chat and New Chat sends were inspected frame by frame. The existing-chat recording shows the new prompt moving from the composer toward its row while the historical prompt remains stationary. The four recorded checks (both sends, completion navigation, and Shift-Return) pass. Animation state tests establish ownership and continuity; the owner can assess the final feel in the running app.
+Code blocks were rendered and inspected in light appearance and dark Increased Contrast. Expanded command/output sections and the complete chat/completion layout were inspected visually. Fixture runs are in-process and do not send Claude requests. Retained XCTest recordings of existing-chat and New Chat sends were inspected frame by frame. The existing-chat recording shows the new prompt moving from the composer toward its row while the historical prompt remains stationary. The recorded sends pass; completion navigation and Shift-Return also pass. Animation state tests establish ownership and continuity; the owner can assess the final feel in the running app.
+
+## Glass composer and send refinement
+
+The rounded-border field was replaced after hands-on feedback. The editor remains the native multiline TextField, with interactive regular glass and comfortable padding. The separate labeled Send/Stop control uses the system’s extra-large size. Faster symbol animations are retained.
+
+Apple’s [custom glass guidance](https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views) and [matched geometry documentation](https://developer.apple.com/documentation/swiftui/view/matchedgeometryeffect(id:in:properties:anchor:issource:)) informed a second recording pass. Matching layout around captured glass produced a stationary surface or an invisible in-flight bubble even though functional tests passed. The final handoff instead uses SwiftUI visualEffect after an isolated glass render: the whole surface and text lift together over 0.46 seconds, with a gentle initial stretch. The footer follows the landing, and the transient glass settles into the ordinary bubble fill. The final bubble’s layout is reserved throughout, keeping selectable text from rewrapping in flight and preserving native transcript anchoring. Only the active send has a glass container; the composer frame is observed only by that bubble.
+
+Existing-chat and New Chat recordings show the glass and text traveling together while historical bubbles remain stationary. Light and dark composer previews were inspected. A wrapped-prompt UI regression additionally checks readable multiline text within the window after sending. Reduce Motion and reduced effects continue to skip the movement entirely.
+
+The final lifecycle review separates preflight visibility from the stable send task key, so a consumed send recreated during the recent-send window remains visible. Historical bubbles skip visual-effect geometry entirely. Pointer selection begins after the brief handoff has settled, preventing the temporary glass subtree from discarding a mid-flight selection.
+
+The wrapped-prompt recording also exposed an immediate fixture reply drawing over the moving glass. The active sending row is now raised above its sibling rows only for the handoff; cancellation, disappearance, and supersession clear that layer ownership.
+
+Final focused verification passes eight distinct UI checks: existing and new chat sends, wrapped-prompt readability, pending-prompt draft preservation, Command-Return, Shift-Return, command completion navigation, and resize/inspector end-follow. The wrapped-prompt and repaired-resize checks were rerun after final layering changes and passed. Recordings were inspected in both appearances, including the long prompt crossing an immediate reply.

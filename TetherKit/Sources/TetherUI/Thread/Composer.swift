@@ -169,8 +169,8 @@ struct Composer: View {
         .animation(reduceMotion ? nil : .snappy, value: status == nil)
     }
 
-    /// Standard editing chrome, with a separate, clearly labeled primary action. Let the field
-    /// and controls choose their intrinsic size instead of aligning an inset circle to text.
+    /// A native editor on one responsive glass surface, beside a clearly labeled primary action.
+    /// The field and buttons keep their intrinsic sizes as the draft grows.
     private var field: some View {
         // Under a prompt card the composer is still there and still typable, just clearly not the
         // thing being asked of you: its contents dim, under the glass rather than over it.
@@ -182,16 +182,15 @@ struct Composer: View {
             }
             HStack(alignment: .bottom, spacing: 10) {
                 addButton(dim: dim)
-                textField
-                    .opacity(dim)
+                textField(dim: dim)
                     .overlay {
                         if dropTargeted {
-                            RoundedRectangle(cornerRadius: 8).strokeBorder(.tint, lineWidth: 2)
+                            RoundedRectangle(cornerRadius: Layout.cardCornerRadius).strokeBorder(.tint, lineWidth: 2)
                         }
                     }
                 sendOrStop
             }
-            .controlSize(.large)
+            .controlSize(.extraLarge)
         }
         // Files and images, dropped on the field, pasted, or taken with Continuity Camera.
         .dropDestination(for: Incoming.self) { items, _ in take(items) }
@@ -275,12 +274,16 @@ struct Composer: View {
         }
     }
 
-    private var textField: some View {
+    private func textField(dim: Double) -> some View {
         TextField(thread?.isRunning == true ? "Queue a message…" : placeholder, text: $text, axis: .vertical)
             .accessibilityIdentifier("composer.input")
-            .textFieldStyle(.roundedBorder)
+            .textFieldStyle(.plain)
             .lineLimit(1...12)
             .focused($focused)
+            .opacity(dim)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
             .modifier(MessageSendSource())
             .onSubmit {
                 if !suggestions.isEmpty { completeSuggestion() }
@@ -310,17 +313,16 @@ struct Composer: View {
             }
     }
 
-    /// The newly echoed prompt travels from the editing field using native shared geometry.
-    /// Its content settles into an ordinary transcript bubble after this brief handoff.
+    /// Share the editing surface's native layout with only the active sending bubble. Changes
+    /// are observed by that bubble, rather than invalidating the transcript during a resize.
     private struct MessageSendSource: ViewModifier {
-        @Environment(\.messageSendNamespace) private var namespace
+        @Environment(\.messageSendGeometry) private var geometry
 
-        @ViewBuilder func body(content: Content) -> some View {
-            if let namespace {
-                content.matchedGeometryEffect(id: "composer.input", in: namespace,
-                                              properties: .position, anchor: .bottomTrailing, isSource: true)
-            } else {
-                content
+        func body(content: Content) -> some View {
+            content.onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .named(MessageSendGeometry.space))
+            } action: { frame in
+                geometry?.composerFrame = frame
             }
         }
     }
@@ -826,7 +828,7 @@ private extension EnvironmentValues {
     .frame(width: 560)
 }
 
-#Preview("Native composer, dark appearance") {
+#Preview("Glass composer, dark appearance") {
     let connection = HostConnection.sample()
     let thread = ThreadModel.sampleIdleChat()
     GlassEffectContainer {

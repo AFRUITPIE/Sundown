@@ -158,6 +158,26 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Scripted response."].waitForExistence(timeout: 10))
     }
 
+    /// A wrapped prompt keeps its final text layout while its native glass surface travels.
+    @MainActor
+    func testLongPromptStaysReadableAfterSending() {
+        let app = launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
+        let prompt = Array(repeating: "Keep this longer message readable as it lifts from the composer, wraps across several lines, and settles into the transcript.", count: 4).joined(separator: " ")
+        let input = app.descendants(matching: .any)["composer.input"]
+        input.click()
+        input.typeText(prompt)
+        app.buttons["composer.send"].click()
+        XCTAssertTrue(app.staticTexts["Scripted response."].waitForExistence(timeout: 10))
+        let message = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(message.frame.height, 40)
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(message.frame.minX, window.minX)
+        XCTAssertLessThanOrEqual(message.frame.maxX, window.maxX)
+    }
+
     @MainActor
     func testSidebarSearch() {
         let app = launch()

@@ -142,7 +142,7 @@ private struct InspectorColumn: ViewModifier {
 /// The selected chat, or the New Chat screen. One container, so the detail column is never torn down.
 struct DetailView: View {
     let window: WindowModel
-    @Namespace private var messageSendNamespace
+    @State private var messageSendGeometry = MessageSendGeometry()
     @State private var messageSendOwner = UUID()
 
     var body: some View {
@@ -157,7 +157,8 @@ struct DetailView: View {
                 NewChatView(window: window)
             }
         }
-        .environment(\.messageSendNamespace, messageSendNamespace)
+        .coordinateSpace(name: MessageSendGeometry.space)
+        .environment(\.messageSendGeometry, messageSendGeometry)
         .environment(\.messageSendOwner, messageSendOwner)
     }
 }

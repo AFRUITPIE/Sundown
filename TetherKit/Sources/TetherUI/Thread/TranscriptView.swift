@@ -360,6 +360,12 @@ private struct OlderHistoryTrigger: View {
 struct TranscriptRowView: View, Equatable {
     let row: TranscriptRow
     let thread: ThreadModel
+    @Environment(\.messageSendGeometry) private var sendGeometry
+
+    private var isSendingPrompt: Bool {
+        guard case .item(.userMessage(let message)) = row else { return false }
+        return sendGeometry?.activeMessageID == message.id
+    }
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
         guard a.thread === b.thread else { return false }
@@ -390,6 +396,9 @@ struct TranscriptRowView: View, Equatable {
             }
         }
         .modifier(FindHighlight(id: row.id))
+        // A reply can begin immediately. Keep the moving surface above its sibling text while
+        // crossing that row, then return to normal drawing order when the handoff settles.
+        .zIndex(isSendingPrompt ? 1 : 0)
     }
 }
 
