@@ -91,6 +91,9 @@ final class TetherAppUITests: XCTestCase {
         let effort = toolbar.menuButtons.matching(NSPredicate(format: "label BEGINSWITH 'Effort'")).firstMatch
         let permissions = toolbar.menuButtons.matching(NSPredicate(format: "label BEGINSWITH 'Permissions'")).firstMatch
         XCTAssertTrue(permissions.waitForExistence(timeout: 5))
+        // From a known mode: New Chat starts in the host's (Auto in the fixture), whose symbol
+        // AppKit measures wider than the others.
+        choose("Ask Before Edits", in: "Permissions", app: app)
         let before = (effort.frame, permissions.frame)
 
         // Don't Ask, not Bypass Permissions: Settings offers Bypass only when asked to.

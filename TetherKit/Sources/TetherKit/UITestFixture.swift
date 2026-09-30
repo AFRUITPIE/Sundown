@@ -129,6 +129,9 @@ private actor FixtureScript {
                 .init(cwd: "/tmp/tether-fixture", lastActivity: 1_700_000_000_000, threadCount: 1)
             ]))))
         case "model/list": return .init(value: .result(json(ModelListResult(models: []))))
+        // As a host whose Claude Code would start in auto mode at medium effort.
+        case "session/defaults":
+            return .init(value: .result(json(SessionDefaultsResult(model: "sonnet", effort: .medium, permissionMode: .auto))))
         case "thread/list":
             let perf = performance ? PerformanceTranscript.otherChats : []
             let threads = (additionalThreads + perf + [originalSummary])
@@ -205,7 +208,9 @@ private actor FixtureScript {
             let id = "fixture-new-\(additionalThreads.count + 1)"
             additionalThreads.insert(.init(threadId: id, title: "New Fixture Chat", cwd: "/tmp/tether-fixture",
                                            updatedAt: 1_700_000_000_002, status: .idle), at: 0)
-            let info = ThreadInfo(threadId: id, status: .idle, cwd: "/tmp/tether-fixture", lastSeq: 0)
+            let mode = params["permissionMode"]?.stringValue.flatMap(PermissionMode.init(rawValue:)) ?? .auto
+            let info = ThreadInfo(threadId: id, status: .idle, cwd: "/tmp/tether-fixture", appliedEffort: .medium,
+                                  permissionMode: mode, lastSeq: 0)
             return .init(value: .result(json(ThreadStartResult(thread: info))),
                          notifications: turnNotifications(threadID: id, input: params["input"]))
         case "turn/start":

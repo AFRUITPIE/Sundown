@@ -87,7 +87,11 @@ public final class WindowModel {
     /// The New Chat screen's session controls, reset to the defaults by `newChat()`.
     public var draftModel: String?
     public var draftEffort: EffortLevel?
-    public var draftPermissionMode: PermissionMode = .default
+    /// Nil until one is chosen: the chat then starts in the host's own starting mode.
+    public var draftPermissionMode: PermissionMode?
+    /// What the host's Claude Code starts a chat with when nothing is chosen, for the draft's
+    /// directory and model (`session/defaults`), so the menus can say it.
+    public var draftDefaults: SessionDefaultsResult?
     /// Carried into `startThread`; off unless the user asks for it on this chat.
     public var draftFastMode = false
     /// Start the chat in a new git worktree, so it doesn't share a checkout with other chats.
@@ -314,10 +318,11 @@ public final class WindowModel {
 
     /// Picks the defaults up again after Settings changes them, if New Chat hasn't been touched.
     func seedDraft() {
-        // None chosen: the host's Claude Code picks, from its own settings (`model`, `effortLevel`).
+        // None chosen: the host's Claude Code picks, from its own settings (`model`, `effortLevel`,
+        // `permissions.defaultMode`), as an interactive session would.
         draftModel = nil
         draftEffort = nil
-        draftPermissionMode = PermissionMode(rawValue: app.defaultPermissionMode)
+        draftPermissionMode = nil
         draftFastMode = false
         draftWorktree = app.appearance.worktreeByDefault
         draftDirectory = app.appearance.newChatFolder == .recent ? app.connections[hostID]?.projects.first?.cwd : nil

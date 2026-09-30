@@ -594,6 +594,13 @@ public final class HostConnection: Identifiable {
         }
     }
 
+    /// What a new chat in `cwd` starts with when nothing is chosen, as the host's Claude Code decides:
+    /// the model, the effort it sends it, and the permission mode. Nil when it can't say.
+    public func sessionDefaults(cwd: String?, model: String?) async -> SessionDefaultsResult? {
+        guard let client else { return nil }
+        return try? await client.call(Methods.SessionDefaults.self, .init(cwd: cwd, model: model))
+    }
+
     public func startThread(cwd: String, input: [UserInput], options: NewThreadOptions) async throws -> ThreadModel {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         let r = try await client.call(Methods.ThreadStart.self, .init(

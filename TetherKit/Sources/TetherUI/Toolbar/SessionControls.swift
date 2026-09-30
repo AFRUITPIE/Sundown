@@ -13,6 +13,9 @@ struct SessionSettings {
     let fastMode: Binding<Bool>
     let models: [ModelInfo]
     let isEnabled: Bool
+    /// The effort Claude Code sends when none is chosen: the model's own default, or the host's
+    /// `effortLevel`. Nil when it isn't known.
+    let defaultEffort: EffortLevel?
     /// The daemon's own reason fast mode is off limits right now (rate limit, cooldown, …).
     private let fastModeDisabledReason: String?
 
@@ -28,6 +31,8 @@ struct SessionSettings {
                            set: { on in Task { await connection.setFastMode(thread, on) } })
         models = connection.models
         fastModeDisabledReason = thread.info?.fastModeDisabledReason
+        // With none chosen, the effort in use is the default.
+        defaultEffort = thread.effort == nil ? thread.info?.appliedEffort : nil
         isEnabled = true
     }
 
@@ -38,10 +43,13 @@ struct SessionSettings {
         model = Binding(get: { connection?.models.concreteValue(for: window.draftModel) ?? window.draftModel },
                         set: { window.draftModel = $0 })
         effort = Binding(get: { window.draftEffort }, set: { window.draftEffort = $0 })
-        permissionMode = Binding(get: { window.draftPermissionMode }, set: { window.draftPermissionMode = $0 })
+        // Until one is chosen, the mode the host's Claude Code starts a chat in.
+        permissionMode = Binding(get: { window.draftPermissionMode ?? window.draftDefaults?.permissionMode ?? .default },
+                                 set: { window.draftPermissionMode = $0 })
         fastMode = Binding(get: { window.draftFastMode }, set: { window.draftFastMode = $0 })
         models = connection?.models ?? []
         fastModeDisabledReason = nil
+        defaultEffort = window.draftDefaults?.effort
         isEnabled = connection != nil
     }
 
@@ -83,6 +91,21 @@ struct SessionSettings {
 
     /// The levels this model offers; the gauge's needle is spread across them.
     var effortLevels: [EffortLevel] { currentModel?.supportedEffortLevels ?? EffortLevel.allCases }
+
+    /// A model Claude Code lists without any effort levels takes none, so there's nothing to set.
+    var effortUnavailable: Bool {
+        guard let model = currentModel else { return false }
+        return model.supportsEffort != true && (model.supportedEffortLevels ?? []).isEmpty
+    }
+
+    /// The effort in use: the one chosen, else Claude Code's default for the model.
+    var effectiveEffort: EffortLevel? { effort.wrappedValue ?? defaultEffort }
+
+    /// What the effort control says: the level in use, or why there's none.
+    var effortLabel: String {
+        if effortUnavailable { return "None" }
+        return effectiveEffort?.label ?? "Default"
+    }
 
     /// Why Fast Mode can't be switched on, or nil when it can.
     var fastModeUnavailable: String? {
@@ -153,20 +176,20 @@ struct EffortMenu: View {
     let settings: SessionSettings
 
     private var levels: [EffortLevel] { settings.effortLevels }
-    private var value: EffortLevel? { settings.effort.wrappedValue }
 
     var body: some View {
         Menu {
             EffortPicker(settings: settings)
                 .pickerStyle(.inline)
         } label: {
-            ReservedWidthLabel("Effort", systemImage: value.symbol(in: levels),
+            // The needle says the level in use, chosen or Claude Code's default.
+            ReservedWidthLabel("Effort", systemImage: settings.effectiveEffort.symbol(in: levels),
                                symbols: [SessionSymbol.automaticEffort] + levels.map { $0.symbol(in: levels) })
         }
-        .disabled(!settings.isEnabled)
-        .help("Effort")
+        .disabled(!settings.isEnabled || settings.effortUnavailable)
+        .help(settings.effortUnavailable ? "\(settings.modelLabel) doesn’t take an effort level" : "Effort, \(settings.effortLabel)")
         // The choice in the label: in the toolbar's control group a value never reaches VoiceOver.
-        .accessibilityLabel("Effort, \(value.label)")
+        .accessibilityLabel("Effort, \(settings.effortLabel)")
     }
 }
 
@@ -236,7 +259,9 @@ struct EffortPicker: View {
     var body: some View {
         let levels = settings.effortLevels
         Picker("Effort", selection: settings.effort) {
-            Label("Automatic", systemImage: SessionSymbol.automaticEffort).tag(EffortLevel?.none)
+            // Claude Code's own level for the model, as its /effort offers it.
+            Label(settings.defaultEffort.map { "Default (\($0.label))" } ?? "Default",
+                  systemImage: SessionSymbol.automaticEffort).tag(EffortLevel?.none)
             ForEach(levels, id: \.self) { level in
                 Label(level.label, systemImage: level.symbol(in: levels)).tag(Optional(level))
             }
@@ -280,6 +305,7 @@ public struct ChatCommands: View {
                 ModelPicker(settings: settings)
                 FastModeToggle(settings: settings)
                 EffortPicker(settings: settings)
+                    .disabled(settings.effortUnavailable)
                 Menu("Permissions") { PermissionModeItems(settings: settings) }
             }
             .disabled(!settings.isEnabled)
@@ -434,7 +460,7 @@ private struct SessionControlsPreview: View {
     return VStack(alignment: .leading, spacing: 14) {
         ForEach(Array(catalogs.enumerated()), id: \.offset) { _, levels in
             HStack(spacing: 14) {
-                Label("Automatic", systemImage: SessionSymbol.automaticEffort)
+                Label("Default", systemImage: SessionSymbol.automaticEffort)
                 ForEach(levels, id: \.self) { level in
                     Label(level.label, systemImage: level.symbol(in: levels))
                 }
