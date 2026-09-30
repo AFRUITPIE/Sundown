@@ -355,14 +355,14 @@ struct Composer: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, suggestion in
-                        completionRow(suggestion, selected: index == selectedSuggestion)
-                            .onHover { if $0 { selectedSuggestion = index } }
-                            .onTapGesture { completeSuggestion(at: index) }
-                            .id(index)
-                            .accessibilityElement(children: .combine)
-                            .accessibilityAddTraits(index == selectedSuggestion ? [.isButton, .isSelected] : .isButton)
-                            .accessibilityAction { completeSuggestion(at: index) }
-                            .accessibilityIdentifier("composer.completion.\(suggestion.id)")
+                        Button { completeSuggestion(at: index) } label: {
+                            completionRow(suggestion, selected: index == selectedSuggestion)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { if $0 { selectedSuggestion = index } }
+                        .id(index)
+                        .accessibilityAddTraits(index == selectedSuggestion ? .isSelected : [])
+                        .accessibilityIdentifier("composer.completion.\(suggestion.id)")
                     }
                 }
                 .padding(5)
