@@ -38,14 +38,19 @@ struct SessionPane: View {
             if let limit = thread.rateLimit {
                 Section("Plan Usage") {
                     if let used = limit.utilization {
+                        let percent = Int((used * 100).rounded())
+                        LabeledContent(limit.name.capitalized, value: "\(percent)%")
+                            .accessibilityHidden(true)
                         Gauge(value: min(used, 1)) {
                             Text(limit.name.capitalized)
-                        } currentValueLabel: {
-                            Text("\(Int((used * 100).rounded()))%")
                         }
+                        // A thin bar that fills, as Context's is: the default style's marker reads
+                        // as a slider's thumb.
+                        .gaugeStyle(.accessoryLinearCapacity)
+                        .labelsHidden()
                         // The accent color until the limit is near, and said in words as well.
                         .tint(limit.status == .allowed ? nil : limit.status == .warning ? .orange : .red)
-                        .accessibilityValue("\(Int((used * 100).rounded())) percent\(limit.status == .allowed ? "" : limit.status == .warning ? ", near the limit" : ", limit reached")")
+                        .accessibilityValue("\(percent) percent\(limit.status == .allowed ? "" : limit.status == .warning ? ", near the limit" : ", limit reached")")
                     }
                     if let reset = limit.resetsAt {
                         LabeledContent("Resets", value: reset.formatted(date: .abbreviated, time: .shortened))
@@ -80,19 +85,10 @@ struct SessionPane: View {
     private struct Key: Equatable { let threadId: String; let turn: String? }
 
     @ViewBuilder private func contextBody(_ u: JSONValue?) -> some View {
-        if let u {
-            let total = u["totalTokens"]?.doubleValue ?? 0
-            let limit = u["maxTokens"]?.doubleValue ?? u["rawMaxTokens"]?.doubleValue ?? 0
-            if limit > 0 {
-                Gauge(value: min(total / limit, 1)) {
-                    Text("Used")
-                } currentValueLabel: {
-                    Text("\(Format.tokens(total)) of \(Format.tokens(limit))")
-                }
-            }
-            ForEach(u["categories"]?.arrayValue ?? [], id: \.self) { c in
-                LabeledContent(c.string("name") ?? "", value: Format.tokens(c["tokens"]?.doubleValue ?? 0))
-            }
+        if let u, let breakdown = ContextBreakdown(u) {
+            LabeledContent("Used", value: "\(Format.tokens(breakdown.total)) of \(Format.tokens(breakdown.limit))")
+            ContextBar(breakdown: breakdown)
+            ForEach(breakdown.categories) { ContextCategoryRow(category: $0) }
         } else {
             Text("No Data").foregroundStyle(.secondary)
         }
@@ -130,18 +126,23 @@ private let sampleContextUsage: JSONValue = [
     "totalTokens": 84_300,
     "maxTokens": 200_000,
     "categories": [
-        ["name": "System prompt", "tokens": 3_100],
-        ["name": "Tools", "tokens": 12_600],
-        ["name": "Messages", "tokens": 61_400],
-        ["name": "Free space", "tokens": 115_700],
+        ["name": "System prompt", "tokens": 3_100, "kind": "used"],
+        ["name": "System tools", "tokens": 12_600, "kind": "used"],
+        ["name": "MCP tools", "tokens": 4_200, "kind": "used"],
+        ["name": "Memory files", "tokens": 2_000, "kind": "used"],
+        ["name": "Skills", "tokens": 1_000, "kind": "used"],
+        ["name": "Messages", "tokens": 61_400, "kind": "used"],
+        ["name": "Free space", "tokens": 82_700, "kind": "free"],
+        ["name": "Autocompact buffer", "tokens": 33_000, "kind": "buffer"],
+        ["name": "MCP tools (deferred)", "tokens": 9_800, "kind": "deferred"],
     ],
 ]
 
 /// One pane on its own, dressed exactly as the shell dresses it.
 @MainActor
-private func sessionPreview(_ usage: Loaded<JSONValue?>) -> some View {
+private func sessionPreview(_ usage: Loaded<JSONValue?>, thread: ThreadModel = .sampleIdleChat()) -> some View {
     inspectorPreview {
-        SessionPane(thread: .sampleIdleChat(), connection: .sample(), usage: usage)
+        SessionPane(thread: thread, connection: .sample(), usage: usage)
             .inspectorPaneStyle()
     }
 }
@@ -157,6 +158,11 @@ private func sessionPreview(_ usage: Loaded<JSONValue?>) -> some View {
 
 #Preview("Session (context loaded)") {
     sessionPreview(.ready(sampleContextUsage))
+}
+
+#Preview("Session (plan usage)") {
+    sessionPreview(.ready(sampleContextUsage),
+                   thread: .sampleRateLimited("allowed_warning", kind: "five_hour", utilization: 0.82, resetsIn: 5_400))
 }
 
 #Preview("Session (no context data)") {
