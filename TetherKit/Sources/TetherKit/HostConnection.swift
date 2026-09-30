@@ -119,10 +119,20 @@ public final class HostConnection: Identifiable {
                 if let env = await load() { host.env = env }
             }
             let transport: any Transport
+            var env = host.env
             if let transportProvider {
                 transport = try await transportProvider(host)
             } else {
-                let cmd = HostBootstrapper().connectCommand(for: host)
+                let boot = HostBootstrapper()
+                let probe = boot.shellPathCommand(for: host)
+                appendLog("$ \(([probe.executable] + probe.arguments).joined(separator: " "))")
+                let path = try await boot.interactivePath(for: host)
+                appendLog(path.map { "Shell PATH: \($0)" } ?? "The shell didn't say its PATH; using the login shell's.")
+                // The daemon may already be running with another PATH: the one sent with
+                // `initialize` is what finds `claude` for this client, and what its chats run with.
+                // One set in the host's Environment wins.
+                if let path, env["PATH"] == nil { env["PATH"] = path }
+                let cmd = boot.connectCommand(for: host, path: path)
                 appendLog("$ \(([cmd.executable] + cmd.arguments).joined(separator: " "))")
                 transport = ProcessTransport(executable: cmd.executable, arguments: cmd.arguments)
             }
@@ -140,7 +150,7 @@ public final class HostConnection: Identifiable {
                 clientInfo: .init(name: "tether-app", title: "Tether", version: Self.appVersion),
                 protocolVersion: tetherProtocolVersion,
                 capabilities: .init(experimentalApi: true, optOutNotificationMethods: Self.unreadNotifications),
-                env: host.env.isEmpty ? nil : host.env))
+                env: env.isEmpty ? nil : env))
             try await client.notify("initialized")
             signpost.event("Handshake")
             if initResult.protocolVersion < Self.minServerProtocol {
