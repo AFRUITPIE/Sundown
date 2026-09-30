@@ -158,8 +158,21 @@ struct Composer: View {
             if let status {
                 ConnectionStatusCard(status: status, connection: connection)
             } else {
-                if focused, !suggestions.isEmpty { completionChoices }
                 field
+                    // Floats over the transcript just above the field, as a menu does: the chat
+                    // doesn't make room for it.
+                    // Hung from a line along the field's top edge, so it opens upward.
+                    .overlay(alignment: .topLeading) {
+                        Color.clear
+                            .frame(height: 0)
+                            .overlay(alignment: .bottomLeading) {
+                                if focused, !suggestions.isEmpty {
+                                    completionChoices
+                                        .padding(.bottom, 8)
+                                        .shadow(color: .black.opacity(0.18), radius: 16, y: 6)
+                                }
+                            }
+                    }
             }
         }
         .animation(reduceMotion ? nil : .snappy, value: status == nil)
@@ -333,10 +346,10 @@ struct Composer: View {
         }
     }
 
-    /// Completion choices, as a menu reads: a glass panel just above the field, the chosen row in
-    /// the accent color, the pointer choosing as it moves. In the window, not a popover or the
-    /// system's text suggestions: those opened below the field, off a full-height window's
-    /// screen, or took the keyboard from the field.
+    /// Completion choices, as a menu reads: a glass panel floating just above the field, over the
+    /// transcript, the chosen row in the accent color, the pointer choosing as it moves. An overlay
+    /// in the window, not a popover or the system's text suggestions: those opened below the
+    /// field, off a full-height window's screen, or took the keyboard from the field.
     private var completionChoices: some View {
         ScrollViewReader { proxy in
             ScrollView {
