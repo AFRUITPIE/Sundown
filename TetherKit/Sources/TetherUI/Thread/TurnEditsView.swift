@@ -42,7 +42,6 @@ struct TurnEditsView: View {
             HStack(spacing: 8) {
                 Text(title).foregroundStyle(.secondary)
                 LineCounts(added: edits.added, removed: edits.removed)
-                Spacer(minLength: 8)
             }
             .scaledFont(.callout)
         }
@@ -71,7 +70,6 @@ private struct EditedFileRow: View {
             HStack(spacing: 6) {
                 Text(file.path.lastPathComponent).foregroundStyle(.secondary)
                 Text(folder).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
-                Spacer(minLength: 8)
                 LineCounts(added: file.added, removed: file.removed)
             }
             .scaledFont(.callout)

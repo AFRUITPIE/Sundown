@@ -61,6 +61,7 @@ struct SuggestedTasksBar: View {
                         Label(task.title, systemImage: "square.and.pencil").lineLimit(1)
                     }
                     .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
                     .help("Open in New Chat")
                     // Named for its task: several of these can be listed at once.
                     Button("Dismiss “\(task.title)”", systemImage: "xmark") { thread.dismissSuggestedTask(task.id) }
@@ -68,7 +69,7 @@ struct SuggestedTasksBar: View {
                         .buttonStyle(.borderless)
                         .foregroundStyle(.secondary)
                 }
-                .controlSize(.small)
+                .controlSize(.regular)
                 .scaledFont(.callout)
             }
         }

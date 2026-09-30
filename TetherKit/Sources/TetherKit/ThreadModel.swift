@@ -37,9 +37,6 @@ public final class ThreadModel: Identifiable {
         _ = childrenVersion
         return storage
     }
-    /// When this app last sent a prompt here, so the prompt's bubble can spring up from the
-    /// composer when the daemon echoes it. Not observed: only a new bubble reads it, once.
-    @ObservationIgnored public var sentAt: Date?
     @ObservationIgnored private var storage: [Item] = []
     @ObservationIgnored private var boxes: [String: ItemBox] = [:]
     public private(set) var turns: [Turn] = []
@@ -134,6 +131,13 @@ public final class ThreadModel: Identifiable {
     /// then and not per delta.
     public private(set) var streamingReplyID: String?
 
+    /// The latest top-level prompt to arrive live, as the host echoes it: never one that came with
+    /// history. The transcript eases in the room it takes. Stored, and changed once a prompt.
+    public private(set) var arrivedPrompt: String?
+    /// A turn is starting here and nothing of it has arrived yet: the running status and the turn
+    /// come just before the prompt's echo. Until then, the transcript lays out as it did before.
+    public private(set) var awaitingPrompt = false
+
     public init(id: String, summary: ThreadSummary? = nil) {
         self.id = id
         self.summary = summary
@@ -224,6 +228,7 @@ public final class ThreadModel: Identifiable {
         remember(changes)
         storage = newItems
         if turns != newTurns { turns = newTurns }
+        if awaitingPrompt { awaitingPrompt = false }
         reindex()
         if hasMoreHistory != hasMore { hasMoreHistory = hasMore }
         if !historyLoaded { historyLoaded = true }
@@ -352,7 +357,10 @@ public final class ThreadModel: Identifiable {
             refreshTitle()
         case .threadStatusChanged(let e):
             // The sidebar reads the status: only a change of it redraws the rows.
-            if status != e.status { status = e.status }
+            if status != e.status {
+                if !isRunning, e.status == .running, currentTurn == nil, !awaitingPrompt { awaitingPrompt = true }
+                status = e.status
+            }
             if activity != e.activity?.rawValue { activity = e.activity?.rawValue }
             if e.status == .idle, apiRetry != nil { apiRetry = nil }
         case .threadClosed:
@@ -363,12 +371,18 @@ public final class ThreadModel: Identifiable {
             Signposts.replyStarted(in: self)
             upsertTurn(e.turn)
             promptSuggestion = nil
+            if !awaitingPrompt { awaitingPrompt = true }
         case .turnCompleted(let e):
             Signposts.replyEnded(in: self)
             upsertTurn(e.turn)
+            if awaitingPrompt { awaitingPrompt = false }
             setStreamingReply(nil)
         case .itemStarted(let e):
-            if index[e.item.id] == nil { noteStarted(e.item.id) }
+            if index[e.item.id] == nil {
+                noteStarted(e.item.id)
+                if case .userMessage(let m) = e.item, m.parentToolUseId == nil { arrivedPrompt = m.id }
+                if awaitingPrompt { awaitingPrompt = false }
+            }
             upsert(e.item)
             if case .agentMessage(let m) = e.item, m.parentToolUseId == nil { setStreamingReply(m.id) }
         case .itemUpdated(let e): upsert(e.item)
@@ -651,6 +665,32 @@ public final class ThreadModel: Identifiable {
         if streamingReplyID != id { streamingReplyID = id }
     }
 
+    /// The last item the transcript draws: a top-level one that isn't reasoning, which is kept
+    /// but never shown. What the live run of calls and the Thinking line go by.
+    public var lastShownItem: Item? {
+        items.last { item in
+            if case .reasoning = item { return false }
+            return item.parentToolUseId == nil
+        }
+    }
+
+    /// Claude's messages in the turn that ends with `id`, in order: what the turn's Copy copies.
+    public func turnReplies(through id: String) -> [String] {
+        guard var i = index[id] else { return [] }
+        var texts: [String] = []
+        while i >= 0 {
+            switch storage[i] {
+            case .userMessage(let m) where m.synthetic != true && m.parentToolUseId == nil && m.origin == nil:
+                return texts.reversed()
+            case .agentMessage(let m) where m.parentToolUseId == nil && !m.text.isEmpty:
+                texts.append(m.text)
+            default: break
+            }
+            i -= 1
+        }
+        return texts.reversed()
+    }
+
     /// The item's box, for a row that renders it. Every held item has one; an item from elsewhere
     /// (a preview) gets a box of its own that the thread doesn't keep.
     public func box(for item: Item) -> ItemBox {
@@ -849,7 +889,7 @@ private extension Item {
     }
 
     /// A prompt of the chat's own, where a turn starts.
-    var isPrompt: Bool {
+    internal var isPrompt: Bool {
         if case .userMessage(let m) = self { return m.parentToolUseId == nil }
         return false
     }

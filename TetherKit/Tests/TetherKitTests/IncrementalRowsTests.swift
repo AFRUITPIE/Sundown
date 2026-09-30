@@ -60,7 +60,7 @@ struct IncrementalRowsTests {
         let items = thread.items
         let top = items.filter { $0.parentToolUseId == nil }
         let running = thread.isRunning
-        let folded = foldTranscriptRows(top, folding: folding, lastTurnRunning: folding == .workedFor && running)
+        let folded = foldTranscriptRows(top, folding: folding, lastTurnRunning: running)
         return decorateTranscriptRows(folded, dates: DateSeparators.prompts(in: top),
                                       edits: turnEdits(in: items, lastTurnRunning: running))
     }

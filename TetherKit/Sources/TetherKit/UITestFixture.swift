@@ -211,8 +211,9 @@ private actor FixtureScript {
         case "turn/start":
             let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
             if performance { return performanceTurn(threadID: id, input: params["input"]) }
-            return .init(value: .result(json(TurnStartResult(turnId: "fixture-turn", messageId: "fixture-message", queued: false))),
-                         notifications: turnNotifications(threadID: id, input: params["input"]))
+            let notifications = turnNotifications(threadID: id, input: params["input"])
+            return .init(value: .result(json(TurnStartResult(turnId: "fixture-turn", messageId: "fixture-sent-\(nextMessage)", queued: false))),
+                         notifications: notifications)
         case "plugin/list":
             let installed: [JSONValue] = installedPlugins.map { ["id": .string($0), "version": "1.0.0", "scope": "user", "enabled": true] }
             let available: [JSONValue] = [["pluginId": "fixture-lint@fixture-market", "name": "fixture-lint",
@@ -269,7 +270,14 @@ private actor FixtureScript {
             // Once put back, there's nothing left to restore.
             let changed: JSONValue = rewound > 0 && dryRun ? [] : ["/tmp/tether-fixture/Sources/App.swift", "/tmp/tether-fixture/README.md"]
             return .init(value: .result(["result": ["canRewind": true, "filesChanged": changed, "insertions": 12, "deletions": 3]]))
-        case "command/list": return .init(value: .result(["commands": []]))
+        case "command/list":
+            return .init(value: .result(["commands": [
+                ["name": "compact", "description": "Compact the conversation"],
+                ["name": "context", "description": "Show context usage"],
+                ["name": "review", "description": "Review the current changes"],
+                ["name": "help", "description": "Show available commands"],
+                ["name": "status", "description": "Show session status"]
+            ]]))
         case "fs/search": return .init(value: .result(["paths": []]))
         default: return .init(value: .error("Unexpected fixture method: \(method)"))
         }
@@ -284,7 +292,7 @@ private actor FixtureScript {
         let text = input?.arrayValue?.first?["text"]?.stringValue ?? "Fixture input"
         let user = Item.userMessage(.init(id: "perf-sent-\(turn)", createdAt: 1_900_000_000_000 + Double(turn * 1000),
                                           content: [.text(.init(text: text))]))
-        var reply = Reply(value: .result(json(TurnStartResult(turnId: "perf-turn-\(turn)", messageId: "perf-message-\(turn)", queued: false))))
+        var reply = Reply(value: .result(json(TurnStartResult(turnId: "perf-turn-\(turn)", messageId: "perf-sent-\(turn)", queued: false))))
         let started = Turn(id: "perf-turn-\(turn)", status: .inProgress, startedAt: 1_900_000_000_000 + Double(turn * 1000))
         var completed = started
         completed.status = .completed
@@ -347,13 +355,15 @@ enum PerformanceTranscript {
         var items: [Item] = [.userMessage(.init(id: "perf-user-\(turn)", createdAt: t,
                                                 content: [.text(.init(text: "Step \(turn): look at the next part of the renderer and tighten it up."))]))]
         var n = 0
-        for burst in 0..<3 {
+        // A long current turn exposes eager layout work that the usual small turns conceal.
+        let bursts = turn == 29 && ProcessInfo.processInfo.environment["TETHER_PERF_LONG_TURN"] == "1" ? 80 : 3
+        for burst in 0..<bursts {
             for _ in 0..<(2 + (turn + burst * 3) % 7) {
                 let status: ToolStatus = turn % 4 == 1 && burst == 1 && n % 5 == 2 ? .failed : .completed
                 items.append(toolCall(id: "perf-tool-\(turn)-\(n)", at: t + Double(n + 1), index: turn + n, status: status))
                 n += 1
             }
-            if burst < 2 {
+            if burst < bursts - 1 {
                 items.append(.agentMessage(.init(id: "perf-note-\(turn)-\(burst)", createdAt: t + Double(n + 1),
                                                  text: "Found it in `\(files[(turn + burst) % files.count])`. Checking the callers next.")))
             }

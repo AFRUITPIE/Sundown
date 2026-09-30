@@ -39,6 +39,10 @@ final class ComposerAndMessageUITests: XCTestCase {
         let input = app.descendants(matching: .any)["composer.input"]
         let send = app.buttons["composer.send"]
         XCTAssertFalse(send.isEnabled)
+        let add = app.descendants(matching: .any)["composer.add"].firstMatch
+        XCTAssertEqual(add.frame.width, add.frame.height, accuracy: 1, "Add should be circular")
+        XCTAssertEqual(send.frame.width, send.frame.height, accuracy: 1, "Send should be circular")
+        XCTAssertEqual(add.frame.height, send.frame.height, accuracy: 1, "Composer actions should share a diameter")
 
         input.click()
         input.typeText("Hello")
@@ -51,6 +55,43 @@ final class ComposerAndMessageUITests: XCTestCase {
         // Whitespace alone isn't a message.
         input.typeText("   ")
         XCTAssertFalse(send.isEnabled)
+    }
+
+    /// Completion choices stay above the field and never open a window below it.
+    @MainActor
+    func testCommandsCompleteAboveTheComposerWithoutSending() {
+        let app = launch()
+        XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
+        let input = app.descendants(matching: .any)["composer.input"]
+        input.click()
+        input.typeText("/")
+        let compact = app.buttons["composer.completion./compact"]
+        XCTAssertTrue(compact.waitForExistence(timeout: 5))
+        XCTAssertLessThan(compact.frame.maxY, input.frame.minY)
+        XCTAssertTrue(app.popovers.count == 0)
+        // Typing narrows the list; a click inserts the command.
+        input.typeText("sta")
+        let status = app.buttons["composer.completion./status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 3))
+        // The menu floats outside the composer's frame, which XCUITest reads as clipping it; the
+        // pointer clicks it all the same.
+        status.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        XCTAssertEqual(input.value as? String, "/status ")
+        input.typeKey("a", modifierFlags: .command)
+        input.typeText("/")
+        XCTAssertTrue(compact.waitForExistence(timeout: 3))
+        input.typeKey(.downArrow, modifierFlags: [])
+        input.typeKey(.tab, modifierFlags: [])
+        XCTAssertEqual(input.value as? String, "/context ")
+        XCTAssertTrue(compact.waitForNonExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["/context"].exists)
+
+        input.typeKey("a", modifierFlags: .command)
+        input.typeText("/")
+        XCTAssertTrue(compact.waitForExistence(timeout: 3))
+        input.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(compact.waitForNonExistence(timeout: 3))
+        XCTAssertEqual(input.value as? String, "/")
     }
 
     /// The round + beside the field is a menu; Attach Files… opens the Open panel, and Mention a
@@ -88,31 +129,26 @@ final class ComposerAndMessageUITests: XCTestCase {
         return buttons.firstMatch
     }
 
-    /// Copy is on the bar that appears over a message on hover, and in its context menu.
+    /// Message actions are icons below the text, shown while the pointer is over the message.
     @MainActor
     func testCopyingAMessage() {
         let app = launch()
         let prompt = app.staticTexts["Summarize this project"].firstMatch
         XCTAssertTrue(prompt.waitForExistence(timeout: 15))
         NSPasteboard.general.clearContents()
-
+        let copy = app.buttons["message.copy.fixture-user"]
+        let fork = app.buttons["message.fork.fixture-user"]
         prompt.hover()
-        let fork = windowButton(app, "Fork from Here")
-        XCTAssertTrue(fork.waitForExistence(timeout: 5))
+        XCTAssertTrue(copy.isHittable)
         let forkBefore = fork.frame
-        windowButton(app, "Copy").click()
+        copy.click()
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Summarize this project")
-        // Turning into a checkmark, for a second, doesn't resize the bar: the buttons after Copy stay
-        // where they were. Read once the symbol has turned.
         Thread.sleep(forTimeInterval: 0.4)
+        // Copy's checkmark doesn't move the icons beside it.
         XCTAssertEqual(fork.frame.minX, forkBefore.minX, accuracy: 0.5)
 
-        // A reply copies from its hover bar the same way. (Its text spans the reply's width, so
-        // right-clicking it gives the text's own menu rather than the message's.)
         NSPasteboard.general.clearContents()
-        let answer = app.staticTexts["Fixture answer from the local transport."].firstMatch
-        answer.hover()
-        windowButton(app, "Copy").click()
+        app.buttons["message.copy.fixture-answer"].click()
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Fixture answer from the local transport.")
     }
 
@@ -129,7 +165,7 @@ final class ComposerAndMessageUITests: XCTestCase {
         XCTAssertEqual(rows.count, 1)
 
         answer.hover()
-        windowButton(app, "Fork from Here").click()
+        app.buttons["message.fork.fixture-answer"].click()
 
         let deadline = Date().addingTimeInterval(5)
         while rows.count < 2 && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
@@ -137,6 +173,27 @@ final class ComposerAndMessageUITests: XCTestCase {
         // The fork is the newer chat, so it heads the list, and it's the one showing.
         XCTAssertTrue(rows.element(boundBy: 0).isSelected)
         XCTAssertFalse(rows.element(boundBy: 1).isSelected)
+    }
+
+    /// Finished work is compact until opened; the expanded group offers complete tool detail.
+    @MainActor
+    func testToolGroupsOfferExpandAllAndReadableOutput() {
+        let app = launch(scenario: "performance")
+        XCTAssertTrue(app.staticTexts["Section 29: tightening the renderer"].waitForExistence(timeout: 20))
+        let groups = app.disclosureTriangles.matching(identifier: "transcript.toolGroup")
+        guard let group = groups.allElementsBoundByIndex.last(where: { $0.isHittable }) else {
+            return XCTFail("No compact tool summary on screen")
+        }
+        XCTAssertFalse(app.buttons["transcript.expandTools"].exists)
+        group.click()
+        let expand = app.buttons["transcript.expandTools"].firstMatch
+        XCTAssertTrue(expand.waitForExistence(timeout: 3))
+        expand.click()
+        XCTAssertEqual(expand.label, "Collapse All")
+        XCTAssertTrue(app.buttons["code.copy"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Output"].firstMatch.exists)
+        expand.click()
+        XCTAssertEqual(expand.label, "Expand All")
     }
 
     /// A running call reads as a button that says it's running, and stops saying so when it

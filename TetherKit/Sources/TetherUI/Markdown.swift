@@ -558,11 +558,15 @@ struct CodeBlock: View {
     var language: String = ""
     var lineLimit: Int? = nil
     @State private var expanded = false
+    /// The shown code in color, once it has been scanned off the main actor.
+    @State private var colored: (source: String, text: AttributedString)?
     @Environment(\.appearance) private var appearance
+    @Environment(\.colorSchemeContrast) private var contrast
 
     private func styled(_ text: some View) -> some View {
         text
             .scaledFont(.callout, design: .monospaced)
+            .foregroundStyle(.primary)
             .lineLimit(expanded ? nil : lineLimit)
             .textSelection(.enabled)
             // Read as code, punctuation and all.
@@ -592,18 +596,25 @@ struct CodeBlock: View {
     var body: some View {
         let measure = Self.measure(code, limit: lineLimit)
         let isTruncated = lineLimit.map { measure.lines > $0 } ?? false
-        let codeText = Text(verbatim: !expanded ? measure.collapsedEnd.map { String(code[..<$0]) } ?? code : code)
+        let shown = !expanded ? measure.collapsedEnd.map { String(code[..<$0]) } ?? code : code
+        // Plain until its colors are ready: only the colors change, never the layout.
+        let codeText = colored.flatMap { $0.source == shown ? Text($0.text) : nil }
+            ?? SyntaxHighlight.cached(shown, language: language).map(Text.init)
+            ?? Text(verbatim: shown)
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(language.isEmpty ? "code" : language)
+                Text(language.isEmpty ? "Code" : language)
+                    .fontWeight(.medium)
                 Spacer()
                 if isTruncated {
                     Button(expanded ? "Show Less" : "Show All \(measure.lines) Lines") { expanded.toggle() }
-                        .buttonStyle(.link)
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("code.expand")
                 }
                 CopyButton { Clipboard.copy(code) }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("code.copy")
             }
             .scaledFont(.caption, design: .default)
             .foregroundStyle(.secondary)
@@ -619,8 +630,19 @@ struct CodeBlock: View {
                 .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             }
         }
-        .padding(10)
-        .background(.fill.quinary, in: .rect(cornerRadius: 8))
+        .controlSize(.regular)
+        .padding(12)
+        .background(.fill.tertiary, in: .rect(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(.primary.opacity(contrast == .increased ? 0.4 : 0.12))
+                .allowsHitTesting(false)
+        }
+        .task(id: shown) {
+            guard colored?.source != shown, let text = await SyntaxHighlight.highlight(shown, language: language),
+                  !Task.isCancelled else { return }
+            colored = (shown, text)
+        }
     }
 }
 

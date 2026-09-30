@@ -12,8 +12,6 @@ struct TranscriptView: View {
     /// Whether the reader left the transcript at its end. Only their own scrolling changes it, so a
     /// resize that briefly pushes the end off screen doesn't count as scrolling away.
     @State private var followsEnd = true
-    /// The last line or two the end grew by, eased away: see `follow`.
-    @State private var glide = Glide()
     /// The rows on screen, for Chat ▸ Previous and Next Prompt. Not observed: it changes as rows
     /// scroll in and out, and nothing is drawn from it.
     @State private var onScreen = OnScreenRows()
@@ -33,18 +31,6 @@ struct TranscriptView: View {
                 // to the new one's height they lay outside what it showed, so the transcript stayed
                 // blank until the reader scrolled.
                 .id(appearance.toolCalls.folding)
-                .keyframeAnimator(initialValue: 0, trigger: glide.count) { content, y in
-                    // Drawing only: an offset moves the content's geometry, and the lazy stack
-                    // worked out again which rows it shows on every frame of the glide.
-                    content.visualEffect { effect, _ in effect.offset(y: y) }
-                } keyframes: { current in
-                    // From where a glide still under way has got to, plus the new line: starting
-                    // over from the new line alone dropped what was left and the text jumped.
-                    KeyframeTrack {
-                        MoveKeyframe(min(current + glide.distance, Glide.limit))
-                        CubicKeyframe(0, duration: 0.3)
-                    }
-                }
         }
         // Opens at the end and keeps it pinned through content and size changes. A transcript shorter
         // than the window sits at the top: aligned to the bottom, it was pushed down by a scroll offset
@@ -54,6 +40,12 @@ struct TranscriptView: View {
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .defaultScrollAnchor(.top, for: .alignment)
         .scrollPosition($position)
+        // A prompt arriving makes room with the sending spring, and so does Thinking… coming and
+        // going: the end anchor carries the transaction's animation, so the whole transcript glides
+        // up rather than jumping. On the scroll view, not its content, which the anchor's adjustment
+        // doesn't read. Streamed text and resizing keep the native, unanimated anchor.
+        .animation(motion, value: thread.arrivedPrompt)
+        .animation(motion, value: thread.isThinking)
         // A newly opened chat starts at its latest message.
         .onChange(of: thread.historyLoaded) {
             guard thread.historyLoaded else { return }
@@ -73,9 +65,6 @@ struct TranscriptView: View {
         // Chat ▸ Previous and Next Prompt, from where the reader is.
         .onChange(of: promptNavigator?.step) { goToPrompt() }
         .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { onScreen.ids = Set($0) }
-        .onScrollGeometryChange(for: Extent.self, of: { Extent(content: $0.contentSize.height, container: $0.containerSize) }) {
-            follow(from: $0, to: $1)
-        }
         .onScrollPhaseChange { old, new, context in
             older.scrolling = new != .idle
             // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
@@ -114,11 +103,30 @@ struct TranscriptView: View {
 }
 
 extension TranscriptView {
-    /// What following the end depends on: how tall the content is, and the size of the view.
-    struct Extent: Equatable {
-        let content: CGFloat
-        let container: CGSize
+    /// Keep a small settled tail measured exactly, without eagerly laying out a whole long turn.
+    static let eagerTailLimit = 8
+
+    /// Where the lazy stack ends and the eager tail begins. A live turn stays in one container as it
+    /// grows: moving its rows across the split would discard their view state. Once settled, only a
+    /// bounded tail needs exact measurements. Starting a turn keeps the settled tail where it was:
+    /// moved into the lazy stack, its rows were counted at guessed heights and the transcript
+    /// lurched by hundreds of points as the prompt went in.
+    static func split(_ rows: [TranscriptRow], prompts: [TranscriptPrompt], running: Bool) -> Int {
+        // Where a prompt's turn starts among the rows: at the date above it, when it has one.
+        func start(of prompt: TranscriptPrompt) -> Int? {
+            rows.lastIndex { $0.id == prompt.id }.map { i in
+                if i > 0, case .dateSeparator = rows[i - 1] { i - 1 } else { i }
+            }
+        }
+        let turnStart = prompts.last.flatMap(start) ?? rows.count
+        return if running {
+            max(prompts.dropLast().last.flatMap(start) ?? 0, turnStart - eagerTailLimit)
+        } else {
+            max(turnStart, rows.count - eagerTailLimit)
+        }
     }
+
+    private var motion: Animation? { reduceMotion || reducesEffects ? nil : MessageSendGeometry.spring }
 
     /// Where the reader is, and how tall what they're reading is.
     struct Place: Equatable {
@@ -208,35 +216,6 @@ extension TranscriptView {
         followsEnd = false
         withAnimation(reduceMotion ? nil : .default) { position.scrollTo(id: id, anchor: .top) }
     }
-
-    /// A distance the content is drawn below where it is, easing back to nothing.
-    struct Glide {
-        /// Past this the end jumps: a whole block landing, not a line wrapping.
-        static let limit: CGFloat = 160
-        var distance: CGFloat = 0
-        var count = 0
-    }
-
-    /// Keeps the end in view while the reader is following it. The scroll view's anchor holds it
-    /// there, which moves the transcript up a whole line at once when a streamed reply wraps; so
-    /// the content is drawn that line lower and eased back up, and the new line glides into view.
-    /// Drawing only, no layout. Not for a resize, whose rows all re-measure, or a jump bigger than
-    /// a few lines, or with Reduce Motion, or while the Mac saves energy (`reducesEffects`): each
-    /// glide is a keyframe animation run every frame.
-    ///
-    /// Switching the anchor off for this instead (and scrolling to the end by hand) made every frame
-    /// of a resize slower, and switching it during layout made AppKit throw.
-    private func follow(from old: Extent, to new: Extent) {
-        guard followsEnd else { return }
-        // The anchor doesn't survive a width change: every row re-measures at the new width.
-        if old.container != new.container {
-            position.scrollTo(edge: .bottom)
-            return
-        }
-        let growth = new.content - old.content
-        guard growth > 0, growth < Glide.limit, !reduceMotion, !reducesEffects else { return }
-        glide = Glide(distance: growth, count: glide.count + 1)
-    }
 }
 
 /// The rows. Only this view and the rows read `thread.rows`; everything that is not a row is its
@@ -246,12 +225,16 @@ private struct TranscriptContent: View {
     let connection: HostConnection?
     let older: OlderPages
     @Environment(\.appearance) private var appearance
+    @State private var turnHover = TurnHover()
 
     var body: some View {
         let folding = appearance.toolCalls.folding
         let rows = thread.rows(folding)
-        // The last turn's rows, from its prompt on, are built whether on screen or not: see below.
-        let split = thread.prompts(folding).last.flatMap { last in rows.lastIndex { $0.id == last.id } } ?? rows.count
+        let places = TurnPlaces(rows, prompts: thread.prompts(folding), running: thread.isRunning)
+        // Live once the turn's prompt is in, whichever of the turn, the running status and the
+        // prompt's echo comes first: in between, the tail moved and moved back.
+        let split = TranscriptView.split(rows, prompts: thread.prompts(folding),
+                                          running: (thread.isRunning || thread.currentTurn != nil) && !thread.awaitingPrompt)
         VStack(alignment: .leading, spacing: 14) {
             if !thread.historyLoaded || thread.hasMoreHistory || split > 0 {
                 LazyVStack(alignment: .leading, spacing: 14) {
@@ -264,25 +247,26 @@ private struct TranscriptContent: View {
                     // One plain view per row, identified by the ForEach alone: an `.id()` here adds a
                     // node to every row, and the lazy stack walks every row on each layout pass.
                     ForEach(rows[..<split], id: \.id) { row in
-                        TranscriptRowView(row: row, thread: thread)
+                        TranscriptRowView(row: row, thread: thread, place: place(of: row, in: places))
                     }
                 }
                 // Rows are scroll targets by their ids, so an older page can keep the reader where they were.
                 .scrollTargetLayout()
             }
-            // The turn at the end, where a reply streams in, built in full rather than lazily. The lazy
+            // The live turn, or a bounded tail of a settled turn, built in full rather than lazily. The lazy
             // stack counts a row it hasn't built at a guessed height; a row just added at the end was
             // counted that way until built, then at its own, a different total, and the scroll view's
             // anchor on the end moved the transcript by the difference, which changed which rows the
             // stack built, and so on: the transcript bounced between two places while a reply streamed.
             VStack(alignment: .leading, spacing: 14) {
                 ForEach(rows[split...], id: \.id) { row in
-                    TranscriptRowView(row: row, thread: thread)
+                    TranscriptRowView(row: row, thread: thread, place: place(of: row, in: places))
                 }
                 TranscriptTail(thread: thread)
             }
             .scrollTargetLayout()
         }
+        .environment(\.turnHover, turnHover)
         // VoiceOver's way from prompt to prompt, which reaches the ones the lazy stack hasn't built.
         // On a container element, as a rotor has to be. Made with the rows, not from them per draw.
         .accessibilityElement(children: .contain)
@@ -294,6 +278,10 @@ private struct TranscriptContent: View {
         // Replies parsed off the main thread before their rows ask: the first row changes as a chat
         // opens and as an older page goes in above.
         .task(id: rows.first?.id) { await MarkdownCache.prewarm(repliesToParse()) }
+    }
+
+    private func place(of row: TranscriptRow, in places: TurnPlaces) -> TurnPlace? {
+        places.turns[row.id].map { TurnPlace(turn: $0, isEnd: places.ends.contains(row.id)) }
     }
 
     /// The top-level replies at either end of what's held: where a chat opens and the reader
@@ -408,9 +396,19 @@ private struct OlderHistoryTrigger: View {
 struct TranscriptRowView: View, Equatable {
     let row: TranscriptRow
     let thread: ThreadModel
+    /// Its turn, for the turn's one row of message actions; nil inside a turn's folded work, which
+    /// takes its turn from the row around it.
+    var place: TurnPlace? = nil
+    @Environment(\.messageSendGeometry) private var sendGeometry
+    @Environment(\.turnHover) private var turnHover
+
+    private var isSendingPrompt: Bool {
+        guard case .item(.userMessage(let message)) = row else { return false }
+        return sendGeometry?.activeMessageID == message.id
+    }
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
-        guard a.thread === b.thread else { return false }
+        guard a.thread === b.thread, a.place == b.place else { return false }
         switch (a.row, b.row) {
         case (.item(let x), .item(let y)): return x.id == y.id
         case (.toolGroup(let x), .toolGroup(let y)): return x == y
@@ -430,7 +428,7 @@ struct TranscriptRowView: View, Equatable {
             switch row {
             case .item(let item):
                 LiveItemView(box: thread.box(for: item), thread: thread)
-                    .modifier(FadesIn(isNew: thread.justStarted(item.id)))
+                    .modifier(FadesIn(isNew: thread.justStarted(item.id), bypass: isSendingPrompt))
             case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread, rowID: row.id)
             case .turnWork(let id, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread, rowID: id)
             case .turnEdits(let edits): TurnEditsView(edits: edits, cwd: thread.cwd)
@@ -438,21 +436,29 @@ struct TranscriptRowView: View, Equatable {
             }
         }
         .modifier(FindHighlight(id: row.id))
+        .transformEnvironment(\.turnPlace) { if let place { $0 = place } }
+        // Anywhere in a turn shows its actions, after its last reply.
+        .onHover { inside in if let place { turnHover?.pointer(inside, turn: place.turn) } }
+        // A reply can begin immediately. Keep the moving surface above its sibling text while
+        // crossing that row, then return to normal drawing order when the handoff settles.
+        .zIndex(isSendingPrompt ? 1 : 0)
     }
 }
 
 /// A row for an item that just started fades in rather than popping in. Opacity only, so it suits
 /// Reduce Motion as it is.
 private struct FadesIn: ViewModifier {
+    let bypass: Bool
     @State private var shown: Bool
 
-    init(isNew: Bool) {
+    init(isNew: Bool, bypass: Bool = false) {
+        self.bypass = bypass
         _shown = State(initialValue: !isNew)
     }
 
     func body(content: Content) -> some View {
         content
-            .opacity(shown ? 1 : 0)
+            .opacity(bypass || shown ? 1 : 0)
             .onAppear {
                 guard !shown else { return }
                 withAnimation(.easeOut(duration: FadeInRenderer.duration)) { shown = true }
@@ -535,10 +541,17 @@ struct TranscriptPlaceholder<Actions: View>: View {
 /// A `Group` rather than a stack, so that with neither of them the enclosing spacing collapses too.
 struct TranscriptTail: View {
     let thread: ThreadModel
+    @Environment(\.appearance) private var appearance
+
+    /// Whether the turn's run of calls is the last row, and says Thinking itself.
+    private var runSaysIt: Bool {
+        guard appearance.toolCalls.folding != .everyCall, case .toolCall(let call)? = thread.lastShownItem else { return false }
+        return call.kind != .todoWrite && call.kind != .subagent
+    }
 
     var body: some View {
         Group {
-            if thread.isThinking { ThinkingLine() }
+            if thread.isThinking, !runSaysIt { ThinkingLine() }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
                 TurnOutcome(status: turn.status, error: turn.result?.errors?.first)
@@ -551,12 +564,12 @@ struct TranscriptTail: View {
 /// with thinking off or redacted. Its dots pulse, but not while the Mac saves energy.
 struct ThinkingLine: View {
     @Environment(\.reducesEffects) private var reducesEffects
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        Label("Thinking…", systemImage: "ellipsis")
-            .symbolEffect(.variableColor.iterative, options: .repeating, isActive: !reducesEffects)
+        ActivityLabel(text: "Thinking", live: true)
+            .fontWeight(.medium)
             .scaledFont(.callout)
-            .foregroundStyle(.secondary)
             // The model's changes carry no animation, so the transition brings its own.
             .transition(.opacity.animation(.easeOut(duration: 0.2)))
     }
@@ -586,6 +599,20 @@ struct TurnOutcome: View {
         .frame(width: 900, height: 760)
 }
 
+#Preview("TranscriptView (long settled turn)") {
+    var items: [Item] = [.sampleUserMessage("Check each part of the renderer.", secondsAgo: 100)]
+    for index in 0..<40 {
+        let ago = Double(90 - index * 2)
+        items.append(.sampleToolCall(name: "Read", kind: .fileRead,
+                                    input: ["file_path": .string("/tmp/Renderer\(index).swift")],
+                                    status: .completed, secondsAgo: ago))
+        items.append(.sampleAgentMessage("Checked renderer \(index). Continuing with the next part.", secondsAgo: ago - 1))
+    }
+    items.append(.sampleAgentMessage("## Finished\n\nThe renderer's checks are complete.", secondsAgo: 4))
+    return TranscriptView(thread: .sample(title: "Long settled turn", items: items, turns: [.sample()]))
+        .frame(width: 900, height: 760)
+}
+
 /// What stands in for a transcript that couldn't be opened. A host that's down is said by the
 /// status card instead ("Status card (chat not loaded)").
 #Preview("TranscriptView (open failed)") {
@@ -611,3 +638,36 @@ struct TurnOutcome: View {
 }
 
 #endif
+
+/// A row's turn: which one, and whether the row is its last reply, where the actions go.
+struct TurnPlace: Equatable {
+    let turn: String
+    let isEnd: Bool
+}
+
+/// The turn under the pointer. Only a turn's action row reads it, so moving over the transcript
+/// redraws those rows and nothing else. Leaving a row waits a moment before letting go, since
+/// the pointer crosses the gaps between a turn's rows.
+@MainActor @Observable
+final class TurnHover {
+    private(set) var turn: String?
+    @ObservationIgnored private var leaving: Task<Void, Never>?
+
+    func pointer(_ inside: Bool, turn key: String) {
+        leaving?.cancel()
+        if inside {
+            if turn != key { turn = key }
+        } else if turn == key {
+            leaving = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled, let self, self.turn == key else { return }
+                self.turn = nil
+            }
+        }
+    }
+}
+
+extension EnvironmentValues {
+    @Entry var turnHover: TurnHover? = nil
+    @Entry var turnPlace: TurnPlace? = nil
+}

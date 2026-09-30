@@ -64,6 +64,63 @@ final class ReadingUITests: XCTestCase {
         }
     }
 
+    /// Native size-change anchoring must keep the end visible after returning from user
+    /// scrolling with Jump to Latest, without treating a resize or inspector animation as leaving the end.
+    @MainActor
+    func testResizingKeepsTheTranscriptAtItsEnd() {
+        let app = launch()
+        let window = app.windows.firstMatch
+        // Give the resize border room inside the display. On CI the window initially
+        // spans the screen, clipping the native hit regions at both horizontal edges.
+        let initialX = window.frame.minX
+        // Leave enough room to grow an 800pt local window to the first 1000pt target.
+        let inset = max(40, 1000 - window.frame.width + 40)
+        let titleBar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 20))
+        titleBar.click(forDuration: 0.1, thenDragTo: titleBar.withOffset(CGVector(dx: inset, dy: 0)),
+                       withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
+        // macOS can add its shadow margin when moving a window away from the screen edge.
+        // What matters is that its left resize border has moved into the display.
+        XCTAssertGreaterThan(window.frame.minX, initialX + inset - 20)
+        func resize(to width: CGFloat) {
+            // Resize from the left border, which stays on screen even when CI's window
+            // fills its 1024pt-wide display. An inset point on the right edge hits the
+            // transcript rather than the window's resize region; changing height can hit the Dock.
+            // Native edge snapping can leave the first drag a few points short. Correct the
+            // gesture before asserting the exact viewport used by the anchoring checks.
+            for _ in 0..<3 where abs(window.frame.width - width) > 2 {
+                let edge = window.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+                edge.click(forDuration: 0.1, thenDragTo: edge.withOffset(CGVector(dx: window.frame.width - width, dy: 0)),
+                           withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
+            }
+            XCTAssertEqual(window.frame.width, width, accuracy: 2)
+        }
+        func assertAtEnd() {
+            let footer = app.disclosureTriangles.matching(identifier: "transcript.edits").matching(NSPredicate(format: "label == %@", "Edited 1 file, 2 lines added, 2 removed")).firstMatch
+            XCTAssertTrue(footer.isHittable, "The last turn's footer must remain visible")
+            XCTAssertFalse(app.buttons["Jump to Latest"].exists)
+        }
+        resize(to: 1000)
+        assertAtEnd()
+        resize(to: 800)
+        assertAtEnd()
+        resize(to: 1000)
+        assertAtEnd()
+
+        let transcript = window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
+        transcript.scroll(byDeltaX: 0, deltaY: 2000)
+        XCTAssertTrue(app.buttons["Jump to Latest"].waitForExistence(timeout: 5))
+        app.buttons["Jump to Latest"].click()
+        XCTAssertTrue(app.buttons["Jump to Latest"].waitForNonExistence(timeout: 5))
+        resize(to: 800)
+        assertAtEnd()
+        resize(to: 1000)
+        assertAtEnd()
+        app.typeKey("i", modifierFlags: [.command, .option])
+        assertAtEnd()
+        app.typeKey("i", modifierFlags: [.command, .option])
+        assertAtEnd()
+    }
+
     @MainActor
     func testFindInChatStepsThroughMatches() {
         let app = launch()

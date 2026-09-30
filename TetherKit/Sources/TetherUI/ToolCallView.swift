@@ -10,6 +10,8 @@ struct ToolCallView: View {
     let call: Item.ToolCall
     let thread: ThreadModel
     @State private var expanded = false
+    /// A group-level action can open every call without repeated disclosure clicks.
+    var expandDetails = false
     @Environment(\.inspectSubagent) private var inspectSubagent
     @Environment(\.hostIsLocal) private var hostIsLocal
     @Environment(\.openFilesWith) private var editor
@@ -57,16 +59,6 @@ struct ToolCallView: View {
                 .accessibilityIdentifier("transcript.toolCall")
                 reasonLine
             }
-        } else if call.kind == .todoWrite {
-            // A checklist is always open.
-            VStack(alignment: .leading, spacing: 6) {
-                header
-                    .accessibilityElement(children: .combine)
-                    .accessibilityValue(statusDescription)
-                    .accessibilityIdentifier("transcript.toolCall")
-                reasonLine
-                detailBox
-            }
         } else {
             DisclosureGroup(isExpanded: $expanded) {
                 detailBox
@@ -75,6 +67,7 @@ struct ToolCallView: View {
             }
             .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.toolCall", value: statusDescription,
                                                             note: ToolCallText.reason(call)))
+            .onChange(of: expandDetails, initial: true) { _, open in expanded = open }
         }
     }
 
@@ -91,19 +84,17 @@ struct ToolCallView: View {
     private var detailBox: some View {
         detail
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(.fill.quinary, in: .rect(cornerRadius: 8))
+            .padding(.vertical, 8)
     }
 
-    /// Words first, and the status at the trailing end (the chevron is the disclosure's). A finished
-    /// call has no status glyph. Its menu and full command or path are on the words.
+    /// Words first, then the status, then the disclosure's chevron. A finished call has no status
+    /// glyph. Its menu and full command or path are on the words.
     private var header: some View {
         HStack(spacing: 6) {
-            Text(title).foregroundStyle(.secondary)
+            Text(title).foregroundStyle(.secondary).fontWeight(.medium)
             if !subtitle.isEmpty {
-                Text(subtitle).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                Text(subtitle).foregroundStyle(.primary).lineLimit(1).truncationMode(.middle)
             }
-            Spacer(minLength: 8)
             if let s = call.elapsedSeconds, call.status == .running {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
@@ -154,10 +145,11 @@ struct ToolCallView: View {
         switch call.kind {
         case .bash:
             VStack(alignment: .leading, spacing: 6) {
-                CodeBlock(code: "$ " + (input.string("command") ?? ""), language: "bash")
+                CodeBlock(code: "$ " + (input.string("command") ?? ""), language: "Command")
                 output
             }
         case .fileEdit:
+            Text("Changes").scaledFont(.caption, weight: .semibold).foregroundStyle(.secondary)
             if let old = input.string("old_string"), let new = input.string("new_string") {
                 DiffView(old: old, new: new)
             } else if let edits = input["edits"]?.arrayValue {
@@ -177,7 +169,7 @@ struct ToolCallView: View {
         default:
             VStack(alignment: .leading, spacing: 6) {
                 if input.objectValue?.isEmpty == false {
-                    CodeBlock(code: PrettyInput.text(for: call.id, input), language: "input", lineLimit: 12)
+                    CodeBlock(code: PrettyInput.text(for: call.id, input), language: "Input", lineLimit: 12)
                 }
                 output
             }
@@ -186,7 +178,7 @@ struct ToolCallView: View {
 
     @ViewBuilder private var output: some View {
         if let text = call.outputText, !text.isEmpty {
-            CodeBlock(code: text, language: call.isError == true ? "error" : "output", lineLimit: 14)
+            CodeBlock(code: text, language: call.isError == true ? "Error Output" : "Output", lineLimit: 14)
         }
     }
 }
@@ -234,7 +226,7 @@ enum SubagentLifecycle {
     }
 }
 
-/// A transcript row that opens, as a disclosure group: its words, the chevron at the trailing end,
+/// A transcript row that opens, as a disclosure group: its words with the chevron right after them,
 /// and what it holds beneath at the same leading edge, so nothing indents. VoiceOver hears whether
 /// it's open along with the row's own value (a call's status, a file's line counts).
 struct TranscriptDisclosureStyle: DisclosureGroupStyle {
@@ -245,17 +237,21 @@ struct TranscriptDisclosureStyle: DisclosureGroupStyle {
     var value: String?
     /// A line under the row whether it's open or not: why a call failed.
     var note: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: spacing) {
             VStack(alignment: .leading, spacing: 2) {
                 Button {
-                    withAnimation(.snappy(duration: 0.15)) { configuration.isExpanded.toggle() }
+                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.15)) { configuration.isExpanded.toggle() }
                 } label: {
-                    HStack(spacing: 8) {
+                    // The words, then the chevron right after them.
+                    HStack(spacing: 6) {
                         configuration.label
                         DisclosureIndicator(expanded: configuration.isExpanded)
+                        Spacer(minLength: 0)
                     }
+                    .padding(.vertical, 4)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -297,31 +293,26 @@ struct DisclosureIndicator: View {
 }
 
 /// A folded run of finished tool calls (see `foldTranscriptRows`) as one line that says what they
-/// did: "Read 3 files, searched code, and ran 2 commands", and in gray how many failed. Open, its
-/// calls are listed beneath at the same leading edge, each a line of its own.
-/// How many calls in a fold failed, in gray beside its chevron; nothing when none did.
-private struct FailureCount: View {
-    let count: Int
-    init(_ count: Int) { self.count = count }
-
-    var body: some View {
-        if count > 0 {
-            Text(count == 1 ? "1 failed" : "\(count) failed")
-                .scaledFont(.caption)
-                .foregroundStyle(.tertiary)
-                .monospacedDigit()
-        }
-    }
-}
-
+/// did: "Read 3 files, searched code, and ran 2 commands". Open, its calls are listed beneath at
+/// the same leading edge, each a line of its own; a failed one has its own gray glyph.
 struct ToolCallGroupView: View {
     let calls: [Item.ToolCall]
     let thread: ThreadModel
     /// The transcript row's id, so Find in Chat opens the group when it's the current match.
     var rowID: String?
     @State private var expanded: Bool
+    @State private var expandAll = false
 
-    private var failures: Int { calls.count { $0.status == .failed } }
+    /// While the run is the turn's work in progress, what it's doing now: the running call's words,
+    /// or Thinking once its calls are done and nothing has come after them. Nil once it's settled.
+    private var liveTitle: String? {
+        if let running = calls.last(where: { $0.status == .running || $0.status == .pending }) {
+            let object = ToolCallText.object(running)
+            return object.isEmpty ? ToolCallText.verb(running) : "\(ToolCallText.verb(running)) \(object)"
+        }
+        if thread.isThinking, let last = calls.last, thread.lastShownItem?.id == last.id { return "Thinking" }
+        return nil
+    }
 
     init(calls: [Item.ToolCall], thread: ThreadModel, rowID: String? = nil, initiallyExpanded: Bool = false) {
         self.calls = calls
@@ -332,25 +323,37 @@ struct ToolCallGroupView: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("\(calls.count) Tool Calls").scaledFont(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(expandAll ? "Collapse All" : "Expand All") { expandAll.toggle() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                        .accessibilityIdentifier("transcript.expandTools")
+                }
+                ForEach(calls, id: \.id) { call in
+                    VStack(alignment: .leading, spacing: 8) {
+                        ToolCallView(call: call, thread: thread, expandDetails: expandAll)
+                        if call.id != calls.last?.id { Divider() }
+                    }
+                }
             }
+            .padding(12)
+            .background(.fill.quinary, in: .rect(cornerRadius: 10))
         } label: {
-            HStack(spacing: 8) {
-                Text(ToolCallText.summary(calls)).foregroundStyle(.secondary).lineLimit(1)
-                Spacer(minLength: 8)
-                FailureCount(failures)
-            }
-            .scaledFont(.callout)
+            ActivityLabel(text: liveTitle ?? ToolCallText.summary(calls), live: liveTitle != nil)
+                .fontWeight(.medium)
+                .scaledFont(.callout)
         }
-        .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.toolGroup"))
+        .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.toolGroup", value: liveTitle == nil ? nil : "Running"))
         .modifier(OpensForFind(rowID: rowID, expanded: $expanded,
                                matches: { TranscriptRow.toolGroup(calls).matches($0) }))
     }
 }
 
 /// A finished turn's work folded behind its last message (Settings ▸ Advanced ▸ Tool Calls ▸
-/// Worked For): "Worked for 3m 12s", and in gray how many calls failed. Open, the work is shown as
+/// Worked For): "Worked for 3m 12s". Open, the work is shown as
 /// Summarized shows it, at the same leading edge.
 struct TurnWorkView: View {
     let rows: [TranscriptRow]
@@ -359,17 +362,6 @@ struct TurnWorkView: View {
     /// The transcript row's id, so Find in Chat opens the work when it's the current match.
     var rowID: String?
     @State private var expanded = false
-
-    /// Calls in the work that failed, in runs or on their own.
-    private var failures: Int {
-        rows.reduce(0) { n, row in
-            switch row {
-            case .item(.toolCall(let call)): n + (call.status == .failed ? 1 : 0)
-            case .toolGroup(let calls): n + calls.count { $0.status == .failed }
-            default: n
-            }
-        }
-    }
 
     private var title: String {
         guard let durationMs, durationMs >= 1000 else { return "Worked" }
@@ -384,12 +376,8 @@ struct TurnWorkView: View {
                     .environment(\.findFold, rowID)
             }
         } label: {
-            HStack(spacing: 8) {
-                Text(title).foregroundStyle(.secondary)
-                Spacer(minLength: 8)
-                FailureCount(failures)
-            }
-            .scaledFont(.callout)
+            Text(title).foregroundStyle(.secondary)
+                .scaledFont(.callout)
         }
         .disclosureGroupStyle(TranscriptDisclosureStyle(spacing: 10, identifier: "transcript.turnWork"))
         .modifier(OpensForFind(rowID: rowID, expanded: $expanded))
@@ -607,7 +595,7 @@ enum PrettyInput {
     ToolCallView(call: .sample(name: "Bash", kind: .bash,
                                 input: ["command": "swift test --filter ThreadModelTests", "description": "Run ThreadModel tests"],
                                 status: .completed, outputText: "Test Suite 'ThreadModelTests' passed.\nExecuted 6 tests, with 0 failures.", secondsAgo: 30),
-                 thread: .sampleIdleChat())
+                 thread: .sampleIdleChat(), expandDetails: true)
         .padding(20)
         .frame(width: 560)
 }
@@ -784,3 +772,37 @@ private struct FindOpensWorkPreview: View {
 }
 
 #endif
+
+/// A line of words that says what's happening: shimmering while it's live, and turning into its
+/// next words by blurring up and away as they rise in from below. Settled, it's plain secondary text.
+struct ActivityLabel: View {
+    let text: String
+    let live: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reducesEffects) private var reducesEffects
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            words
+                .id(text)
+                .transition(.moving(AnyTransition(BlurReplaceTransition(configuration: .upUp)), reduceMotion: reduceMotion))
+        }
+        .lineLimit(1)
+        .animation(reduceMotion ? .default : .spring(duration: 0.45, bounce: 0.25), value: text)
+    }
+
+    @ViewBuilder private var words: some View {
+        if live, !reduceMotion, !reducesEffects {
+            // A band of the primary color sweeping across the secondary, every 1.6 s.
+            TimelineView(.animation) { context in
+                let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
+                let start = -0.8 + 2.2 * phase
+                Text(text).foregroundStyle(LinearGradient(colors: [.secondary, .primary, .secondary],
+                                                          startPoint: UnitPoint(x: start, y: 0.5),
+                                                          endPoint: UnitPoint(x: start + 0.6, y: 0.5)))
+            }
+        } else {
+            Text(text).foregroundStyle(.secondary)
+        }
+    }
+}

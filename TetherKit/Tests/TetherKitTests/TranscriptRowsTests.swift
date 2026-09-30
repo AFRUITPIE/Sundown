@@ -40,6 +40,23 @@ struct TranscriptRowsTests {
         for row in rows { if case .toolGroup = row { Issue.record("did not expect a group") } }
     }
 
+    /// In the running turn a run is one row from its first call, running ones included, and
+    /// stays that row as calls join it; earlier turns fold as ever.
+    @Test func theRunningTurnsWorkIsOneRowAsItGrows() {
+        let first = foldTranscriptRows([prompt("p1", at: 0), call("t1", status: .running)],
+                                       folding: .summarized, lastTurnRunning: true)
+        #expect(first.map(\.id) == ["p1", "group-t1"])
+        let later = foldTranscriptRows([prompt("p0", at: 0), call("o1"), reply("r0", at: 1),
+                                        prompt("p1", at: 2), call("t1"), call("t2", status: .running)],
+                                       folding: .summarized, lastTurnRunning: true)
+        #expect(later.map(\.id) == ["p0", "o1", "r0", "p1", "group-t1"])
+        guard case .toolGroup(let calls) = later.last else { Issue.record("expected the run"); return }
+        #expect(calls.map(\.id) == ["t1", "t2"])
+        // Settled, a lone call is its own line again.
+        #expect(foldTranscriptRows([prompt("p1", at: 0), call("t1")], folding: .summarized, lastTurnRunning: false)
+            .map(\.id) == ["p1", "t1"])
+    }
+
     @Test func runningCallStaysUngroupedBesideAFinishedGroup() {
         let rows = foldTranscriptRows([call("t1"), call("t2"), call("t3", status: .running)])
         #expect(rows.count == 2)
@@ -82,7 +99,8 @@ struct TranscriptRowsTests {
     @Test func workedForLeavesRunningAndReplylessTurnsAlone() {
         let running = [prompt("p1", at: 0), call("t1"), reply("r1", at: 5), prompt("p2", at: 10), call("t2"), reply("r2", at: 20)]
         let rows = foldTranscriptRows(running, folding: .workedFor, lastTurnRunning: true)
-        #expect(rows.map(\.id) == ["p1", "work-p1", "r1", "p2", "t2", "r2"])
+        // The running turn's lone call is already a run of its own, one row as it grows.
+        #expect(rows.map(\.id) == ["p1", "work-p1", "r1", "p2", "group-t2", "r2"])
 
         let noReply = [prompt("p1", at: 0), call("t1"), call("t2")]
         #expect(foldTranscriptRows(noReply, folding: .workedFor, lastTurnRunning: false).map(\.id) == ["p1", "group-t1"])

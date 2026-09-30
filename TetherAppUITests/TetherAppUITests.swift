@@ -156,6 +156,49 @@ final class TetherAppUITests: XCTestCase {
         input.typeText("Follow up")
         app.buttons["composer.send"].click()
         XCTAssertTrue(app.staticTexts["Scripted response."].waitForExistence(timeout: 10))
+        // Sending must finish: the new message's actions become usable after the spring settles.
+        let copy = app.buttons["message.copy.fixture-sent-1"]
+        let landed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: copy)
+        XCTAssertEqual(XCTWaiter.wait(for: [landed], timeout: 5), .completed)
+    }
+
+    /// Sending from the end of a full transcript makes room and leaves the new prompt usable.
+    @MainActor
+    func testSendingLiftsTheTranscript() {
+        let app = launch(scenario: "performance")
+        defer { app.terminate() }
+        let previous = app.staticTexts["Section 29: tightening the renderer"].firstMatch
+        XCTAssertTrue(previous.waitForExistence(timeout: 20))
+        let before = previous.frame.minY
+        let input = app.descendants(matching: .any)["composer.input"]
+        input.click()
+        input.typeText("Follow up")
+        app.buttons["composer.send"].click()
+        let copy = app.buttons["message.copy.perf-sent-1"]
+        let landed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: copy)
+        XCTAssertEqual(XCTWaiter.wait(for: [landed], timeout: 8), .completed)
+        XCTAssertLessThan(previous.frame.minY, before - 20)
+        XCTAssertLessThan(copy.frame.maxY, input.frame.minY)
+    }
+
+    /// A wrapped prompt keeps its final text layout while its native glass surface travels.
+    @MainActor
+    func testLongPromptStaysReadableAfterSending() {
+        let app = launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["Fixture answer from the local transport."].waitForExistence(timeout: 15))
+        let prompt = Array(repeating: "Keep this longer message readable as it lifts from the composer, wraps across several lines, and settles into the transcript.", count: 4).joined(separator: " ")
+        let input = app.descendants(matching: .any)["composer.input"]
+        input.click()
+        input.typeText(prompt)
+        app.buttons["composer.send"].click()
+        XCTAssertTrue(app.staticTexts["Scripted response."].waitForExistence(timeout: 10))
+        let message = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(message.frame.height, 40)
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(message.frame.minX, window.minX)
+        XCTAssertLessThanOrEqual(message.frame.maxX, window.maxX)
     }
 
     @MainActor
