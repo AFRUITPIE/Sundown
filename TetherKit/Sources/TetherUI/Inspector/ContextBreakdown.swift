@@ -78,6 +78,8 @@ struct ContextBar: View {
         Chart(breakdown.segments, id: \.category.id) { segment in
             BarMark(xStart: .value("Start", segment.range.lowerBound), xEnd: .value("End", segment.range.upperBound))
                 .foregroundStyle(ContextBreakdown.color(segment.category.kind) ?? .clear)
+                // Square where one meets the next.
+                .cornerRadius(0)
         }
         .chartXScale(domain: 0...breakdown.limit)
         .chartXAxis(.hidden)
@@ -85,7 +87,9 @@ struct ContextBar: View {
         .chartLegend(.hidden)
         .chartPlotStyle { $0.background(.fill) }
         .frame(height: 8)
-        .clipShape(.capsule)
+        // Barely rounded, as the storage bar in System Settings is: a capsule turned the small
+        // categories at the ends into rounded slivers.
+        .clipShape(.rect(cornerRadius: 2))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Context")
         .accessibilityValue("\(Format.tokens(breakdown.total)) of \(Format.tokens(breakdown.limit)) tokens used")
