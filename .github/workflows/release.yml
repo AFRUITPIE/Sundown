@@ -2,13 +2,15 @@ name: Release
 
 # Merging a version bump releases it. On each push to main, if the app's MARKETING_VERSION has no
 # tag yet, this builds, signs with Developer ID, notarizes and publishes it as a GitHub release
-# (Scripts/release.sh); the Homebrew tap picks the release up by itself. Any other push stops after
+# (Scripts/release.sh), then has the Homebrew tap move its cask to it. Any other push stops after
 # the first step, on Linux.
 #
 # Secrets, in the `release` environment rather than the repository: DEVELOPER_ID_P12 (the Developer
 # ID Application certificate and its key, exported from Keychain Access as .p12, base64),
 # DEVELOPER_ID_P12_PASSWORD, and an App Store Connect API key for notarizing: NOTARY_KEY (the .p8's
-# contents), NOTARY_KEY_ID, NOTARY_ISSUER. The environment is limited to main and needs the owner's
+# contents), NOTARY_KEY_ID, NOTARY_ISSUER; and TAP_TOKEN, a fine-grained token for
+# AFRUITPIE/homebrew-tap with Actions read and write, since this workflow's own token can't start
+# another repository's workflow. The environment is limited to main and needs the owner's
 # approval, so a workflow on any other branch can't read them, and each release waits for a click.
 on:
   push:
@@ -69,3 +71,8 @@ jobs:
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
         run: Scripts/release.sh
+      # The tap also checks daily, which catches a release this step missed.
+      - name: Update the Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: gh workflow run update.yml --repo AFRUITPIE/homebrew-tap
