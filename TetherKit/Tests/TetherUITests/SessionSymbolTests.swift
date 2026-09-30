@@ -59,7 +59,7 @@ struct SessionSymbolTests {
     }
 
     @Test func effortLabelsReadAsWords() {
-        #expect(EffortLevel?.none.label == "Automatic")
+        #expect(EffortLevel?.none.label == "Default")
         #expect(EffortLevel.medium.label == "Medium")
         #expect(EffortLevel.xhigh.label == "Extra High")
     }

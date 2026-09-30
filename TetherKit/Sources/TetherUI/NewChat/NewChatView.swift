@@ -88,6 +88,26 @@ struct NewChatView: View {
             .task(id: GitKey(folder: window.draftDirectory, connected: connection?.state == .connected, active: appearsActive)) {
                 await readGit()
             }
+            // What the host's Claude Code would start this chat with, for the session menus to say.
+            .task(id: DefaultsKey(host: connection?.id, folder: window.draftDirectory,
+                                  model: window.draftModel, connected: connection?.state == .connected)) {
+                await readDefaults()
+            }
+    }
+
+    private struct DefaultsKey: Equatable {
+        let host: UUID?
+        let folder: String?
+        let model: String?
+        let connected: Bool
+    }
+
+    private func readDefaults() async {
+        guard let connection, connection.state == .connected else { return }
+        // The last answer stays until this one's, so the menus don't blink.
+        let defaults = await connection.sessionDefaults(cwd: window.draftDirectory, model: window.draftModel)
+        guard !Task.isCancelled else { return }
+        window.draftDefaults = defaults
     }
 
     private struct GitKey: Equatable {

@@ -12,7 +12,6 @@ struct GeneralSettings: View {
     var body: some View {
         Form {
             Section("New Chats") {
-                permissionsRow
                 Picker("Directory", selection: $app.appearance.newChatFolder) {
                     ForEach(Appearance.NewChatFolder.allCases) { Text($0.label).tag($0) }
                 }
@@ -64,18 +63,6 @@ struct GeneralSettings: View {
         }
     }
 
-    // MARK: new-chat defaults
-
-    private var permissionsRow: some View {
-        PermissionModeFormPicker(selection: permissionSelection,
-                                 modes: PermissionMode.offered(bypass: app.appearance.offerBypass,
-                                                               current: PermissionMode(rawValue: app.defaultPermissionMode)))
-    }
-
-    private var permissionSelection: Binding<PermissionMode> {
-        Binding(get: { PermissionMode(rawValue: app.defaultPermissionMode) },
-                set: { app.defaultPermissionMode = $0.rawValue })
-    }
 }
 
 /// Permissions as a Settings row: a pop-up of the modes, with what the chosen one does under the
@@ -108,7 +95,6 @@ struct PermissionModeFormPicker: View {
 #Preview("General (editor, plan mode)") {
     let app = AppModel.sample()
     app.appearance.openFilesWith = .xcode
-    app.defaultPermissionMode = PermissionMode.plan.rawValue
     return GeneralSettings(app: app)
         .frame(width: 560, height: 780)
 }

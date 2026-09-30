@@ -302,13 +302,11 @@ struct WindowModelTests {
     @Test func defaultsRoundTripWithoutUsingStandardDefaults() {
         let defaults = isolatedDefaults()
         let app = AppModel.sample(connections: [.sample(), .sampleFailed()], defaults: defaults)
-        app.defaultPermissionMode = "plan"
         app.transcriptWidth = .wide
         app.sidebarGrouping = .directory
 
         let restored = AppModel(defaults: defaults)
 
-        #expect(restored.defaultPermissionMode == "plan")
         #expect(restored.transcriptWidth == .wide)
         #expect(restored.sidebarGrouping == .directory)
     }
@@ -413,6 +411,24 @@ struct WindowModelTests {
         #expect(settings.offeredModes.contains(.bypassPermissions))
     }
 
+    /// Until something is chosen, New Chat's menus say what the host's Claude Code would start with.
+    @Test func newChatShowsTheHostsDefaults() {
+        let app = AppModel.sample()
+        let w = window(app)
+        w.draftDefaults = .init(model: "sonnet", effort: .medium, permissionMode: .auto)
+        var settings = SessionSettings.current(w)
+        #expect(settings.permissionMode.wrappedValue == .auto)
+        #expect(settings.effectiveEffort == .medium)
+        #expect(settings.effort.wrappedValue == nil)
+
+        // A choice is the draft's own, and wins.
+        w.draftPermissionMode = .plan
+        w.draftEffort = .high
+        settings = SessionSettings.current(w)
+        #expect(settings.permissionMode.wrappedValue == .plan)
+        #expect(settings.effectiveEffort == .high)
+    }
+
     @Test func newChatsStartInAWorktreeWhenSettingsSaySo() {
         let app = AppModel.sample()
         let w = window(app)
@@ -430,20 +446,20 @@ struct WindowModelTests {
         #expect(w.draftDirectory == nil)
     }
 
-    /// Model and effort are left to the host's Claude Code, from its own settings; the permission
-    /// mode is the app's default.
-    @Test func newChatLeavesModelAndEffortToClaudeCode() {
+    /// Model, effort and permission mode are left to the host's Claude Code, from its own settings,
+    /// as an interactive session would start.
+    @Test func newChatLeavesModelEffortAndModeToClaudeCode() {
         let app = AppModel(defaults: isolatedDefaults())
         let w = window(app)
-        app.defaultPermissionMode = "plan"
         w.draftModel = "sonnet"
         w.draftEffort = .high
+        w.draftPermissionMode = .plan
 
         w.newChat()
 
         #expect(w.draftModel == nil)
         #expect(w.draftEffort == nil)
-        #expect(w.draftPermissionMode == .plan)
+        #expect(w.draftPermissionMode == nil)
     }
 }
 

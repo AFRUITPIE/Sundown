@@ -177,7 +177,7 @@ extension Array where Element == ModelInfo {
 enum SessionSymbol {
     static let model = "sparkle"
     static let fastMode = "hare"
-    /// Not a gauge: every needle position means a level, and Automatic is the absence of one.
+    /// Not a gauge: every needle position means a level, and Default is the absence of a choice.
     /// "A" in a circle is what the system uses elsewhere for automatic, and it keeps the round
     /// silhouette the gauges have.
     static let automaticEffort = "a.circle"
@@ -189,7 +189,7 @@ extension EffortLevel {
 
     /// A gauge whose needle sits where this level falls among the ones the model supports, so the
     /// icon-only control says "how hard" without a word. A level the model doesn't list shows the
-    /// Automatic symbol rather than claiming a position on a scale it isn't on.
+    /// Default symbol rather than claiming a position on a scale it isn't on.
     func symbol(in levels: [EffortLevel]) -> String {
         guard let index = levels.firstIndex(of: self) else { return SessionSymbol.automaticEffort }
         guard levels.count > 1 else { return "gauge.with.dots.needle.50percent" }
@@ -202,8 +202,8 @@ extension EffortLevel {
 }
 
 extension Optional where Wrapped == EffortLevel {
-    /// No effort is a real choice: the model then decides per turn.
-    var label: String { self?.label ?? "Automatic" }
+    /// None chosen: Claude Code sends its own default for the model.
+    var label: String { self?.label ?? "Default" }
 
     func symbol(in levels: [EffortLevel]) -> String { self?.symbol(in: levels) ?? SessionSymbol.automaticEffort }
 }

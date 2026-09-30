@@ -185,9 +185,6 @@ public final class AppModel {
         if let openURL { openURL(link.url) } else { NSWorkspace.shared.open(link.url) }
     }
 
-    /// Defaults for new threads, per app (persisted).
-    public var defaultPermissionMode: String = "default" { didSet { save() } }
-
     /// Each chat's unsent composer text, by thread id (persisted), so switching chats, closing a
     /// window or quitting doesn't lose it. Not observed: it changes on every keystroke, and a
     /// composer reads it only when it appears. Text put in a field from outside goes through
@@ -519,6 +516,7 @@ public final class AppModel {
     // Everything but `hosts` is optional, so a store written by an older build still decodes.
     private struct Stored: Codable {
         var hosts: [HostConfig]
+        /// Once the app's own permission mode for new chats; the host's Claude Code decides now.
         var defaultPermissionMode: String?
         var transcriptWidth: String?
         /// Where the last window was: in `LastWindow` now, read from here once.
@@ -572,7 +570,6 @@ public final class AppModel {
         appearance = defaults.data(forKey: Self.appearanceKey).flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
         alerts = defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode(AlertPreferences.self, from: $0) } ?? AlertPreferences()
         if let s = stored {
-            defaultPermissionMode = s.defaultPermissionMode ?? "default"
             transcriptWidth = s.transcriptWidth.flatMap(TranscriptWidth.init(rawValue:)) ?? .narrow
             sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date
             textScale = s.textScale.map { CGFloat($0) } ?? 1
@@ -616,7 +613,7 @@ public final class AppModel {
             return h
         }
         let inKeychain = self.hosts.filter { unreadEnvironment.contains($0.id) || !(writtenEnv[$0.id] ?? [:]).isEmpty }
-        let s = Stored(hosts: hosts, defaultPermissionMode: defaultPermissionMode, transcriptWidth: transcriptWidth.rawValue,
+        let s = Stored(hosts: hosts, transcriptWidth: transcriptWidth.rawValue,
                        sidebarGrouping: sidebarGrouping.rawValue, textScale: Double(textScale),
                        sidebarFilter: sidebarFilter.rawValue,
                        pinnedChats: Dictionary(uniqueKeysWithValues: pinnedChats.map { ($0.key.uuidString, $0.value.sorted()) }),
