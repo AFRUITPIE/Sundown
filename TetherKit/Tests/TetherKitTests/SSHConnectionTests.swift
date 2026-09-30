@@ -20,6 +20,10 @@ struct SSHConnectionTests {
         #expect(connection.state == .connected)
         #expect(connection.serverInfo?.host.hostname.isEmpty == false)
         #expect(connection.serverInfo?.claude.path.isEmpty == false)
+        // The `claude` the host's interactive shell finds, such as a wrapper its `.zshrc` puts first.
+        if let claude = ProcessInfo.processInfo.environment["TETHER_SSH_EXPECT_CLAUDE"] {
+            #expect(connection.serverInfo?.claude.path == claude, "\(connection.log.joined(separator: "\n"))")
+        }
         await connection.disconnect()
         #expect(connection.state == .disconnected)
 

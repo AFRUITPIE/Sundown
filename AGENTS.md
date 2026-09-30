@@ -31,7 +31,7 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
 - `Tether/TetherIntents.swift`: the Start a Chat shortcut (App Intents live in the app target), which opens a `tether://` link (`OpenURLIntent`).
 - `Tether/Info.plist`: the `tether` URL scheme.
 - `TetherKit/Sources/TetherKit`: transport and state layer.
-  - `Bootstrap.swift`: `ServerRelease` (the pinned version) and `HostBootstrapper`, which builds the connect command: `npx` under the login shell, locally or through system `ssh`, or a host's Server Command as it is.
+  - `Bootstrap.swift`: `ServerRelease` (the pinned version) and `HostBootstrapper`, which reads the host's interactive PATH and builds the connect command: `npx` under the login shell with that PATH, locally or through system `ssh`, or a host's Server Command as it is.
   - `Transport.swift`: process-backed JSONL byte transport (`LineSplitter`: each byte looked at once, a long line's buffer let go).
   - `RPCClient.swift`: actor that correlates JSON-RPC calls, finds each message's members without decoding it (`WireMessage`, then one typed decode), delivers notifications in order in batches of up to a frame, and answers server-to-client requests.
   - `HostConnection.swift`: one host connection, reconnect/replay behavior, catalogs, thread operations, and server-request routing.
@@ -68,7 +68,7 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
 ## Runtime flow
 
 1. `AppModel` creates a `HostConnection` for each configured host and initiates connections.
-2. `HostConnection` runs `npx … tether-server@<version> connect` under the host's login shell, locally or through system `ssh` (a host's Server Command instead, as it is). There's no check first and nothing to install or update: a new app runs its new version, and the daemon moves onto it once its running chats finish.
+2. `HostConnection` asks the host's shell, interactive (`$SHELL -ilc`, stdin empty), for its PATH, between markers so whatever its rc files print is ignored; that is where people set PATH (`.zshrc`, `.bashrc`, `config.fish`: nvm, mise, a `claude` wrapper). Then it runs `npx … tether-server@<version> connect` under the login shell (non-interactive, since an rc file's output would land in the JSON-RPC stream) with that PATH, locally or through system `ssh` (a host's Server Command instead, as it is), and sends the PATH in `initialize`'s `env`, which is how a daemon already running with another PATH finds this client's `claude`. A PATH in the host's Environment wins. A shell that doesn't answer in 10 s (an rc file that `exec`s another shell unguarded, or waits for input) leaves the login shell's PATH, said in the connection log. There's no check first and nothing to install or update: a new app runs its new version, and the daemon moves onto it once its running chats finish.
 3. `RPCClient` performs the initialize handshake and carries newline-delimited JSON-RPC.
 4. `HostConnection` loads the host catalog, maps summaries to stable `ThreadModel` instances, subscribes with `afterSeq`, and batches streaming deltas to roughly one UI update per frame. `RPCClient` holds streamed output for up to a frame and sends anything else at once, with what came before it; `HostConnection.route` applies each batch, joining a reply's consecutive text deltas into one.
 5. `ThreadModel` applies snapshots and notifications. SwiftUI renders its cached top-level items, rows, turns, tasks, pending requests, and status.
