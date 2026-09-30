@@ -73,7 +73,9 @@ final class ComposerAndMessageUITests: XCTestCase {
         input.typeText("sta")
         let status = app.buttons["composer.completion./status"]
         XCTAssertTrue(status.waitForExistence(timeout: 3))
-        status.click()
+        // The menu floats outside the composer's frame, which XCUITest reads as clipping it; the
+        // pointer clicks it all the same.
+        status.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertEqual(input.value as? String, "/status ")
         input.typeKey("a", modifierFlags: .command)
         input.typeText("/")
