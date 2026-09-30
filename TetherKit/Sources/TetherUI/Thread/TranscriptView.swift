@@ -503,10 +503,11 @@ struct TranscriptTail: View {
 /// with thinking off or redacted. Its dots pulse, but not while the Mac saves energy.
 struct ThinkingLine: View {
     @Environment(\.reducesEffects) private var reducesEffects
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Label("Thinking…", systemImage: "ellipsis")
-            .symbolEffect(.variableColor.iterative, options: .repeating, isActive: !reducesEffects)
+            .symbolEffect(.variableColor.iterative, options: .repeating.speed(1.8), isActive: !reducesEffects && !reduceMotion)
             .scaledFont(.callout)
             .foregroundStyle(.secondary)
             // The model's changes carry no animation, so the transition brings its own.

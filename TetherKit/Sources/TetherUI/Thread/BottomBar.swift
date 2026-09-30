@@ -10,6 +10,7 @@ struct BottomBar: View {
     /// from a draft.
     @State private var composerFocused = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.messageSendOwner) private var sendOwner
 
     var body: some View {
         // One read of `pending`: it decides both the card and whether the composer can send.
@@ -33,7 +34,7 @@ struct BottomBar: View {
                     Task { await connection.interrupt(thread) }
                 },
                 submit: { input in
-                    await connection.send(thread, input: input)
+                    await connection.send(thread, input: input, animationOwner: sendOwner)
                 }, onFocusChange: { composerFocused = $0 })
             }
             // The only explicit animation down here, and it runs only when a prompt comes or goes.
@@ -61,6 +62,7 @@ struct SuggestedTasksBar: View {
                         Label(task.title, systemImage: "square.and.pencil").lineLimit(1)
                     }
                     .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
                     .help("Open in New Chat")
                     // Named for its task: several of these can be listed at once.
                     Button("Dismiss “\(task.title)”", systemImage: "xmark") { thread.dismissSuggestedTask(task.id) }
@@ -68,7 +70,7 @@ struct SuggestedTasksBar: View {
                         .buttonStyle(.borderless)
                         .foregroundStyle(.secondary)
                 }
-                .controlSize(.small)
+                .controlSize(.regular)
                 .scaledFont(.callout)
             }
         }

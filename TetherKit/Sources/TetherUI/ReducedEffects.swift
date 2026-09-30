@@ -3,7 +3,7 @@ import Observation
 import SwiftUI
 
 /// Whether to leave out motion that only decorates — a chat's spinning glyph, the transcript's
-/// glide, a reply's words fading in, Thinking's shimmer — because the Mac is saving energy (Low
+/// a reply's words fading in, Thinking's shimmer — because the Mac is saving energy (Low
 /// Power Mode), is running hot (serious or critical), or has another app in front. Each ran every
 /// frame while a turn did. Treated as Reduce Motion is, where the effect is drawn
 /// (`EnvironmentValues.reducesEffects`). This follows the Mac's power and heat; whether the app is

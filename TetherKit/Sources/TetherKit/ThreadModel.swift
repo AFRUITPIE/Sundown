@@ -37,9 +37,14 @@ public final class ThreadModel: Identifiable {
         _ = childrenVersion
         return storage
     }
-    /// When this app last sent a prompt here, so the prompt's bubble can spring up from the
-    /// composer when the daemon echoes it. Not observed: only a new bubble reads it, once.
-    @ObservationIgnored public var sentAt: Date?
+    /// The row whose ID the turn-start RPC returns plays the sending handoff. The window owner
+    /// prevents another window showing this chat from claiming or replaying the animation.
+    public private(set) var sendAnimationID: String?
+    @ObservationIgnored private var localSend: (token: UUID, owner: UUID)?
+    @ObservationIgnored private var sendAnimationOwner: UUID?
+    @ObservationIgnored private var sendAnimationAt: ContinuousClock.Instant?
+    @ObservationIgnored private var sendAnimationConsumed = false
+    @ObservationIgnored private var initialSend: (input: [UserInput], owner: UUID, at: ContinuousClock.Instant)?
     @ObservationIgnored private var storage: [Item] = []
     @ObservationIgnored private var boxes: [String: ItemBox] = [:]
     public private(set) var turns: [Turn] = []
@@ -290,6 +295,7 @@ public final class ThreadModel: Identifiable {
 
     /// Drops the transcript so the next open reads it afresh.
     func unload() {
+        cancelLocalSend()
         fileChanges = [:]
         started = [:]
         openingPrompt = nil
@@ -368,7 +374,10 @@ public final class ThreadModel: Identifiable {
             upsertTurn(e.turn)
             setStreamingReply(nil)
         case .itemStarted(let e):
-            if index[e.item.id] == nil { noteStarted(e.item.id) }
+            if index[e.item.id] == nil {
+                noteStarted(e.item.id)
+                noteInitialSendEcho(e.item)
+            }
             upsert(e.item)
             if case .agentMessage(let m) = e.item, m.parentToolUseId == nil { setStreamingReply(m.id) }
         case .itemUpdated(let e): upsert(e.item)
@@ -623,6 +632,93 @@ public final class ThreadModel: Identifiable {
     /// False for one that came with history, or a row made again when scrolled back to.
     public func justStarted(_ id: String) -> Bool {
         started[id].map { ContinuousClock.now - $0 < .milliseconds(500) } ?? false
+    }
+
+    /// Called immediately before the turn-start RPC, after any history resume is complete.
+    func beginLocalSend(owner: UUID?) -> UUID? {
+        initialSend = nil
+        sendAnimationID = nil
+        sendAnimationOwner = nil
+        sendAnimationAt = nil
+        sendAnimationConsumed = false
+        guard let owner else { localSend = nil; return nil }
+        let token = UUID()
+        localSend = (token, owner)
+        return token
+    }
+
+    func cancelLocalSend(token: UUID? = nil) {
+        guard token == nil || localSend?.token == token else { return }
+        localSend = nil
+        initialSend = nil
+        sendAnimationID = nil
+        sendAnimationOwner = nil
+        sendAnimationAt = nil
+        sendAnimationConsumed = false
+    }
+
+    /// Notifications can precede the RPC response. Publishing its actual ID also reaches a row
+    /// already created from that echo, without depending on text or the server's clock.
+    func confirmLocalSend(messageID: String, token: UUID?) {
+        guard let token, let localSend, localSend.token == token else { return }
+        self.localSend = nil
+        activateSendAnimation(id: messageID, owner: localSend.owner)
+    }
+
+    /// ThreadStart sends its initial input but doesn't return its message ID. This matching is
+    /// confined to the first human prompt in that newly created thread, never an existing chat.
+    func prepareInitialSend(_ input: [UserInput], owner: UUID?) {
+        guard !input.isEmpty, let owner else { return }
+        if let first = storage.first(where: { Self.isHumanPrompt($0) }) {
+            if case .userMessage(let message) = first, message.content == input {
+                activateSendAnimation(id: message.id, owner: owner)
+            }
+        } else {
+            initialSend = (input, owner, .now)
+        }
+    }
+
+    private static func isHumanPrompt(_ item: Item) -> Bool {
+        guard case .userMessage(let message) = item else { return false }
+        return message.synthetic != true && message.parentToolUseId == nil && message.origin == nil
+    }
+
+    private func noteInitialSendEcho(_ item: Item) {
+        guard let initialSend, Self.isHumanPrompt(item) else { return }
+        self.initialSend = nil
+        guard ContinuousClock.now - initialSend.at < .seconds(3),
+              !storage.contains(where: { Self.isHumanPrompt($0) }),
+              case .userMessage(let message) = item, message.content == initialSend.input else { return }
+        activateSendAnimation(id: message.id, owner: initialSend.owner)
+    }
+
+    private func activateSendAnimation(id: String, owner: UUID) {
+        sendAnimationOwner = owner
+        sendAnimationAt = .now
+        sendAnimationConsumed = false
+        sendAnimationID = id
+    }
+
+    /// Remains true during the handoff after its once-only claim. Transcript updates must not
+    /// cancel the row's animation task just because it has already claimed the send.
+    public func isRecentLocalSend(_ id: String, owner: UUID?) -> Bool {
+        let candidate = sendAnimationID
+        guard candidate == id, let owner, owner == sendAnimationOwner,
+              let sendAnimationAt else { return false }
+        return ContinuousClock.now - sendAnimationAt < .seconds(3)
+    }
+
+    public func canAnimateSend(_ id: String, owner: UUID?) -> Bool {
+        let isLocal = isRecentLocalSend(id, owner: owner)
+        return isLocal && !sendAnimationConsumed
+    }
+
+    /// A local echo animates once in the window that sent it, including when rows are recreated.
+    @discardableResult
+    public func consumeSendAnimation(_ id: String, owner: UUID?) -> Bool {
+        guard canAnimateSend(id, owner: owner), !sendAnimationConsumed else { return false }
+        sendAnimationConsumed = true
+        return true
     }
 
     /// A streamed change to one item: its box, not the transcript's structure.

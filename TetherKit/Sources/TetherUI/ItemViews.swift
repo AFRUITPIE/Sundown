@@ -18,11 +18,13 @@ struct LiveItemView: View {
 struct ItemView: View {
     let item: Item
     let thread: ThreadModel
+    @Environment(\.messageSendOwner) private var sendOwner
 
     var body: some View {
         switch item {
         case .userMessage(let m):
-            UserMessageView(message: m, justSent: thread.sentAt.map { Date().timeIntervalSince($0) < 3 } ?? false)
+            UserMessageView(message: m, justSent: thread.isRecentLocalSend(m.id, owner: sendOwner),
+                            claimSendAnimation: { thread.consumeSendAnimation(m.id, owner: sendOwner) })
                 .messageMenu(id: m.id, text: m.plainText, isMarkdown: false, sentAt: m.createdAt)
         case .agentMessage(let m):
             // Only the reply being streamed into fades its new text in; every other reply is settled.
@@ -60,10 +62,8 @@ struct ItemView: View {
 }
 
 /// What can be done with a message: copy it, branch the chat from it (Fork from Here), or, from a
-/// prompt, put the files back as they were before it. In its context menu, and — since
-/// right-clicking the words themselves gives the text's own menu, and a context menu shouldn't be
-/// the only way to a command — in a small bar that appears on hover, with when it was sent.
-/// VoiceOver gets the same as actions.
+/// prompt, put the files back as they were before it. Regular controls live below the message,
+/// rather than floating over selectable text. Context menus and VoiceOver offer the same actions.
 private struct MessageMenu: ViewModifier {
     let id: String
     /// The message as it arrived: plain for a prompt, Markdown for a reply.
@@ -73,38 +73,20 @@ private struct MessageMenu: ViewModifier {
     let sentAt: Double
     @Environment(\.forkChat) private var forkChat
     @Environment(\.restoreCode) private var restoreCode
-    @State private var hovering = false
 
     /// A prompt's bubble sits at the trailing edge; a reply at the leading one.
     private var trailing: Bool { !isMarkdown }
 
     func body(content: Content) -> some View {
-        content
-            // The blank beside a short line is the message too, so right-clicking there works.
-            .contentShape(.rect)
-            .contextMenu {
-                Button("Copy", action: copyText)
-                if isMarkdown { Button("Copy as Markdown") { Clipboard.copy(text) } }
-                Divider()
-                Button("Fork from Here") { forkChat(id) }
-                // Files go back to a prompt's checkpoint; a reply has none of its own.
-                if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
-            }
-            .overlay(alignment: trailing ? .topLeading : .topTrailing) {
-                if hovering {
-                    // Centered on the message's top edge, however tall the bar is at this text size.
-                    // Glass that comes and goes does it the glass's way; scaling it in read as the
-                    // bar resizing.
-                    bar.alignmentGuide(.top) { $0[VerticalAlignment.center] }
-                        .glassEffectTransition(.materialize)
-                        .transition(.opacity)
-                }
-            }
-            .animation(.easeOut(duration: 0.12), value: hovering)
-            // After the overlay, so moving onto the bar doesn't hide it.
-            .onHover { hovering = $0 }
+        VStack(alignment: trailing ? .trailing : .leading, spacing: 8) {
+            content
+                // The blank beside a short line is the message too, so right-clicking there works.
+                .contentShape(.rect)
+                .contextMenu { actions }
+            bar
+        }
             // A reply is one element, as a prompt's bubble is, so its actions are the reply's and not
-            // each paragraph's; and says when it was sent, which the eye gets from the hover bar.
+            // each paragraph's; and says when it was sent, as the inline footer does visually.
             .modifier(ReplyElement(isReply: isMarkdown))
             // A date and a style, formatted only when VoiceOver reads it, not per streamed delta.
             .accessibilityCustomContent(Text("Sent"), Text(Date(timeIntervalSince1970: sentAt / 1000),
@@ -116,27 +98,43 @@ private struct MessageMenu: ViewModifier {
             }
     }
 
-    private var bar: some View {
-        HStack(spacing: 2) {
-            Text(Format.messageTime(msSinceEpoch: sentAt))
-                .scaledFont(.caption, design: .default)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 4)
-                .accessibilityIdentifier("message.time")
-            CopyButton(action: copyText)
-            Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
-                .help("Fork from Here")
-            if !isMarkdown {
-                Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
-                    .help("Restore Code to Here")
-            }
+    @ViewBuilder private var actions: some View {
+        Button("Copy", action: copyText)
+        if isMarkdown { Button("Copy as Markdown") { Clipboard.copy(text) } }
+        Divider()
+        Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
+        if !isMarkdown {
+            Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
         }
-        .labelStyle(.iconOnly)
+    }
+
+    private var bar: some View {
+        HStack(spacing: 10) {
+            Text(Format.messageTime(msSinceEpoch: sentAt))
+                .scaledFont(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("message.time")
+            CopyButton(action: copyText, spacious: true)
+                .accessibilityIdentifier("message.copy.\(id)")
+            Menu {
+                if isMarkdown { Button("Copy as Markdown") { Clipboard.copy(text) } }
+                Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
+                if !isMarkdown {
+                    Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
+                }
+            } label: {
+                Label("More", systemImage: "ellipsis")
+                    .padding(4)
+            }
+            .labelStyle(.iconOnly)
+            .menuIndicator(.hidden)
+            .help("More Message Actions")
+            .accessibilityLabel("More Message Actions")
+            .accessibilityIdentifier("message.more.\(id)")
+        }
         .buttonStyle(.borderless)
-        .scaledFont(.callout, design: .default)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .glassEffect(in: .capsule)
+        .controlSize(.regular)
+        .scaledFont(.callout)
     }
 
     // Converted when chosen, not per update: a streaming reply's body runs every frame.
@@ -147,6 +145,7 @@ private struct MessageMenu: ViewModifier {
 /// two, so turning into the checkmark doesn't resize the bar it's in and move the buttons beside it.
 struct CopyButton: View {
     let action: () -> Void
+    var spacious = false
     @State private var copied = false
 
     var body: some View {
@@ -156,6 +155,7 @@ struct CopyButton: View {
         } label: {
             ReservedWidthLabel(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc",
                                widestOf: ["Copy", "Copied"], symbols: ["doc.on.doc", "checkmark"])
+                .padding(.vertical, spacious ? 4 : 0)
         }
         .task(id: copied) {
             guard copied else { return }
@@ -242,37 +242,56 @@ struct OpenChatAction: Equatable {
 
 struct UserMessageView: View {
     let message: Item.UserMessage
-    /// Whether the bubble is in its place. A prompt just sent starts out down by the composer and
-    /// springs up into it, as Messages sends; one from history or another session is simply there.
+    let claimSendAnimation: () -> Bool
+    let justSent: Bool
     @State private var arrived: Bool
+    @State private var sending = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reducesEffects) private var reducesEffects
+    @Environment(\.messageSendNamespace) private var sendNamespace
 
-    /// `justSent`: this app sent a prompt to the chat a moment ago (`ThreadModel.sentAt`), and this
-    /// is its echo, which comes back well within that.
-    init(message: Item.UserMessage, justSent: Bool = false) {
+    init(message: Item.UserMessage, justSent: Bool = false,
+         claimSendAnimation: @escaping () -> Bool = { true }) {
         self.message = message
-        _arrived = State(initialValue: !(justSent && message.synthetic != true))
+        self.claimSendAnimation = claimSendAnimation
+        self.justSent = justSent
+        _arrived = State(initialValue: true)
     }
 
     var body: some View {
         HStack {
             Spacer(minLength: 60)
             parts(alignment: .trailing)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
                 .background(message.synthetic == true ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(.fill),
-                            in: .rect(cornerRadius: 12))
-                // Drawn, not laid out: the row takes its place at once, so the transcript's scroll
-                // to its end isn't disturbed.
-                .scaleEffect(arrived ? 1 : 0.6, anchor: .bottomTrailing)
-                .offset(y: arrived ? 0 : 48)
-                .opacity(arrived ? 1 : 0)
+                            in: .rect(cornerRadius: Layout.cardCornerRadius))
+                // Glass belongs to the sending handoff. The settled transcript remains content.
+                .glassEffect(sending ? .regular : .identity, in: .rect(cornerRadius: Layout.cardCornerRadius))
+                .modifier(SentMessagePosition(id: message.id, arrived: arrived || reduceMotion || reducesEffects,
+                                              namespace: sendNamespace, active: sending))
+                .opacity(arrived || reduceMotion || reducesEffects ? 1 : 0)
         }
-        .onAppear {
-            guard !arrived else { return }
-            if reduceMotion { arrived = true } else {
-                withAnimation(.spring(duration: 0.45, bounce: 0.3)) { arrived = true }
+        .task(id: justSent) {
+            guard justSent else { arrived = true; sending = false; return }
+            guard claimSendAnimation(), !reduceMotion, !reducesEffects else {
+                arrived = true
+                return
             }
+            sending = true
+            arrived = false
+            defer { arrived = true; sending = false }
+            // Give the native source-position match an initial render before moving to this row.
+            try? await Task.sleep(for: .milliseconds(16))
+            guard !Task.isCancelled else { arrived = true; sending = false; return }
+            withAnimation(.snappy(duration: 0.26, extraBounce: 0)) { arrived = true }
+            try? await Task.sleep(for: .milliseconds(280))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.12)) { sending = false }
+        }
+        .onDisappear {
+            arrived = true
+            sending = false
         }
     }
 
@@ -341,6 +360,29 @@ struct UserMessageView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(message.synthetic == true ? Self.originLabel(message.origin) : "You")
     }
+}
+
+/// The composer supplies the source position through the thread's shared namespace. Position
+/// matching moves only the drawing, keeping the row's layout and native scroll anchoring stable.
+private struct SentMessagePosition: ViewModifier {
+    let id: String
+    let arrived: Bool
+    let namespace: Namespace.ID?
+    let active: Bool
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if active, let namespace {
+            content.matchedGeometryEffect(id: arrived ? "message.\(id)" : "composer.input", in: namespace,
+                                          properties: .position, anchor: .bottomTrailing, isSource: false)
+        } else {
+            content
+        }
+    }
+}
+
+extension EnvironmentValues {
+    @Entry var messageSendNamespace: Namespace.ID? = nil
+    @Entry var messageSendOwner: UUID? = nil
 }
 
 /// Opens the session a message came from. Dimmed, and saying why, when it isn't one of this host's
@@ -472,6 +514,55 @@ struct NoticeView: View {
             .frame(maxWidth: 920)
     }
     .frame(width: 640, height: 200)
+}
+
+#Preview("Message controls") {
+    ScrollView {
+        VStack(spacing: 24) {
+            ItemView(item: .sampleUserMessage("Keep the ordinary text field, with Send beside it.", secondsAgo: 30),
+                     thread: .sampleIdleChat())
+            ItemView(item: .agentMessage(.init(id: "reply-controls", createdAt: 0,
+                                              text: "The controls now live below each message. **Copy** is one click; Fork and Restore are in **More**.")),
+                     thread: .sampleIdleChat())
+        }
+        .padding(28)
+    }
+    .frame(width: 640, height: 340)
+}
+
+#Preview("Sending handoff") {
+    MessageSendPreview()
+        .frame(width: 640, height: 360)
+}
+
+private struct MessageSendPreview: View {
+    @Namespace private var namespace
+    @State private var sends = 0
+    @State private var draft = "Make the interface feel at home on macOS."
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ScrollView {
+                if sends > 0 {
+                    UserMessageView(message: .init(id: "preview-send", createdAt: 0,
+                                                   content: [.text(.init(text: draft))]), justSent: true)
+                        .id(sends)
+                        .padding(24)
+                }
+            }
+            HStack(alignment: .bottom) {
+                TextField("Message", text: $draft, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .matchedGeometryEffect(id: "composer.input", in: namespace,
+                                           properties: .position, anchor: .bottomTrailing)
+                Button("Send", systemImage: "arrow.up") { sends += 1 }
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.large)
+            }
+            .padding(24)
+        }
+        .environment(\.messageSendNamespace, namespace)
+    }
 }
 
 #Preview("User message (synthetic)") {

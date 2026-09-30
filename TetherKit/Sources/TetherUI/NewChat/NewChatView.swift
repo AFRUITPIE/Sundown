@@ -9,6 +9,7 @@ struct NewChatView: View {
     @State private var choosingFolder = false
     /// What git says about the folder; nil until the host answers, or when it can't.
     @State private var git: FolderGit?
+    @Environment(\.messageSendOwner) private var sendOwner
     @Environment(\.appearsActive) private var appearsActive
     /// False when a preview seeded `git`: the preview host never answers.
     private let readsGit: Bool
@@ -209,7 +210,7 @@ struct NewChatView: View {
     }
 
     private func start(_ connection: HostConnection, _ input: [UserInput]) async {
-        await window.startDraftChat(input)
+        await window.startDraftChat(input, animationOwner: sendOwner)
     }
 }
 

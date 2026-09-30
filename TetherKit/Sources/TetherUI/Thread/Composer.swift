@@ -5,7 +5,7 @@ import TetherProtocol
 import UniformTypeIdentifiers
 
 /// Prompt field: native multi-line TextField (Return or ⌘Return sends, per Settings) with native
-/// input suggestions for `/` commands and `@` file mentions, image attachments, and send-while-running.
+/// completions above the field for `/` commands and `@` file mentions, image attachments, and send-while-running.
 ///
 /// The only thread properties it reads are `promptSuggestion` and `isRunning`, both of which change
 /// at turn boundaries rather than per streamed delta, so a running turn doesn't re-render the field.
@@ -31,6 +31,9 @@ struct Composer: View {
     @Environment(\.composerDrafts) private var drafts
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #if DEBUG
+    @Environment(\.composerPreviewCommands) private var previewCommands
+    #endif
     @State private var text = ""
     @State private var images: [Attachment] = []
     @State private var commands: [SlashCommand] = []
@@ -41,21 +44,17 @@ struct Composer: View {
     @State private var commandsWanted = false
     @State private var fileMatches: [String] = []
     @State private var suggestions: [Suggestion] = []
+    @State private var selectedSuggestion = 0
     @State private var choosingFiles = false
-    /// Counts sends, for Send's spring.
-    @State private var sends = 0
     /// The last text put here from outside the field (`ComposerDrafts.delivery`), so each is applied once.
     @State private var appliedDelivery: UUID?
     /// The text Esc closed the suggestion list on: it stays closed until the text changes.
     @State private var suggestionsClosedFor: String?
     @FocusState private var focused: Bool
-    @Namespace private var glass
     /// Something is being dragged over the field.
     @State private var dropTargeted = false
     /// Files being read and images prepared, off the main actor: the message waits for them.
     @State private var attaching = 0
-
-    private enum GlassID: Hashable { case field }
 
     /// Something going with the message besides its text. Made off the main actor, ready to send.
     struct Attachment: Identifiable, Sendable {
@@ -111,7 +110,7 @@ struct Composer: View {
             return commands
                 .filter { $0.terminalOnly != true && (q.isEmpty || $0.name.localizedCaseInsensitiveContains(q)) }
                 .prefix(12)
-                .map { Suggestion(id: "/" + $0.name, title: "/" + $0.name, detail: $0.description, symbol: "command", completion: "/\($0.name) ") }
+                .map { Suggestion(id: "/" + $0.name, title: "/" + $0.name, detail: $0.description, symbol: "terminal", completion: "/\($0.name) ") }
         }
         if let last = text.split(separator: " ", omittingEmptySubsequences: false).last, last.hasPrefix("@") {
             let prefix = text.dropLast(last.count)
@@ -149,10 +148,11 @@ struct Composer: View {
         VStack(alignment: .leading, spacing: 8) {
             if status == nil, let s = thread?.promptSuggestion, text.isEmpty {
                 Button { text = s } label: {
-                    Label(s, systemImage: "sparkles").lineLimit(1)
+                    Label(s, systemImage: "sparkles").lineLimit(2)
                 }
                 .buttonStyle(.glass)
-                .controlSize(.small)
+                .buttonBorderShape(.capsule)
+                .controlSize(.regular)
                 .scaledFont(.callout)
                 .help("Use Suggestion")
                 .glassEffectTransition(.materialize)
@@ -160,37 +160,38 @@ struct Composer: View {
             }
             if let status {
                 ConnectionStatusCard(status: status, connection: connection)
-                    .glassEffectID(GlassID.field, in: glass)
             } else {
+                if focused, !suggestions.isEmpty { completionChoices }
                 field
             }
         }
         .animation(.snappy, value: thread?.promptSuggestion)
-        // The status card and the field morph into each other as the host connects and drops.
         .animation(reduceMotion ? nil : .snappy, value: status == nil)
     }
 
-    /// Laid out like Messages: a round + outside the field, and the field a capsule that grows with
-    /// its text, with a round Send — or Stop — at its trailing end.
+    /// Standard editing chrome, with a separate, clearly labeled primary action. Let the field
+    /// and controls choose their intrinsic size instead of aligning an inset circle to text.
     private var field: some View {
         // Under a prompt card the composer is still there and still typable, just clearly not the
         // thing being asked of you: its contents dim, under the glass rather than over it.
         let dim = awaitingAnswer ? 0.7 : 1
-        return HStack(alignment: .bottom, spacing: 10) {
-            addButton(dim: dim)
-            oneRowField
-                .opacity(dim)
-                // A capsule at one line; the same corner radius as the text grows makes it a rounded
-                // rectangle, the way Messages' field grows.
-                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
-                // Says a drop here will be taken.
-                .overlay {
-                    if dropTargeted {
-                        RoundedRectangle(cornerRadius: Layout.cardCornerRadius).strokeBorder(.tint, lineWidth: 2)
+        return VStack(alignment: .leading, spacing: 8) {
+            if !images.isEmpty {
+                AttachmentStrip(attachments: images) { id in images.removeAll { $0.id == id } }
+                    .equatable()
+            }
+            HStack(alignment: .bottom, spacing: 10) {
+                addButton(dim: dim)
+                textField
+                    .opacity(dim)
+                    .overlay {
+                        if dropTargeted {
+                            RoundedRectangle(cornerRadius: 8).strokeBorder(.tint, lineWidth: 2)
+                        }
                     }
-                }
-                // The status card morphs into the field when the host connects, and back.
-                .glassEffectID(GlassID.field, in: glass)
+                sendOrStop
+            }
+            .controlSize(.large)
         }
         // Files and images, dropped on the field, pasted, or taken with Continuity Camera.
         .dropDestination(for: Incoming.self) { items, _ in take(items) }
@@ -227,6 +228,7 @@ struct Composer: View {
             #if DEBUG
             // Previews only: the field's text is otherwise private state.
             if text.isEmpty, !composerDraft.isEmpty { text = composerDraft }
+            if !previewCommands.isEmpty { focused = true }
             #endif
         }
         .onChange(of: text) {
@@ -273,33 +275,23 @@ struct Composer: View {
         }
     }
 
-    /// The text, and Send beside its last line: on the text's baseline, which Send's symbol shares,
-    /// so the text sits level with Send at any size rather than at the bottom of the row.
-    private var oneRowField: some View {
-        HStack(alignment: .lastTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 8) {
-                if !images.isEmpty {
-                    AttachmentStrip(attachments: images) { id in images.removeAll { $0.id == id } }
-                        .equatable()
-                }
-                textField
-            }
-            sendOrStop
-        }
-        .padding(.leading, 16)
-        // Room around Send on every side, so it sits inside the field's end rather than against it.
-        .padding(.trailing, 6)
-        .padding(.vertical, 6)
-    }
-
     private var textField: some View {
         TextField(thread?.isRunning == true ? "Queue a message…" : placeholder, text: $text, axis: .vertical)
             .accessibilityIdentifier("composer.input")
-            .textFieldStyle(.plain)
+            .textFieldStyle(.roundedBorder)
             .lineLimit(1...12)
             .focused($focused)
-            .onSubmit { if appearance.sendShortcut == .returnKey { send() } }
+            .modifier(MessageSendSource())
+            .onSubmit {
+                if !suggestions.isEmpty { completeSuggestion() }
+                else if appearance.sendShortcut == .returnKey { send() }
+            }
             .onKeyPress(.return, phases: .down, action: returnPressed)
+            .onKeyPress(.tab, phases: .down) { press in
+                guard press.modifiers.isEmpty, !suggestions.isEmpty else { return .ignored }
+                completeSuggestion()
+                return .handled
+            }
             // Esc closes the suggestion list if it's open, and otherwise stops Claude, as in the
             // CLI; with nothing running it's the field's own.
             .onKeyPress(.escape) {
@@ -316,57 +308,129 @@ struct Composer: View {
                     return .ignored
                 }
             }
-            .textInputSuggestions(suggestions) { s in
-                Label {
-                    Text(s.title)
-                    if let d = s.detail { Text(d) }
-                } icon: {
-                    Image(systemName: s.symbol)
-                }
-                .textInputCompletion(s.completion)
-            }
     }
 
-    /// Send, a round button inside the field's trailing end; Stop in its place while Claude works
-    /// and the field is empty.
-    /// Send springs up as it sends; Send and Stop trade places with a quick scale.
+    /// The newly echoed prompt travels from the editing field using native shared geometry.
+    /// Its content settles into an ordinary transcript bubble after this brief handoff.
+    private struct MessageSendSource: ViewModifier {
+        @Environment(\.messageSendNamespace) private var namespace
+
+        @ViewBuilder func body(content: Content) -> some View {
+            if let namespace {
+                content.matchedGeometryEffect(id: "composer.input", in: namespace,
+                                              properties: .position, anchor: .bottomTrailing, isSource: true)
+            } else {
+                content
+            }
+        }
+    }
+
+    /// Completion choices stay inside the window above the composer. Unlike an external popover,
+    /// this keeps the editing focus and avoids opening a list into the Dock at the window's bottom.
+    private var completionChoices: some View {
+        let first = (selectedSuggestion / 4) * 4
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(text.hasPrefix("/") ? "Commands" : "Files").font(.caption.weight(.semibold))
+                Spacer()
+                Text("↑↓ to choose · Tab to insert · Esc to close")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 4)
+            ForEach(Array(suggestions.enumerated()).dropFirst(first).prefix(4), id: \.element.id) { index, suggestion in
+                Button { completeSuggestion(at: index) } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: suggestion.symbol).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(suggestion.title).font(.callout.weight(.medium)).lineLimit(1)
+                            if let detail = suggestion.detail {
+                                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(index == selectedSuggestion ? AnyShapeStyle(.fill.secondary) : AnyShapeStyle(Color.clear),
+                                in: .rect(cornerRadius: 8))
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("composer.completion.\(suggestion.id)")
+                .accessibilityAddTraits(index == selectedSuggestion ? .isSelected : [])
+            }
+            if suggestions.count > 4 {
+                HStack {
+                    Text("\(first + 1)–\(min(first + 4, suggestions.count)) of \(suggestions.count)")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Previous", systemImage: "chevron.left") { changeSuggestionPage(by: -1) }
+                        .disabled(first == 0)
+                        .accessibilityIdentifier("composer.completions.previous")
+                    Button("Next", systemImage: "chevron.right") { changeSuggestionPage(by: 1) }
+                        .disabled(first + 4 >= suggestions.count)
+                        .accessibilityIdentifier("composer.completions.next")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.regular)
+                .padding(.horizontal, 8)
+            }
+        }
+        .padding(8)
+        .background(.regularMaterial, in: .rect(cornerRadius: Layout.cardCornerRadius))
+        // The native multiline editor handles arrows before onKeyPress. These SwiftUI commands
+        // exist only while its completion list is visible; ordinary editing keeps its arrow keys.
+        .background {
+            VStack {
+                Button("Previous Completion") { _ = moveSuggestion(by: -1) }
+                    .keyboardShortcut(.upArrow, modifiers: [])
+                Button("Next Completion") { _ = moveSuggestion(by: 1) }
+                    .keyboardShortcut(.downArrow, modifiers: [])
+            }
+            .hidden()
+            .accessibilityHidden(true)
+        }
+    }
+
+    private func moveSuggestion(by direction: Int) -> KeyPress.Result {
+        guard !suggestions.isEmpty else { return .ignored }
+        selectedSuggestion = (selectedSuggestion + direction + suggestions.count) % suggestions.count
+        return .handled
+    }
+
+    private func changeSuggestionPage(by direction: Int) {
+        let first = (selectedSuggestion / 4) * 4
+        selectedSuggestion = min(max(first + direction * 4, 0), suggestions.count - 1)
+        focused = true
+    }
+
+    private func completeSuggestion(at index: Int? = nil) {
+        guard !suggestions.isEmpty else { return }
+        text = suggestions[index ?? selectedSuggestion].completion
+        focused = true
+    }
+
+    /// A full native push button, outside the editing field, with its action visible in the label.
     private var sendOrStop: some View {
         ZStack {
             if showStop {
                 Button("Stop", systemImage: "stop.fill") { onStop?() }
-                    .labelStyle(.iconOnly)
-                    .modifier(RoundAction())
-                    .tint(.red)
+                    .buttonStyle(.glass)
                     .help("Stop")
-                    .transition(.moving(.scale(scale: 0.5).combined(with: .opacity), reduceMotion: reduceMotion))
             } else {
                 Button("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up", action: send)
                     .accessibilityIdentifier("composer.send")
-                    .labelStyle(.iconOnly)
-                    .symbolEffect(.bounce.up, options: reduceMotion ? .nonRepeating.speed(0) : .default, value: sends)
                     // Send's arrow turns into Add to Turn's and back as a turn starts and ends.
                     .contentTransition(.symbolEffect(.replace))
-                    .animation(.default, value: thread?.isRunning == true)
-                    .modifier(RoundAction())
+                    .buttonStyle(.glassProminent)
                     // Not while an attachment is still being read.
                     .disabled(!canSend || awaitingAnswer || attaching > 0)
                     .help(sendHelp)
-                    .transition(.moving(.scale(scale: 0.5).combined(with: .opacity), reduceMotion: reduceMotion))
             }
         }
-        .animation(.snappy(duration: 0.2), value: showStop)
-    }
-
-    /// A prominent round button, as Messages draws Send.
-    /// Send or Stop inside the glass field: a standard prominent circle, not glass on glass.
-    private struct RoundAction: ViewModifier {
-        func body(content: Content) -> some View {
-            content
-                .fontWeight(.bold)
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.circle)
-                .controlSize(.regular)
-        }
+        .buttonBorderShape(.capsule)
+        .labelStyle(.titleAndIcon)
     }
 
     private var sendHelp: String {
@@ -377,6 +441,14 @@ struct Composer: View {
     /// The commands for this folder or chat, from what's been fetched, or asked for if there's
     /// nothing (or the list went stale when a turn ended).
     private func requestCommands() {
+        #if DEBUG
+        // A preview catalog is inert: rendering completion choices never starts a server query.
+        if !previewCommands.isEmpty {
+            commands = previewCommands
+            commandsLoaded = true
+            return
+        }
+        #endif
         if let cached = connection.cachedCommands(cwd: cwd, thread: thread) {
             if !commandsLoaded || cached != commands {
                 commands = cached
@@ -390,6 +462,7 @@ struct Composer: View {
     private func refreshSuggestions() {
         suggestions = text == suggestionsClosedFor ? []
             : Self.matchingSuggestions(for: text, commands: commands, fileMatches: fileMatches)
+        selectedSuggestion = 0
     }
 
     /// The + menu, as the desktop app has it: attach, mention a file, or browse the commands
@@ -400,7 +473,7 @@ struct Composer: View {
             Button("Mention a File", systemImage: "at") { insert("@") }
                 .disabled(cwd == nil)
             let offered = commands.filter { $0.terminalOnly != true }
-            Menu("Commands", systemImage: "command") {
+            Menu("Commands", systemImage: "terminal") {
                 ForEach(offered, id: \.name) { command in
                     Button { insert("/\(command.name) ") } label: {
                         Text("/" + command.name)
@@ -415,19 +488,14 @@ struct Composer: View {
             }
             .disabled(commandsLoaded && offered.isEmpty)
         } label: {
-            // Glass on the label itself: on macOS 27 the glass button style draws a flat circle on
-            // a `Menu`, not glass. As tall as the field beside it at one line.
             Label("Add", systemImage: "plus")
                 .labelStyle(.iconOnly)
-                .font(.system(size: 15, weight: .medium))
                 .opacity(dim)
-                .frame(width: 34, height: 34)
-                .contentShape(.circle)
-                .glassEffect(.regular.interactive(), in: .circle)
         }
         .menuIndicator(.hidden)
         .menuStyle(.button)
-        .buttonStyle(.plain)
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
         // About to open the menu, whose Commands are asked for only now.
         .onHover { if $0 { requestCommands() } }
         .help("Add")
@@ -461,7 +529,7 @@ struct Composer: View {
             return .handled
         case .commandReturn:
             if press.modifiers.contains(.command) {
-                send()
+                if !suggestions.isEmpty { completeSuggestion() } else { send() }
             } else if !press.modifiers.contains(.option) {
                 newLine()
             } else {
@@ -479,7 +547,6 @@ struct Composer: View {
         for attachment in images { input.append(attachment.input) }
         text = ""
         images = []
-        sends += 1
         Task { await submit(input) }
     }
 
@@ -695,6 +762,10 @@ private struct AttachmentStrip: View, Equatable {
 }
 
 #if DEBUG
+private extension EnvironmentValues {
+    @Entry var composerPreviewCommands: [SlashCommand] = []
+}
+
 #Preview("Idle") {
     let connection = HostConnection.sample()
     let thread = ThreadModel.sampleIdleChat()
@@ -736,7 +807,7 @@ private struct AttachmentStrip: View, Equatable {
     .frame(width: 560)
 }
 
-/// Send stays by the last line as the text grows, and the text by Send at any size.
+/// The native multiline field expands while Send remains a separate, usable control.
 #Preview("Several lines, and bigger text") {
     let connection = HostConnection.sample()
     let thread = ThreadModel.sampleIdleChat()
@@ -753,6 +824,39 @@ private struct AttachmentStrip: View, Equatable {
     }
     .padding(20)
     .frame(width: 560)
+}
+
+#Preview("Native composer, dark appearance") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.sampleIdleChat()
+    GlassEffectContainer {
+        Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in })
+    }
+    .environment(\.composerDraft, "Review the implementation and suggest the next improvement.")
+    .padding(20)
+    .frame(width: 680)
+    .preferredColorScheme(.dark)
+}
+
+#Preview("Commands above composer, with mouse paging") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.sampleIdleChat()
+    GlassEffectContainer {
+        Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in })
+    }
+    .environment(\.composerDraft, "/")
+    .environment(\.composerPreviewCommands, [
+        .init(name: "compact", description: "Compact the conversation"),
+        .init(name: "context", description: "Show context usage"),
+        .init(name: "cost", description: "Show token usage and cost"),
+        .init(name: "diff", description: "Review working tree changes"),
+        .init(name: "help", description: "Show available commands"),
+        .init(name: "review", description: "Review the implementation"),
+        .init(name: "status", description: "Show session status"),
+        .init(name: "summary", description: "Summarize this conversation"),
+    ])
+    .padding(20)
+    .frame(width: 680)
 }
 
 #endif

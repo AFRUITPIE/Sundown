@@ -594,7 +594,8 @@ public final class HostConnection: Identifiable {
         }
     }
 
-    public func startThread(cwd: String, input: [UserInput], options: NewThreadOptions) async throws -> ThreadModel {
+    public func startThread(cwd: String, input: [UserInput], options: NewThreadOptions,
+                            animationOwner: UUID? = nil) async throws -> ThreadModel {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         let r = try await client.call(Methods.ThreadStart.self, .init(
             cwd: cwd,
@@ -609,6 +610,7 @@ public final class HostConnection: Identifiable {
         let model = thread(r.thread.threadId)
         model.setInfo(r.thread)
         model.loadHistory(items: model.items, turns: model.turns, seq: nil)
+        model.prepareInitialSend(input, owner: animationOwner)
         subscribed.insert(model.id)
         // In a worktree the chat's folder is the worktree's, not the one chosen.
         attach(model, toProject: r.thread.cwd)
@@ -651,14 +653,17 @@ public final class HostConnection: Identifiable {
         return RewindResult(r.result)
     }
 
-    public func send(_ model: ThreadModel, input: [UserInput]) async {
+    public func send(_ model: ThreadModel, input: [UserInput], animationOwner: UUID? = nil) async {
         guard let client else { model.setError("Not connected"); return }
-        model.sentAt = Date()
+        var sendToken: UUID?
         do {
             try await makeLive(model, client)
-            _ = try await client.call(Methods.TurnStart.self, .init(threadId: model.id, input: input))
+            sendToken = model.beginLocalSend(owner: animationOwner)
+            let result = try await client.call(Methods.TurnStart.self, .init(threadId: model.id, input: input))
+            model.confirmLocalSend(messageID: result.messageId, token: sendToken)
             model.setError(nil)
         } catch {
+            if let sendToken { model.cancelLocalSend(token: sendToken) }
             model.setError(error.localizedDescription)
         }
     }

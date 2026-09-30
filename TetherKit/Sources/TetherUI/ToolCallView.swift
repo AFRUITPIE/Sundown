@@ -10,6 +10,8 @@ struct ToolCallView: View {
     let call: Item.ToolCall
     let thread: ThreadModel
     @State private var expanded = false
+    /// A group-level action can open every call without repeated disclosure clicks.
+    var expandDetails = false
     @Environment(\.inspectSubagent) private var inspectSubagent
     @Environment(\.hostIsLocal) private var hostIsLocal
     @Environment(\.openFilesWith) private var editor
@@ -57,16 +59,6 @@ struct ToolCallView: View {
                 .accessibilityIdentifier("transcript.toolCall")
                 reasonLine
             }
-        } else if call.kind == .todoWrite {
-            // A checklist is always open.
-            VStack(alignment: .leading, spacing: 6) {
-                header
-                    .accessibilityElement(children: .combine)
-                    .accessibilityValue(statusDescription)
-                    .accessibilityIdentifier("transcript.toolCall")
-                reasonLine
-                detailBox
-            }
         } else {
             DisclosureGroup(isExpanded: $expanded) {
                 detailBox
@@ -75,6 +67,7 @@ struct ToolCallView: View {
             }
             .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.toolCall", value: statusDescription,
                                                             note: ToolCallText.reason(call)))
+            .onChange(of: expandDetails, initial: true) { _, open in expanded = open }
         }
     }
 
@@ -91,17 +84,16 @@ struct ToolCallView: View {
     private var detailBox: some View {
         detail
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(.fill.quinary, in: .rect(cornerRadius: 8))
+            .padding(.vertical, 8)
     }
 
     /// Words first, and the status at the trailing end (the chevron is the disclosure's). A finished
     /// call has no status glyph. Its menu and full command or path are on the words.
     private var header: some View {
         HStack(spacing: 6) {
-            Text(title).foregroundStyle(.secondary)
+            Text(title).foregroundStyle(.secondary).fontWeight(.medium)
             if !subtitle.isEmpty {
-                Text(subtitle).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                Text(subtitle).foregroundStyle(.primary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 8)
             if let s = call.elapsedSeconds, call.status == .running {
@@ -154,10 +146,11 @@ struct ToolCallView: View {
         switch call.kind {
         case .bash:
             VStack(alignment: .leading, spacing: 6) {
-                CodeBlock(code: "$ " + (input.string("command") ?? ""), language: "bash")
+                CodeBlock(code: "$ " + (input.string("command") ?? ""), language: "Command")
                 output
             }
         case .fileEdit:
+            Text("Changes").scaledFont(.caption, weight: .semibold).foregroundStyle(.secondary)
             if let old = input.string("old_string"), let new = input.string("new_string") {
                 DiffView(old: old, new: new)
             } else if let edits = input["edits"]?.arrayValue {
@@ -177,7 +170,7 @@ struct ToolCallView: View {
         default:
             VStack(alignment: .leading, spacing: 6) {
                 if input.objectValue?.isEmpty == false {
-                    CodeBlock(code: PrettyInput.text(for: call.id, input), language: "input", lineLimit: 12)
+                    CodeBlock(code: PrettyInput.text(for: call.id, input), language: "Input", lineLimit: 12)
                 }
                 output
             }
@@ -186,7 +179,7 @@ struct ToolCallView: View {
 
     @ViewBuilder private var output: some View {
         if let text = call.outputText, !text.isEmpty {
-            CodeBlock(code: text, language: call.isError == true ? "error" : "output", lineLimit: 14)
+            CodeBlock(code: text, language: call.isError == true ? "Error Output" : "Output", lineLimit: 14)
         }
     }
 }
@@ -245,17 +238,19 @@ struct TranscriptDisclosureStyle: DisclosureGroupStyle {
     var value: String?
     /// A line under the row whether it's open or not: why a call failed.
     var note: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: spacing) {
             VStack(alignment: .leading, spacing: 2) {
                 Button {
-                    withAnimation(.snappy(duration: 0.15)) { configuration.isExpanded.toggle() }
+                    withAnimation(reduceMotion ? nil : .snappy(duration: 0.15)) { configuration.isExpanded.toggle() }
                 } label: {
                     HStack(spacing: 8) {
-                        configuration.label
                         DisclosureIndicator(expanded: configuration.isExpanded)
+                        configuration.label
                     }
+                    .padding(.vertical, 4)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -320,6 +315,7 @@ struct ToolCallGroupView: View {
     /// The transcript row's id, so Find in Chat opens the group when it's the current match.
     var rowID: String?
     @State private var expanded: Bool
+    @State private var expandAll = false
 
     private var failures: Int { calls.count { $0.status == .failed } }
 
@@ -332,12 +328,27 @@ struct ToolCallGroupView: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(calls, id: \.id) { ToolCallView(call: $0, thread: thread) }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("\(calls.count) Tool Calls").scaledFont(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(expandAll ? "Collapse All" : "Expand All") { expandAll.toggle() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                        .accessibilityIdentifier("transcript.expandTools")
+                }
+                ForEach(calls, id: \.id) { call in
+                    VStack(alignment: .leading, spacing: 8) {
+                        ToolCallView(call: call, thread: thread, expandDetails: expandAll)
+                        if call.id != calls.last?.id { Divider() }
+                    }
+                }
             }
+            .padding(12)
+            .background(.fill.quinary, in: .rect(cornerRadius: 10))
         } label: {
             HStack(spacing: 8) {
-                Text(ToolCallText.summary(calls)).foregroundStyle(.secondary).lineLimit(1)
+                Text(ToolCallText.summary(calls)).foregroundStyle(.secondary).fontWeight(.medium).lineLimit(1)
                 Spacer(minLength: 8)
                 FailureCount(failures)
             }
@@ -607,7 +618,7 @@ enum PrettyInput {
     ToolCallView(call: .sample(name: "Bash", kind: .bash,
                                 input: ["command": "swift test --filter ThreadModelTests", "description": "Run ThreadModel tests"],
                                 status: .completed, outputText: "Test Suite 'ThreadModelTests' passed.\nExecuted 6 tests, with 0 failures.", secondsAgo: 30),
-                 thread: .sampleIdleChat())
+                 thread: .sampleIdleChat(), expandDetails: true)
         .padding(20)
         .frame(width: 560)
 }

@@ -50,7 +50,7 @@ struct ChatStatusGlyph: View {
                 // Swaps as the chat starts waiting on you, and comes and goes with the turn.
                 .contentTransition(.symbolEffect(.replace))
                 .transition(.symbolEffect)
-                .symbolEffect(.rotate, isActive: thread.status == .running && !reduceMotion && !reducesEffects)
+                .symbolEffect(.rotate, options: .speed(1.8), isActive: thread.status == .running && !reduceMotion && !reducesEffects)
                 // Said, not only drawn: the glyph and its color are all a row has for it.
                 .accessibilityLabel(needsYou ? "Needs You" : "Running")
         }

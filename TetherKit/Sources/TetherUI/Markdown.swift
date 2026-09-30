@@ -559,10 +559,12 @@ struct CodeBlock: View {
     var lineLimit: Int? = nil
     @State private var expanded = false
     @Environment(\.appearance) private var appearance
+    @Environment(\.colorSchemeContrast) private var contrast
 
     private func styled(_ text: some View) -> some View {
         text
             .scaledFont(.callout, design: .monospaced)
+            .foregroundStyle(.primary)
             .lineLimit(expanded ? nil : lineLimit)
             .textSelection(.enabled)
             // Read as code, punctuation and all.
@@ -595,15 +597,18 @@ struct CodeBlock: View {
         let codeText = Text(verbatim: !expanded ? measure.collapsedEnd.map { String(code[..<$0]) } ?? code : code)
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(language.isEmpty ? "code" : language)
+                Text(language.isEmpty ? "Code" : language)
+                    .fontWeight(.medium)
                 Spacer()
                 if isTruncated {
                     Button(expanded ? "Show Less" : "Show All \(measure.lines) Lines") { expanded.toggle() }
-                        .buttonStyle(.link)
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("code.expand")
                 }
                 CopyButton { Clipboard.copy(code) }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
+                    .labelStyle(.titleAndIcon)
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("code.copy")
             }
             .scaledFont(.caption, design: .default)
             .foregroundStyle(.secondary)
@@ -619,8 +624,14 @@ struct CodeBlock: View {
                 .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             }
         }
-        .padding(10)
-        .background(.fill.quinary, in: .rect(cornerRadius: 8))
+        .controlSize(.regular)
+        .padding(12)
+        .background(.fill.tertiary, in: .rect(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(.primary.opacity(contrast == .increased ? 0.4 : 0.12))
+                .allowsHitTesting(false)
+        }
     }
 }
 

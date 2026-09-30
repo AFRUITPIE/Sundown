@@ -38,7 +38,7 @@ struct ComposerSuggestionsTests {
         #expect(all.map(\.title) == ["/compact", "/context", "/review"], "terminal-only commands can't be run from here")
         #expect(all.first?.completion == "/compact ")
         #expect(all.first?.detail == "Compact the conversation")
-        #expect(all.first?.symbol == "command")
+        #expect(all.first?.symbol == "terminal")
     }
 
     @Test func slashFiltersCaseInsensitively() {

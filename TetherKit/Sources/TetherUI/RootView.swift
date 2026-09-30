@@ -142,6 +142,8 @@ private struct InspectorColumn: ViewModifier {
 /// The selected chat, or the New Chat screen. One container, so the detail column is never torn down.
 struct DetailView: View {
     let window: WindowModel
+    @Namespace private var messageSendNamespace
+    @State private var messageSendOwner = UUID()
 
     var body: some View {
         // The column's root keeps one identity. When the root itself changed (the branch, or the
@@ -155,6 +157,8 @@ struct DetailView: View {
                 NewChatView(window: window)
             }
         }
+        .environment(\.messageSendNamespace, messageSendNamespace)
+        .environment(\.messageSendOwner, messageSendOwner)
     }
 }
 
