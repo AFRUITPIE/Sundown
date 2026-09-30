@@ -156,6 +156,10 @@ final class TetherAppUITests: XCTestCase {
         input.typeText("Follow up")
         app.buttons["composer.send"].click()
         XCTAssertTrue(app.staticTexts["Scripted response."].waitForExistence(timeout: 10))
+        // Sending must finish: the new message's actions become usable after the spring settles.
+        let copy = app.buttons["message.copy.fixture-sent-1"]
+        let landed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: copy)
+        XCTAssertEqual(XCTWaiter.wait(for: [landed], timeout: 5), .completed)
     }
 
     /// A wrapped prompt keeps its final text layout while its native glass surface travels.

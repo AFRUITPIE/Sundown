@@ -77,11 +77,17 @@ private struct MessageMenu: ViewModifier {
     let sentAt: Double
     let arrivalID: String?
     let animateArrival: Bool
-    @State private var actionsVisible = true
+    @State private var arrivalPrepared = false
     @Environment(\.forkChat) private var forkChat
     @Environment(\.restoreCode) private var restoreCode
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.reducesEffects) private var reducesEffects
+    @Environment(\.messageSendGeometry) private var sendGeometry
+
+    private var hidesActions: Bool {
+        !reduceMotion && !reducesEffects &&
+        (sendGeometry?.activeMessageID == id || (animateArrival && !arrivalPrepared))
+    }
 
     /// A prompt's bubble sits at the trailing edge; a reply at the leading one.
     private var trailing: Bool { !isMarkdown }
@@ -93,9 +99,10 @@ private struct MessageMenu: ViewModifier {
                 .contentShape(.rect)
                 .contextMenu { actions }
             bar
-                .opacity(actionsVisible ? 1 : 0)
-                .allowsHitTesting(actionsVisible)
-                .accessibilityHidden(!actionsVisible)
+                .opacity(hidesActions ? 0 : 1)
+                .allowsHitTesting(!hidesActions)
+                .accessibilityHidden(hidesActions)
+                .animation(.easeOut(duration: 0.12), value: hidesActions)
         }
             // A reply is one element, as a prompt's bubble is, so its actions are the reply's and not
             // each paragraph's; and says when it was sent, as the inline footer does visually.
@@ -109,13 +116,7 @@ private struct MessageMenu: ViewModifier {
                 if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
             }
             .task(id: arrivalID) {
-                guard animateArrival, !reduceMotion, !reducesEffects else { actionsVisible = true; return }
-                // Keep the final footer's space, revealing its actions only once the surface lands.
-                actionsVisible = false
-                defer { actionsVisible = true }
-                try? await Task.sleep(for: .milliseconds(350))
-                guard !Task.isCancelled else { return }
-                withAnimation(.easeOut(duration: 0.12)) { actionsVisible = true }
+                arrivalPrepared = true
             }
     }
 
@@ -271,6 +272,7 @@ struct UserMessageView: View {
     @State private var arrived: Bool
     @State private var sending = false
     @State private var prepared = false
+    @State private var launchFrame: CGRect?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.reducesEffects) private var reducesEffects
     @Environment(\.messageSendGeometry) private var sendGeometry
@@ -290,7 +292,7 @@ struct UserMessageView: View {
             Spacer(minLength: 60)
             surface
                 .modifier(SentMessagePosition(arrived: arrived || reduceMotion || reducesEffects,
-                                              origin: sending ? sendGeometry?.composerFrame : nil))
+                                              origin: sending ? launchFrame : nil))
                 .opacity(justSent && canAnimate && !prepared && !reduceMotion && !reducesEffects ? 0 : 1)
                 // The transient subtree settles before selection starts, so a mid-flight drag
                 // cannot begin a selection that the glass-to-fill handoff would discard.
@@ -304,6 +306,8 @@ struct UserMessageView: View {
                 return
             }
             sendGeometry?.activeMessageID = message.id
+            launchFrame = sendGeometry?.submittedFrame ?? sendGeometry?.composerFrame
+            sendGeometry?.submittedFrame = nil
             sending = true
             arrived = false
             prepared = true
@@ -315,10 +319,16 @@ struct UserMessageView: View {
             // Give the visual effect its initial render at the composer before lifting into the row.
             try? await Task.sleep(for: .milliseconds(16))
             guard !Task.isCancelled else { arrived = true; sending = false; return }
-            withAnimation(.smooth(duration: 0.32, extraBounce: 0.025)) { arrived = true }
-            try? await Task.sleep(for: .milliseconds(420))
+            // A damped spring gives the reference's acceleration, small overshoot and soft return.
+            // Completion follows the actual spring tail, rather than replacing glass on a timer.
+            await withCheckedContinuation { continuation in
+                withAnimation(.spring(response: 0.52, dampingFraction: 0.74), completionCriteria: .removed) {
+                    arrived = true
+                } completion: {
+                    continuation.resume()
+                }
+            }
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.12)) { sending = false }
         }
         .onDisappear {
             arrived = true
@@ -327,24 +337,23 @@ struct UserMessageView: View {
         }
     }
 
-    /// Only the active handoff needs a glass renderer. Settled history has ordinary fills.
-    @ViewBuilder private var surface: some View {
-        if sending {
-            GlassEffectContainer { bubble }
-        } else {
-            bubble
-        }
-    }
+    /// Only the active handoff's background needs a glass renderer. Its text stays outside the
+    /// capture so an independently morphing surface cannot composite over the message.
+    private var surface: some View { bubble }
 
     private var bubble: some View {
         parts(alignment: .trailing)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(sending ? AnyShapeStyle(Color.clear) :
-                        message.synthetic == true ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(bubbleBlue),
-                        in: .rect(cornerRadius: Layout.cardCornerRadius))
-            .glassEffect(sending ? .regular.tint(bubbleBlue) : .identity,
-                         in: .rect(cornerRadius: Layout.cardCornerRadius))
+            .scaleEffect(sending && !arrived ? 0.92 : 1, anchor: .bottomTrailing)
+            .background(alignment: .bottomTrailing) {
+                if sending {
+                    SendingMessageSurface(arrived: arrived, origin: launchFrame, blue: bubbleBlue)
+                } else {
+                    RoundedRectangle(cornerRadius: Layout.cardCornerRadius)
+                        .fill(message.synthetic == true ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(bubbleBlue))
+                }
+            }
     }
 
     /// System blue keeps the Messages-inspired identity across appearances. A modest dark mix
@@ -431,7 +440,6 @@ private struct SentMessagePosition: ViewModifier {
             content.visualEffect { effect, geometry in
                 let target = geometry.frame(in: .named(MessageSendGeometry.space))
                 return effect
-                    .scaleEffect(x: arrived ? 1 : 1.025, y: arrived ? 1 : 0.96, anchor: .bottomTrailing)
                     .offset(x: arrived ? 0 : origin.maxX - target.maxX,
                             y: arrived ? 0 : origin.maxY - target.maxY)
             }
@@ -441,12 +449,44 @@ private struct SentMessagePosition: ViewModifier {
     }
 }
 
+/// Only the background's inexpensive shape changes size. Its rounded corners stay circular,
+/// while the independently drawn text keeps its final measurement and line breaks.
+private struct SendingMessageSurface: View {
+    let arrived: Bool
+    let origin: CGRect?
+    let blue: Color
+    @State private var size: CGSize = .zero
+
+    var body: some View {
+        Color.clear
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+            .overlay(alignment: .bottomTrailing) {
+                GlassEffectContainer {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: Layout.cardCornerRadius)
+                            .fill(blue).opacity(arrived ? 1 : 0)
+                        if !arrived {
+                            Color.clear
+                                .glassEffect(.regular.tint(blue), in: .rect(cornerRadius: Layout.cardCornerRadius))
+                                .glassEffectTransition(.materialize)
+                        }
+                    }
+                    .animation(.easeOut(duration: 0.22).delay(0.06), value: arrived)
+                    .frame(width: arrived ? size.width : origin?.width ?? size.width,
+                           height: arrived ? size.height : origin?.height ?? size.height)
+                    .animation(.spring(response: 0.26, dampingFraction: 0.8), value: arrived)
+                }
+            }
+    }
+}
+
 /// One stable coordinate space per detail column, preserved when New Chat becomes a chat.
 /// Only a sending bubble reads the frame. No scroll-frame state reaches the transcript's rows.
 @MainActor @Observable
 final class MessageSendGeometry {
     nonisolated static let space = "message.send"
     var composerFrame: CGRect?
+    @ObservationIgnored var submittedFrame: CGRect?
     var activeMessageID: String?
 }
 

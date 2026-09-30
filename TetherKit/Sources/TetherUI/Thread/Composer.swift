@@ -31,6 +31,7 @@ struct Composer: View {
     @Environment(\.composerDrafts) private var drafts
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.messageSendGeometry) private var sendGeometry
     #if DEBUG
     @Environment(\.composerPreviewCommands) private var previewCommands
     #endif
@@ -169,8 +170,7 @@ struct Composer: View {
         .animation(reduceMotion ? nil : .snappy, value: status == nil)
     }
 
-    /// A native editor on one responsive glass surface, beside a clearly labeled primary action.
-    /// The field and buttons keep their intrinsic sizes as the draft grows.
+    /// A native editor between two circles, sized from the editor's one-line intrinsic height.
     private var field: some View {
         // Under a prompt card the composer is still there and still typable, just clearly not the
         // thing being asked of you: its contents dim, under the glass rather than over it.
@@ -180,7 +180,7 @@ struct Composer: View {
                 AttachmentStrip(attachments: images) { id in images.removeAll { $0.id == id } }
                     .equatable()
             }
-            HStack(alignment: .bottom, spacing: 10) {
+            ComposerControlsLayout(spacing: 10) {
                 addButton(dim: dim)
                 textField(dim: dim)
                     .overlay {
@@ -189,6 +189,8 @@ struct Composer: View {
                         }
                     }
                 sendOrStop
+                // The same font and vertical padding as the editor, without its draft's wrapping.
+                Text(" ").padding(.vertical, 12).hidden().accessibilityHidden(true)
             }
             .controlSize(.extraLarge)
         }
@@ -413,15 +415,21 @@ struct Composer: View {
         focused = true
     }
 
-    /// A full native push button, outside the editing field, with its action visible in the label.
+    /// A native circular action, with its full name available to accessibility and in its help.
     private var sendOrStop: some View {
         ZStack {
             if showStop {
-                Button("Stop", systemImage: "stop.fill") { onStop?() }
+                Button { onStop?() } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
                     .buttonStyle(.glass)
                     .help("Stop")
             } else {
-                Button("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up", action: send)
+                Button(action: send) {
+                    Label("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
                     .accessibilityIdentifier("composer.send")
                     // Send's arrow turns into Add to Turn's and back as a turn starts and ends.
                     .contentTransition(.symbolEffect(.replace))
@@ -431,8 +439,8 @@ struct Composer: View {
                     .help(sendHelp)
             }
         }
-        .buttonBorderShape(.capsule)
-        .labelStyle(.titleAndIcon)
+        .buttonBorderShape(.circle)
+        .labelStyle(.iconOnly)
     }
 
     private var sendHelp: String {
@@ -493,11 +501,16 @@ struct Composer: View {
             Label("Add", systemImage: "plus")
                 .labelStyle(.iconOnly)
                 .opacity(dim)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .menuIndicator(.hidden)
         .menuStyle(.button)
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
+        .buttonStyle(.plain)
+        // Menu's system button style holds its own intrinsic diameter. The menu remains native;
+        // its outer interactive glass takes the circle proposed by the editor's layout instead.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(.circle)
+        .glassEffect(.regular.interactive(), in: .circle)
         // About to open the menu, whose Commands are asked for only now.
         .onHover { if $0 { requestCommands() } }
         .help("Add")
@@ -547,6 +560,8 @@ struct Composer: View {
         var input: [UserInput] = []
         if !trimmed.isEmpty { input.append(.text(.init(text: trimmed))) }
         for attachment in images { input.append(attachment.input) }
+        // Preserve the filled editor's shape before clearing a multiline draft collapses it.
+        sendGeometry?.submittedFrame = sendGeometry?.composerFrame
         text = ""
         images = []
         Task { await submit(input) }
@@ -707,6 +722,32 @@ struct Composer: View {
         guard let destination = CGImageDestinationCreateWithData(data, type, 1, nil) else { return nil }
         CGImageDestinationAddImage(destination, image, jpeg ? [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary : nil)
         return CGImageDestinationFinalize(destination) ? data as Data : nil
+    }
+}
+
+/// Derive both action diameters from a one-line editor probe. Multiline drafts change only the
+/// editor's height; there is no resize observation or state feedback into the composer.
+private struct ComposerControlsLayout: SwiftUI.Layout {
+    let spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 4 else { return .zero }
+        let diameter = subviews[3].sizeThatFits(.unspecified).height
+        let width = proposal.width ?? subviews[1].sizeThatFits(.unspecified).width + 2 * (diameter + spacing)
+        let editor = subviews[1].sizeThatFits(.init(width: max(0, width - 2 * (diameter + spacing)), height: nil))
+        return .init(width: width, height: max(diameter, editor.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 4 else { return }
+        let diameter = subviews[3].sizeThatFits(.unspecified).height
+        let circle = ProposedViewSize(width: diameter, height: diameter)
+        let editorProposal = ProposedViewSize(width: max(0, bounds.width - 2 * (diameter + spacing)), height: nil)
+        subviews[0].place(at: .init(x: bounds.minX, y: bounds.maxY), anchor: .bottomLeading, proposal: circle)
+        subviews[1].place(at: .init(x: bounds.minX + diameter + spacing, y: bounds.maxY),
+                          anchor: .bottomLeading, proposal: editorProposal)
+        subviews[2].place(at: .init(x: bounds.maxX, y: bounds.maxY), anchor: .bottomTrailing, proposal: circle)
+        subviews[3].place(at: bounds.origin, proposal: .zero)
     }
 }
 

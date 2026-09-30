@@ -39,6 +39,10 @@ final class ComposerAndMessageUITests: XCTestCase {
         let input = app.descendants(matching: .any)["composer.input"]
         let send = app.buttons["composer.send"]
         XCTAssertFalse(send.isEnabled)
+        let add = app.descendants(matching: .any)["composer.add"].firstMatch
+        XCTAssertEqual(add.frame.width, add.frame.height, accuracy: 1, "Add should be circular")
+        XCTAssertEqual(send.frame.width, send.frame.height, accuracy: 1, "Send should be circular")
+        XCTAssertEqual(add.frame.height, send.frame.height, accuracy: 1, "Composer actions should share a diameter")
 
         input.click()
         input.typeText("Hello")
