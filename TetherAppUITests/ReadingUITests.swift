@@ -71,9 +71,12 @@ final class ReadingUITests: XCTestCase {
         let app = launch()
         let window = app.windows.firstMatch
         func resize(to width: CGFloat) {
-            let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1)).withOffset(CGVector(dx: -3, dy: -3))
-            corner.click(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: width - window.frame.width, dy: 740 - window.frame.height)),
-                         withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
+            // Change only the width, from the middle of the right edge. CI's 1024×768
+            // desktop cannot fit a 740pt-tall window below its menu bar and above its Dock;
+            // dragging the bottom corner there can hit the Dock instead of resizing.
+            let edge = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: -3, dy: 0))
+            edge.click(forDuration: 0.1, thenDragTo: edge.withOffset(CGVector(dx: width - window.frame.width, dy: 0)),
+                       withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
             XCTAssertEqual(window.frame.width, width, accuracy: 2)
         }
         func assertAtEnd() {
