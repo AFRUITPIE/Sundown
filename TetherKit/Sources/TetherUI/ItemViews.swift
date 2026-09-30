@@ -73,47 +73,61 @@ private struct MessageMenu: ViewModifier {
     let sentAt: Double
     @Environment(\.forkChat) private var forkChat
     @Environment(\.restoreCode) private var restoreCode
-    @State private var hovering = false
-
-    /// A prompt's bubble sits at the trailing edge; a reply at the leading one.
-    private var trailing: Bool { !isMarkdown }
+    @Environment(\.messageHover) private var hover
 
     func body(content: Content) -> some View {
-        content
-            // The blank beside a short line is the message too, so right-clicking there works.
-            .contentShape(.rect)
-            .contextMenu {
-                Button("Copy", action: copyText)
-                if isMarkdown { Button("Copy as Markdown") { Clipboard.copy(text) } }
-                Divider()
-                Button("Fork from Here") { forkChat(id) }
-                // Files go back to a prompt's checkpoint; a reply has none of its own.
-                if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
-            }
-            .overlay(alignment: trailing ? .topLeading : .topTrailing) {
-                if hovering {
-                    // Centered on the message's top edge, however tall the bar is at this text size.
-                    // Glass that comes and goes does it the glass's way; scaling it in read as the
-                    // bar resizing.
-                    bar.alignmentGuide(.top) { $0[VerticalAlignment.center] }
-                        .glassEffectTransition(.materialize)
-                        .transition(.opacity)
+        let hovering = hover?.message == id
+        VStack(alignment: .leading, spacing: 4) {
+            content
+                // The blank beside a short line is the message too, so right-clicking there works.
+                .contentShape(.rect)
+                .contextMenu {
+                    Button("Copy", action: copyText)
+                    if isMarkdown { Button("Copy as Markdown") { Clipboard.copy(text) } }
+                    Divider()
+                    Button("Fork from Here") { forkChat(id) }
+                    // Files go back to a prompt's checkpoint; a reply has none of its own.
+                    if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
+                }
+                // A prompt's bar sits at its bottom-left, beside the bubble at the trailing edge.
+                .overlay(alignment: .bottomLeading) {
+                    if hovering, !isMarkdown { shownBar }
+                }
+            // A reply's goes below it, in room the reply keeps for it: floating over the start of its
+            // last line, it took the clicks meant for the words. Not hung outside the message either:
+            // past a row's bounds the transcript's AppKit hosting doesn't hit-test, and the bar's
+            // buttons couldn't be clicked.
+            if isMarkdown {
+                ZStack(alignment: .leading) {
+                    bar.hidden()
+                    if hovering { shownBar }
                 }
             }
-            .animation(.easeOut(duration: 0.12), value: hovering)
-            // After the overlay, so moving onto the bar doesn't hide it.
-            .onHover { hovering = $0 }
-            // A reply is one element, as a prompt's bubble is, so its actions are the reply's and not
-            // each paragraph's; and says when it was sent, which the eye gets from the hover bar.
-            .modifier(ReplyElement(isReply: isMarkdown))
-            // A date and a style, formatted only when VoiceOver reads it, not per streamed delta.
-            .accessibilityCustomContent(Text("Sent"), Text(Date(timeIntervalSince1970: sentAt / 1000),
-                                                            format: .dateTime.month(.abbreviated).day().hour().minute()))
-            .accessibilityAction(named: "Copy", copyText)
-            .accessibilityAction(named: "Fork from Here") { forkChat(id) }
-            .accessibilityActions {
-                if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
-            }
+        }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        // Where the message is in the transcript, for `MessageHover` to find it under the pointer.
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(MessageHover.space)) }) { hover?.place(id, $0) }
+        .onDisappear { hover?.place(id, nil) }
+        // A reply is one element, as a prompt's bubble is, so its actions are the reply's and not
+        // each paragraph's; and says when it was sent, which the eye gets from the hover bar.
+        .modifier(ReplyElement(isReply: isMarkdown))
+        // A date and a style, formatted only when VoiceOver reads it, not per streamed delta.
+        .accessibilityCustomContent(Text("Sent"), Text(Date(timeIntervalSince1970: sentAt / 1000),
+                                                        format: .dateTime.month(.abbreviated).day().hour().minute()))
+        .accessibilityAction(named: "Copy", copyText)
+        .accessibilityAction(named: "Fork from Here") { forkChat(id) }
+        .accessibilityActions {
+            if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
+        }
+    }
+
+    /// The bar as it comes and goes: the glass's way, since scaling it in read as the bar resizing,
+    /// and saying where it is, so moving onto it keeps it.
+    private var shownBar: some View {
+        bar
+            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(MessageHover.space)) }) { hover?.bar = $0 }
+            .glassEffectTransition(.materialize)
+            .transition(.opacity)
     }
 
     private var bar: some View {
@@ -209,7 +223,55 @@ struct ForkChatAction: Equatable {
     static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
 }
 
+/// Which message the pointer is over, for its hover bar. The transcript has one hover region
+/// (`TranscriptView`), not one per message: SwiftUI hit-tests every hover region on every frame the
+/// content moves under the pointer, and one per message was about half the frames the transcript
+/// dropped while scrolling. Each message leaves its frame here as it's laid out, in the content's
+/// own coordinates, which scrolling doesn't change; the pointer is looked up among them.
+@MainActor @Observable
+final class MessageHover {
+    static let space = "transcript.content"
+    /// The message under the pointer.
+    private(set) var message: String?
+    @ObservationIgnored private var frames: [String: CGRect] = [:]
+    @ObservationIgnored private var pointer: CGPoint?
+    /// The hovered message's bar, which reaches past a short message's edges and above its top.
+    @ObservationIgnored var bar: CGRect?
+    /// Whether the transcript is scrolling. No bar comes or goes meanwhile: each one's glass
+    /// appearing and fading as messages passed under a still pointer cost more frames than the rest
+    /// of the scroll; it shows again for the message under the pointer once the transcript stops.
+    @ObservationIgnored private var scrolling = false
+
+    func place(_ id: String, _ frame: CGRect?) {
+        frames[id] = frame
+        find()
+    }
+
+    func scroll(_ isScrolling: Bool) {
+        guard isScrolling != scrolling else { return }
+        scrolling = isScrolling
+        find()
+    }
+
+    func move(to point: CGPoint?) {
+        pointer = point
+        find()
+    }
+
+    private func find() {
+        let over = scrolling ? nil : pointer.flatMap { p in
+            if let message, bar?.contains(p) == true { return message }
+            return frames.first { $0.value.contains(p) }?.key
+        }
+        if over != message {
+            message = over
+            bar = nil
+        }
+    }
+}
+
 extension EnvironmentValues {
+    @Entry var messageHover: MessageHover?
     @Entry var forkChat = ForkChatAction(owner: nil) { _ in }
     /// Restore Code to Here…, for a prompt. The same shape as Fork from Here's.
     @Entry var restoreCode = ForkChatAction(owner: nil) { _ in }

@@ -339,26 +339,25 @@ enum PerformanceTranscript {
               updatedAt: 1_700_000_000_000 - Double($0), status: .idle)
     }
 
-    /// TETHER_PERF_TURNS sizes it (30 turns by default). Each turn works the way a real one does:
-    /// bursts of tool calls with a line of text between them, now and then a failed call, which stays
-    /// on its own row, and a Markdown answer at the end.
+    /// TETHER_PERF_TURNS sizes it (30 turns by default). Each turn works the way a real one does,
+    /// shaped after a long working session with Claude Code (162 prompts, 5,764 tool calls): most
+    /// turns a dozen calls, one in ten a hundred or so, one of them several hundred; mostly Bash;
+    /// a line of text every few calls; now and then a failed call, which stays on its own row; and
+    /// a Markdown answer at the end.
     static let history: [Item] = (0..<(Int(ProcessInfo.processInfo.environment["TETHER_PERF_TURNS"] ?? "") ?? 30)).flatMap { turn -> [Item] in
-        let t = 1_700_000_000_000.0 + Double(turn * 1000)
+        let t = 1_700_000_000_000.0 + Double(turn * 10_000)
         var items: [Item] = [.userMessage(.init(id: "perf-user-\(turn)", createdAt: t,
                                                 content: [.text(.init(text: "Step \(turn): look at the next part of the renderer and tighten it up."))]))]
-        var n = 0
-        for burst in 0..<3 {
-            for _ in 0..<(2 + (turn + burst * 3) % 7) {
-                let status: ToolStatus = turn % 4 == 1 && burst == 1 && n % 5 == 2 ? .failed : .completed
-                items.append(toolCall(id: "perf-tool-\(turn)-\(n)", at: t + Double(n + 1), index: turn + n, status: status))
-                n += 1
-            }
-            if burst < 2 {
-                items.append(.agentMessage(.init(id: "perf-note-\(turn)-\(burst)", createdAt: t + Double(n + 1),
-                                                 text: "Found it in `\(files[(turn + burst) % files.count])`. Checking the callers next.")))
+        let calls = turn == 13 ? 400 : turn % 10 == 7 ? 110 : 6 + (turn * 5) % 11
+        for n in 0..<calls {
+            let status: ToolStatus = turn % 4 == 1 && n % 9 == 4 ? .failed : .completed
+            items.append(toolCall(id: "perf-tool-\(turn)-\(n)", at: t + Double(n + 1), index: turn + n, status: status))
+            if n % 6 == 5, n < calls - 1 {
+                items.append(.agentMessage(.init(id: "perf-note-\(turn)-\(n)", createdAt: t + Double(n + 1),
+                                                 text: "Found it in `\(files[(turn + n) % files.count])`. Checking the callers next.")))
             }
         }
-        items.append(.agentMessage(.init(id: "perf-answer-\(turn)", createdAt: t + 500, text: markdown(section: turn))))
+        items.append(.agentMessage(.init(id: "perf-answer-\(turn)", createdAt: t + 5_000, text: markdown(section: turn))))
         return items
     }
 
@@ -368,11 +367,16 @@ enum PerformanceTranscript {
     static func toolCall(id: String, at time: Double, index i: Int, status: ToolStatus) -> Item {
         let file = "TetherKit/Sources/TetherUI/\(files[i % files.count])"
         let failed = status == .failed
-        switch i % 5 {
-        case 0:
+        switch i % 8 {
+        case 0, 4, 5, 6, 7:
+            // One in ten long, as a build log or a test run's is.
+            let long = i % 10 == 0
             return .toolCall(.init(id: id, createdAt: time, name: "Bash", kind: .bash,
-                                   input: ["command": .string("rg -n 'MarkdownView' TetherKit/Sources | head -\(i % 9 + 3)")],
-                                   status: status, outputText: failed ? "rg: TetherKit/Sources/Missing: No such file or directory" : "\(file):\(i % 90 + 5): struct MarkdownView: View {",
+                                   input: ["command": .string(long ? "swift test --package-path TetherKit 2>&1 | tail -\(i % 90 + 60)" : "rg -n 'MarkdownView' TetherKit/Sources | head -\(i % 9 + 3)")],
+                                   status: status,
+                                   outputText: failed ? "rg: TetherKit/Sources/Missing: No such file or directory"
+                                       : long ? (0..<120).map { "Test Case '-[TetherKitTests.Case\($0) testSomething\(i)]' passed (0.00\($0 % 10) seconds)." }.joined(separator: "\n")
+                                       : "\(file):\(i % 90 + 5): struct MarkdownView: View {",
                                    isError: failed ? true : nil))
         case 1:
             return .toolCall(.init(id: id, createdAt: time, name: "Read", kind: .fileRead, input: ["file_path": .string(file)],
