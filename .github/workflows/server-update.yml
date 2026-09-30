@@ -1,0 +1,66 @@
+name: Server update
+
+# A new tether-server on npm becomes a pull request here: ServerRelease.version, the protocol
+# package's pin, and the app's own patch version, so merging it releases the app with that server.
+# Daily, and by hand. Waits for npm's published version, so a staged one isn't picked up until it's
+# approved.
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pin the latest server
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(npm view tether-server version)
+          current=$(sed -n 's/.*public static let version = "\(.*\)"/\1/p' TetherKit/Sources/TetherKit/Bootstrap.swift)
+          branch="tether-server-$latest"
+          if [ "$latest" = "$current" ]; then echo "Already on tether-server $current."; exit 0; fi
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then echo "$branch is already open."; exit 0; fi
+
+          # The tag's commit, which SwiftPM pins.
+          revision=$(git ls-remote https://github.com/AFRUITPIE/tether-server.git "refs/tags/v$latest^{}" | cut -f1)
+          [ -n "$revision" ] || revision=$(git ls-remote https://github.com/AFRUITPIE/tether-server.git "refs/tags/v$latest" | cut -f1)
+          [ -n "$revision" ] || { echo "No v$latest tag."; exit 1; }
+
+          sed -i "s/public static let version = \"$current\"/public static let version = \"$latest\"/" TetherKit/Sources/TetherKit/Bootstrap.swift
+          for resolved in TetherKit/Package.resolved Tether.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved; do
+            python3 - "$resolved" "$revision" "$latest" <<'PY'
+          import json, sys
+          path, revision, version = sys.argv[1:]
+          data = json.load(open(path))
+          for pin in data["pins"]:
+              if pin["identity"] == "tether-server":
+                  pin["state"] = {"revision": revision, "version": version}
+          open(path, "w").write(json.dumps(data, indent=2, separators=(",", " : ")) + "\n")
+          PY
+          done
+
+          # The app's next patch version, and its next build.
+          project=Tether.xcodeproj/project.pbxproj
+          app=$(grep -m1 'MARKETING_VERSION = ' "$project" | sed 's/.*= \(.*\);/\1/')
+          build=$(grep -m1 'CURRENT_PROJECT_VERSION = ' "$project" | sed 's/.*= \(.*\);/\1/')
+          next=$(echo "$app" | awk -F. '{ if (NF < 3) print $0 ".1"; else { $NF = $NF + 1; print } }' OFS=.)
+          sed -i "s/MARKETING_VERSION = $app;/MARKETING_VERSION = $next;/; s/CURRENT_PROJECT_VERSION = $build;/CURRENT_PROJECT_VERSION = $((build + 1));/" "$project"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "Use tether-server $latest, as Tether $next"
+          git push origin "$branch"
+          gh pr create --head "$branch" --title "Use tether-server $latest" \
+            --body "tether-server $latest is on npm. This pins it (\`ServerRelease.version\` and the protocol package) and makes the app $next, so merging it releases the app with that server."
+          # A pull request this workflow's token opens starts no other workflows, so its tests are
+          # started by hand; they report on the branch's commit, which the PR shows.
+          gh workflow run ui-tests.yml --ref "$branch"
