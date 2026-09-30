@@ -1,0 +1,25 @@
+name: Release preview
+
+# Says on a pull request whether merging it releases the app: when its MARKETING_VERSION has no tag
+# yet, merging it starts release.yml. No secrets; it only reads the version and the tags.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          version=$(grep -m1 'MARKETING_VERSION = ' Tether.xcodeproj/project.pbxproj | sed 's/.*= \(.*\);/\1/')
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            message="Merging this doesn't release: v$version is already out."
+          else
+            message="Merging this releases Tether $version, once approved in the release environment."
+          fi
+          echo "::notice title=Release::$message"
+          echo "$message" >> "$GITHUB_STEP_SUMMARY"
