@@ -70,6 +70,13 @@ final class ReadingUITests: XCTestCase {
     func testResizingKeepsTheTranscriptAtItsEnd() {
         let app = launch()
         let window = app.windows.firstMatch
+        // Give the resize border room inside the display. On CI the window initially
+        // spans the screen, clipping the native hit regions at both horizontal edges.
+        let initialX = window.frame.minX
+        let titleBar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 20))
+        titleBar.click(forDuration: 0.1, thenDragTo: titleBar.withOffset(CGVector(dx: 40, dy: 0)),
+                       withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
+        XCTAssertEqual(window.frame.minX, initialX + 40, accuracy: 2)
         func resize(to width: CGFloat) {
             // Resize from the left border, which stays on screen even when CI's window
             // fills its 1024pt-wide display. An inset point on the right edge hits the
