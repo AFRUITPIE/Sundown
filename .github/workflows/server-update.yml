@@ -10,6 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -60,3 +61,6 @@ jobs:
           git push origin "$branch"
           gh pr create --head "$branch" --title "Use tether-server $latest" \
             --body "tether-server $latest is on npm. This pins it (\`ServerRelease.version\` and the protocol package) and makes the app $next, so merging it releases the app with that server."
+          # A pull request this workflow's token opens starts no other workflows, so its tests are
+          # started by hand; they report on the branch's commit, which the PR shows.
+          gh workflow run ui-tests.yml --ref "$branch"
