@@ -31,6 +31,7 @@ struct Composer: View {
     @Environment(\.composerDrafts) private var drafts
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reducesEffects) private var reducesEffects
     @Environment(\.messageSendGeometry) private var sendGeometry
     #if DEBUG
     @Environment(\.composerPreviewCommands) private var previewCommands
@@ -561,10 +562,17 @@ struct Composer: View {
         if !trimmed.isEmpty { input.append(.text(.init(text: trimmed))) }
         for attachment in images { input.append(attachment.input) }
         // Preserve the filled editor's shape before clearing a multiline draft collapses it.
-        sendGeometry?.submittedFrame = sendGeometry?.composerFrame
+        let preparation = sendGeometry?.prepareSend()
         text = ""
         images = []
-        Task { await submit(input) }
+        Task {
+            await submit(input)
+            // New Chat has no preceding transcript to hold. Failed sends and reduced motion
+            // must also release the end anchor even when no animated bubble claims the handoff.
+            if thread == nil || thread?.sendAnimationID == nil || thread?.lastError != nil || reduceMotion || reducesEffects {
+                sendGeometry?.cancelPreparation(preparation)
+            }
+        }
     }
 
     /// What the field takes from outside it: a file (by URL), or an image that isn't one, such as

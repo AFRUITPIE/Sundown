@@ -73,17 +73,25 @@ final class ReadingUITests: XCTestCase {
         // Give the resize border room inside the display. On CI the window initially
         // spans the screen, clipping the native hit regions at both horizontal edges.
         let initialX = window.frame.minX
+        // Leave enough room to grow an 800pt local window to the first 1000pt target.
+        let inset = max(40, 1000 - window.frame.width + 40)
         let titleBar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 20))
-        titleBar.click(forDuration: 0.1, thenDragTo: titleBar.withOffset(CGVector(dx: 40, dy: 0)),
+        titleBar.click(forDuration: 0.1, thenDragTo: titleBar.withOffset(CGVector(dx: inset, dy: 0)),
                        withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
-        XCTAssertEqual(window.frame.minX, initialX + 40, accuracy: 2)
+        // macOS can add its shadow margin when moving a window away from the screen edge.
+        // What matters is that its left resize border has moved into the display.
+        XCTAssertGreaterThan(window.frame.minX, initialX + inset - 20)
         func resize(to width: CGFloat) {
             // Resize from the left border, which stays on screen even when CI's window
             // fills its 1024pt-wide display. An inset point on the right edge hits the
             // transcript rather than the window's resize region; changing height can hit the Dock.
-            let edge = window.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
-            edge.click(forDuration: 0.1, thenDragTo: edge.withOffset(CGVector(dx: window.frame.width - width, dy: 0)),
-                       withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
+            // Native edge snapping can leave the first drag a few points short. Correct the
+            // gesture before asserting the exact viewport used by the anchoring checks.
+            for _ in 0..<3 where abs(window.frame.width - width) > 2 {
+                let edge = window.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+                edge.click(forDuration: 0.1, thenDragTo: edge.withOffset(CGVector(dx: window.frame.width - width, dy: 0)),
+                           withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
+            }
             XCTAssertEqual(window.frame.width, width, accuracy: 2)
         }
         func assertAtEnd() {

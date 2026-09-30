@@ -21,6 +21,9 @@ struct TranscriptView: View {
     @Environment(\.promptNavigator) private var promptNavigator
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reducesEffects) private var reducesEffects
+    @Environment(\.messageSendGeometry) private var sendGeometry
+    @State private var sendScrollPrepared = false
 
     var body: some View {
         ScrollView {
@@ -36,9 +39,20 @@ struct TranscriptView: View {
         // and the toolbar's edge effect followed its top edge down the window.
         .accessibilityLabel("Transcript")
         .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .defaultScrollAnchor(.bottom, for: .sizeChanges)
+        .defaultScrollAnchor(sendScrollPrepared && sendGeometry?.preparationID != nil ? .top : .bottom, for: .sizeChanges)
         .defaultScrollAnchor(.top, for: .alignment)
         .scrollPosition($position)
+        // Hold the existing content until the local bubble departs, then make room with its
+        // spring. Ordinary streaming and resizing keep the native, unanimated end anchor.
+        .onChange(of: sendGeometry?.preparationID) {
+            guard sendGeometry?.preparationID != nil else { sendScrollPrepared = false; return }
+            sendScrollPrepared = followsEnd && !reduceMotion && !reducesEffects
+            if sendScrollPrepared { position.scrollTo(point: CGPoint(x: 0, y: older.offset)) }
+        }
+        .onChange(of: sendGeometry?.departingMessageID) {
+            guard sendScrollPrepared, sendGeometry?.departingMessageID != nil else { return }
+            withAnimation(MessageSendGeometry.spring) { position.scrollTo(edge: .bottom) }
+        }
         // A newly opened chat starts at its latest message.
         .onChange(of: thread.historyLoaded) {
             guard thread.historyLoaded else { return }
@@ -63,6 +77,7 @@ struct TranscriptView: View {
             // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
             // Previous or Next last went to.
             if new == .interacting {
+                sendScrollPrepared = false
                 onScreen.lastPrompt = nil
                 older.taken = false
             }
@@ -119,6 +134,7 @@ extension TranscriptView {
     /// the frame that lays it out. `ThreadModel.pageAnchor` says a page added rows; the rows aren't
     /// read here, which would redraw this view whenever they change.
     private func keepPlace(from old: Place, to new: Place) {
+        older.offset = new.offset
         let nearTop = new.nearTop && !older.taken
         if older.nearTop != nearTop { older.nearTop = nearTop }
         guard let page = thread.pageAnchor, page != older.page, new.content > old.content else { return }
@@ -264,6 +280,7 @@ private struct TranscriptContent: View {
 /// it, so nothing else redraws as the reader nears the top.
 @MainActor @Observable
 final class OlderPages {
+    @ObservationIgnored var offset: CGFloat = 0
     /// Within a screen and a half of the top: the page before is asked for from there, so it's
     /// usually in before the reader gets to the top.
     var nearTop = false

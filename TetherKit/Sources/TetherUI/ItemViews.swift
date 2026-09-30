@@ -273,6 +273,7 @@ struct UserMessageView: View {
     @State private var sending = false
     @State private var prepared = false
     @State private var launchFrame: CGRect?
+    @State private var launchPreparation: UUID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.reducesEffects) private var reducesEffects
     @Environment(\.messageSendGeometry) private var sendGeometry
@@ -306,6 +307,7 @@ struct UserMessageView: View {
                 return
             }
             sendGeometry?.activeMessageID = message.id
+            launchPreparation = sendGeometry?.preparationID
             launchFrame = sendGeometry?.submittedFrame ?? sendGeometry?.composerFrame
             sendGeometry?.submittedFrame = nil
             sending = true
@@ -314,7 +316,7 @@ struct UserMessageView: View {
             defer {
                 arrived = true
                 sending = false
-                if sendGeometry?.activeMessageID == message.id { sendGeometry?.activeMessageID = nil }
+                sendGeometry?.finishSend(message.id, preparation: launchPreparation)
             }
             // Give the visual effect its initial render at the composer before lifting into the row.
             try? await Task.sleep(for: .milliseconds(16))
@@ -322,8 +324,9 @@ struct UserMessageView: View {
             // A damped spring gives the reference's acceleration, small overshoot and soft return.
             // Completion follows the actual spring tail, rather than replacing glass on a timer.
             await withCheckedContinuation { continuation in
-                withAnimation(.spring(response: 0.52, dampingFraction: 0.74), completionCriteria: .removed) {
+                withAnimation(MessageSendGeometry.spring, completionCriteria: .removed) {
                     arrived = true
+                    sendGeometry?.departingMessageID = message.id
                 } completion: {
                     continuation.resume()
                 }
@@ -333,7 +336,7 @@ struct UserMessageView: View {
         .onDisappear {
             arrived = true
             sending = false
-            if sendGeometry?.activeMessageID == message.id { sendGeometry?.activeMessageID = nil }
+            sendGeometry?.finishSend(message.id, preparation: launchPreparation)
         }
     }
 
@@ -349,6 +352,7 @@ struct UserMessageView: View {
             .background(alignment: .bottomTrailing) {
                 if sending {
                     SendingMessageSurface(arrived: arrived, origin: launchFrame, blue: bubbleBlue)
+                        .transition(.identity)
                 } else {
                     RoundedRectangle(cornerRadius: Layout.cardCornerRadius)
                         .fill(message.synthetic == true ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(bubbleBlue))
@@ -462,19 +466,12 @@ private struct SendingMessageSurface: View {
             .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
             .overlay(alignment: .bottomTrailing) {
                 GlassEffectContainer {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: Layout.cardCornerRadius)
-                            .fill(blue).opacity(arrived ? 1 : 0)
-                        if !arrived {
-                            Color.clear
-                                .glassEffect(.regular.tint(blue), in: .rect(cornerRadius: Layout.cardCornerRadius))
-                                .glassEffectTransition(.materialize)
-                        }
-                    }
-                    .animation(.easeOut(duration: 0.22).delay(0.06), value: arrived)
-                    .frame(width: arrived ? size.width : origin?.width ?? size.width,
-                           height: arrived ? size.height : origin?.height ?? size.height)
-                    .animation(.spring(response: 0.26, dampingFraction: 0.8), value: arrived)
+                    RoundedRectangle(cornerRadius: Layout.cardCornerRadius)
+                        .fill(blue)
+                        .frame(width: arrived ? size.width : origin?.width ?? size.width,
+                               height: arrived ? size.height : origin?.height ?? size.height)
+                        .glassEffect(.regular.tint(blue), in: .rect(cornerRadius: Layout.cardCornerRadius))
+                        .animation(.spring(response: 0.26, dampingFraction: 0.8), value: arrived)
                 }
             }
     }
@@ -485,9 +482,32 @@ private struct SendingMessageSurface: View {
 @MainActor @Observable
 final class MessageSendGeometry {
     nonisolated static let space = "message.send"
+    static let spring = Animation.spring(response: 0.52, dampingFraction: 0.74)
     var composerFrame: CGRect?
     @ObservationIgnored var submittedFrame: CGRect?
     var activeMessageID: String?
+    var preparationID: UUID?
+    var departingMessageID: String?
+
+    func prepareSend() -> UUID {
+        let token = UUID()
+        submittedFrame = composerFrame
+        departingMessageID = nil
+        preparationID = token
+        return token
+    }
+
+    func cancelPreparation(_ token: UUID?) {
+        guard token == preparationID else { return }
+        preparationID = nil
+    }
+
+    func finishSend(_ id: String, preparation token: UUID?) {
+        guard activeMessageID == id else { return }
+        activeMessageID = nil
+        if preparationID == token { preparationID = nil }
+        if departingMessageID == id { departingMessageID = nil }
+    }
 }
 
 extension EnvironmentValues {

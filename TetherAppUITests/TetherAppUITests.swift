@@ -162,6 +162,25 @@ final class TetherAppUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [landed], timeout: 5), .completed)
     }
 
+    /// Sending from the end of a full transcript makes room and leaves the new prompt usable.
+    @MainActor
+    func testSendingLiftsTheTranscript() {
+        let app = launch(scenario: "performance")
+        defer { app.terminate() }
+        let previous = app.staticTexts["Section 29: tightening the renderer"].firstMatch
+        XCTAssertTrue(previous.waitForExistence(timeout: 20))
+        let before = previous.frame.minY
+        let input = app.descendants(matching: .any)["composer.input"]
+        input.click()
+        input.typeText("Follow up")
+        app.buttons["composer.send"].click()
+        let copy = app.buttons["message.copy.perf-sent-1"]
+        let landed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: copy)
+        XCTAssertEqual(XCTWaiter.wait(for: [landed], timeout: 8), .completed)
+        XCTAssertLessThan(previous.frame.minY, before - 20)
+        XCTAssertLessThan(copy.frame.maxY, input.frame.minY)
+    }
+
     /// A wrapped prompt keeps its final text layout while its native glass surface travels.
     @MainActor
     func testLongPromptStaysReadableAfterSending() {
