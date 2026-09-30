@@ -98,10 +98,12 @@ final class TetherAppUITests: XCTestCase {
         choose("Max", in: "Effort", app: app)
 
         XCTAssertEqual(permissions.label, "Permissions, Don't Ask")
-        // Within a point: AppKit rounds each segment of the toolbar's control group to the pixel
-        // grid by where its visible symbol sits, though the label reserves the same width for all.
+        // Each control holds its width within a point: AppKit rounds each segment of the toolbar's
+        // control group to the pixel grid by where its visible symbol sits, though the label
+        // reserves the same width for all. Where one sits can drift by that rounding of each of the
+        // group's three segments (New Chat starts in the host's mode, Auto here, then Don't Ask).
         for (after, was) in [(effort.frame, before.0), (permissions.frame, before.1)] {
-            XCTAssertEqual(after.minX, was.minX, accuracy: 1)
+            XCTAssertEqual(after.minX, was.minX, accuracy: 3)
             XCTAssertEqual(after.width, was.width, accuracy: 1)
         }
     }
