@@ -71,11 +71,11 @@ final class ReadingUITests: XCTestCase {
         let app = launch()
         let window = app.windows.firstMatch
         func resize(to width: CGFloat) {
-            // Change only the width, from the middle of the right edge. CI's 1024×768
-            // desktop cannot fit a 740pt-tall window below its menu bar and above its Dock;
-            // dragging the bottom corner there can hit the Dock instead of resizing.
-            let edge = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5)).withOffset(CGVector(dx: -3, dy: 0))
-            edge.click(forDuration: 0.1, thenDragTo: edge.withOffset(CGVector(dx: width - window.frame.width, dy: 0)),
+            // Resize from the left border, which stays on screen even when CI's window
+            // fills its 1024pt-wide display. An inset point on the right edge hits the
+            // transcript rather than the window's resize region; changing height can hit the Dock.
+            let edge = window.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+            edge.click(forDuration: 0.1, thenDragTo: edge.withOffset(CGVector(dx: window.frame.width - width, dy: 0)),
                        withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
             XCTAssertEqual(window.frame.width, width, accuracy: 2)
         }
