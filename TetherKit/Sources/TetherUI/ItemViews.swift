@@ -113,9 +113,9 @@ private struct MessageMenu: ViewModifier {
                 // Keep the final footer's space, revealing its actions only once the surface lands.
                 actionsVisible = false
                 defer { actionsVisible = true }
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: .milliseconds(350))
                 guard !Task.isCancelled else { return }
-                withAnimation(.easeOut(duration: 0.2)) { actionsVisible = true }
+                withAnimation(.easeOut(duration: 0.12)) { actionsVisible = true }
             }
     }
 
@@ -274,6 +274,7 @@ struct UserMessageView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.reducesEffects) private var reducesEffects
     @Environment(\.messageSendGeometry) private var sendGeometry
+    @Environment(\.colorSchemeContrast) private var contrast
 
     init(message: Item.UserMessage, justSent: Bool = false, canAnimate: Bool = true,
          claimSendAnimation: @escaping () -> Bool = { true }) {
@@ -314,10 +315,10 @@ struct UserMessageView: View {
             // Give the visual effect its initial render at the composer before lifting into the row.
             try? await Task.sleep(for: .milliseconds(16))
             guard !Task.isCancelled else { arrived = true; sending = false; return }
-            withAnimation(.smooth(duration: 0.46, extraBounce: 0.04)) { arrived = true }
-            try? await Task.sleep(for: .milliseconds(700))
+            withAnimation(.smooth(duration: 0.32, extraBounce: 0.025)) { arrived = true }
+            try? await Task.sleep(for: .milliseconds(420))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.2)) { sending = false }
+            withAnimation(.easeOut(duration: 0.12)) { sending = false }
         }
         .onDisappear {
             arrived = true
@@ -340,10 +341,16 @@ struct UserMessageView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(sending ? AnyShapeStyle(Color.clear) :
-                        message.synthetic == true ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(.fill),
+                        message.synthetic == true ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(bubbleBlue),
                         in: .rect(cornerRadius: Layout.cardCornerRadius))
-            .glassEffect(sending ? .regular.tint(.accentColor.opacity(0.12)) : .identity,
+            .glassEffect(sending ? .regular.tint(bubbleBlue) : .identity,
                          in: .rect(cornerRadius: Layout.cardCornerRadius))
+    }
+
+    /// System blue keeps the Messages-inspired identity across appearances. A modest dark mix
+    /// gives small white text enough separation; Increased Contrast strengthens it further.
+    private var bubbleBlue: Color {
+        .blue.mix(with: .black, by: contrast == .increased ? 0.30 : 0.16)
     }
 
     /// Whether a part has something to show, so an unknown one takes no space.
@@ -406,7 +413,7 @@ struct UserMessageView: View {
                 Text("Sent while running").scaledFont(.caption2).foregroundStyle(.secondary)
             }
         }
-        .foregroundStyle(message.synthetic == true ? .secondary : .primary)
+        .foregroundStyle(message.synthetic == true ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
         // A group VoiceOver names as it enters: whose message this is.
         .accessibilityElement(children: .contain)
         .accessibilityLabel(message.synthetic == true ? Self.originLabel(message.origin) : "You")
@@ -424,7 +431,7 @@ private struct SentMessagePosition: ViewModifier {
             content.visualEffect { effect, geometry in
                 let target = geometry.frame(in: .named(MessageSendGeometry.space))
                 return effect
-                    .scaleEffect(x: arrived ? 1 : 1.08, y: arrived ? 1 : 0.86, anchor: .bottomTrailing)
+                    .scaleEffect(x: arrived ? 1 : 1.025, y: arrived ? 1 : 0.96, anchor: .bottomTrailing)
                     .offset(x: arrived ? 0 : origin.maxX - target.maxX,
                             y: arrived ? 0 : origin.maxY - target.maxY)
             }
@@ -577,6 +584,20 @@ struct NoticeView: View {
             .frame(maxWidth: 920)
     }
     .frame(width: 640, height: 200)
+}
+
+#Preview("Blue prompts, dark") {
+    ItemView(item: .sampleUserMessage("A clearer blue bubble, with white text and a quick glass handoff.", secondsAgo: 30),
+             thread: .sampleIdleChat())
+        .padding(28).frame(width: 640)
+        .preferredColorScheme(.dark)
+}
+
+#Preview("Blue prompts, light") {
+    ItemView(item: .sampleUserMessage("A clearer blue bubble, with white text and a quick glass handoff.", secondsAgo: 30),
+             thread: .sampleIdleChat())
+        .padding(28).frame(width: 640)
+        .preferredColorScheme(.light)
 }
 
 #Preview("Message controls") {

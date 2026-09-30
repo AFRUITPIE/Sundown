@@ -1,6 +1,6 @@
 # macOS UI revamp
 
-The working branch descends from PR #69’s repaired head (`bd9078f`). It keeps native transcript anchoring and bounded eager layout. This work adds no scroll glide or resize-driven scroll commands.
+The working branch descends from PR #69’s repaired head (`4e4d2fa`). Its resize test moves a display-edge window inward using the native title bar before exercising its border. It keeps native transcript anchoring and bounded eager layout. This work adds no scroll glide or resize-driven scroll commands.
 
 ## Design basis
 
@@ -13,7 +13,7 @@ The adversarial review challenged permanent glass bubbles, dominant message butt
 - Code uses primary text, a stronger semantic fill, and a border that strengthens with Increased Contrast. Selection, wrapping, horizontal scrolling, and cached measurement remain intact.
 - The composer is a plain native multiline field on a padded interactive glass surface, beside an extra-large labeled glass Send/Stop button. Existing draft persistence, attachments, input methods, and Shift-Return handling remain in place.
 - Completion choices stay above the field inside the window, with bounded pages and pointer/keyboard controls. Commands use a terminal glyph.
-- Suggestions have explicit capsule borders. Glass remains on controls and the brief sending handoff, rather than settled transcript content.
+- Suggestions have explicit capsule borders. Glass remains on controls and the brief sending handoff. Settled human prompts use ordinary system-blue fills and white text; synthetic messages retain their secondary styling.
 - Message actions live below the text: a labeled Copy and a regular More menu with Fork and Restore. They no longer float over selection.
 - Tool summaries are compact. Leading disclosure triangles reveal labeled input/output sections; expanded groups offer Expand All/Collapse All and separate calls with dividers.
 - Decorative symbols are faster and respect Reduce Motion and reduced effects.
@@ -29,7 +29,7 @@ Code blocks were rendered and inspected in light appearance and dark Increased C
 
 The rounded-border field was replaced after hands-on feedback. The editor remains the native multiline TextField, with interactive regular glass and comfortable padding. The separate labeled Send/Stop control uses the system’s extra-large size. Faster symbol animations are retained.
 
-Apple’s [custom glass guidance](https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views) and [matched geometry documentation](https://developer.apple.com/documentation/swiftui/view/matchedgeometryeffect(id:in:properties:anchor:issource:)) informed a second recording pass. Matching layout around captured glass produced a stationary surface or an invisible in-flight bubble even though functional tests passed. The final handoff instead uses SwiftUI visualEffect after an isolated glass render: the whole surface and text lift together over 0.46 seconds, with a gentle initial stretch. The footer follows the landing, and the transient glass settles into the ordinary bubble fill. The final bubble’s layout is reserved throughout, keeping selectable text from rewrapping in flight and preserving native transcript anchoring. Only the active send has a glass container; the composer frame is observed only by that bubble.
+Apple’s [custom glass guidance](https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views) and [matched geometry documentation](https://developer.apple.com/documentation/swiftui/view/matchedgeometryeffect(id:in:properties:anchor:issource:)) informed a second recording pass. Matching layout around captured glass produced a stationary surface or an invisible in-flight bubble even though functional tests passed. The final handoff instead uses SwiftUI visualEffect after an isolated glass render: the whole surface and text lift together over 0.32 seconds, with a small initial stretch and a restrained settle. The footer follows the landing, and the transient glass settles into the ordinary blue bubble fill. The final bubble’s layout is reserved throughout, keeping selectable text from rewrapping in flight and preserving native transcript anchoring. Only the active send has a glass container; the composer frame is observed only by that bubble.
 
 Existing-chat and New Chat recordings show the glass and text traveling together while historical bubbles remain stationary. Light and dark composer previews were inspected. A wrapped-prompt UI regression additionally checks readable multiline text within the window after sending. Reduce Motion and reduced effects continue to skip the movement entirely.
 
@@ -38,3 +38,11 @@ The final lifecycle review separates preflight visibility from the stable send t
 The wrapped-prompt recording also exposed an immediate fixture reply drawing over the moving glass. The active sending row is now raised above its sibling rows only for the handoff; cancellation, disappearance, and supersession clear that layer ownership.
 
 Final focused verification passes eight distinct UI checks: existing and new chat sends, wrapped-prompt readability, pending-prompt draft preservation, Command-Return, Shift-Return, command completion navigation, and resize/inspector end-follow. The wrapped-prompt and repaired-resize checks were rerun after final layering changes and passed. Recordings were inspected in both appearances, including the long prompt crossing an immediate reply.
+
+## Messages reference refinement
+
+The owner’s Messages recording inspired the permanent blue/white prompt palette and a quicker, smaller settle. The active sending prompt bypasses the generic new-row opacity fade so the glass and its text stay coherent during the lift. It still uses the existing once-only send ownership and leaves historical rows stationary.
+
+Apple’s HIG [color guidance](https://developer.apple.com/design/human-interface-guidelines/color) informed the use of dynamic system blue and four appearance/contrast preview checks. The blue is mixed modestly with black, with a stronger mix for Increased Contrast. Rendered settled-fill contrast against white text measures approximately 6.28:1 in light appearance, 4.62:1 in dark, 9.45:1 in light Increased Contrast, and 5.23:1 in dark Increased Contrast. These measurements cover the ordinary settled fill; moving glass varies with the content behind it.
+
+The updated build passes existing-chat, New Chat, and wrapped-prompt send UI checks. Retained recordings show the blue glass lifting together with its text, stable line wrapping, stationary history, and an immediate reply remaining behind the active surface.

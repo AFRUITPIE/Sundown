@@ -388,7 +388,7 @@ struct TranscriptRowView: View, Equatable {
             switch row {
             case .item(let item):
                 LiveItemView(box: thread.box(for: item), thread: thread)
-                    .modifier(FadesIn(isNew: thread.justStarted(item.id)))
+                    .modifier(FadesIn(isNew: thread.justStarted(item.id), bypass: isSendingPrompt))
             case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread, rowID: row.id)
             case .turnWork(let id, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread, rowID: id)
             case .turnEdits(let edits): TurnEditsView(edits: edits, cwd: thread.cwd)
@@ -405,15 +405,17 @@ struct TranscriptRowView: View, Equatable {
 /// A row for an item that just started fades in rather than popping in. Opacity only, so it suits
 /// Reduce Motion as it is.
 private struct FadesIn: ViewModifier {
+    let bypass: Bool
     @State private var shown: Bool
 
-    init(isNew: Bool) {
+    init(isNew: Bool, bypass: Bool = false) {
+        self.bypass = bypass
         _shown = State(initialValue: !isNew)
     }
 
     func body(content: Content) -> some View {
         content
-            .opacity(shown ? 1 : 0)
+            .opacity(bypass || shown ? 1 : 0)
             .onAppear {
                 guard !shown else { return }
                 withAnimation(.easeOut(duration: FadeInRenderer.duration)) { shown = true }
