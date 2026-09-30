@@ -143,7 +143,6 @@ private struct InspectorColumn: ViewModifier {
 struct DetailView: View {
     let window: WindowModel
     @State private var messageSendGeometry = MessageSendGeometry()
-    @State private var messageSendOwner = UUID()
 
     var body: some View {
         // The column's root keeps one identity. When the root itself changed (the branch, or the
@@ -159,7 +158,6 @@ struct DetailView: View {
         }
         .coordinateSpace(name: MessageSendGeometry.space)
         .environment(\.messageSendGeometry, messageSendGeometry)
-        .environment(\.messageSendOwner, messageSendOwner)
     }
 }
 

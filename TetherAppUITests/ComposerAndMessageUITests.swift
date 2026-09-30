@@ -69,19 +69,14 @@ final class ComposerAndMessageUITests: XCTestCase {
         XCTAssertTrue(compact.waitForExistence(timeout: 5))
         XCTAssertLessThan(compact.frame.maxY, input.frame.minY)
         XCTAssertTrue(app.popovers.count == 0)
-        let next = app.buttons["composer.completions.next"]
-        XCTAssertTrue(next.isEnabled)
-        next.click()
+        // Typing narrows the list; a click inserts the command.
+        input.typeText("sta")
         let status = app.buttons["composer.completion./status"]
         XCTAssertTrue(status.waitForExistence(timeout: 3))
         status.click()
         XCTAssertEqual(input.value as? String, "/status ")
         input.typeKey("a", modifierFlags: .command)
         input.typeText("/")
-        XCTAssertTrue(compact.waitForExistence(timeout: 3))
-        next.click()
-        XCTAssertTrue(status.waitForExistence(timeout: 3))
-        app.buttons["composer.completions.previous"].click()
         XCTAssertTrue(compact.waitForExistence(timeout: 3))
         input.typeKey(.downArrow, modifierFlags: [])
         input.typeKey(.tab, modifierFlags: [])
@@ -132,7 +127,7 @@ final class ComposerAndMessageUITests: XCTestCase {
         return buttons.firstMatch
     }
 
-    /// Message actions stay below the text, without hovering or covering selection.
+    /// Message actions are icons below the text, shown while the pointer is over the message.
     @MainActor
     func testCopyingAMessage() {
         let app = launch()
@@ -140,13 +135,15 @@ final class ComposerAndMessageUITests: XCTestCase {
         XCTAssertTrue(prompt.waitForExistence(timeout: 15))
         NSPasteboard.general.clearContents()
         let copy = app.buttons["message.copy.fixture-user"]
-        let more = app.menuButtons["message.more.fixture-user"]
+        let fork = app.buttons["message.fork.fixture-user"]
+        prompt.hover()
         XCTAssertTrue(copy.isHittable)
-        let moreBefore = more.frame
+        let forkBefore = fork.frame
         copy.click()
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Summarize this project")
         Thread.sleep(forTimeInterval: 0.4)
-        XCTAssertEqual(more.frame.minX, moreBefore.minX, accuracy: 0.5)
+        // Copy's checkmark doesn't move the icons beside it.
+        XCTAssertEqual(fork.frame.minX, forkBefore.minX, accuracy: 0.5)
 
         NSPasteboard.general.clearContents()
         app.buttons["message.copy.fixture-answer"].click()
@@ -165,8 +162,8 @@ final class ComposerAndMessageUITests: XCTestCase {
         XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(rows.count, 1)
 
-        app.menuButtons["message.more.fixture-answer"].click()
-        visibleMenuItem(app, "Fork from Here").click()
+        answer.hover()
+        app.buttons["message.fork.fixture-answer"].click()
 
         let deadline = Date().addingTimeInterval(5)
         while rows.count < 2 && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }

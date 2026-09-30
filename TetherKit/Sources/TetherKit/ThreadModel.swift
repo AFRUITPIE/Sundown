@@ -37,14 +37,6 @@ public final class ThreadModel: Identifiable {
         _ = childrenVersion
         return storage
     }
-    /// The row whose ID the turn-start RPC returns plays the sending handoff. The window owner
-    /// prevents another window showing this chat from claiming or replaying the animation.
-    public private(set) var sendAnimationID: String?
-    @ObservationIgnored private var localSend: (token: UUID, owner: UUID)?
-    @ObservationIgnored private var sendAnimationOwner: UUID?
-    @ObservationIgnored private var sendAnimationAt: ContinuousClock.Instant?
-    @ObservationIgnored private var sendAnimationConsumed = false
-    @ObservationIgnored private var initialSend: (input: [UserInput], owner: UUID, at: ContinuousClock.Instant)?
     @ObservationIgnored private var storage: [Item] = []
     @ObservationIgnored private var boxes: [String: ItemBox] = [:]
     public private(set) var turns: [Turn] = []
@@ -139,6 +131,13 @@ public final class ThreadModel: Identifiable {
     /// then and not per delta.
     public private(set) var streamingReplyID: String?
 
+    /// The latest top-level prompt to arrive live, as the host echoes it: never one that came with
+    /// history. The transcript eases in the room it takes. Stored, and changed once a prompt.
+    public private(set) var arrivedPrompt: String?
+    /// A turn is starting here and nothing of it has arrived yet: the running status and the turn
+    /// come just before the prompt's echo. Until then, the transcript lays out as it did before.
+    public private(set) var awaitingPrompt = false
+
     public init(id: String, summary: ThreadSummary? = nil) {
         self.id = id
         self.summary = summary
@@ -229,6 +228,7 @@ public final class ThreadModel: Identifiable {
         remember(changes)
         storage = newItems
         if turns != newTurns { turns = newTurns }
+        if awaitingPrompt { awaitingPrompt = false }
         reindex()
         if hasMoreHistory != hasMore { hasMoreHistory = hasMore }
         if !historyLoaded { historyLoaded = true }
@@ -295,7 +295,6 @@ public final class ThreadModel: Identifiable {
 
     /// Drops the transcript so the next open reads it afresh.
     func unload() {
-        cancelLocalSend()
         fileChanges = [:]
         started = [:]
         openingPrompt = nil
@@ -358,7 +357,10 @@ public final class ThreadModel: Identifiable {
             refreshTitle()
         case .threadStatusChanged(let e):
             // The sidebar reads the status: only a change of it redraws the rows.
-            if status != e.status { status = e.status }
+            if status != e.status {
+                if !isRunning, e.status == .running, currentTurn == nil, !awaitingPrompt { awaitingPrompt = true }
+                status = e.status
+            }
             if activity != e.activity?.rawValue { activity = e.activity?.rawValue }
             if e.status == .idle, apiRetry != nil { apiRetry = nil }
         case .threadClosed:
@@ -369,14 +371,17 @@ public final class ThreadModel: Identifiable {
             Signposts.replyStarted(in: self)
             upsertTurn(e.turn)
             promptSuggestion = nil
+            if !awaitingPrompt { awaitingPrompt = true }
         case .turnCompleted(let e):
             Signposts.replyEnded(in: self)
             upsertTurn(e.turn)
+            if awaitingPrompt { awaitingPrompt = false }
             setStreamingReply(nil)
         case .itemStarted(let e):
             if index[e.item.id] == nil {
                 noteStarted(e.item.id)
-                noteInitialSendEcho(e.item)
+                if case .userMessage(let m) = e.item, m.parentToolUseId == nil { arrivedPrompt = m.id }
+                if awaitingPrompt { awaitingPrompt = false }
             }
             upsert(e.item)
             if case .agentMessage(let m) = e.item, m.parentToolUseId == nil { setStreamingReply(m.id) }
@@ -634,93 +639,6 @@ public final class ThreadModel: Identifiable {
         started[id].map { ContinuousClock.now - $0 < .milliseconds(500) } ?? false
     }
 
-    /// Called immediately before the turn-start RPC, after any history resume is complete.
-    func beginLocalSend(owner: UUID?) -> UUID? {
-        initialSend = nil
-        sendAnimationID = nil
-        sendAnimationOwner = nil
-        sendAnimationAt = nil
-        sendAnimationConsumed = false
-        guard let owner else { localSend = nil; return nil }
-        let token = UUID()
-        localSend = (token, owner)
-        return token
-    }
-
-    func cancelLocalSend(token: UUID? = nil) {
-        guard token == nil || localSend?.token == token else { return }
-        localSend = nil
-        initialSend = nil
-        sendAnimationID = nil
-        sendAnimationOwner = nil
-        sendAnimationAt = nil
-        sendAnimationConsumed = false
-    }
-
-    /// Notifications can precede the RPC response. Publishing its actual ID also reaches a row
-    /// already created from that echo, without depending on text or the server's clock.
-    func confirmLocalSend(messageID: String, token: UUID?) {
-        guard let token, let localSend, localSend.token == token else { return }
-        self.localSend = nil
-        activateSendAnimation(id: messageID, owner: localSend.owner)
-    }
-
-    /// ThreadStart sends its initial input but doesn't return its message ID. This matching is
-    /// confined to the first human prompt in that newly created thread, never an existing chat.
-    func prepareInitialSend(_ input: [UserInput], owner: UUID?) {
-        guard !input.isEmpty, let owner else { return }
-        if let first = storage.first(where: { Self.isHumanPrompt($0) }) {
-            if case .userMessage(let message) = first, message.content == input {
-                activateSendAnimation(id: message.id, owner: owner)
-            }
-        } else {
-            initialSend = (input, owner, .now)
-        }
-    }
-
-    private static func isHumanPrompt(_ item: Item) -> Bool {
-        guard case .userMessage(let message) = item else { return false }
-        return message.synthetic != true && message.parentToolUseId == nil && message.origin == nil
-    }
-
-    private func noteInitialSendEcho(_ item: Item) {
-        guard let initialSend, Self.isHumanPrompt(item) else { return }
-        self.initialSend = nil
-        guard ContinuousClock.now - initialSend.at < .seconds(3),
-              !storage.contains(where: { Self.isHumanPrompt($0) }),
-              case .userMessage(let message) = item, message.content == initialSend.input else { return }
-        activateSendAnimation(id: message.id, owner: initialSend.owner)
-    }
-
-    private func activateSendAnimation(id: String, owner: UUID) {
-        sendAnimationOwner = owner
-        sendAnimationAt = .now
-        sendAnimationConsumed = false
-        sendAnimationID = id
-    }
-
-    /// Remains true during the handoff after its once-only claim. Transcript updates must not
-    /// cancel the row's animation task just because it has already claimed the send.
-    public func isRecentLocalSend(_ id: String, owner: UUID?) -> Bool {
-        let candidate = sendAnimationID
-        guard candidate == id, let owner, owner == sendAnimationOwner,
-              let sendAnimationAt else { return false }
-        return ContinuousClock.now - sendAnimationAt < .seconds(3)
-    }
-
-    public func canAnimateSend(_ id: String, owner: UUID?) -> Bool {
-        let isLocal = isRecentLocalSend(id, owner: owner)
-        return isLocal && !sendAnimationConsumed
-    }
-
-    /// A local echo animates once in the window that sent it, including when rows are recreated.
-    @discardableResult
-    public func consumeSendAnimation(_ id: String, owner: UUID?) -> Bool {
-        guard canAnimateSend(id, owner: owner), !sendAnimationConsumed else { return false }
-        sendAnimationConsumed = true
-        return true
-    }
-
     /// A streamed change to one item: its box, not the transcript's structure.
     private func mutate(_ id: String, _ f: (inout Item) -> Void) {
         guard let i = index[id] else { return }
@@ -745,6 +663,32 @@ public final class ThreadModel: Identifiable {
 
     private func setStreamingReply(_ id: String?) {
         if streamingReplyID != id { streamingReplyID = id }
+    }
+
+    /// The last item the transcript draws: a top-level one that isn't reasoning, which is kept
+    /// but never shown. What the live run of calls and the Thinking line go by.
+    public var lastShownItem: Item? {
+        items.last { item in
+            if case .reasoning = item { return false }
+            return item.parentToolUseId == nil
+        }
+    }
+
+    /// Claude's messages in the turn that ends with `id`, in order: what the turn's Copy copies.
+    public func turnReplies(through id: String) -> [String] {
+        guard var i = index[id] else { return [] }
+        var texts: [String] = []
+        while i >= 0 {
+            switch storage[i] {
+            case .userMessage(let m) where m.synthetic != true && m.parentToolUseId == nil && m.origin == nil:
+                return texts.reversed()
+            case .agentMessage(let m) where m.parentToolUseId == nil && !m.text.isEmpty:
+                texts.append(m.text)
+            default: break
+            }
+            i -= 1
+        }
+        return texts.reversed()
     }
 
     /// The item's box, for a row that renders it. Every held item has one; an item from elsewhere
@@ -945,7 +889,7 @@ private extension Item {
     }
 
     /// A prompt of the chat's own, where a turn starts.
-    var isPrompt: Bool {
+    internal var isPrompt: Bool {
         if case .userMessage(let m) = self { return m.parentToolUseId == nil }
         return false
     }

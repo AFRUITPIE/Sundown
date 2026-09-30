@@ -558,6 +558,8 @@ struct CodeBlock: View {
     var language: String = ""
     var lineLimit: Int? = nil
     @State private var expanded = false
+    /// The shown code in color, once it has been scanned off the main actor.
+    @State private var colored: (source: String, text: AttributedString)?
     @Environment(\.appearance) private var appearance
     @Environment(\.colorSchemeContrast) private var contrast
 
@@ -594,7 +596,11 @@ struct CodeBlock: View {
     var body: some View {
         let measure = Self.measure(code, limit: lineLimit)
         let isTruncated = lineLimit.map { measure.lines > $0 } ?? false
-        let codeText = Text(verbatim: !expanded ? measure.collapsedEnd.map { String(code[..<$0]) } ?? code : code)
+        let shown = !expanded ? measure.collapsedEnd.map { String(code[..<$0]) } ?? code : code
+        // Plain until its colors are ready: only the colors change, never the layout.
+        let codeText = colored.flatMap { $0.source == shown ? Text($0.text) : nil }
+            ?? SyntaxHighlight.cached(shown, language: language).map(Text.init)
+            ?? Text(verbatim: shown)
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(language.isEmpty ? "Code" : language)
@@ -606,8 +612,8 @@ struct CodeBlock: View {
                         .accessibilityIdentifier("code.expand")
                 }
                 CopyButton { Clipboard.copy(code) }
-                    .labelStyle(.titleAndIcon)
-                    .buttonStyle(.bordered)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
                     .accessibilityIdentifier("code.copy")
             }
             .scaledFont(.caption, design: .default)
@@ -631,6 +637,11 @@ struct CodeBlock: View {
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(.primary.opacity(contrast == .increased ? 0.4 : 0.12))
                 .allowsHitTesting(false)
+        }
+        .task(id: shown) {
+            guard colored?.source != shown, let text = await SyntaxHighlight.highlight(shown, language: language),
+                  !Task.isCancelled else { return }
+            colored = (shown, text)
         }
     }
 }

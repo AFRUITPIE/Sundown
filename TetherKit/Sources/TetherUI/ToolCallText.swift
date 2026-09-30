@@ -10,7 +10,8 @@ enum ToolCallText {
     static func verb(_ call: Item.ToolCall) -> String {
         let running = call.status == .running || call.status == .pending
         switch call.kind {
-        case .bash: return running ? "Running" : call.status == .denied ? "Run" : "Ran"
+        // Just that it ran: the command is in the help tag and the opened row, not on the line.
+        case .bash: return running ? "Running a command" : call.status == .denied ? "Run a command" : "Ran a command"
         case .fileRead: return running ? "Reading" : "Read"
         case .fileWrite: return running ? "Writing" : call.status == .denied ? "Write" : "Wrote"
         case .fileEdit, .notebookEdit: return running ? "Editing" : call.status == .denied ? "Edit" : "Edited"
@@ -26,13 +27,13 @@ enum ToolCallText {
     }
 
     /// What the call acted on: a file's name (its path is in the help tag and the detail), a
-    /// command's description or the command itself, a search pattern, a URL's host and path.
+    /// search pattern, a URL's host and path. Nothing for a command: a shell line is more than a
+    /// reader wants on every row.
     static func object(_ call: Item.ToolCall) -> String {
+        if call.kind == .bash { return "" }
         if let summary = call.summary { return summary }
         let input = call.input
         switch call.kind {
-        // The command's first line; Claude's description of it is the help tag.
-        case .bash: return input.string("command").flatMap { $0.split(whereSeparator: \.isNewline).first.map(String.init) } ?? ""
         case .fileRead, .fileWrite, .fileEdit, .notebookEdit:
             return ((input.string("file_path") ?? input.string("notebook_path") ?? "") as NSString).lastPathComponent
         case .grep, .glob: return input.string("pattern").map { "“\($0)”" } ?? ""

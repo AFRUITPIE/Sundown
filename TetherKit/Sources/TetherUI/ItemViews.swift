@@ -18,23 +18,23 @@ struct LiveItemView: View {
 struct ItemView: View {
     let item: Item
     let thread: ThreadModel
-    @Environment(\.messageSendOwner) private var sendOwner
+    @Environment(\.messageSendGeometry) private var sendGeometry
 
     var body: some View {
         switch item {
         case .userMessage(let m):
-            let isLocalSend = thread.isRecentLocalSend(m.id, owner: sendOwner)
-            UserMessageView(message: m, justSent: isLocalSend,
-                            canAnimate: thread.canAnimateSend(m.id, owner: sendOwner),
-                            claimSendAnimation: { thread.consumeSendAnimation(m.id, owner: sendOwner) })
+            // The prompt that just arrived, in the window whose field sent it.
+            let justSent = thread.arrivedPrompt == m.id && m.synthetic != true && m.origin == nil
+            let launches = justSent && sendGeometry?.hasLaunch == true
+            UserMessageView(message: m, justSent: justSent, canAnimate: launches)
                 .messageMenu(id: m.id, text: m.plainText, isMarkdown: false, sentAt: m.createdAt,
-                             arrivalID: isLocalSend ? m.id : nil,
-                             animateArrival: thread.canAnimateSend(m.id, owner: sendOwner))
+                             arrivalID: justSent ? m.id : nil, animateArrival: launches)
         case .agentMessage(let m):
             // Only the reply being streamed into fades its new text in; every other reply is settled.
             MarkdownView(text: m.text, streams: thread.streamingReplyID == m.id)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .messageMenu(id: m.id, text: m.text, isMarkdown: true, sentAt: m.createdAt)
+                .messageMenu(id: m.id, text: m.text, isMarkdown: true, sentAt: m.createdAt,
+                             turnText: { thread.turnReplies(through: m.id).joined(separator: "\n\n") })
         // Reasoning never renders; subagent items come through here too.
         case .reasoning: EmptyView()
         case .toolCall(let t): ToolCallView(call: t, thread: thread)
@@ -66,8 +66,9 @@ struct ItemView: View {
 }
 
 /// What can be done with a message: copy it, branch the chat from it (Fork from Here), or, from a
-/// prompt, put the files back as they were before it. Regular controls live below the message,
-/// rather than floating over selectable text. Context menus and VoiceOver offer the same actions.
+/// prompt, put the files back as they were before it. Icons in a row below the message, with when
+/// it was sent, shown while the pointer is over the message: a reader of the chat sees only the
+/// chat. The context menu and VoiceOver offer the same actions.
 private struct MessageMenu: ViewModifier {
     let id: String
     /// The message as it arrived: plain for a prompt, Markdown for a reply.
@@ -77,7 +78,12 @@ private struct MessageMenu: ViewModifier {
     let sentAt: Double
     let arrivalID: String?
     let animateArrival: Bool
+    /// All of Claude's messages in the turn, for the turn's Copy.
+    var turnText: (() -> String)?
     @State private var arrivalPrepared = false
+    @State private var hovering = false
+    @Environment(\.turnPlace) private var place
+    @Environment(\.turnHover) private var turnHover
     @Environment(\.forkChat) private var forkChat
     @Environment(\.restoreCode) private var restoreCode
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -98,12 +104,18 @@ private struct MessageMenu: ViewModifier {
                 // The blank beside a short line is the message too, so right-clicking there works.
                 .contentShape(.rect)
                 .contextMenu { actions }
-            bar
-                .opacity(hidesActions ? 0 : 1)
-                .allowsHitTesting(!hidesActions)
-                .accessibilityHidden(hidesActions)
-                .animation(.easeOut(duration: 0.12), value: hidesActions)
+            // Its room is kept while hidden, so pointing at a message moves nothing. Still there
+            // for VoiceOver and the keyboard, which don't point. A reply before the end of its turn
+            // has none: the turn's actions go once, after its last reply.
+            if hasBar {
+                bar
+                    .opacity(showsActions ? 1 : 0)
+                    .allowsHitTesting(!hidesActions)
+                    .accessibilityHidden(hidesActions)
+                    .animation(.easeOut(duration: 0.12), value: showsActions)
+            }
         }
+            .onHover { hovering = $0 }
             // A reply is one element, as a prompt's bubble is, so its actions are the reply's and not
             // each paragraph's; and says when it was sent, as the inline footer does visually.
             .modifier(ReplyElement(isReply: isMarkdown))
@@ -130,44 +142,53 @@ private struct MessageMenu: ViewModifier {
         }
     }
 
+    /// A prompt has its own; a reply in the transcript only at the end of its finished turn.
+    private var hasBar: Bool { !isMarkdown || place == nil || place?.isEnd == true }
+
+    private var showsActions: Bool {
+        guard !hidesActions else { return false }
+        if hovering { return true }
+        guard isMarkdown, let place else { return false }
+        return turnHover?.turn == place.turn
+    }
+
+    /// When it was sent, then the actions as icons, named in their help tags.
     private var bar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Text(Format.messageTime(msSinceEpoch: sentAt))
                 .scaledFont(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("message.time")
-            CopyButton(action: copyText, spacious: true)
+            CopyButton(action: copyText)
                 .accessibilityIdentifier("message.copy.\(id)")
-            Menu {
-                if isMarkdown { Button("Copy as Markdown") { Clipboard.copy(text) } }
-                Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
-                if !isMarkdown {
-                    Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
-                }
-            } label: {
-                Label("More", systemImage: "ellipsis")
-                    .padding(4)
+            Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
+                .help("Fork from Here")
+                .accessibilityIdentifier("message.fork.\(id)")
+            if !isMarkdown {
+                Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
+                    .help("Restore Code to Here")
+                    .accessibilityIdentifier("message.restore.\(id)")
             }
-            .labelStyle(.iconOnly)
-            .menuIndicator(.hidden)
-            .help("More Message Actions")
-            .accessibilityLabel("More Message Actions")
-            .accessibilityIdentifier("message.more.\(id)")
         }
+        .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
-        .controlSize(.regular)
+        .foregroundStyle(.secondary)
         .scaledFont(.callout)
     }
 
-    // Converted when chosen, not per update: a streaming reply's body runs every frame.
-    private func copyText() { Clipboard.copy(isMarkdown ? MarkdownView.plainText(text) : text) }
+    // Converted when chosen, not per update: a streaming reply's body runs every frame. At the end
+    // of a turn, the whole turn's replies.
+    private func copyText() {
+        guard isMarkdown else { Clipboard.copy(text); return }
+        let markdown = place?.isEnd == true ? turnText?() ?? text : text
+        Clipboard.copy(MarkdownView.plainText(markdown))
+    }
 }
 
 /// Copy, which turns into a checkmark for a moment once it has copied. As wide as the wider of the
 /// two, so turning into the checkmark doesn't resize the bar it's in and move the buttons beside it.
 struct CopyButton: View {
     let action: () -> Void
-    var spacious = false
     @State private var copied = false
 
     var body: some View {
@@ -177,7 +198,6 @@ struct CopyButton: View {
         } label: {
             ReservedWidthLabel(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc",
                                widestOf: ["Copy", "Copied"], symbols: ["doc.on.doc", "checkmark"])
-                .padding(.vertical, spacious ? 4 : 0)
         }
         .task(id: copied) {
             guard copied else { return }
@@ -190,9 +210,10 @@ struct CopyButton: View {
 
 extension View {
     func messageMenu(id: String, text: String, isMarkdown: Bool, sentAt: Double,
-                     arrivalID: String? = nil, animateArrival: Bool = false) -> some View {
+                     arrivalID: String? = nil, animateArrival: Bool = false,
+                     turnText: (() -> String)? = nil) -> some View {
         modifier(MessageMenu(id: id, text: text, isMarkdown: isMarkdown, sentAt: sentAt,
-                             arrivalID: arrivalID, animateArrival: animateArrival))
+                             arrivalID: arrivalID, animateArrival: animateArrival, turnText: turnText))
     }
 }
 
@@ -266,23 +287,19 @@ struct OpenChatAction: Equatable {
 
 struct UserMessageView: View {
     let message: Item.UserMessage
-    let claimSendAnimation: () -> Bool
     let justSent: Bool
     let canAnimate: Bool
     @State private var arrived: Bool
     @State private var sending = false
     @State private var prepared = false
     @State private var launchFrame: CGRect?
-    @State private var launchPreparation: UUID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.reducesEffects) private var reducesEffects
     @Environment(\.messageSendGeometry) private var sendGeometry
     @Environment(\.colorSchemeContrast) private var contrast
 
-    init(message: Item.UserMessage, justSent: Bool = false, canAnimate: Bool = true,
-         claimSendAnimation: @escaping () -> Bool = { true }) {
+    init(message: Item.UserMessage, justSent: Bool = false, canAnimate: Bool = true) {
         self.message = message
-        self.claimSendAnimation = claimSendAnimation
         self.justSent = justSent
         self.canAnimate = canAnimate
         _arrived = State(initialValue: true)
@@ -301,22 +318,20 @@ struct UserMessageView: View {
         }
         .task(id: justSent) {
             guard justSent else { prepared = true; arrived = true; sending = false; return }
-            guard claimSendAnimation(), !reduceMotion, !reducesEffects else {
+            guard !reduceMotion, !reducesEffects, let frame = sendGeometry?.takeLaunch() else {
                 prepared = true
                 arrived = true
                 return
             }
             sendGeometry?.activeMessageID = message.id
-            launchPreparation = sendGeometry?.preparationID
-            launchFrame = sendGeometry?.submittedFrame ?? sendGeometry?.composerFrame
-            sendGeometry?.submittedFrame = nil
+            launchFrame = frame
             sending = true
             arrived = false
             prepared = true
             defer {
                 arrived = true
                 sending = false
-                sendGeometry?.finishSend(message.id, preparation: launchPreparation)
+                sendGeometry?.finishSend(message.id)
             }
             // Give the visual effect its initial render at the composer before lifting into the row.
             try? await Task.sleep(for: .milliseconds(16))
@@ -326,7 +341,6 @@ struct UserMessageView: View {
             await withCheckedContinuation { continuation in
                 withAnimation(MessageSendGeometry.spring, completionCriteria: .removed) {
                     arrived = true
-                    sendGeometry?.departingMessageID = message.id
                 } completion: {
                     continuation.resume()
                 }
@@ -336,7 +350,7 @@ struct UserMessageView: View {
         .onDisappear {
             arrived = true
             sending = false
-            sendGeometry?.finishSend(message.id, preparation: launchPreparation)
+            sendGeometry?.finishSend(message.id)
         }
     }
 
@@ -484,35 +498,37 @@ final class MessageSendGeometry {
     nonisolated static let space = "message.send"
     static let spring = Animation.spring(response: 0.52, dampingFraction: 0.74)
     var composerFrame: CGRect?
+    /// The filled editor's frame as it sent, before clearing a multiline draft collapsed it, for
+    /// the next prompt to arrive here. Only the window that sent it holds one.
     @ObservationIgnored var submittedFrame: CGRect?
+    @ObservationIgnored private var submittedAt: ContinuousClock.Instant?
     var activeMessageID: String?
-    var preparationID: UUID?
-    var departingMessageID: String?
 
-    func prepareSend() -> UUID {
-        let token = UUID()
+    func prepareSend() {
         submittedFrame = composerFrame
-        departingMessageID = nil
-        preparationID = token
-        return token
+        submittedAt = .now
     }
 
-    func cancelPreparation(_ token: UUID?) {
-        guard token == preparationID else { return }
-        preparationID = nil
+    /// Whether a send from this window is waiting for its prompt: a failed one lapses.
+    var hasLaunch: Bool {
+        guard submittedFrame != nil, let submittedAt else { return false }
+        return ContinuousClock.now - submittedAt < .seconds(3)
     }
 
-    func finishSend(_ id: String, preparation token: UUID?) {
+    /// The sent field's frame, once: a row made again for the same prompt doesn't fly again.
+    func takeLaunch() -> CGRect? {
+        defer { submittedFrame = nil; submittedAt = nil }
+        return hasLaunch ? submittedFrame : nil
+    }
+
+    func finishSend(_ id: String) {
         guard activeMessageID == id else { return }
         activeMessageID = nil
-        if preparationID == token { preparationID = nil }
-        if departingMessageID == id { departingMessageID = nil }
     }
 }
 
 extension EnvironmentValues {
     @Entry var messageSendGeometry: MessageSendGeometry? = nil
-    @Entry var messageSendOwner: UUID? = nil
 }
 
 /// Opens the session a message came from. Dimmed, and saying why, when it isn't one of this host's
@@ -702,7 +718,7 @@ private struct MessageSendPreview: View {
                     .onGeometryChange(for: CGRect.self) {
                         $0.frame(in: .named(MessageSendGeometry.space))
                     } action: { geometry.composerFrame = $0 }
-                Button("Send", systemImage: "arrow.up") { sends += 1 }
+                Button("Send", systemImage: "arrow.up") { geometry.prepareSend(); sends += 1 }
                     .buttonStyle(.glassProminent)
                     .controlSize(.large)
             }

@@ -87,15 +87,14 @@ struct ToolCallView: View {
             .padding(.vertical, 8)
     }
 
-    /// Words first, and the status at the trailing end (the chevron is the disclosure's). A finished
-    /// call has no status glyph. Its menu and full command or path are on the words.
+    /// Words first, then the status, then the disclosure's chevron. A finished call has no status
+    /// glyph. Its menu and full command or path are on the words.
     private var header: some View {
         HStack(spacing: 6) {
             Text(title).foregroundStyle(.secondary).fontWeight(.medium)
             if !subtitle.isEmpty {
                 Text(subtitle).foregroundStyle(.primary).lineLimit(1).truncationMode(.middle)
             }
-            Spacer(minLength: 8)
             if let s = call.elapsedSeconds, call.status == .running {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
@@ -227,7 +226,7 @@ enum SubagentLifecycle {
     }
 }
 
-/// A transcript row that opens, as a disclosure group: its words, the chevron at the trailing end,
+/// A transcript row that opens, as a disclosure group: its words with the chevron right after them,
 /// and what it holds beneath at the same leading edge, so nothing indents. VoiceOver hears whether
 /// it's open along with the row's own value (a call's status, a file's line counts).
 struct TranscriptDisclosureStyle: DisclosureGroupStyle {
@@ -246,9 +245,11 @@ struct TranscriptDisclosureStyle: DisclosureGroupStyle {
                 Button {
                     withAnimation(reduceMotion ? nil : .snappy(duration: 0.15)) { configuration.isExpanded.toggle() }
                 } label: {
-                    HStack(spacing: 8) {
-                        DisclosureIndicator(expanded: configuration.isExpanded)
+                    // The words, then the chevron right after them.
+                    HStack(spacing: 6) {
                         configuration.label
+                        DisclosureIndicator(expanded: configuration.isExpanded)
+                        Spacer(minLength: 0)
                     }
                     .padding(.vertical, 4)
                     .contentShape(Rectangle())
@@ -292,23 +293,8 @@ struct DisclosureIndicator: View {
 }
 
 /// A folded run of finished tool calls (see `foldTranscriptRows`) as one line that says what they
-/// did: "Read 3 files, searched code, and ran 2 commands", and in gray how many failed. Open, its
-/// calls are listed beneath at the same leading edge, each a line of its own.
-/// How many calls in a fold failed, in gray beside its chevron; nothing when none did.
-private struct FailureCount: View {
-    let count: Int
-    init(_ count: Int) { self.count = count }
-
-    var body: some View {
-        if count > 0 {
-            Text(count == 1 ? "1 failed" : "\(count) failed")
-                .scaledFont(.caption)
-                .foregroundStyle(.tertiary)
-                .monospacedDigit()
-        }
-    }
-}
-
+/// did: "Read 3 files, searched code, and ran 2 commands". Open, its calls are listed beneath at
+/// the same leading edge, each a line of its own; a failed one has its own gray glyph.
 struct ToolCallGroupView: View {
     let calls: [Item.ToolCall]
     let thread: ThreadModel
@@ -317,7 +303,16 @@ struct ToolCallGroupView: View {
     @State private var expanded: Bool
     @State private var expandAll = false
 
-    private var failures: Int { calls.count { $0.status == .failed } }
+    /// While the run is the turn's work in progress, what it's doing now: the running call's words,
+    /// or Thinking once its calls are done and nothing has come after them. Nil once it's settled.
+    private var liveTitle: String? {
+        if let running = calls.last(where: { $0.status == .running || $0.status == .pending }) {
+            let object = ToolCallText.object(running)
+            return object.isEmpty ? ToolCallText.verb(running) : "\(ToolCallText.verb(running)) \(object)"
+        }
+        if thread.isThinking, let last = calls.last, thread.lastShownItem?.id == last.id { return "Thinking" }
+        return nil
+    }
 
     init(calls: [Item.ToolCall], thread: ThreadModel, rowID: String? = nil, initiallyExpanded: Bool = false) {
         self.calls = calls
@@ -347,21 +342,18 @@ struct ToolCallGroupView: View {
             .padding(12)
             .background(.fill.quinary, in: .rect(cornerRadius: 10))
         } label: {
-            HStack(spacing: 8) {
-                Text(ToolCallText.summary(calls)).foregroundStyle(.secondary).fontWeight(.medium).lineLimit(1)
-                Spacer(minLength: 8)
-                FailureCount(failures)
-            }
-            .scaledFont(.callout)
+            ActivityLabel(text: liveTitle ?? ToolCallText.summary(calls), live: liveTitle != nil)
+                .fontWeight(.medium)
+                .scaledFont(.callout)
         }
-        .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.toolGroup"))
+        .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.toolGroup", value: liveTitle == nil ? nil : "Running"))
         .modifier(OpensForFind(rowID: rowID, expanded: $expanded,
                                matches: { TranscriptRow.toolGroup(calls).matches($0) }))
     }
 }
 
 /// A finished turn's work folded behind its last message (Settings ▸ Advanced ▸ Tool Calls ▸
-/// Worked For): "Worked for 3m 12s", and in gray how many calls failed. Open, the work is shown as
+/// Worked For): "Worked for 3m 12s". Open, the work is shown as
 /// Summarized shows it, at the same leading edge.
 struct TurnWorkView: View {
     let rows: [TranscriptRow]
@@ -370,17 +362,6 @@ struct TurnWorkView: View {
     /// The transcript row's id, so Find in Chat opens the work when it's the current match.
     var rowID: String?
     @State private var expanded = false
-
-    /// Calls in the work that failed, in runs or on their own.
-    private var failures: Int {
-        rows.reduce(0) { n, row in
-            switch row {
-            case .item(.toolCall(let call)): n + (call.status == .failed ? 1 : 0)
-            case .toolGroup(let calls): n + calls.count { $0.status == .failed }
-            default: n
-            }
-        }
-    }
 
     private var title: String {
         guard let durationMs, durationMs >= 1000 else { return "Worked" }
@@ -395,12 +376,8 @@ struct TurnWorkView: View {
                     .environment(\.findFold, rowID)
             }
         } label: {
-            HStack(spacing: 8) {
-                Text(title).foregroundStyle(.secondary)
-                Spacer(minLength: 8)
-                FailureCount(failures)
-            }
-            .scaledFont(.callout)
+            Text(title).foregroundStyle(.secondary)
+                .scaledFont(.callout)
         }
         .disclosureGroupStyle(TranscriptDisclosureStyle(spacing: 10, identifier: "transcript.turnWork"))
         .modifier(OpensForFind(rowID: rowID, expanded: $expanded))
@@ -795,3 +772,37 @@ private struct FindOpensWorkPreview: View {
 }
 
 #endif
+
+/// A line of words that says what's happening: shimmering while it's live, and turning into its
+/// next words by blurring up and away as they rise in from below. Settled, it's plain secondary text.
+struct ActivityLabel: View {
+    let text: String
+    let live: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.reducesEffects) private var reducesEffects
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            words
+                .id(text)
+                .transition(.moving(AnyTransition(BlurReplaceTransition(configuration: .upUp)), reduceMotion: reduceMotion))
+        }
+        .lineLimit(1)
+        .animation(reduceMotion ? .default : .spring(duration: 0.45, bounce: 0.25), value: text)
+    }
+
+    @ViewBuilder private var words: some View {
+        if live, !reduceMotion, !reducesEffects {
+            // A band of the primary color sweeping across the secondary, every 1.6 s.
+            TimelineView(.animation) { context in
+                let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
+                let start = -0.8 + 2.2 * phase
+                Text(text).foregroundStyle(LinearGradient(colors: [.secondary, .primary, .secondary],
+                                                          startPoint: UnitPoint(x: start, y: 0.5),
+                                                          endPoint: UnitPoint(x: start + 0.6, y: 0.5)))
+            }
+        } else {
+            Text(text).foregroundStyle(.secondary)
+        }
+    }
+}

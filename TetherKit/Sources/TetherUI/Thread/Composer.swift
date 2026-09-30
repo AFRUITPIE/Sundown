@@ -31,12 +31,14 @@ struct Composer: View {
     @Environment(\.composerDrafts) private var drafts
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.reducesEffects) private var reducesEffects
+    @Environment(\.appearsActive) private var appearsActive
     @Environment(\.messageSendGeometry) private var sendGeometry
     #if DEBUG
     @Environment(\.composerPreviewCommands) private var previewCommands
     #endif
     @State private var text = ""
+    /// How many messages this field has sent, for Send's hop.
+    @State private var sent = 0
     @State private var images: [Attachment] = []
     @State private var commands: [SlashCommand] = []
     /// Whether `commands` is this folder's or chat's list, rather than nothing asked for yet.
@@ -140,26 +142,19 @@ struct Composer: View {
     /// While Claude works, an empty field offers Stop; typing turns it back into Send (adds to the turn).
     private var showStop: Bool { thread?.isRunning == true && onStop != nil && !canSend }
 
+    /// Claude's suggestion for what to ask next, while the field is empty.
+    private var suggestion: String? {
+        guard text.isEmpty, let s = thread?.promptSuggestion, !s.isEmpty else { return nil }
+        return s
+    }
+
     private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty }
 
     var body: some View {
         // While the host isn't connected, a card says so in the field's place. The composer stays,
         // so the draft and its attachments are there when the field comes back.
         let status = ConnectionStatusCard.Status(connection.state, host: connection.host.name)
-        // Above the field, not in it: it's an offer, not text you've written.
         VStack(alignment: .leading, spacing: 8) {
-            if status == nil, let s = thread?.promptSuggestion, text.isEmpty {
-                Button { text = s } label: {
-                    Label(s, systemImage: "sparkles").lineLimit(2)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.capsule)
-                .controlSize(.regular)
-                .scaledFont(.callout)
-                .help("Use Suggestion")
-                .glassEffectTransition(.materialize)
-                .transition(.moving(.opacity.combined(with: .move(edge: .bottom)), reduceMotion: reduceMotion))
-            }
             if let status {
                 ConnectionStatusCard(status: status, connection: connection)
             } else {
@@ -167,7 +162,6 @@ struct Composer: View {
                 field
             }
         }
-        .animation(.snappy, value: thread?.promptSuggestion)
         .animation(reduceMotion ? nil : .snappy, value: status == nil)
     }
 
@@ -278,8 +272,11 @@ struct Composer: View {
     }
 
     private func textField(dim: Double) -> some View {
-        TextField(thread?.isRunning == true ? "Queue a message…" : placeholder, text: $text, axis: .vertical)
+        // Claude's suggested next prompt is the empty field's placeholder, as in the CLI: an offer,
+        // not text you've written, and Tab takes it.
+        TextField(suggestion ?? (thread?.isRunning == true ? "Queue a message…" : placeholder), text: $text, axis: .vertical)
             .accessibilityIdentifier("composer.input")
+            .accessibilityHint(suggestion == nil ? "" : "Press Tab to use the suggestion.")
             .textFieldStyle(.plain)
             .lineLimit(1...12)
             .focused($focused)
@@ -294,8 +291,14 @@ struct Composer: View {
             }
             .onKeyPress(.return, phases: .down, action: returnPressed)
             .onKeyPress(.tab, phases: .down) { press in
-                guard press.modifiers.isEmpty, !suggestions.isEmpty else { return .ignored }
-                completeSuggestion()
+                guard press.modifiers.isEmpty else { return .ignored }
+                if !suggestions.isEmpty {
+                    completeSuggestion()
+                } else if let suggestion {
+                    text = suggestion
+                } else {
+                    return .ignored
+                }
                 return .handled
             }
             // Esc closes the suggestion list if it's open, and otherwise stops Claude, as in the
@@ -330,60 +333,37 @@ struct Composer: View {
         }
     }
 
-    /// Completion choices stay inside the window above the composer. Unlike an external popover,
-    /// this keeps the editing focus and avoids opening a list into the Dock at the window's bottom.
+    /// Completion choices, as a menu reads: a glass panel just above the field, the chosen row in
+    /// the accent color, the pointer choosing as it moves. In the window, not a popover or the
+    /// system's text suggestions: those opened below the field, off a full-height window's
+    /// screen, or took the keyboard from the field.
     private var completionChoices: some View {
-        let first = (selectedSuggestion / 4) * 4
-        return VStack(alignment: .leading, spacing: 2) {
-            HStack {
-                Text(text.hasPrefix("/") ? "Commands" : "Files").font(.caption.weight(.semibold))
-                Spacer()
-                Text("↑↓ to choose · Tab to insert · Esc to close")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 4)
-            ForEach(Array(suggestions.enumerated()).dropFirst(first).prefix(4), id: \.element.id) { index, suggestion in
-                Button { completeSuggestion(at: index) } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: suggestion.symbol).foregroundStyle(.secondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(suggestion.title).font(.callout.weight(.medium)).lineLimit(1)
-                            if let detail = suggestion.detail {
-                                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        }
-                        Spacer(minLength: 0)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(suggestions.enumerated()), id: \.element.id) { index, suggestion in
+                        completionRow(suggestion, selected: index == selectedSuggestion)
+                            .onHover { if $0 { selectedSuggestion = index } }
+                            .onTapGesture { completeSuggestion(at: index) }
+                            .id(index)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityAddTraits(index == selectedSuggestion ? [.isButton, .isSelected] : .isButton)
+                            .accessibilityAction { completeSuggestion(at: index) }
+                            .accessibilityIdentifier("composer.completion.\(suggestion.id)")
                     }
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(index == selectedSuggestion ? AnyShapeStyle(.fill.secondary) : AnyShapeStyle(Color.clear),
-                                in: .rect(cornerRadius: 8))
-                    .contentShape(.rect)
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("composer.completion.\(suggestion.id)")
-                .accessibilityAddTraits(index == selectedSuggestion ? .isSelected : [])
+                .padding(5)
             }
-            if suggestions.count > 4 {
-                HStack {
-                    Text("\(first + 1)–\(min(first + 4, suggestions.count)) of \(suggestions.count)")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Previous", systemImage: "chevron.left") { changeSuggestionPage(by: -1) }
-                        .disabled(first == 0)
-                        .accessibilityIdentifier("composer.completions.previous")
-                    Button("Next", systemImage: "chevron.right") { changeSuggestionPage(by: 1) }
-                        .disabled(first + 4 >= suggestions.count)
-                        .accessibilityIdentifier("composer.completions.next")
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.regular)
-                .padding(.horizontal, 8)
-            }
+            // Six rows, then it scrolls.
+            .frame(maxHeight: 6 * 30 + 10)
+            .fixedSize(horizontal: false, vertical: true)
+            .scrollBounceBehavior(.basedOnSize)
+            .onChange(of: selectedSuggestion) { proxy.scrollTo(selectedSuggestion) }
         }
-        .padding(8)
-        .background(.regularMaterial, in: .rect(cornerRadius: Layout.cardCornerRadius))
+        .frame(maxWidth: 420, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(text.hasPrefix("/") ? "Commands" : "Files")
         // The native multiline editor handles arrows before onKeyPress. These SwiftUI commands
         // exist only while its completion list is visible; ordinary editing keeps its arrow keys.
         .background {
@@ -398,16 +378,30 @@ struct Composer: View {
         }
     }
 
+    private func completionRow(_ suggestion: Suggestion, selected: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: suggestion.symbol)
+                .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+                .frame(width: 16)
+            Text(suggestion.title).lineLimit(1).layoutPriority(1)
+            if let detail = suggestion.detail {
+                Text(detail).lineLimit(1)
+                    .foregroundStyle(selected ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
+            }
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+        .padding(.horizontal, 8)
+        .frame(height: 30)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 7))
+        .contentShape(.rect)
+    }
+
     private func moveSuggestion(by direction: Int) -> KeyPress.Result {
         guard !suggestions.isEmpty else { return .ignored }
         selectedSuggestion = (selectedSuggestion + direction + suggestions.count) % suggestions.count
         return .handled
-    }
-
-    private func changeSuggestionPage(by direction: Int) {
-        let first = (selectedSuggestion / 4) * 4
-        selectedSuggestion = min(max(first + direction * 4, 0), suggestions.count - 1)
-        focused = true
     }
 
     private func completeSuggestion(at index: Int? = nil) {
@@ -416,30 +410,29 @@ struct Composer: View {
         focused = true
     }
 
-    /// A native circular action, with its full name available to accessibility and in its help.
+    /// One native circular action whose symbol turns into the next: Send's arrow, Add to Turn's
+    /// return arrow while Claude works, and Stop with an empty field. Its name is its label, for
+    /// accessibility and in its help.
     private var sendOrStop: some View {
-        ZStack {
-            if showStop {
-                Button { onStop?() } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                    .buttonStyle(.glass)
-                    .help("Stop")
-            } else {
-                Button(action: send) {
-                    Label("Send", systemImage: thread?.isRunning == true ? "arrow.turn.down.left" : "arrow.up")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                    .accessibilityIdentifier("composer.send")
-                    // Send's arrow turns into Add to Turn's and back as a turn starts and ends.
-                    .contentTransition(.symbolEffect(.replace))
-                    .buttonStyle(.glassProminent)
-                    // Not while an attachment is still being read.
-                    .disabled(!canSend || awaitingAnswer || attaching > 0)
-                    .help(sendHelp)
-            }
+        let (title, symbol) = showStop ? ("Stop", "stop.fill")
+            : thread?.isRunning == true ? ("Add to Turn", "arrow.turn.down.left") : ("Send", "arrow.up")
+        return Button {
+            if showStop { onStop?() } else { send() }
+        } label: {
+            Label(title, systemImage: symbol)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Hops as it sends.
+                .symbolEffect(.bounce.up, options: reduceMotion ? .nonRepeating.speed(0) : .nonRepeating, value: sent)
         }
+        .accessibilityIdentifier(showStop ? "composer.stop" : "composer.send")
+        .contentTransition(.symbolEffect(.replace))
+        .animation(reduceMotion ? nil : .snappy, value: symbol)
+        .buttonStyle(.glassProminent)
+        // Stop is the neutral glass of the controls beside it, Send the accent.
+        .tint(showStop ? .secondary : nil)
+        // Not while an attachment is still being read.
+        .disabled(!showStop && (!canSend || awaitingAnswer || attaching > 0))
+        .help(showStop ? "Stop" : sendHelp)
         .buttonBorderShape(.circle)
         .labelStyle(.iconOnly)
     }
@@ -501,14 +494,16 @@ struct Composer: View {
         } label: {
             Label("Add", systemImage: "plus")
                 .labelStyle(.iconOnly)
+                // A plain label doesn't fade with its window as the glass buttons' do.
+                .foregroundStyle(appearsActive ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                 .opacity(dim)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .menuIndicator(.hidden)
         .menuStyle(.button)
+        // A Menu in the glass button style draws a flat gray bezel on macOS 27, not glass. So it's
+        // plain, under the same interactive glass that style gives Send, in the layout's circle.
         .buttonStyle(.plain)
-        // Menu's system button style holds its own intrinsic diameter. The menu remains native;
-        // its outer interactive glass takes the circle proposed by the editor's layout instead.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(.circle)
         .glassEffect(.regular.interactive(), in: .circle)
@@ -557,22 +552,15 @@ struct Composer: View {
 
     private func send() {
         guard canSend, !awaitingAnswer, attaching == 0 else { return }
+        sent += 1
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var input: [UserInput] = []
         if !trimmed.isEmpty { input.append(.text(.init(text: trimmed))) }
         for attachment in images { input.append(attachment.input) }
-        // Preserve the filled editor's shape before clearing a multiline draft collapses it.
-        let preparation = sendGeometry?.prepareSend()
+        sendGeometry?.prepareSend()
         text = ""
         images = []
-        Task {
-            await submit(input)
-            // New Chat has no preceding transcript to hold. Failed sends and reduced motion
-            // must also release the end anchor even when no animated bubble claims the handoff.
-            if thread == nil || thread?.sendAnimationID == nil || thread?.lastError != nil || reduceMotion || reducesEffects {
-                sendGeometry?.cancelPreparation(preparation)
-            }
-        }
+        Task { await submit(input) }
     }
 
     /// What the field takes from outside it: a file (by URL), or an image that isn't one, such as
@@ -889,7 +877,7 @@ private extension EnvironmentValues {
     .preferredColorScheme(.dark)
 }
 
-#Preview("Commands above composer, with mouse paging") {
+#Preview("Commands above composer") {
     let connection = HostConnection.sample()
     let thread = ThreadModel.sampleIdleChat()
     GlassEffectContainer {
@@ -911,3 +899,4 @@ private extension EnvironmentValues {
 }
 
 #endif
+

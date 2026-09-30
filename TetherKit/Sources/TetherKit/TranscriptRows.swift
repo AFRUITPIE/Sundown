@@ -51,14 +51,18 @@ public enum TranscriptFolding: Sendable, Hashable {
 /// Reasoning items are dropped here rather than rendered: the model's internal monologue competes
 /// with its actual answer. `ThreadModel` still keeps them, and `ThreadModel.isThinking` drives the
 /// one line that marks the wait before a reply starts.
-public func foldTranscriptRows(_ items: [Item], grouping: Bool = true) -> [TranscriptRow] {
+///
+/// `live` is for the turn that's running: its calls fold as they run, and every run is a group,
+/// one call or more, so the run is one row from its first call to its last, saying what it's doing
+/// now, rather than a line per running call that turns into a group once they finish.
+public func foldTranscriptRows(_ items: [Item], grouping: Bool = true, live: Bool = false) -> [TranscriptRow] {
     var rows: [TranscriptRow] = []
     var run: [Item.ToolCall] = []
 
     func flushRun() {
         switch run.count {
         case 0: break
-        case 1: rows.append(.item(.toolCall(run[0])))
+        case 1 where !live: rows.append(.item(.toolCall(run[0])))
         default: rows.append(.toolGroup(run))
         }
         run.removeAll()
@@ -67,7 +71,7 @@ public func foldTranscriptRows(_ items: [Item], grouping: Bool = true) -> [Trans
     for item in items {
         if case .reasoning = item {
             continue
-        } else if grouping, case .toolCall(let call) = item, isGroupable(call) {
+        } else if grouping, case .toolCall(let call) = item, live ? isFoldable(call) : isGroupable(call) {
             run.append(call)
         } else {
             flushRun()
@@ -84,7 +88,12 @@ public func foldTranscriptRows(_ items: [Item], grouping: Bool = true) -> [Trans
 /// it would with `.summarized`, since nothing would be left to read.
 public func foldTranscriptRows(_ items: [Item], folding: TranscriptFolding, lastTurnRunning: Bool) -> [TranscriptRow] {
     switch folding {
-    case .summarized: return foldTranscriptRows(items)
+    case .summarized:
+        // Only the running turn, from its prompt, folds live.
+        guard lastTurnRunning, let start = items.lastIndex(where: \.isPrompt) else {
+            return foldTranscriptRows(items, live: lastTurnRunning)
+        }
+        return foldTranscriptRows(Array(items[..<start])) + foldTranscriptRows(Array(items[start...]), live: true)
     case .everyCall: return foldTranscriptRows(items, grouping: false)
     case .workedFor: break
     }
@@ -105,7 +114,7 @@ public func foldTranscriptRows(_ items: [Item], folding: TranscriptFolding, last
         guard !isRunning,
               case .userMessage(let prompt)? = turn.first,
               let last = turn.lastIndex(where: { if case .agentMessage = $0 { true } else { false } }) else {
-            rows += foldTranscriptRows(Array(turn))
+            rows += foldTranscriptRows(Array(turn), live: isRunning)
             continue
         }
         let work = turn[turn.index(after: turn.startIndex)..<last]
@@ -123,7 +132,12 @@ public func foldTranscriptRows(_ items: [Item], folding: TranscriptFolding, last
 }
 
 private func isGroupable(_ call: Item.ToolCall) -> Bool {
-    call.status != .running && call.status != .pending && call.kind != .todoWrite && call.kind != .subagent
+    call.status != .running && call.status != .pending && isFoldable(call)
+}
+
+/// A call that can be a line in a run at all: not a checklist or a subagent, which are shown whole.
+private func isFoldable(_ call: Item.ToolCall) -> Bool {
+    call.kind != .todoWrite && call.kind != .subagent
 }
 
 /// Folded rows with what goes between turns: a date above each prompt in `dates` (by prompt id,
@@ -208,7 +222,7 @@ public enum DateSeparators {
 func transcriptRows(ofTurn items: ArraySlice<Item>, folding: TranscriptFolding, running: Bool,
                     dates: inout DateSeparators.Carry, changes: (Item.ToolCall) -> [FileChange]) -> [TranscriptRow] {
     let top = items.filter { $0.parentToolUseId == nil }
-    let folded = foldTranscriptRows(top, folding: folding, lastTurnRunning: folding == .workedFor && running)
+    let folded = foldTranscriptRows(top, folding: folding, lastTurnRunning: running)
     let promptDates = DateSeparators.prompts(in: top, after: &dates)
     var edits: [String: TurnEdits] = [:]
     // A subagent's edits count too, so they're read from every item of the turn, not only the top.
@@ -336,5 +350,36 @@ private extension JSONValue {
         case .object(let o): return o.keys.sorted().flatMap { o[$0]!.strings }
         default: return []
         }
+    }
+}
+
+/// Which turn each row belongs to, and where each turn's one row of message actions goes: after
+/// its last reply, once the turn has finished. Claude's earlier messages in a turn, between its
+/// tool calls, have none of their own. Pure, one pass over the rows.
+public struct TurnPlaces: Sendable, Equatable {
+    /// Each row's turn, by its prompt's id: "" for rows before the first prompt held.
+    public let turns: [String: String]
+    /// The last top-level reply of each finished turn.
+    public let ends: Set<String>
+
+    public init(_ rows: [TranscriptRow], prompts: [TranscriptPrompt], running: Bool) {
+        let promptIDs = Set(prompts.map(\.id))
+        var turns: [String: String] = [:]
+        turns.reserveCapacity(rows.count)
+        var lastReply: [String: String] = [:]
+        var current = ""
+        for row in rows {
+            switch row {
+            case .dateSeparator(let promptID, _): current = promptID
+            case .item(let item) where promptIDs.contains(item.id): current = item.id
+            case .item(.agentMessage(let m)) where m.parentToolUseId == nil: lastReply[current] = m.id
+            default: break
+            }
+            turns[row.id] = current
+        }
+        // The running turn's latest reply may not be its last.
+        if running { lastReply[current] = nil }
+        self.turns = turns
+        self.ends = Set(lastReply.values)
     }
 }

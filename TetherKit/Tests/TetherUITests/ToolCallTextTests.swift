@@ -17,8 +17,8 @@ struct ToolCallTextTests {
         #expect(ToolCallText.fullObject(read)?.hasSuffix("app/RootView.swift") == true)
 
         let running = call(.bash, ["command": "swift build\necho done", "description": "Build"], status: .running)
-        #expect(ToolCallText.verb(running) == "Running")
-        #expect(ToolCallText.object(running) == "swift build")
+        #expect(ToolCallText.verb(running) == "Running a command")
+        #expect(ToolCallText.object(running) == "")
         #expect(ToolCallText.fullObject(running) == "Build")
 
         let denied = call(.fileEdit, ["file_path": "/a/B.swift"], status: .denied)

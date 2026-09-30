@@ -10,7 +10,6 @@ struct BottomBar: View {
     /// from a draft.
     @State private var composerFocused = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.messageSendOwner) private var sendOwner
 
     var body: some View {
         // One read of `pending`: it decides both the card and whether the composer can send.
@@ -34,7 +33,7 @@ struct BottomBar: View {
                     Task { await connection.interrupt(thread) }
                 },
                 submit: { input in
-                    await connection.send(thread, input: input, animationOwner: sendOwner)
+                    await connection.send(thread, input: input)
                 }, onFocusChange: { composerFocused = $0 })
             }
             // The only explicit animation down here, and it runs only when a prompt comes or goes.
