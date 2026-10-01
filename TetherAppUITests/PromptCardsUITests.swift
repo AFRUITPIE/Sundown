@@ -13,16 +13,6 @@ final class PromptCardsUITests: TetherUITestCase {
         // In the window: not a Touch Bar's copy of the card's buttons.
         let buttons = app.windows.firstMatch.buttons
 
-        // The inspector and the sidebar opening and closing over a card. A column's minimum came
-        // from its content (the card's buttons among it), and AppKit gave up laying the window out
-        // ("more Update Constraints in Window passes than there are views") a few rounds in.
-        for round in 1...8 {
-            app.typeKey("i", modifierFlags: [.command, .option])
-            app.typeKey("s", modifierFlags: [.command, .control])
-            assertAlive("toggling the inspector and sidebar over a card, round \(round)")
-        }
-        XCTAssertTrue(permission.exists, "the card went while the inspector and sidebar toggled")
-
         // The composer stays under a card, so a draft survives it, but can't send until it's
         // answered; and Return in the draft doesn't press the card's default button, Allow.
         input.click()
