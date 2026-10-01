@@ -141,15 +141,6 @@ private struct InspectorColumn: ViewModifier {
                     ToolbarItem { InspectorToggle(window: window) }
                 }
         }
-        // Opens and closes at once, without sliding. The sidebar shown or hidden while the
-        // inspector slid put SwiftUI's toolbar in a loop (`Toolbar.LocationStorage` re-vending
-        // its items on every layout pass), until AppKit threw ("more Update Constraints in Window
-        // passes than there are views"): about one run in three of toggling both while a reply
-        // streamed, none in fifteen once the inspector stopped animating.
-        .transaction(value: window.showInspector) {
-            $0.animation = nil
-            $0.disablesAnimations = true
-        }
     }
 }
 
