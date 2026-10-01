@@ -15,6 +15,8 @@ struct TranscriptView: View {
     /// More than a screen from the end: Jump to Latest is offered only then, so a nudge up (which
     /// stops following the end) doesn't bring it up.
     @State private var farFromEnd = false
+    /// Told when the reader opens a row, which stops following the end (below).
+    @State private var rowOpening = RowOpening()
     /// The rows on screen, for Chat ▸ Previous and Next Prompt. Not observed: it changes as rows
     /// scroll in and out, and nothing is drawn from it.
     @State private var onScreen = OnScreenRows()
@@ -34,13 +36,18 @@ struct TranscriptView: View {
                 // to the new one's height they lay outside what it showed, so the transcript stayed
                 // blank until the reader scrolled.
                 .id(appearance.toolCalls.folding)
+                .environment(\.rowOpening, rowOpening)
         }
         // Opens at the end and keeps it pinned through content and size changes. A transcript shorter
         // than the window sits at the top: aligned to the bottom, it was pushed down by a scroll offset
         // and the toolbar's edge effect followed its top edge down the window.
         .accessibilityLabel("Transcript")
         .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .defaultScrollAnchor(.bottom, for: .sizeChanges)
+        // While it follows the end: else, when the reader opens a row ("Ran a command") at the end,
+        // the end stayed put and the row and everything above it moved up under them. Opening a row
+        // is reading, so it stops following and the row opens downward. Switched by that click,
+        // never from layout, where switching the anchor made AppKit throw.
+        .defaultScrollAnchor(followsEnd ? .bottom : .top, for: .sizeChanges)
         .defaultScrollAnchor(.top, for: .alignment)
         .scrollPosition($position)
         // A prompt arriving makes room with the sending spring, and so does Thinking… coming and
@@ -56,7 +63,10 @@ struct TranscriptView: View {
             position.scrollTo(edge: .bottom)
         }
         .onScrollGeometryChange(for: Place.self, of: { Place($0) }) { keepPlace(from: $0, to: $1) }
-        .onAppear { older.page = thread.pageAnchor }
+        .onAppear {
+            older.page = thread.pageAnchor
+            rowOpening.willOpen = { if followsEnd { followsEnd = false } }
+        }
         // Find Next and Previous bring the match into view; the reader has left the end to read it.
         .onChange(of: find?.step) {
             guard let id = find?.current else { return }
@@ -675,7 +685,14 @@ final class TurnHover {
     }
 }
 
+/// The transcript's to tell when the reader opens a row. One object for the transcript's life, so
+/// the environment value never changes and no row redraws for it.
+final class RowOpening {
+    var willOpen: () -> Void = {}
+}
+
 extension EnvironmentValues {
     @Entry var turnHover: TurnHover? = nil
+    @Entry var rowOpening: RowOpening? = nil
     @Entry var turnPlace: TurnPlace? = nil
 }

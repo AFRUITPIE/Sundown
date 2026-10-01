@@ -238,11 +238,14 @@ struct TranscriptDisclosureStyle: DisclosureGroupStyle {
     /// A line under the row whether it's open or not: why a call failed.
     var note: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.rowOpening) private var rowOpening
 
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: spacing) {
             VStack(alignment: .leading, spacing: 2) {
                 Button {
+                    // Opens downward from where it is, not pushing what's above it up.
+                    if !configuration.isExpanded { rowOpening?.willOpen() }
                     withAnimation(reduceMotion ? nil : .snappy(duration: 0.15)) { configuration.isExpanded.toggle() }
                 } label: {
                     // The words, then the chevron right after them.
