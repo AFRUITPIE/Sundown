@@ -216,10 +216,18 @@ final class TranscriptUITests: TetherUITestCase {
         // Finished calls are one compact row until opened: then each call is a row of its own (a
         // group holds two at least), with Expand All, Collapse All and complete detail.
         let groups = app.disclosureTriangles.matching(identifier: "transcript.toolGroup")
-        // Clear of the bottom bar floating over the transcript, where a click would land on the bar
-        // (a smaller screen in CI puts the last group under it).
-        let clear = mainWindow().frame.maxY - 180
-        guard let group = groups.allElementsBoundByIndex.last(where: { $0.isHittable && $0.frame.midY < clear }) else {
+        // Clear of the toolbar above and the bottom bar floating over the transcript below: over
+        // either, XCUITest still calls a row hittable but the click lands on the bar. On CI's
+        // smaller screen the opened edits row pushes the groups up under the toolbar, so one is
+        // scrolled down into the clear band.
+        let top = window.frame.minY + 160, bottom = window.frame.maxY - 180
+        func clearGroup() -> XCUIElement? {
+            groups.allElementsBoundByIndex.last { $0.isHittable && $0.frame.midY > top && $0.frame.midY < bottom }
+        }
+        for _ in 0..<10 where clearGroup() == nil {
+            window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)).scroll(byDeltaX: 0, deltaY: 120)
+        }
+        guard let group = clearGroup() else {
             return XCTFail("no compact tool summary on screen")
         }
         XCTAssertFalse(app.buttons["transcript.expandTools"].exists, "Expand All is offered with every group closed")
