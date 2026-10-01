@@ -88,7 +88,6 @@ public struct RootView: View {
         // No columnVisibility binding: writing it on every sidebar toggle rebuilt the toolbar mid-animation.
         NavigationSplitView {
             SidebarView(window: window)
-                .splitViewColumnContent()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
             DetailView(window: window)
@@ -134,7 +133,6 @@ private struct InspectorColumn: ViewModifier {
     func body(content: Content) -> some View {
         content.inspector(isPresented: $window.showInspector) {
             InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-                .splitViewColumnContent()
                 .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
                 .toolbar {
                     ToolbarSpacer(.flexible)
@@ -161,21 +159,8 @@ struct DetailView: View {
                 NewChatView(window: window)
             }
         }
-        .splitViewColumnContent()
         .coordinateSpace(name: MessageSendGeometry.space)
         .environment(\.messageSendGeometry, messageSendGeometry)
-    }
-}
-
-extension View {
-    /// A split view column's content, whose minimum size is always zero: the column's own width
-    /// limits are the only ones. Without it the column took its minimum from whatever it showed
-    /// (the inspector's tab bar, a prompt card's buttons, New Chat's menus), which changed as it
-    /// was resized or its content changed, while AppKit was updating constraints; AppKit then
-    /// asked for pass after pass and threw ("more Update Constraints in Window passes than there
-    /// are views"). Content narrower than it would like is clipped or truncated instead.
-    func splitViewColumnContent() -> some View {
-        frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
     }
 }
 
