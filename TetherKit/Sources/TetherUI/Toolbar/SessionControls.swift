@@ -124,8 +124,7 @@ struct ToolbarSessionControl<Control: View>: View {
 }
 
 /// The chat's three settings as one toolbar item, a control group, so they share one glass capsule
-/// the way Xcode's scheme and run destination do, and Customize Toolbar and the » menu call them
-/// Session.
+/// the way Xcode's scheme and run destination do, and the » menu calls them Session.
 struct SessionMenus: View {
     let settings: SessionSettings
 
@@ -291,7 +290,7 @@ struct PermissionModeItems: View {
 }
 
 /// The Chat menu, for the frontmost window: the open chat's settings, or the New Chat draft's,
-/// for a hidden or customized toolbar, then what can be done to the chat itself. With no window
+/// for a narrow window's » menu, then what can be done to the chat itself. With no window
 /// open every item is still listed, dimmed.
 public struct ChatCommands: View {
     @FocusedValue(\.window) private var window

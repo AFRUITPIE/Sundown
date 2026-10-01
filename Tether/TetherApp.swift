@@ -65,8 +65,6 @@ struct TetherApp: App {
             CommandMenu("Chat") { ChatCommands() }
             // View ▸ Show Sidebar, for the toolbar's sidebar button.
             SidebarCommands()
-            // View ▸ Show Toolbar / Customize Toolbar…, for the identified toolbar in RootView.
-            ToolbarCommands()
         }
         HostWindows(app: app)
             .appEnvironment(app)
