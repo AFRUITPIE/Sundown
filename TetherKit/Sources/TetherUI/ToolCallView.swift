@@ -237,8 +237,6 @@ struct TranscriptDisclosureStyle: DisclosureGroupStyle {
     var value: String?
     /// A line under the row whether it's open or not: why a call failed.
     var note: String?
-    /// The row's words centred, as a date is: for what the chat says rather than does.
-    var centered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.rowOpening) private var rowOpening
 
@@ -252,7 +250,6 @@ struct TranscriptDisclosureStyle: DisclosureGroupStyle {
                 } label: {
                     // The words, then the chevron right after them.
                     HStack(spacing: 6) {
-                        if centered { Spacer(minLength: 0) }
                         configuration.label
                         DisclosureIndicator(expanded: configuration.isExpanded)
                         Spacer(minLength: 0)

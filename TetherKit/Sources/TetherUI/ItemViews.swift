@@ -43,12 +43,11 @@ struct ItemView: View {
         case .reasoning: EmptyView()
         case .toolCall(let t): ToolCallView(call: t, thread: thread)
         case .compaction(let c):
-            // Quiet and centred, as a date is; Claude Code's summary follows it, a line of its own.
-            Text(c.preTokens.map { "Compacted · \(Format.tokens($0)) tokens" } ?? "Compacted")
-                .scaledFont(.caption)
+            // A quiet line in Claude's column, as a tool row; Claude Code's summary follows it.
+            Text(c.preTokens.map { "Conversation compacted from \(Format.tokens($0)) tokens" } ?? "Conversation compacted")
+                .scaledFont(.callout)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
-                .padding(.top, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
         // Quiet, like a failed call: said, selectable to copy, not alarming.
         case .error(let e):
             Label(e.message, systemImage: "exclamationmark.circle")
@@ -448,9 +447,9 @@ struct UserMessageView: View {
     }
 }
 
-/// A message Claude Code, a subagent or another session put in the chat, not typed here: one quiet
-/// line in the middle, as a date is, that opens to the message. Claude Code's summary after a
-/// compaction says so, under the "Compacted" line.
+/// A message Claude Code, a subagent or another session put in the chat, not typed here: a quiet
+/// line in Claude's column, as Claude's desktop app shows one ("Message from subagent ›"), the size
+/// and gray of a tool row, that opens to the message. Never a prompt on the person's side.
 struct SyntheticMessageView: View {
     let message: Item.UserMessage
     @State private var isOpen = false
@@ -462,14 +461,26 @@ struct SyntheticMessageView: View {
         message.content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n\n")
     }
 
-    private var title: String {
+    /// Who it's from, in words that follow "Message from".
+    private var sender: String {
+        if let name = message.originName { return name }
+        // A subagent's prompt, which Claude wrote.
+        if message.synthetic != true, message.parentToolUseId != nil { return "Claude" }
+        switch message.origin {
+        case "peer": return "another session"
+        case "channel": return "a channel"
+        case "coordinator", "teamLead", "team-lead": return "the team lead"
+        case nil: return "Claude Code"
+        case let other?: return other.humanized.lowercased()
+        }
+    }
+
+    private var label: Text {
         // Marked by its origin; told by Claude Code's own opening where the origin isn't sent.
         if message.origin == "compaction" || text.hasPrefix(Self.compactionSummaryOpening) {
-            return "Summary of the Earlier Conversation"
+            return Text("Summary of the earlier conversation")
         }
-        // A subagent's prompt, which Claude wrote.
-        if message.synthetic != true, message.parentToolUseId != nil { return "Prompt from Claude" }
-        return message.originName.map { "From “\($0)”" } ?? UserMessageView.originLabel(message.origin)
+        return Text("Message from \(Text(sender).foregroundStyle(.primary))")
     }
 
     var body: some View {
@@ -480,16 +491,12 @@ struct SyntheticMessageView: View {
                     .textSelection(.enabled)
                     .foregroundStyle(.secondary)
             }
-            .scaledFont(.callout)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(.fill.quinary, in: .rect(cornerRadius: Layout.cardCornerRadius))
         } label: {
-            Text(title)
-                .scaledFont(.caption)
-                .foregroundStyle(.secondary)
+            label.foregroundStyle(.secondary)
         }
-        .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.synthetic", centered: true))
+        .scaledFont(.callout)
+        .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.synthetic"))
     }
 }
 
