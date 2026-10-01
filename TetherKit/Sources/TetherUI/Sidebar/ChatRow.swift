@@ -13,7 +13,8 @@ struct ChatRow: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 ChatStatusGlyph(thread: thread)
-                Text(thread.title).lineLimit(1)
+                // Claude names a chat a moment after its first turn: the opening prompt turns into it.
+                ReplacingText(thread.title).lineLimit(1)
             }
             .animation(reduceMotion ? nil : .default, value: thread.status)
             secondary
@@ -74,7 +75,7 @@ struct ActivityRow: View {
                         .foregroundStyle(.secondary)
                         .accessibilityLabel("Pinned")
                 }
-                Text(thread.title)
+                ReplacingText(thread.title)
                     .fontWeight(.semibold)
                     .lineLimit(1)
                 Spacer(minLength: 4)
