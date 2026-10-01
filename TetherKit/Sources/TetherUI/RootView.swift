@@ -95,13 +95,16 @@ public struct RootView: View {
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(window.selectedThread?.title ?? "New Chat")
                 .navigationSubtitle(window.subtitle)
-                // Identified, so View ▸ Customize Toolbar… can rearrange these and the window
-                // remembers the arrangement. Every item is still declared unconditionally.
-                .toolbar(id: "main") {
-                    ToolbarItem(id: "newChat", placement: .navigation) { NewChatButton(window: window) }
+                // Not identified, and so not customizable: an identified toolbar is one AppKit keeps
+                // in step across every window, removing an item from all of them at once by its
+                // index, and two windows' items differ for a moment (one going to New Chat, one
+                // inspector open): the other window had no item at that index and AppKit threw
+                // (`-[NSToolbar _itemAtIndex:]`, `_currentItems`).
+                .toolbar {
+                    ToolbarItem(placement: .navigation) { NewChatButton(window: window) }
                         .visibilityPriority(.high)
                     // The last to go to the » menu when the window is narrow; the title gives way first.
-                    ToolbarItem(id: "session", placement: .primaryAction) {
+                    ToolbarItem(placement: .primaryAction) {
                         ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
                     .visibilityPriority(.high)
@@ -165,7 +168,7 @@ struct NewChatButton: View {
     let window: WindowModel
 
     var body: some View {
-        // Titled, for the toolbar's Icon and Text mode and its Customize palette.
+        // Titled, for VoiceOver and the » menu.
         Button("New Chat", systemImage: "square.and.pencil") { window.newChat() }
             .help("New Chat")
     }

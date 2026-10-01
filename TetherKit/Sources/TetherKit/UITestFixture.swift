@@ -9,15 +9,24 @@ public enum UITestFixture {
 
     /// `failedConnects` attempts fail before one succeeds: two keep the status card up for a few
     /// seconds of retries, long enough to press its Reconnect.
+    ///
+    /// Two more knobs, read here: the `prompts` scenario (this Mac's host only) asks for a
+    /// permission, another, a question, a form and a very long question in turn, each once the one
+    /// before is answered, and puts each answer in the chat as a reply; `TETHER_UI_TEST_FAIL=a,b`
+    /// answers those methods with an error ("Fixture a failed").
     @MainActor
     public static func connection(host: HostConfig = .local, failedConnects: Int = 0,
                                   pendingPermission: Bool = false, performance: Bool = false) -> HostConnection {
         let attempts = FixtureAttempts()
+        let environment = ProcessInfo.processInfo.environment
+        let prompts = host.id == HostConfig.local.id && environment["TETHER_UI_TEST_SCENARIO"] == "prompts"
+        let failing = Set((environment["TETHER_UI_TEST_FAIL"] ?? "").split(separator: ",").map(String.init))
         return HostConnection(host: host, transportProvider: { _ in
             if await attempts.next() <= failedConnects {
                 throw TransportError.launchFailed("Fixture connection unavailable")
             }
-            return FixtureTransport(pendingPermission: pendingPermission, performance: performance)
+            return FixtureTransport(pendingPermission: pendingPermission || prompts, performance: performance,
+                                    prompts: prompts, failing: failing)
         })
     }
 }
@@ -32,8 +41,8 @@ private final class FixtureTransport: Transport, @unchecked Sendable {
     private let stream: AsyncThrowingStream<Data, any Error>
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
 
-    init(pendingPermission: Bool, performance: Bool) {
-        script = FixtureScript(pendingPermission: pendingPermission, performance: performance)
+    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, failing: Set<String> = []) {
+        script = FixtureScript(pendingPermission: pendingPermission, performance: performance, prompts: prompts, failing: failing)
         var captured: AsyncThrowingStream<Data, any Error>.Continuation!
         stream = AsyncThrowingStream { captured = $0 }
         continuation = captured
@@ -43,7 +52,14 @@ private final class FixtureTransport: Transport, @unchecked Sendable {
 
     func send(_ line: Data) async throws {
         let request = try JSONDecoder().decode(JSONValue.self, from: line)
-        guard let id = request["id"], let method = request["method"]?.stringValue else { return }
+        guard let id = request["id"] else { return }
+        guard let method = request["method"]?.stringValue else {
+            // The app's answer to one of the fixture's requests.
+            for message in await script.answered(id: id, result: request["result"] ?? request["error"] ?? .null) {
+                continuation.yield(try JSONEncoder().encode(message))
+            }
+            return
+        }
         let reply = await script.reply(method: method, params: request["params"] ?? [:])
         let response: JSONValue
         switch reply.value {
@@ -89,6 +105,10 @@ private actor FixtureScript {
 
     private let pendingPermission: Bool
     private let performance: Bool
+    /// The `prompts` scenario: each answered request brings the next (`answered`).
+    private let prompts: Bool
+    /// Methods answered with an error (TETHER_UI_TEST_FAIL).
+    private let failing: Set<String>
     private var sentPermission = false
     private var nextSequence = 1
     private var nextMessage = 0
@@ -104,9 +124,11 @@ private actor FixtureScript {
     private var schedules: [ScheduledTask] = []
     private var installedPlugins: [String] = []
 
-    init(pendingPermission: Bool, performance: Bool) {
+    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, failing: Set<String> = []) {
         self.pendingPermission = pendingPermission
         self.performance = performance
+        self.prompts = prompts
+        self.failing = failing
     }
 
     private var originalSummary: ThreadSummary {
@@ -115,6 +137,7 @@ private actor FixtureScript {
     }
 
     func reply(method: String, params: JSONValue) -> Reply {
+        if failing.contains(method) { return .init(value: .error("Fixture \(method) failed")) }
         switch method {
         case "initialize":
             return .init(value: .result(json(InitializeResult(
@@ -286,6 +309,60 @@ private actor FixtureScript {
         case "fs/search": return .init(value: .result(["paths": []]))
         default: return .init(value: .error("Unexpected fixture method: \(method)"))
         }
+    }
+
+    // MARK: The prompts scenario
+
+    /// The app's answer to request `id`, said in the chat as a reply ("Answered: " and the answer's
+    /// JSON, keys sorted), and the request that comes after it: the permission asked on subscribe
+    /// (900), a second permission, a question, a form, then a question too long for the window.
+    func answered(id: JSONValue, result: JSONValue) -> [JSONValue] {
+        guard prompts, let answered = id.intValue else { return [] }
+        let thread = UITestFixture.threadID
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let text = (try? encoder.encode(result)).flatMap { String(data: $0, encoding: .utf8) } ?? "?"
+        let item = Item.agentMessage(.init(id: "fixture-answered-\(answered)", createdAt: 1_700_000_000_100 + Double(answered),
+                                           text: "Answered: \(text)"))
+        var out: [JSONValue] = [
+            ["method": "item/started", "params": json(ItemStartedNotification(threadId: thread, seq: nextSequence + 1, item: item))],
+            ["method": "item/completed", "params": json(ItemCompletedNotification(threadId: thread, seq: nextSequence + 2, item: item))],
+        ]
+        nextSequence += 2
+        let next: (method: String, params: JSONValue)? = switch answered {
+        case 900: ("permission/request", json(PermissionRequestParams(
+            threadId: thread, requestId: "fixture-second-permission", toolUseId: "fixture-second-tool", toolName: "Bash",
+            input: ["command": "echo second"], title: "Allow second command?", suppressAlwaysAllowRule: true)))
+        case 901: ("question/request", question(threadID: thread, long: false))
+        case 902: ("elicitation/request", json(ElicitationRequestParams(
+            threadId: thread, requestId: "fixture-elicitation", serverName: "Fixture Server",
+            message: "Tell the server about the project.", requestedSchema: [
+                "type": "object",
+                "properties": ["name": ["type": "string", "title": "Project Name", "description": "What to call it"]],
+                "required": ["name"],
+            ])))
+        case 903: ("question/request", question(threadID: thread, long: true))
+        default: nil
+        }
+        if let next {
+            out.append(["id": .number(Double(answered + 1)), "method": .string(next.method), "params": next.params])
+        }
+        return out
+    }
+
+    /// One question with three choices, or one so long, with thirty long choices, that the card
+    /// is taller than the window.
+    private func question(threadID: String, long: Bool) -> JSONValue {
+        let filler = long ? String(repeating: "This sentence makes the question much longer than a card expects. ", count: 60) : ""
+        let options: [QuestionRequestParams.Question.Option] = long
+            ? (1...30).map { .init(label: "Option number \($0) with a rather long label that goes on",
+                                   description: String(repeating: "Describes option \($0) at length. ", count: 6)) }
+            : [.init(label: "Postgres", description: "A server"), .init(label: "SQLite", description: "A file"),
+               .init(label: "MySQL", description: "Another server")]
+        return json(QuestionRequestParams(threadId: threadID, requestId: long ? "fixture-long-question" : "fixture-question",
+                                          toolUseId: long ? "fixture-long-question-tool" : "fixture-question-tool", questions: [
+            .init(question: "Which database should we use? " + filler, header: "Database", multiSelect: false, options: options)
+        ]))
     }
 
     /// A prompt in the performance scenario gets a long working reply: the turn, the prompt and

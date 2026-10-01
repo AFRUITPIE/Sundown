@@ -34,6 +34,7 @@ struct BottomBar: View {
                 },
                 submit: { input in
                     await connection.send(thread, input: input)
+                    return true
                 }, onFocusChange: { composerFocused = $0 })
             }
             // The only explicit animation down here, and it runs only when a prompt comes or goes.
