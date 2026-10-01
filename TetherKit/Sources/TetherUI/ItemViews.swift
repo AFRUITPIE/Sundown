@@ -22,6 +22,10 @@ struct ItemView: View {
 
     var body: some View {
         switch item {
+        case .userMessage(let m) where m.synthetic == true || m.parentToolUseId != nil:
+            // Not typed here (Claude Code's, a subagent's, another session's): a quiet line in the
+            // middle, not a prompt on the person's side.
+            SyntheticMessageView(message: m)
         case .userMessage(let m):
             // The prompt that just arrived, in the window whose field sent it.
             let justSent = thread.arrivedPrompt == m.id && m.synthetic != true && m.origin == nil
@@ -39,15 +43,12 @@ struct ItemView: View {
         case .reasoning: EmptyView()
         case .toolCall(let t): ToolCallView(call: t, thread: thread)
         case .compaction(let c):
-            HStack {
-                VStack { Divider() }
-                Label(c.preTokens.map { "Conversation compacted · \(Format.tokens($0)) tokens" } ?? "Conversation compacted",
-                      systemImage: "arrow.down.right.and.arrow.up.left")
-                    .scaledFont(.caption).foregroundStyle(.secondary)
-                    // The rules on either side give way first.
-                    .layoutPriority(1)
-                VStack { Divider() }
-            }
+            // Quiet and centred, as a date is; Claude Code's summary follows it, a line of its own.
+            Text(c.preTokens.map { "Compacted · \(Format.tokens($0)) tokens" } ?? "Compacted")
+                .scaledFont(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
         // Quiet, like a failed call: said, selectable to copy, not alarming.
         case .error(let e):
             Label(e.message, systemImage: "exclamationmark.circle")
@@ -444,6 +445,48 @@ struct UserMessageView: View {
         // A group VoiceOver names as it enters: whose message this is.
         .accessibilityElement(children: .contain)
         .accessibilityLabel(message.synthetic == true ? Self.originLabel(message.origin) : "You")
+    }
+}
+
+/// A message Claude Code, a subagent or another session put in the chat, not typed here: one quiet
+/// line in the middle, as a date is, that opens to the message. Claude Code's summary after a
+/// compaction says so, under the "Compacted" line.
+struct SyntheticMessageView: View {
+    let message: Item.UserMessage
+    @State private var isOpen = false
+
+    /// Claude Code's own opening for the summary it writes when it compacts a chat.
+    static let compactionSummaryOpening = "This session is being continued from a previous conversation"
+
+    private var text: String {
+        message.content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n\n")
+    }
+
+    private var title: String {
+        if text.hasPrefix(Self.compactionSummaryOpening) { return "Summary of the Earlier Conversation" }
+        // A subagent's prompt, which Claude wrote.
+        if message.synthetic != true, message.parentToolUseId != nil { return "Prompt from Claude" }
+        return message.originName.map { "From “\($0)”" } ?? UserMessageView.originLabel(message.origin)
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isOpen) {
+            VStack(alignment: .leading, spacing: 6) {
+                if let session = message.originSession { PeerSessionLink(sessionID: session) }
+                Text(text)
+                    .textSelection(.enabled)
+                    .foregroundStyle(.secondary)
+            }
+            .scaledFont(.callout)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(.fill.quinary, in: .rect(cornerRadius: Layout.cardCornerRadius))
+        } label: {
+            Text(title)
+                .scaledFont(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.synthetic", centered: true))
     }
 }
 

@@ -569,7 +569,12 @@ struct TranscriptTail: View {
 
     var body: some View {
         Group {
-            if thread.isThinking, !runSaysIt { ThinkingLine() }
+            // Compacting says so where Thinking would, not in a card under the transcript.
+            if thread.activity == "compacting" {
+                ActivityLine(text: "Compacting Conversation")
+            } else if thread.isThinking, !runSaysIt {
+                ThinkingLine()
+            }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
                 TurnOutcome(status: turn.status, error: turn.result?.errors?.first)
@@ -581,11 +586,18 @@ struct TranscriptTail: View {
 /// Marks the wait before a turn has anything to show. From the thread's status, so it works
 /// with thinking off or redacted. Its dots pulse, but not while the Mac saves energy.
 struct ThinkingLine: View {
+    var body: some View { ActivityLine(text: "Thinking") }
+}
+
+/// A shimmering line for what the turn is doing while it has nothing else to show.
+struct ActivityLine: View {
+    let text: String
+
     @Environment(\.reducesEffects) private var reducesEffects
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ActivityLabel(text: "Thinking", live: true)
+        ActivityLabel(text: text, live: true)
             .fontWeight(.medium)
             .scaledFont(.callout)
             // The model's changes carry no animation, so the transition brings its own.
