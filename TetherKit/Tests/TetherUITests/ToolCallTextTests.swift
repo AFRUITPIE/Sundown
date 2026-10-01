@@ -47,5 +47,7 @@ struct ToolCallTextTests {
         #expect(ToolCallText.summary([call(.fileEdit, ["file_path": "/a/One.swift"]),
                                       call(.fileEdit, ["file_path": "/a/One.swift"])]) == "Edited One.swift")
         #expect(ToolCallText.summary([call(.mcp, [:], name: "mcp__xcode__BuildProject")]) == "Used xcode")
+        #expect(ToolCallText.summary([call(.subagent, ["description": "5 second timer"], name: "Agent"),
+                                      call(.subagent, ["description": "10 second timer"], name: "Agent")]) == "Ran 2 agents")
     }
 }

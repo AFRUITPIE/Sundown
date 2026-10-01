@@ -683,24 +683,22 @@ enum MessageImages {
     }
 }
 
+/// A line the session itself adds (a background task settling, a stopped turn, a model fallback):
+/// quiet gray words in Claude's column, as a message from a subagent is. A warning keeps a glyph,
+/// so it's not said by color alone.
 struct NoticeView: View {
     let notice: Item.Notice
 
     var body: some View {
-        let symbol = switch notice.kind {
-        case "interrupted": "stop.circle"
-        case "localCommandOutput": "terminal"
-        case "modelFallback": "arrow.triangle.swap"
-        case "taskNotification": notice.level == .warning ? "exclamationmark.circle" : "checkmark.circle"
-        default: "info.circle"
-        }
-        Label {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if notice.level == .warning {
+                Image(systemName: "exclamationmark.circle").accessibilityHidden(true)
+            }
             Text(notice.text).textSelection(.enabled)
-        } icon: {
-            Image(systemName: symbol)
         }
-        .scaledFont(.caption)
+        .scaledFont(.callout)
         .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -780,6 +778,32 @@ private struct MessageSendPreview: View {
         .coordinateSpace(name: MessageSendGeometry.space)
         .environment(\.messageSendGeometry, geometry)
     }
+}
+
+/// Background subagents reporting back, as in Claude's desktop app: each message from one is a
+/// quiet line in Claude's column, then Claude's reply.
+#Preview("Messages from subagents") {
+    let thread = ThreadModel.sampleIdleChat()
+    let agents: [Item.ToolCall] = (1...3).map { n in
+        .sample(id: "agent-\(n)", name: "Agent", kind: .subagent,
+                input: ["description": .string("Timer for \(n * 5) seconds"), "prompt": .string("Wait, then say hello world.")],
+                secondsAgo: 60)
+    }
+    ScrollView {
+        VStack(alignment: .leading, spacing: 18) {
+            ItemView(item: .sampleUserMessage("Can you have 3 background subagents set timers for 5, 10 and 15 seconds, then respond \"hello world\"?", secondsAgo: 70), thread: thread)
+            ToolCallGroupView(calls: agents, thread: thread)
+            ItemView(item: .sampleAgentMessage("Three background agents are running, with timers of 5, 10 and 15 seconds. I'll report their results as they come in.", secondsAgo: 58), thread: thread)
+            ItemView(item: .sampleUserMessage("<task-notification>The 5-second agent finished: hello world</task-notification>", secondsAgo: 50, synthetic: true, origin: "subagent"), thread: thread)
+            ItemView(item: .sampleAgentMessage("The 5-second agent finished and replied \"hello world\". The 10- and 15-second agents are still running.", secondsAgo: 49), thread: thread)
+            ItemView(item: .sampleUserMessage("<task-notification>The 10-second agent finished: hello world</task-notification>", secondsAgo: 45, synthetic: true, origin: "subagent"), thread: thread)
+            ItemView(item: .sampleAgentMessage("The 10-second agent finished too. Only the 15-second agent is still running.", secondsAgo: 44), thread: thread)
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 20)
+        .frame(maxWidth: 760)
+    }
+    .frame(width: 760, height: 560)
 }
 
 #Preview("User message (synthetic)") {

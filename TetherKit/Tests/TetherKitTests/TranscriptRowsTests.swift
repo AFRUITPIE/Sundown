@@ -115,10 +115,10 @@ struct TranscriptRowsTests {
         for row in rows { if case .toolGroup = row { Issue.record("todoWrite should never be grouped") } }
     }
 
-    @Test func subagentNeverGroups() {
-        let rows = foldTranscriptRows([call("t1"), call("agent", kind: .subagent), call("t2")])
-        #expect(rows.count == 3)
-        for row in rows { if case .toolGroup = row { Issue.record("subagent should never be grouped") } }
+    @Test func finishedSubagentsGroupAsAgents() {
+        let rows = foldTranscriptRows([call("a1", kind: .subagent), call("a2", kind: .subagent), call("a3", kind: .subagent)])
+        guard rows.count == 1, case .toolGroup(let calls) = rows[0] else { Issue.record("expected one group"); return }
+        #expect(calls.map(\.id) == ["a1", "a2", "a3"])
     }
 
     @Test func rowIdsAreStable() {

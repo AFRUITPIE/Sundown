@@ -19,6 +19,7 @@ enum ToolCallText {
         case .webSearch: return running ? "Searching the web for" : call.status == .denied ? "Search the web for" : "Searched the web for"
         case .webFetch: return running ? "Fetching" : call.status == .denied ? "Fetch" : "Fetched"
         case .skill: return running ? "Using" : call.status == .denied ? "Use" : "Used"
+        case .subagent: return running ? "Running an agent:" : call.status == .denied ? "Run an agent:" : "Ran an agent:"
         case .monitor: return running ? "Watching" : "Watched"
         case .todoWrite: return "Todos"
         case .mcp: return mcpName(call)
@@ -116,6 +117,7 @@ enum ToolCallText {
         case .webSearch: return "searched the web"
         case .webFetch: return n == 1 ? "fetched a page" : "fetched \(n) pages"
         case .skill: return n == 1 ? "used a skill" : "used \(n) skills"
+        case .subagent: return n == 1 ? "ran an agent" : "ran \(n) agents"
         case .mcp: return "used " + (first.mcpServer ?? mcpServerName(first) ?? "an MCP server")
         default: return n == 1 ? "used \(first.name)" : "used \(first.name) \(n) times"
         }
