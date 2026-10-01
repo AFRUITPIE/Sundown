@@ -58,6 +58,15 @@ struct ConnectCommandTests {
         #expect(failed.errors == "nope\n")
     }
 
+    /// A Claude Code session's variables stay out of the server's environment; the rest go through.
+    @Test func serverEnvironmentLeavesOutAClaudeSessions() {
+        let env = HostBootstrapper.serverEnvironment([
+            "PATH": "/usr/bin", "HOME": "/Users/me", "CLAUDECODE": "1",
+            "CLAUDE_CODE_ENTRYPOINT": "claude-desktop", "CLAUDE_CODE_SESSION_ID": "x", "CLAUDE_EFFORT": "high",
+        ])
+        #expect(env == ["PATH": "/usr/bin", "HOME": "/Users/me"])
+    }
+
     /// The pinned package from npm, run the way a host runs it. Opt in (`TETHER_NPX_E2E=1`), once
     /// that version is published.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["TETHER_NPX_E2E"] == "1"))

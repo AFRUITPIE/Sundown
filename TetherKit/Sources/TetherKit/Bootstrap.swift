@@ -61,6 +61,16 @@ public struct HostBootstrapper: Sendable {
 
     static let pathMarker = "__TETHER_PATH__"
 
+    /// This app's environment without what a Claude Code session puts in its children's:
+    /// `CLAUDECODE` and every `CLAUDE_…` variable. Tether opened from a terminal inside Claude Code
+    /// (or Claude's desktop app) inherits them, the server it starts passes them on, and Claude
+    /// Code then runs each chat as that host's child session: as a desktop one it named chats
+    /// after their first prompt and never made a title of its own. What the person sets for Claude
+    /// Code in their shell's files the login shell sets again; an SSH host never gets these.
+    static func serverEnvironment(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
+        environment.filter { name, _ in name != "CLAUDECODE" && !name.hasPrefix("CLAUDE_") }
+    }
+
     /// The PATH between the markers, once both have come.
     static func shellPath(in output: String) -> String? {
         let parts = output.components(separatedBy: pathMarker)
@@ -74,7 +84,7 @@ public struct HostBootstrapper: Sendable {
     /// when `ssh` couldn't reach the host, which connecting would say again after as long a wait.
     func interactivePath(for host: HostConfig, timeout: Duration = .seconds(10)) async throws -> String? {
         let cmd = shellPathCommand(for: host)
-        let run = ShellRun(executable: cmd.executable, arguments: cmd.arguments)
+        let run = ShellRun(executable: cmd.executable, arguments: cmd.arguments, environment: Self.serverEnvironment())
         let result = await run.result(timeout: timeout) { Self.shellPath(in: $0) != nil }
         if let path = Self.shellPath(in: result.output) { return path }
         if case .ssh = host.kind, result.status == 255 {
@@ -121,9 +131,10 @@ final class ShellRun: @unchecked Sendable {
     private var closed = false
     private var status: Int32?
 
-    init(executable: String, arguments: [String]) {
+    init(executable: String, arguments: [String], environment: [String: String]? = nil) {
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        if let environment { process.environment = environment }
         process.standardInput = FileHandle.nullDevice
     }
 

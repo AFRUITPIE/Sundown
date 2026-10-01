@@ -134,7 +134,8 @@ public final class HostConnection: Identifiable {
                 if let path, env["PATH"] == nil { env["PATH"] = path }
                 let cmd = boot.connectCommand(for: host, path: path)
                 appendLog("$ \(([cmd.executable] + cmd.arguments).joined(separator: " "))")
-                transport = ProcessTransport(executable: cmd.executable, arguments: cmd.arguments)
+                transport = ProcessTransport(executable: cmd.executable, arguments: cmd.arguments,
+                                             environment: HostBootstrapper.serverEnvironment())
             }
             signpost.event("Bootstrap")
             let client = RPCClient(transport: transport)
