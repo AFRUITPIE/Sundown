@@ -365,6 +365,8 @@ public final class HostConnection: Identifiable {
         }
         // Claude's name for a session only appears in thread/list; nothing announces it.
         if case .turnCompleted(let e) = n {
+            // A reply nobody has seen: the sidebar's green dot, until a window shows the chat.
+            if e.turn.status == .completed, !openRequested.contains(tid) { model.noteUnseenReply() }
             scheduleChatsRefresh()
             NotificationCenter.default.post(name: .tetherTurnFinished, object: self,
                                             userInfo: ["threadId": tid, "status": e.turn.status.rawValue])
@@ -525,6 +527,7 @@ public final class HostConnection: Identifiable {
     /// `connect()` rather than failing.
     public func open(_ model: ThreadModel) async {
         openRequested.insert(model.id)
+        model.noteSeen()
         guard case .connected = state else { return }
         await loadRequestedThread(model)
     }
