@@ -81,7 +81,7 @@ class TetherUITestCase: XCTestCase {
     /// Types `message` into the composer and presses Send.
     @MainActor
     func send(_ message: String, file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(input.waitForExistence(timeout: 10), "no message field", file: file, line: line)
+        XCTAssertTrue(input.appears(timeout: 10), "no message field", file: file, line: line)
         input.click()
         input.typeText(message)
         app.buttons["composer.send"].click()
@@ -101,7 +101,7 @@ class TetherUITestCase: XCTestCase {
     @MainActor
     func visibleMenuItem(_ title: String) -> XCUIElement {
         let items = app.menuItems.matching(NSPredicate(format: "title == %@", title))
-        _ = items.firstMatch.waitForExistence(timeout: 5)
+        _ = items.firstMatch.appears(timeout: 5)
         return items.allElementsBoundByIndex.first { $0.isHittable } ?? items.firstMatch
     }
 
@@ -135,9 +135,9 @@ class TetherUITestCase: XCTestCase {
     @MainActor
     func sidebar() -> XCUIElement {
         let outline = app.windows.firstMatch.outlines["Sidebar"]
-        if !outline.waitForExistence(timeout: 5) {
+        if !outline.appears(timeout: 5) {
             app.menuBars.menuItems["toggleSidebar:"].click()
-            XCTAssertTrue(outline.waitForExistence(timeout: 5), "no sidebar")
+            XCTAssertTrue(outline.appears(timeout: 5), "no sidebar")
         }
         return outline
     }
@@ -152,8 +152,8 @@ class TetherUITestCase: XCTestCase {
     /// directory and host).
     @MainActor
     func waitForTitle(_ prefix: String, timeout: TimeInterval = 8) -> Bool {
-        let titled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "title BEGINSWITH %@", prefix), object: app.windows.firstMatch)
-        return XCTWaiter.wait(for: [titled], timeout: timeout) == .completed
+        let window = app.windows.firstMatch
+        return waitUntil(timeout) { window.exists && window.title.hasPrefix(prefix) }
     }
 
     /// Waits until the app's windows are exactly `expected`, by the start of their titles, in any order.
@@ -187,7 +187,7 @@ class TetherUITestCase: XCTestCase {
     func openSettings(_ pane: String) -> XCUIElement {
         app.typeKey(",", modifierFlags: .command)
         let sidebar = settingsWindow.outlines["Sidebar"]
-        XCTAssertTrue(sidebar.staticTexts[pane].waitForExistence(timeout: 10), "no \(pane) in Settings")
+        XCTAssertTrue(sidebar.staticTexts[pane].appears(timeout: 10), "no \(pane) in Settings")
         sidebar.staticTexts[pane].click()
         return settingsWindow
     }
@@ -196,7 +196,7 @@ class TetherUITestCase: XCTestCase {
     @MainActor
     func closeSettings() {
         settingsWindow.buttons[XCUIIdentifierCloseWindow].click()
-        XCTAssertTrue(settingsWindow.waitForNonExistence(timeout: 5), "Settings didn't close")
+        XCTAssertTrue(settingsWindow.disappears(timeout: 5), "Settings didn't close")
     }
 
     /// The control of `query`'s kind on the same row as the text `label`: a grouped form's pop-ups
@@ -206,7 +206,7 @@ class TetherUITestCase: XCTestCase {
         let named = query.matching(NSPredicate(format: "label == %@ OR title == %@", label, label)).firstMatch
         if named.exists { return named }
         let text = settingsWindow.staticTexts.matching(NSPredicate(format: "value == %@ OR label == %@", label, label)).firstMatch
-        guard text.waitForExistence(timeout: 5) else { return nil }
+        guard text.appears(timeout: 5) else { return nil }
         let row = text.frame
         for i in 0..<query.count {
             let candidate = query.element(boundBy: i)
@@ -226,7 +226,7 @@ class TetherUITestCase: XCTestCase {
     @MainActor
     func choose(_ option: String, from label: String, file: StaticString = #filePath, line: UInt = #line) {
         let popUp = popUp(label)
-        XCTAssertTrue(popUp.waitForExistence(timeout: 5), "no \(label) pop-up", file: file, line: line)
+        XCTAssertTrue(popUp.appears(timeout: 5), "no \(label) pop-up", file: file, line: line)
         popUp.scrollToVisible()
         popUp.click()
         settingsWindow.menuItems[option].click()
@@ -247,7 +247,56 @@ class TetherUITestCase: XCTestCase {
     }
 }
 
+/// Polls `condition` every 0.1 s until it holds or `timeout` passes. XCTest's own waits
+/// (`waitForExistence`, `XCTWaiter` with a predicate) check first after a whole second, even when
+/// the answer is already yes: across a flow of a hundred steps that was most of its time.
+@MainActor
+@discardableResult
+func waitUntil(_ timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while true {
+        if condition() { return true }
+        if Date() >= deadline { return false }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+}
+
 extension XCUIElement {
+    /// Whether it exists, or comes to within `timeout`: `waitForExistence`, checking at once.
+    @MainActor
+    @discardableResult
+    func appears(timeout: TimeInterval) -> Bool { waitUntil(timeout) { exists } }
+
+    /// Waits until its frame stops changing (two reads 0.2 s apart agree), as a window settles
+    /// after a drag or a row after an animation: with no second-long wait before each check,
+    /// a frame read at once can be one from the middle of the motion.
+    @MainActor
+    func settle(timeout: TimeInterval = 3) {
+        var last = exists ? frame : .null
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.2)
+            let now = exists ? frame : .null
+            if now == last { return }
+            last = now
+        }
+    }
+
+    /// Clicks it once its arrival has played: a prompt card's buttons come with the card's
+    /// materialize transition, and a click the moment one exists can miss. Not by `isHittable`,
+    /// which stays false for a card's controls though a click reaches them.
+    @MainActor
+    func clickWhenReady(timeout: TimeInterval = 5) {
+        appears(timeout: timeout)
+        Thread.sleep(forTimeInterval: 0.6)
+        click()
+    }
+
+    /// Whether it's gone, or goes within `timeout`: `waitForNonExistence`, checking at once.
+    @MainActor
+    @discardableResult
+    func disappears(timeout: TimeInterval) -> Bool { waitUntil(timeout) { !exists } }
+
     /// Scrolls the Settings form until the element is on screen.
     @MainActor
     func scrollToVisible() {

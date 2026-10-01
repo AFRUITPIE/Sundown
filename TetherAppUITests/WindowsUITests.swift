@@ -6,7 +6,7 @@ final class WindowsUITests: TetherUITestCase {
     @MainActor
     private func launchThreeChats(defaults suite: String) {
         launch("performance", environment: ["TETHER_PERF_TURNS": "1"], defaults: suite)
-        XCTAssertTrue(row("Performance chat 1").waitForExistence(timeout: 20), "the chats never showed")
+        XCTAssertTrue(row("Performance chat 1").appears(timeout: 20), "the chats never showed")
     }
 
     /// A new window keeps its own chat; New Chat in a second window; Open in New Window; a
@@ -54,23 +54,23 @@ final class WindowsUITests: TetherUITestCase {
         chooseMenuItem("Host", "Scheduled Tasks…")
         XCTAssertTrue(waitForWindows(["Performance chat 1", "Scheduled Tasks"]), "Scheduled Tasks…: \(windowTitles())")
         let tasks = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Scheduled Tasks'")).element(boundBy: 0)
-        XCTAssertTrue(tasks.staticTexts["No Scheduled Tasks"].waitForExistence(timeout: 5), "the fixture has tasks")
+        XCTAssertTrue(tasks.staticTexts["No Scheduled Tasks"].appears(timeout: 5), "the fixture has tasks")
         tasks.toolbars.buttons["New Task"].click()
-        XCTAssertTrue(tasks.outlines.staticTexts["New Task"].waitForExistence(timeout: 5), "New Task added nothing")
+        XCTAssertTrue(tasks.outlines.staticTexts["New Task"].appears(timeout: 5), "New Task added nothing")
         visibleButton("Delete…").click()
         visibleButton("Delete").click()
-        XCTAssertTrue(tasks.staticTexts["No Scheduled Tasks"].waitForExistence(timeout: 5), "the task wasn't deleted")
+        XCTAssertTrue(tasks.staticTexts["No Scheduled Tasks"].appears(timeout: 5), "the task wasn't deleted")
         app.typeKey("w", modifierFlags: .command)
         XCTAssertTrue(waitForWindows(["Performance chat 1"]), "⌘W on Scheduled Tasks: \(windowTitles())")
 
         // Host ▸ Plugins… lists what's installed and available; installing moves a plugin across.
         chooseMenuItem("Host", "Plugins…")
         XCTAssertTrue(waitForWindows(["Performance chat 1", "Plugins"]), "Plugins…: \(windowTitles())")
-        XCTAssertTrue(app.staticTexts["fixture-lint"].waitForExistence(timeout: 5), "no plugin available")
+        XCTAssertTrue(app.staticTexts["fixture-lint"].appears(timeout: 5), "no plugin available")
         XCTAssertTrue(app.staticTexts["None"].exists, "something installed already")
         app.menuButtons["Install"].firstMatch.click()
         visibleMenuItem("For Me").click()
-        XCTAssertTrue(app.staticTexts["fixture-market · v1.0.0 · For Me"].waitForExistence(timeout: 5), "the plugin didn't install")
+        XCTAssertTrue(app.staticTexts["fixture-market · v1.0.0 · For Me"].appears(timeout: 5), "the plugin didn't install")
         app.typeKey("w", modifierFlags: .command)
         XCTAssertTrue(waitForWindows(["Performance chat 1"]), "⌘W on Plugins: \(windowTitles())")
 

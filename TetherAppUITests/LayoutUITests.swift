@@ -9,36 +9,38 @@ final class LayoutUITests: TetherUITestCase {
     func testSwitchingLayoutsLive() {
         launch("performance")
         let end = text(longChatEnd)
-        XCTAssertTrue(end.waitForExistence(timeout: 20), "the long chat never showed")
+        XCTAssertTrue(end.appears(timeout: 20), "the long chat never showed")
 
         // Model, effort and permissions share one toolbar item.
         let toolbar = mainWindow().toolbars.element(boundBy: 0)
         for menu in ["Model", "Effort", "Permissions"] {
             let button = toolbar.menuButtons.matching(NSPredicate(format: "label BEGINSWITH %@", menu)).firstMatch
-            XCTAssertTrue(button.waitForExistence(timeout: 5), "no \(menu) menu in the toolbar")
+            XCTAssertTrue(button.appears(timeout: 5), "no \(menu) menu in the toolbar")
         }
 
         // Every Call puts each finished call on a row of its own; Summarized folds runs of them
         // again. The rows are laid out again from the end of the chat with no scrolling needed: the
         // reply that ends it is on screen, not merely built somewhere above, and so is a fold.
         let groups = mainWindow().disclosureTriangles.matching(identifier: "transcript.toolGroup")
-        XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 5), "no folded calls in Summarized")
+        XCTAssertTrue(groups.firstMatch.appears(timeout: 5), "no folded calls in Summarized")
         openSettings("Advanced")
         choose("Every Call", from: "Tool Calls")
-        XCTAssertTrue(groups.firstMatch.waitForNonExistence(timeout: 5), "Every Call left calls folded")
+        XCTAssertTrue(groups.firstMatch.disappears(timeout: 5), "Every Call left calls folded")
         XCTAssertTrue(showsSomething(), "the chat is blank after Every Call")
         choose("Summarized", from: "Tool Calls")
-        XCTAssertTrue(end.waitForExistence(timeout: 5), "the chat lost its end after Summarized")
-        XCTAssertTrue(groups.firstMatch.waitForExistence(timeout: 5), "Summarized didn't fold the calls again")
-        XCTAssertTrue(isOnScreen(end), "the chat is blank: its last reply is at \(end.frame), not in \(mainWindow().frame)")
+        XCTAssertTrue(end.appears(timeout: 5), "the chat lost its end after Summarized")
+        XCTAssertTrue(groups.firstMatch.appears(timeout: 5), "Summarized didn't fold the calls again")
+        XCTAssertTrue(waitUntil(5) { self.isOnScreen(end) }, "the chat is blank: its last reply is at \(end.frame), not in \(mainWindow().frame)")
 
         // Worked For folds each finished turn's work behind one line, which opens to show it.
         choose("Worked For", from: "Tool Calls")
         closeSettings()
         XCTAssertTrue(showsSomething(), "the chat is blank after Worked For")
         let folds = app.disclosureTriangles.matching(identifier: "transcript.turnWork")
-        XCTAssertTrue(folds.firstMatch.waitForExistence(timeout: 5), "Worked For folded nothing")
-        guard let fold = folds.allElementsBoundByIndex.last(where: { $0.isHittable }) else {
+        XCTAssertTrue(folds.firstMatch.appears(timeout: 5), "Worked For folded nothing")
+        var hittableFold: XCUIElement?
+        waitUntil(5) { hittableFold = folds.allElementsBoundByIndex.last { $0.isHittable }; return hittableFold != nil }
+        guard let fold = hittableFold else {
             return XCTFail("no Worked For line on screen")
         }
         XCTAssertTrue(fold.label.hasPrefix("Worked"), fold.label)
@@ -57,14 +59,14 @@ final class LayoutUITests: TetherUITestCase {
         choose("Summarized", from: "Tool Calls")
         closeSettings()
         let jump = app.buttons["Jump to Latest"]
-        if jump.waitForExistence(timeout: 3) { jump.click() }
-        XCTAssertTrue(end.waitForExistence(timeout: 5) && isOnScreen(end), "the chat is blank after switching in its middle")
+        if jump.appears(timeout: 3) { jump.click() }
+        XCTAssertTrue(waitUntil(5) { self.isOnScreen(end) }, "the chat is blank after switching in its middle")
 
         // Advanced ▸ Sidebar ▸ Activity lists the chats by day.
         openSettings("Advanced")
         choose("Activity", from: "Layout")
         closeSettings()
-        XCTAssertTrue(sidebar().staticTexts["Performance chat 2"].waitForExistence(timeout: 5), "Activity lists no chats")
+        XCTAssertTrue(sidebar().staticTexts["Performance chat 2"].appears(timeout: 5), "Activity lists no chats")
         assertAlive("after switching to Activity")
     }
 

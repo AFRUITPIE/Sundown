@@ -7,9 +7,9 @@ final class ComposerUITests: TetherUITestCase {
     @MainActor
     func testComposingAndSending() {
         launch()
-        XCTAssertTrue(text(fixtureAnswer).waitForExistence(timeout: 15), "the fixture chat never showed")
+        XCTAssertTrue(text(fixtureAnswer).appears(timeout: 15), "the fixture chat never showed")
         // Prompts are dated, as in Messages (when and how: DateSeparatorsTests, TranscriptDateTests).
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "transcript.date").firstMatch.waitForExistence(timeout: 5), "the prompt has no date above it")
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "transcript.date").firstMatch.appears(timeout: 5), "the prompt has no date above it")
 
         // Send is available only with something to send. Add and Send are circles of one size.
         let send = app.buttons["composer.send"]
@@ -20,7 +20,7 @@ final class ComposerUITests: TetherUITestCase {
         XCTAssertEqual(add.frame.height, send.frame.height, accuracy: 1, "Composer actions should share a diameter")
         input.click()
         input.typeText("Hello")
-        XCTAssertTrue(send.isEnabled, "Send is disabled with a message in the field")
+        XCTAssertTrue(waitUntil(3) { send.isEnabled }, "Send is disabled with a message in the field")
         input.typeKey("a", modifierFlags: .command)
         input.typeKey(.delete, modifierFlags: [])
         XCTAssertFalse(send.isEnabled, "Send is enabled once the field is emptied")
@@ -31,44 +31,46 @@ final class ComposerUITests: TetherUITestCase {
         input.typeKey("a", modifierFlags: .command)
         input.typeText("/")
         let compact = app.buttons["composer.completion./compact"]
-        XCTAssertTrue(compact.waitForExistence(timeout: 5), "typing / offers no commands")
+        XCTAssertTrue(compact.appears(timeout: 5), "typing / offers no commands")
         XCTAssertLessThan(compact.frame.maxY, input.frame.minY, "the completions aren't above the field")
         XCTAssertEqual(app.popovers.count, 0, "the completions opened a popover")
         // Typing narrows the list; a click inserts the command. The menu floats outside the
         // composer's frame, which XCUITest reads as clipping it; the pointer clicks it all the same.
         input.typeText("sta")
         let status = app.buttons["composer.completion./status"]
-        XCTAssertTrue(status.waitForExistence(timeout: 3), "/sta doesn't offer /status")
+        XCTAssertTrue(status.appears(timeout: 3), "/sta doesn't offer /status")
         status.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertEqual(input.value as? String, "/status ", "clicking a completion")
         // The arrow keys choose, Tab inserts.
         input.typeKey("a", modifierFlags: .command)
         input.typeText("/")
-        XCTAssertTrue(compact.waitForExistence(timeout: 3))
+        XCTAssertTrue(compact.appears(timeout: 3))
         input.typeKey(.downArrow, modifierFlags: [])
         input.typeKey(.tab, modifierFlags: [])
         XCTAssertEqual(input.value as? String, "/context ", "↓ then Tab")
-        XCTAssertTrue(compact.waitForNonExistence(timeout: 3), "the completions stayed open after Tab")
+        XCTAssertTrue(compact.disappears(timeout: 3), "the completions stayed open after Tab")
         XCTAssertFalse(app.staticTexts["/context"].exists, "Tab sent the command")
         // Esc closes them, leaving the text.
         input.typeKey("a", modifierFlags: .command)
         input.typeText("/")
-        XCTAssertTrue(compact.waitForExistence(timeout: 3))
+        XCTAssertTrue(compact.appears(timeout: 3))
         input.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(compact.waitForNonExistence(timeout: 3), "Esc didn't close the completions")
+        XCTAssertTrue(compact.disappears(timeout: 3), "Esc didn't close the completions")
         XCTAssertEqual(input.value as? String, "/", "Esc changed the text")
 
-        // The round + is a menu: Mention a File starts an @ mention, Attach Files… opens the Open panel.
+        // The round + is a menu: Attach Files… opens the Open panel, Mention a File starts an @
+        // mention. In that order: the @ brings up file completions, which close the menu if it's
+        // opened again while they arrive.
         input.typeKey(.delete, modifierFlags: [])
-        add.click()
-        visibleMenuItem("Mention a File").click()
-        XCTAssertEqual(input.value as? String, "@", "Mention a File")
         add.click()
         visibleMenuItem("Attach Files…").click()
         let panel = app.sheets.firstMatch
-        XCTAssertTrue(panel.waitForExistence(timeout: 5) || app.dialogs.firstMatch.waitForExistence(timeout: 1), "no Open panel")
+        XCTAssertTrue(panel.appears(timeout: 5) || app.dialogs.firstMatch.appears(timeout: 1), "no Open panel")
         app.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "Esc didn't close the Open panel")
+        XCTAssertTrue(panel.disappears(timeout: 5), "Esc didn't close the Open panel")
+        add.click()
+        visibleMenuItem("Mention a File").click()
+        XCTAssertEqual(input.value as? String, "@", "Mention a File")
 
         // Shift-Return starts a line and Return sends. The first line wraps: a wrapped prompt keeps
         // its final text layout while its glass surface travels, and lands inside the window.
@@ -82,13 +84,12 @@ final class ComposerUITests: TetherUITestCase {
         let prompt = first + "\nsecond line"
         XCTAssertTrue(inputText().contains(prompt), "Shift-Return didn't start a new line: \(inputText())")
         input.typeKey(.return, modifierFlags: [])
-        XCTAssertTrue(app.staticTexts["Scripted response."].waitForExistence(timeout: 10), "Return didn't send")
+        XCTAssertTrue(app.staticTexts["Scripted response."].appears(timeout: 10), "Return didn't send")
         // Sending must finish: the new message's actions become usable after the spring settles.
         let copy = app.buttons["message.copy.fixture-sent-1"]
-        let landed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: copy)
-        XCTAssertEqual(XCTWaiter.wait(for: [landed], timeout: 5), .completed, "the sent prompt's actions never became usable")
+        XCTAssertTrue(waitUntil(5) { copy.exists && copy.isHittable }, "the sent prompt's actions never became usable")
         let message = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).firstMatch
-        XCTAssertTrue(message.waitForExistence(timeout: 5), "the sent prompt isn't in the transcript")
+        XCTAssertTrue(message.appears(timeout: 5), "the sent prompt isn't in the transcript")
         XCTAssertGreaterThan(message.frame.height, 40, "the sent prompt isn't wrapped")
         let window = app.windows.firstMatch.frame
         XCTAssertGreaterThanOrEqual(message.frame.minX, window.minX, "the sent prompt starts outside the window")
@@ -100,10 +101,10 @@ final class ComposerUITests: TetherUITestCase {
         input.typeText("Please suggest a task")
         input.typeKey(.return, modifierFlags: [])
         let chip = app.windows.firstMatch.buttons["Write the release notes"]
-        XCTAssertTrue(chip.waitForExistence(timeout: 10), "no suggested task")
+        XCTAssertTrue(chip.appears(timeout: 10), "no suggested task")
         chip.click()
-        XCTAssertTrue(chip.waitForNonExistence(timeout: 5), "the suggested task stayed")
-        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        XCTAssertTrue(chip.disappears(timeout: 5), "the suggested task stayed")
+        XCTAssertTrue(input.appears(timeout: 10))
         XCTAssertTrue(inputText().contains("release notes"), "New Chat's draft isn't the suggested prompt: \(inputText())")
     }
 }

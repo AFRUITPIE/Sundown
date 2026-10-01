@@ -7,7 +7,7 @@ final class TranscriptUITests: TetherUITestCase {
     @MainActor
     private func launchLongChat(environment: [String: String] = [:]) {
         launch("performance", environment: environment)
-        XCTAssertTrue(text(longChatEnd).waitForExistence(timeout: 20), "the long chat never showed")
+        XCTAssertTrue(text(longChatEnd).appears(timeout: 20), "the long chat never showed")
     }
 
     /// Scrolling up loads the page before the first; Jump to Latest; Find in Chat; Bigger and
@@ -31,24 +31,23 @@ final class TranscriptUITests: TetherUITestCase {
         }
         XCTAssertTrue(olderPage.exists, "scrolling to the top didn't load the page before")
         // Jump to Latest is offered once the reader is away from the end, and takes them back.
-        XCTAssertTrue(jump.waitForExistence(timeout: 5), "no Jump to Latest away from the end")
+        XCTAssertTrue(jump.appears(timeout: 5), "no Jump to Latest away from the end")
         jump.click()
-        XCTAssertTrue(jump.waitForNonExistence(timeout: 5), "Jump to Latest stayed")
-        XCTAssertTrue(latest.waitForExistence(timeout: 5) && latest.isHittable, "Jump to Latest didn't reach the end")
+        XCTAssertTrue(jump.disappears(timeout: 5), "Jump to Latest stayed")
+        XCTAssertTrue(waitUntil(5) { latest.exists && latest.isHittable }, "Jump to Latest didn't reach the end")
 
         // Find in Chat steps through its matches.
         app.typeKey("f", modifierFlags: .command)
         let field = app.textFields["find.field"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "⌘F opened no Find bar")
+        XCTAssertTrue(field.appears(timeout: 5), "⌘F opened no Find bar")
         let status = app.staticTexts["find.status"]
         field.typeText("zzqq")
-        XCTAssertTrue(status.waitForExistence(timeout: 3))
-        let notFound = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Not Found'"), object: status)
-        XCTAssertEqual(XCTWaiter.wait(for: [notFound], timeout: 3), .completed, "no Not Found: \(String(describing: status.value))")
+        XCTAssertTrue(status.appears(timeout: 3))
+        XCTAssertTrue(waitUntil(3) { status.value as? String == "Not Found" }, "no Not Found: \(String(describing: status.value))")
         field.typeKey("a", modifierFlags: .command)
         field.typeText("tightening")
         // The search runs a moment after typing stops, off the main thread.
-        _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS ' of '"), object: status)], timeout: 5)
+        waitUntil(5) { (status.value as? String)?.contains(" of ") == true }
         let first = status.value as? String ?? ""
         let parts = first.split(separator: " ")
         XCTAssertEqual(parts.count, 3, "\"n of m\", got \(first)")
@@ -61,12 +60,12 @@ final class TranscriptUITests: TetherUITestCase {
         app.typeKey("g", modifierFlags: [.command, .shift])
         XCTAssertEqual(status.value as? String, "\(total) of \(total)", "⇧⌘G")
         app.buttons["Done"].firstMatch.click()
-        XCTAssertTrue(field.waitForNonExistence(timeout: 3), "Done didn't close the Find bar")
+        XCTAssertTrue(field.disappears(timeout: 3), "Done didn't close the Find bar")
 
         // View ▸ Bigger scales the transcript, not the sidebar, which keeps the system's size;
         // ⌘0, Actual Size, puts it back.
         let sidebarRow = sidebar().staticTexts["Fixture Chat"].firstMatch
-        XCTAssertTrue(latest.waitForExistence(timeout: 5))
+        XCTAssertTrue(latest.appears(timeout: 5))
         let height = latest.frame.height
         let rowHeight = sidebarRow.frame.height
         chooseMenuItem("View", "Bigger")
@@ -84,7 +83,7 @@ final class TranscriptUITests: TetherUITestCase {
         // in another long chat, opened fresh, so only its first page is in.
         row("Performance chat 1").click()
         XCTAssertTrue(waitForTitle("Performance chat 1"), "the other chat didn't open: \(app.windows.firstMatch.title)")
-        XCTAssertTrue(text(longChatEnd).waitForExistence(timeout: 20), "the other chat never showed its end")
+        XCTAssertTrue(text(longChatEnd).appears(timeout: 20), "the other chat never showed its end")
         app.typeKey(.upArrow, modifierFlags: [.command, .option])
         guard let start = topPrompt() else { return XCTFail("Previous Prompt put no prompt at the top") }
         for _ in 0..<3 { app.typeKey(.upArrow, modifierFlags: [.command, .option]) }
@@ -121,8 +120,8 @@ final class TranscriptUITests: TetherUITestCase {
         return last
     }
 
-    /// Resizing keeps the end in view; the inspector in a window as narrow as it goes; a turn's
-    /// edited files; tool calls folded and opened.
+    /// Resizing keeps the end in view; a turn's edited files; tool calls folded and opened; the
+    /// inspector in a window as narrow as it goes.
     @MainActor
     func testRowsResizingAndTheInspector() {
         launchLongChat()
@@ -132,12 +131,14 @@ final class TranscriptUITests: TetherUITestCase {
         // the reader's own scrolling with Jump to Latest, and as the inspector opens and closes.
         // Give the resize border room inside the display: on CI the window initially spans the
         // screen, clipping the native hit regions at both horizontal edges.
+        window.settle()
         let initialX = window.frame.minX
         // Leave enough room to grow an 800pt local window to the first 1000pt target.
         let inset = max(40, 1000 - window.frame.width + 40)
         let titleBar = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: 20))
         titleBar.click(forDuration: 0.1, thenDragTo: titleBar.withOffset(CGVector(dx: inset, dy: 0)),
                        withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
+        window.settle()
         // macOS can add its shadow margin when moving a window away from the screen edge.
         // What matters is that its left resize border has moved into the display.
         XCTAssertGreaterThan(window.frame.minX, initialX + inset - 20, "the window didn't move off the screen's edge")
@@ -150,6 +151,7 @@ final class TranscriptUITests: TetherUITestCase {
                 let edge = window.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
                 edge.click(forDuration: 0.1, thenDragTo: edge.withOffset(CGVector(dx: window.frame.width - width, dy: 0)),
                            withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
+                window.settle()
             }
             XCTAssertEqual(window.frame.width, width, accuracy: 2, "the window didn't resize to \(width)")
         }
@@ -166,9 +168,9 @@ final class TranscriptUITests: TetherUITestCase {
         resize(to: 1000)
         assertAtEnd("widening again")
         window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)).scroll(byDeltaX: 0, deltaY: 2000)
-        XCTAssertTrue(app.buttons["Jump to Latest"].waitForExistence(timeout: 5), "no Jump to Latest after scrolling up")
+        XCTAssertTrue(app.buttons["Jump to Latest"].appears(timeout: 5), "no Jump to Latest after scrolling up")
         app.buttons["Jump to Latest"].click()
-        XCTAssertTrue(app.buttons["Jump to Latest"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Jump to Latest"].disappears(timeout: 5))
         resize(to: 800)
         assertAtEnd("narrowing after Jump to Latest")
         resize(to: 1000)
@@ -177,31 +179,25 @@ final class TranscriptUITests: TetherUITestCase {
         assertAtEnd("opening the inspector")
         app.typeKey("i", modifierFlags: [.command, .option])
         assertAtEnd("closing the inspector")
-
-        // Opening and closing the inspector in a window as narrow as it goes. The detail column's
-        // minimum used to come from whatever its content measured, and with the composer's + button
-        // that made AppKit lay the window out again and again until it gave up and crashed. The drag
-        // goes further than the minimum.
-        let edge = window.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
-        edge.click(forDuration: 0.1, thenDragTo: edge.withOffset(CGVector(dx: 600, dy: 0)),
-                   withVelocity: XCUIGestureVelocity(600), thenHoldForDuration: 0.1)
-        for round in 1...3 {
-            app.typeKey("i", modifierFlags: [.command, .option])
-            Thread.sleep(forTimeInterval: 1)
-            app.typeKey("i", modifierFlags: [.command, .option])
-            Thread.sleep(forTimeInterval: 1)
-            assertAlive("opening and closing the inspector in a narrow window, round \(round)")
-        }
-        XCTAssertTrue(window.exists)
+        // Back where it started, 1000 points wide: moved right, and widened by the inspector, its
+        // trailing side (where a group's Expand All sits) was off the screen. Moved by the title
+        // bar's empty stretch between the window buttons and the sidebar toggle.
+        resize(to: 1000)
+        let bar = window.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 120, dy: 20))
+        bar.click(forDuration: 0.1, thenDragTo: bar.withOffset(CGVector(dx: initialX - window.frame.minX, dy: 0)),
+                  withVelocity: XCUIGestureVelocity(400), thenHoldForDuration: 0.1)
+        window.settle()
 
         // A turn that edited files ends with a row that lists them; a file opens to its diff.
         let edits = app.disclosureTriangles.matching(identifier: "transcript.edits")
-        guard let edited = edits.allElementsBoundByIndex.last(where: { $0.isHittable }) else {
+        var hittableEdits: XCUIElement?
+        waitUntil(5) { hittableEdits = edits.allElementsBoundByIndex.last { $0.isHittable }; return hittableEdits != nil }
+        guard let edited = hittableEdits else {
             return XCTFail("no edited-files row on screen")
         }
         XCTAssertTrue(edited.label.hasPrefix("Edited"), edited.label)
         edited.click()
-        XCTAssertTrue(app.disclosureTriangles.matching(identifier: "transcript.editedFile").firstMatch.waitForExistence(timeout: 5),
+        XCTAssertTrue(app.disclosureTriangles.matching(identifier: "transcript.editedFile").firstMatch.appears(timeout: 5),
                       "the edited-files row opened to no files")
         XCTAssertTrue(app.buttons["Restore Files…"].exists, "the edited-files row has no Restore Files…")
 
@@ -219,13 +215,35 @@ final class TranscriptUITests: TetherUITestCase {
         while calls.count < before + 2 && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
         XCTAssertGreaterThanOrEqual(calls.count, before + 2, "the opened group shows no calls")
         let expand = app.buttons["transcript.expandTools"].firstMatch
-        XCTAssertTrue(expand.waitForExistence(timeout: 3), "an open group offers no Expand All")
+        XCTAssertTrue(expand.appears(timeout: 3), "an open group offers no Expand All")
+        // Above the group's calls, so the group opening at the end pushes it up under the toolbar,
+        // where XCUITest still calls it hittable and a click lands on the toolbar: scrolled down
+        // into the open.
+        for _ in 0..<10 where expand.frame.minY < window.frame.minY + 160 {
+            window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)).scroll(byDeltaX: 0, deltaY: 120)
+        }
         expand.click()
-        XCTAssertEqual(expand.label, "Collapse All")
-        XCTAssertTrue(app.buttons["code.copy"].firstMatch.waitForExistence(timeout: 3), "expanded calls have no Copy")
+        XCTAssertTrue(waitUntil(3) { expand.label == "Collapse All" }, "Expand All didn't turn into Collapse All")
+        XCTAssertTrue(app.buttons["code.copy"].firstMatch.appears(timeout: 3), "expanded calls have no Copy")
         XCTAssertTrue(app.staticTexts["Output"].firstMatch.exists, "expanded calls have no Output")
         expand.click()
-        XCTAssertEqual(expand.label, "Expand All")
+        XCTAssertTrue(waitUntil(3) { expand.label == "Expand All" }, "Collapse All didn't turn back into Expand All")
+
+        // Opening and closing the inspector in a window as narrow as it goes. The detail column's
+        // minimum used to come from whatever its content measured, and with the composer's + button
+        // that made AppKit lay the window out again and again until it gave up and crashed. The drag
+        // goes further than the minimum.
+        let edge = window.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+        edge.click(forDuration: 0.1, thenDragTo: edge.withOffset(CGVector(dx: 600, dy: 0)),
+                   withVelocity: XCUIGestureVelocity(600), thenHoldForDuration: 0.1)
+        for round in 1...3 {
+            app.typeKey("i", modifierFlags: [.command, .option])
+            Thread.sleep(forTimeInterval: 1)
+            app.typeKey("i", modifierFlags: [.command, .option])
+            Thread.sleep(forTimeInterval: 1)
+            assertAlive("opening and closing the inspector in a narrow window, round \(round)")
+        }
+        XCTAssertTrue(window.exists)
     }
 
     /// A reply streaming in: the prompt lifts the transcript, a running call says so, the text fades
@@ -243,19 +261,18 @@ final class TranscriptUITests: TetherUITestCase {
         // row read as a progress indicator). A disclosure triangle's value is whether it's open: the
         // status follows the row's words.
         let running = app.windows.firstMatch.disclosureTriangles.matching(NSPredicate(format: "label ENDSWITH 'Running'")).firstMatch
-        XCTAssertTrue(running.waitForExistence(timeout: 10), "no running call reads as Running")
+        XCTAssertTrue(running.appears(timeout: 10), "no running call reads as Running")
 
         // Sending from the end of a full transcript makes room and leaves the new prompt usable.
         let copy = app.buttons["message.copy.perf-sent-1"]
-        let landed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: copy)
-        XCTAssertEqual(XCTWaiter.wait(for: [landed], timeout: 8), .completed, "the sent prompt's actions never became usable")
+        XCTAssertTrue(waitUntil(8) { copy.exists && copy.isHittable }, "the sent prompt's actions never became usable")
         XCTAssertLessThan(previous.frame.minY, before - 20, "the transcript didn't lift for the prompt")
         XCTAssertLessThan(copy.frame.maxY, input.frame.minY, "the prompt landed under the field")
-        XCTAssertTrue(running.waitForNonExistence(timeout: 10), "the call still reads as Running once finished")
+        XCTAssertTrue(running.disappears(timeout: 10), "the call still reads as Running once finished")
 
         // The reply's words fade in as they stream. The screenshots taken on the way are attached to
         // the report, to look at.
-        XCTAssertTrue(app.staticTexts["Section 100: tightening the renderer"].firstMatch.waitForExistence(timeout: 20), "the reply never streamed in")
+        XCTAssertTrue(app.staticTexts["Section 100: tightening the renderer"].firstMatch.appears(timeout: 20), "the reply never streamed in")
         for i in 1...3 {
             let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
             shot.name = "Streaming \(i)"
@@ -264,10 +281,12 @@ final class TranscriptUITests: TetherUITestCase {
         }
         // Done once Stop gives way to Send. What's checked is that text drawn that way is still
         // ordinary text once it has arrived, which can be selected and copied.
-        XCTAssertTrue(app.buttons["Stop"].waitForNonExistence(timeout: 60), "the turn never finished")
+        XCTAssertTrue(app.buttons["Stop"].disappears(timeout: 60), "the turn never finished")
         let quote = app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH 'Streaming should cost'"))
             .allElementsBoundByIndex.last { $0.isHittable }
         let last = try XCTUnwrap(quote, "the reply's last block isn't on screen")
+        // Where the turn's end leaves it, not where it was as the last row went in.
+        last.settle()
         NSPasteboard.general.clearContents()
         last.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).doubleClick()
         app.typeKey("c", modifierFlags: .command)

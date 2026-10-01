@@ -9,7 +9,7 @@ final class ChatListUITests: TetherUITestCase {
     func testManagingChats() {
         launch("performance", environment: ["TETHER_PERF_TURNS": "1"])
         let outline = sidebar()
-        XCTAssertTrue(row("Performance chat 1").waitForExistence(timeout: 20), "the chats never showed")
+        XCTAssertTrue(row("Performance chat 1").appears(timeout: 20), "the chats never showed")
         XCTAssertTrue(waitForTitle("Fixture Chat"), "the window isn't on the fixture chat: \(app.windows.firstMatch.title)")
 
         // Search narrows the list, and clearing it brings every chat back.
@@ -17,14 +17,15 @@ final class ChatListUITests: TetherUITestCase {
         XCTAssertTrue(search.exists, "the sidebar has no search field")
         search.click()
         search.typeText("zzqq")
-        XCTAssertTrue(row("Fixture Chat").waitForNonExistence(timeout: 5), "a search for nothing still lists the chat")
+        XCTAssertTrue(row("Fixture Chat").disappears(timeout: 5), "a search for nothing still lists the chat")
         search.typeKey("a", modifierFlags: .command)
-        search.typeText("Fixture")
-        XCTAssertTrue(row("Fixture Chat").waitForExistence(timeout: 5), "a search for its title doesn't list the chat")
-        XCTAssertFalse(row("Performance chat 1").exists, "a search for Fixture lists another chat")
+        // Words only its title has: search matches directories too, and every chat is in tether-fixture.
+        search.typeText("Fixture Chat")
+        XCTAssertTrue(row("Fixture Chat").appears(timeout: 5), "a search for its title doesn't list the chat")
+        XCTAssertFalse(row("Performance chat 1").exists, "a search for Fixture Chat lists another chat")
         search.typeKey("a", modifierFlags: .command)
         search.typeKey(.delete, modifierFlags: [])
-        XCTAssertTrue(row("Performance chat 1").waitForExistence(timeout: 5), "clearing the search didn't list every chat again")
+        XCTAssertTrue(row("Performance chat 1").appears(timeout: 5), "clearing the search didn't list every chat again")
 
         // A draft belongs to its chat: gone while another chat shows, back with its own.
         input.click()
@@ -48,34 +49,34 @@ final class ChatListUITests: TetherUITestCase {
         let pinned = outline.staticTexts["Pinned"]
         XCTAssertFalse(pinned.exists, "something is pinned already")
         app.typeKey("p", modifierFlags: [.command, .option])
-        XCTAssertTrue(pinned.waitForExistence(timeout: 5), "⌥⌘P pinned nothing")
+        XCTAssertTrue(pinned.appears(timeout: 5), "⌥⌘P pinned nothing")
         app.typeKey("p", modifierFlags: [.command, .option])
-        XCTAssertTrue(pinned.waitForNonExistence(timeout: 5), "⌥⌘P again didn't unpin")
+        XCTAssertTrue(pinned.disappears(timeout: 5), "⌥⌘P again didn't unpin")
 
         // Archive takes a chat out of the list without deleting it; Show ▸ Archived lists it (and
         // the open chat, whatever it says, but no other), and Unarchive puts it back.
         let archived = row("Performance chat 2")
         archived.rightClick()
         visibleMenuItem("Archive").click()
-        XCTAssertTrue(archived.waitForNonExistence(timeout: 5), "Archive left the chat listed")
+        XCTAssertTrue(archived.disappears(timeout: 5), "Archive left the chat listed")
         chooseMenuItem("View", "Archived", in: "Show")
-        XCTAssertTrue(archived.waitForExistence(timeout: 5), "Show ▸ Archived doesn't list it")
+        XCTAssertTrue(archived.appears(timeout: 5), "Show ▸ Archived doesn't list it")
         XCTAssertFalse(outline.staticTexts["Fixture Chat"].exists, "Show ▸ Archived lists a chat that isn't")
         archived.rightClick()
         visibleMenuItem("Unarchive").click()
-        XCTAssertTrue(archived.waitForNonExistence(timeout: 5), "Unarchive left it among the archived")
+        XCTAssertTrue(archived.disappears(timeout: 5), "Unarchive left it among the archived")
         chooseMenuItem("View", "All Chats", in: "Show")
-        XCTAssertTrue(archived.waitForExistence(timeout: 5), "the unarchived chat isn't listed again")
+        XCTAssertTrue(archived.appears(timeout: 5), "the unarchived chat isn't listed again")
 
         // Chat ▸ Rename… opens with the current title, ready to replace.
         chooseMenuItem("Chat", "Rename…")
         let field = app.sheets.firstMatch.textFields.firstMatch
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "Rename… opened no alert")
+        XCTAssertTrue(field.appears(timeout: 5), "Rename… opened no alert")
         XCTAssertEqual(field.value as? String, "Performance chat 1")
         field.typeKey("a", modifierFlags: .command)
         field.typeText("Renamed Chat")
         visibleButton("Rename").click()
-        XCTAssertTrue(row("Renamed Chat").waitForExistence(timeout: 5), "the sidebar doesn't show the new title")
+        XCTAssertTrue(row("Renamed Chat").appears(timeout: 5), "the sidebar doesn't show the new title")
         XCTAssertFalse(row("Performance chat 1").exists, "the old title is still listed")
 
         // Duplicate makes a copy, with the same title.
@@ -91,12 +92,12 @@ final class ChatListUITests: TetherUITestCase {
         let doomed = row("Performance chat 2")
         doomed.rightClick()
         visibleMenuItem("Delete…").click()
-        XCTAssertTrue(app.staticTexts["Delete “Performance chat 2”?"].waitForExistence(timeout: 5), "Delete didn't ask first")
+        XCTAssertTrue(app.staticTexts["Delete “Performance chat 2”?"].appears(timeout: 5), "Delete didn't ask first")
         visibleButton("Cancel").click()
         XCTAssertTrue(doomed.exists, "Cancel deleted the chat")
         doomed.rightClick()
         visibleMenuItem("Delete…").click()
         visibleButton("Delete").click()
-        XCTAssertTrue(doomed.waitForNonExistence(timeout: 5), "Delete left the chat")
+        XCTAssertTrue(doomed.disappears(timeout: 5), "Delete left the chat")
     }
 }

@@ -7,7 +7,7 @@ final class NewChatUITests: TetherUITestCase {
     @MainActor
     func testNewChatAndTheSessionControls() {
         launch()
-        XCTAssertTrue(text(fixtureAnswer).waitForExistence(timeout: 15), "the fixture chat never showed")
+        XCTAssertTrue(text(fixtureAnswer).appears(timeout: 15), "the fixture chat never showed")
         let window = app.windows.firstMatch
         XCTAssertTrue(window.title.contains("This Mac"), "the subtitle doesn't name the host: \(window.title)")
 
@@ -34,30 +34,30 @@ final class NewChatUITests: TetherUITestCase {
         let toolbar = window.toolbars.firstMatch
         for menu in ["Model", "Effort", "Permissions"] {
             let button = toolbar.menuButtons.matching(NSPredicate(format: "label BEGINSWITH %@", menu)).firstMatch
-            XCTAssertTrue(button.waitForExistence(timeout: 5), "no \(menu) menu in the toolbar")
+            XCTAssertTrue(button.appears(timeout: 5), "no \(menu) menu in the toolbar")
         }
 
         // New Chat keeps its directory with the composer, not in a form under the toolbar: the
         // directory, the branch checked out there, and Work In, in one row above the field.
         app.buttons["New Chat"].click()
         let folder = app.descendants(matching: .any)["newChat.folder"]
-        XCTAssertTrue(folder.waitForExistence(timeout: 5), "New Chat has no directory menu")
+        XCTAssertTrue(folder.appears(timeout: 5), "New Chat has no directory menu")
         XCTAssertEqual(folder.value as? String, "/tmp/tether-fixture")
         let workIn = app.descendants(matching: .any)["newChat.workIn"]
         XCTAssertTrue(workIn.exists, "Work In sits beside the directory")
         XCTAssertEqual(workIn.value as? String, "This Directory")
         // The fixture's `git/status` says the directory is on main.
         let branch = app.descendants(matching: .any)["newChat.branch"]
-        XCTAssertTrue(branch.waitForExistence(timeout: 5), "no branch beside the directory")
+        XCTAssertTrue(branch.appears(timeout: 5), "no branch beside the directory")
         XCTAssertEqual(branch.label, "Branch main")
-        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        XCTAssertTrue(input.appears(timeout: 5))
         XCTAssertLessThan(folder.frame.maxY, input.frame.minY, "the directory isn't above the field")
 
         // Choosing another value never resizes a session control or moves its neighbours. Each
         // says its choice after its name ("Permissions, Don't Ask").
         let effort = toolbar.menuButtons.matching(NSPredicate(format: "label BEGINSWITH 'Effort'")).firstMatch
         let permissions = toolbar.menuButtons.matching(NSPredicate(format: "label BEGINSWITH 'Permissions'")).firstMatch
-        XCTAssertTrue(permissions.waitForExistence(timeout: 5))
+        XCTAssertTrue(permissions.appears(timeout: 5))
         // From a known mode: New Chat starts in the host's (Auto in the fixture), whose symbol
         // AppKit measures wider than the others.
         chooseMenuItem("Chat", "Ask Before Edits", in: "Permissions")
@@ -80,13 +80,12 @@ final class NewChatUITests: TetherUITestCase {
 
         // The chat starts, and its reply streams in.
         send("UI test prompt")
-        XCTAssertTrue(app.staticTexts["Scripted response."].waitForExistence(timeout: 10), "the new chat got no reply")
+        XCTAssertTrue(app.staticTexts["Scripted response."].appears(timeout: 10), "the new chat got no reply")
 
         // The host is switched from the menu bar only; switching opens New Chat on it, and the
         // subtitle names it.
         chooseMenuItem("Host", "Fixture SSH")
-        let switched = XCTNSPredicateExpectation(predicate: NSPredicate(format: "title CONTAINS %@", "Fixture SSH"), object: window)
-        XCTAssertEqual(XCTWaiter.wait(for: [switched], timeout: 5), .completed, "the title doesn't name Fixture SSH: \(window.title)")
+        XCTAssertTrue(waitUntil(5) { window.title.contains("Fixture SSH") }, "the title doesn't name Fixture SSH: \(window.title)")
         XCTAssertTrue(window.title.hasPrefix("New Chat"), "switching host didn't open New Chat: \(window.title)")
     }
 }
