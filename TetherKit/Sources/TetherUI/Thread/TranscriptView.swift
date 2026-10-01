@@ -12,6 +12,9 @@ struct TranscriptView: View {
     /// Whether the reader left the transcript at its end. Only their own scrolling changes it, so a
     /// resize that briefly pushes the end off screen doesn't count as scrolling away.
     @State private var followsEnd = true
+    /// More than a screen from the end: Jump to Latest is offered only then, so a nudge up (which
+    /// stops following the end) doesn't bring it up.
+    @State private var farFromEnd = false
     /// The rows on screen, for Chat ▸ Previous and Next Prompt. Not observed: it changes as rows
     /// scroll in and out, and nothing is drawn from it.
     @State private var onScreen = OnScreenRows()
@@ -78,10 +81,11 @@ struct TranscriptView: View {
             followsEnd = g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 24
         }
         // Offered once the reader has scrolled away, not whenever the end is off screen: a resize
-        // pushes it off for a frame or two, and the button flickered in and out.
+        // pushes it off for a frame or two, and the button flickered in and out. And only once
+        // they're more than a screen from the end, not for a nudge up.
         .overlay(alignment: .bottom) {
             ZStack {
-                if !followsEnd {
+                if !followsEnd && farFromEnd {
                     Button("Jump to Latest", systemImage: "arrow.down") {
                         onScreen.lastPrompt = nil
                         followsEnd = true
@@ -97,7 +101,7 @@ struct TranscriptView: View {
                 }
             }
             // Scoped to the button so the transcript's own layout changes don't animate.
-            .animation(.snappy, value: followsEnd)
+            .animation(.snappy, value: !followsEnd && farFromEnd)
         }
     }
 }
@@ -133,6 +137,8 @@ extension TranscriptView {
         let content: CGFloat
         let offset: CGFloat
         let nearTop: Bool
+        /// More than a screen of transcript below what's shown.
+        let farFromEnd: Bool
 
         init(_ g: ScrollGeometry) {
             content = g.contentSize.height
@@ -140,6 +146,7 @@ extension TranscriptView {
             // from under the toolbar, and moving on by it left the reader the toolbar's height out.
             offset = g.contentOffset.y + g.contentInsets.top
             nearTop = offset < g.containerSize.height * 1.5
+            farFromEnd = g.contentSize.height - (g.contentOffset.y + g.containerSize.height) > g.containerSize.height
         }
     }
 
@@ -151,6 +158,7 @@ extension TranscriptView {
     /// the frame that lays it out. `ThreadModel.pageAnchor` says a page added rows; the rows aren't
     /// read here, which would redraw this view whenever they change.
     private func keepPlace(from old: Place, to new: Place) {
+        if farFromEnd != new.farFromEnd { farFromEnd = new.farFromEnd }
         let nearTop = new.nearTop && !older.taken
         if older.nearTop != nearTop { older.nearTop = nearTop }
         guard let page = thread.pageAnchor, page != older.page, new.content > old.content else { return }
