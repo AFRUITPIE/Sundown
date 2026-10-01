@@ -775,6 +775,24 @@ private struct FindOpensWorkPreview: View {
 
 /// A line of words that says what's happening: shimmering while it's live, and turning into its
 /// next words by blurring up and away as they rise in from below. Settled, it's plain secondary text.
+/// Text that turns into its next value the way the running turn's words do: the old blurs up and
+/// away as the new blurs in, on a gentle spring. A chat's title as Claude names it.
+struct ReplacingText: View {
+    let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Text(text)
+                .id(text)
+                .transition(.moving(AnyTransition(BlurReplaceTransition(configuration: .upUp)), reduceMotion: reduceMotion))
+        }
+        .animation(reduceMotion ? .default : .spring(duration: 0.45, bounce: 0.25), value: text)
+    }
+}
+
 struct ActivityLabel: View {
     let text: String
     let live: Bool

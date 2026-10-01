@@ -122,6 +122,12 @@ public final class ThreadModel: Identifiable {
     /// transcript is let go, so a chat opened once this launch keeps it. Nil for a chat not loaded
     /// here: the host's chat list (`thread/list`) doesn't carry a preview.
     public private(set) var replyPreview: String?
+    /// How the last turn ended, for the sidebar's dot. Stored and kept when the transcript is let
+    /// go, so the sidebar never reads `turns`. Nil for a chat not loaded this launch.
+    public private(set) var lastTurnStatus: TurnStatus?
+    /// A finished reply no window has shown yet: set when a turn completes in a chat nobody is
+    /// looking at, cleared when a window shows it. This launch only.
+    public private(set) var hasUnseenReply = false
     /// The item `replyPreview` came from, so an older reply arriving later doesn't replace it.
     @ObservationIgnored private var replyPreviewItemID: String?
 
@@ -228,6 +234,7 @@ public final class ThreadModel: Identifiable {
         remember(changes)
         storage = newItems
         if turns != newTurns { turns = newTurns }
+        noteLastTurn()
         if awaitingPrompt { awaitingPrompt = false }
         reindex()
         if hasMoreHistory != hasMore { hasMoreHistory = hasMore }
@@ -505,8 +512,19 @@ public final class ThreadModel: Identifiable {
         return storage[i].parentToolUseId == nil
     }
 
+    private func noteLastTurn() {
+        if let status = turns.last?.status, status != lastTurnStatus { lastTurnStatus = status }
+    }
+
+    /// A turn finished where no window shows the chat.
+    func noteUnseenReply() { if !hasUnseenReply { hasUnseenReply = true } }
+
+    /// A window shows the chat.
+    func noteSeen() { if hasUnseenReply { hasUnseenReply = false } }
+
     private func upsertTurn(_ t: Turn) {
         if let i = turns.lastIndex(where: { $0.id == t.id }) { turns[i] = t } else { turns.append(t) }
+        noteLastTurn()
     }
 
     private func upsert(_ item: Item) {
