@@ -228,7 +228,7 @@ struct NewChatView: View {
         choosingFolder = true
     }
 
-    private func start(_ connection: HostConnection, _ input: [UserInput]) async {
+    private func start(_ connection: HostConnection, _ input: [UserInput]) async -> Bool {
         await window.startDraftChat(input)
     }
 }

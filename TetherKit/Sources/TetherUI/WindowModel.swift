@@ -352,9 +352,11 @@ extension FocusedValues {
 
 extension WindowModel {
     /// Starts the New Chat draft as a chat with `input` as its first message, and opens it.
-    func startDraftChat(_ input: [UserInput]) async {
-        guard let connection else { return }
-        guard let cwd = draftDirectory else { draftError = "Choose a directory first."; return }
+    /// Whether the chat started.
+    @discardableResult
+    func startDraftChat(_ input: [UserInput]) async -> Bool {
+        guard let connection else { return false }
+        guard let cwd = draftDirectory else { draftError = "Choose a directory first."; return false }
         draftError = nil
         do {
             let t = try await connection.startThread(cwd: cwd, input: input,
@@ -362,8 +364,10 @@ extension WindowModel {
                                                                     permissionMode: draftPermissionMode, fastMode: draftFastMode,
                                                                     worktree: draftWorktree))
             open(threadID: t.id, on: connection.id)
+            return true
         } catch {
             draftError = error.localizedDescription
+            return false
         }
     }
 }

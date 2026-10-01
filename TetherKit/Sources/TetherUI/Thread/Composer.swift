@@ -21,7 +21,8 @@ struct Composer: View {
     /// A server request is waiting: the draft stays, but it has to be answered before sending.
     var awaitingAnswer = false
     var onStop: (() -> Void)?
-    let submit: ([UserInput]) async -> Void
+    /// Whether the message went; when it didn't, the draft comes back to the field.
+    let submit: ([UserInput]) async -> Bool
     /// Told when the message field gains or loses focus.
     var onFocusChange: ((Bool) -> Void)?
     /// Takes a directory dropped on the field, as New Chat's directory, instead of mentioning it.
@@ -571,9 +572,14 @@ struct Composer: View {
         if !trimmed.isEmpty { input.append(.text(.init(text: trimmed))) }
         for attachment in images { input.append(attachment.input) }
         sendGeometry?.prepareSend()
+        let draft = (text: text, images: images)
         text = ""
         images = []
-        Task { await submit(input) }
+        Task {
+            guard await !submit(input) else { return }
+            // Not over anything typed since.
+            if text.isEmpty && images.isEmpty { text = draft.text; images = draft.images }
+        }
     }
 
     /// What the field takes from outside it: a file (by URL), or an image that isn't one, such as
@@ -822,7 +828,7 @@ private extension EnvironmentValues {
     let connection = HostConnection.sample()
     let thread = ThreadModel.sampleIdleChat()
     GlassEffectContainer {
-        Composer(connection: connection, cwd: thread.cwd, thread: thread, onStop: {}, submit: { _ in })
+        Composer(connection: connection, cwd: thread.cwd, thread: thread, onStop: {}, submit: { _ in true })
     }
     .padding(20)
     .frame(width: 560)
@@ -832,7 +838,7 @@ private extension EnvironmentValues {
     let connection = HostConnection.sample()
     let thread = ThreadModel.sampleRunningTurn()
     GlassEffectContainer {
-        Composer(connection: connection, cwd: thread.cwd, thread: thread, onStop: {}, submit: { _ in })
+        Composer(connection: connection, cwd: thread.cwd, thread: thread, onStop: {}, submit: { _ in true })
     }
     .padding(20)
     .frame(width: 560)
@@ -843,7 +849,7 @@ private extension EnvironmentValues {
     let connection = HostConnection.sample()
     let thread = ThreadModel.samplePendingPermission()
     GlassEffectContainer {
-        Composer(connection: connection, cwd: thread.cwd, thread: thread, awaitingAnswer: true, onStop: {}, submit: { _ in })
+        Composer(connection: connection, cwd: thread.cwd, thread: thread, awaitingAnswer: true, onStop: {}, submit: { _ in true })
     }
     .environment(\.composerDraft, "…and once that's done, run the package tests")
     .padding(20)
@@ -853,7 +859,7 @@ private extension EnvironmentValues {
 #Preview("New chat (no thread yet)") {
     let connection = HostConnection.sample()
     GlassEffectContainer {
-        Composer(connection: connection, cwd: nil, placeholder: "Choose a directory, then ask Claude…", submit: { _ in })
+        Composer(connection: connection, cwd: nil, placeholder: "Choose a directory, then ask Claude…", submit: { _ in true })
     }
     .padding(20)
     .frame(width: 560)
@@ -865,11 +871,11 @@ private extension EnvironmentValues {
     let thread = ThreadModel.sampleIdleChat()
     VStack(spacing: 20) {
         GlassEffectContainer {
-            Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in })
+            Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in true })
         }
         .environment(\.composerDraft, "Rename the helper,\nthen update its callers,\nand run the package tests")
         GlassEffectContainer {
-            Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in })
+            Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in true })
         }
         .scaledFont(.body)
         .environment(\.textScale, 1.5)
@@ -882,7 +888,7 @@ private extension EnvironmentValues {
     let connection = HostConnection.sample()
     let thread = ThreadModel.sampleIdleChat()
     GlassEffectContainer {
-        Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in })
+        Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in true })
     }
     .environment(\.composerDraft, "Review the implementation and suggest the next improvement.")
     .padding(20)
@@ -894,7 +900,7 @@ private extension EnvironmentValues {
     let connection = HostConnection.sample()
     let thread = ThreadModel.sampleIdleChat()
     GlassEffectContainer {
-        Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in })
+        Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in true })
     }
     .environment(\.composerDraft, "/")
     .environment(\.composerPreviewCommands, [
