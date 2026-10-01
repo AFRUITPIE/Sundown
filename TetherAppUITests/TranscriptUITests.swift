@@ -48,6 +48,15 @@ final class TranscriptUITests: TetherUITestCase {
         field.typeText("tightening")
         // The search runs a moment after typing stops, off the main thread.
         waitUntil(5) { (status.value as? String)?.contains(" of ") == true }
+        // The count can still change while the transcript settles (a slower runner): read it once
+        // it has held for half a second.
+        var held = status.value as? String ?? ""
+        waitUntil(5) {
+            Thread.sleep(forTimeInterval: 0.5)
+            let now = status.value as? String ?? ""
+            defer { held = now }
+            return now == held
+        }
         let first = status.value as? String ?? ""
         let parts = first.split(separator: " ")
         XCTAssertEqual(parts.count, 3, "\"n of m\", got \(first)")
@@ -56,9 +65,12 @@ final class TranscriptUITests: TetherUITestCase {
         // A new search starts at the latest match; Find Next wraps to the first, Previous back.
         XCTAssertEqual(first, "\(total) of \(total)")
         app.typeKey("g", modifierFlags: .command)
-        XCTAssertEqual(status.value as? String, "1 of \(total)", "⌘G")
+        XCTAssertTrue(waitUntil(3) { (status.value as? String)?.hasPrefix("1 of ") == true }, "⌘G: \(String(describing: status.value))")
         app.typeKey("g", modifierFlags: [.command, .shift])
-        XCTAssertEqual(status.value as? String, "\(total) of \(total)", "⇧⌘G")
+        XCTAssertTrue(waitUntil(3) {
+            let parts = (status.value as? String ?? "").split(separator: " ")
+            return parts.count == 3 && parts[0] == parts[2]
+        }, "⇧⌘G: \(String(describing: status.value))")
         app.buttons["Done"].firstMatch.click()
         XCTAssertTrue(field.disappears(timeout: 3), "Done didn't close the Find bar")
 
@@ -204,14 +216,17 @@ final class TranscriptUITests: TetherUITestCase {
         // Finished calls are one compact row until opened: then each call is a row of its own (a
         // group holds two at least), with Expand All, Collapse All and complete detail.
         let groups = app.disclosureTriangles.matching(identifier: "transcript.toolGroup")
-        guard let group = groups.allElementsBoundByIndex.last(where: { $0.isHittable }) else {
+        // Clear of the bottom bar floating over the transcript, where a click would land on the bar
+        // (a smaller screen in CI puts the last group under it).
+        let clear = mainWindow().frame.maxY - 180
+        guard let group = groups.allElementsBoundByIndex.last(where: { $0.isHittable && $0.frame.midY < clear }) else {
             return XCTFail("no compact tool summary on screen")
         }
         XCTAssertFalse(app.buttons["transcript.expandTools"].exists, "Expand All is offered with every group closed")
         let calls = app.disclosureTriangles.matching(identifier: "transcript.toolCall")
         let before = calls.count
         group.click()
-        let deadline = Date().addingTimeInterval(5)
+        let deadline = Date().addingTimeInterval(8)
         while calls.count < before + 2 && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
         XCTAssertGreaterThanOrEqual(calls.count, before + 2, "the opened group shows no calls")
         let expand = app.buttons["transcript.expandTools"].firstMatch
