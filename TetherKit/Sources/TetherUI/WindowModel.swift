@@ -351,8 +351,9 @@ extension FocusedValues {
 }
 
 extension WindowModel {
-    /// Starts the New Chat draft as a chat with `input` as its first message, and opens it.
-    /// Whether the chat started.
+    /// Starts the New Chat draft as a chat with `input` as its first message, and opens it, unless
+    /// the window has moved to another host meanwhile: then the chat just starts on its own host,
+    /// and a failure isn't written into a draft it doesn't belong to. Whether the chat started.
     @discardableResult
     func startDraftChat(_ input: [UserInput]) async -> Bool {
         guard let connection else { return false }
@@ -363,10 +364,10 @@ extension WindowModel {
                                                      options: .init(model: draftModel, effort: draftEffort,
                                                                     permissionMode: draftPermissionMode, fastMode: draftFastMode,
                                                                     worktree: draftWorktree))
-            open(threadID: t.id, on: connection.id)
+            if hostID == connection.id { open(threadID: t.id, on: connection.id) }
             return true
         } catch {
-            draftError = error.localizedDescription
+            if hostID == connection.id { draftError = error.localizedDescription }
             return false
         }
     }
