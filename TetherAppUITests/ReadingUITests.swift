@@ -157,14 +157,14 @@ final class ReadingUITests: XCTestCase {
         XCTAssertTrue(field.waitForNonExistence(timeout: 3))
     }
 
-    /// The toolbar can be hidden or customized, so the menu bar has to carry every command.
+    /// A narrow window sends toolbar items to the » menu, so the menu bar has to carry every command.
     @MainActor
     func testTheMenuBarListsEveryCommand() {
         let app = launch()
         let expected: [String: [String]] = [
             "File": ["New Chat", "New Window", "Close"],
             "Edit": ["Find…", "Find Next", "Find Previous"],
-            "View": ["Bigger", "Smaller", "Actual Size", "Show Inspector", "Show Toolbar"],
+            "View": ["Bigger", "Smaller", "Actual Size", "Show Inspector"],
             "Chat": ["Stop", "Open in New Window", "Pin", "Rename…", "Duplicate", "Show in Finder", "Archive", "Delete…"],
             "Help": ["Tether Help", "Claude Code Documentation"],
         ]
