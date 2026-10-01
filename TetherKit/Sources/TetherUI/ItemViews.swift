@@ -463,7 +463,10 @@ struct SyntheticMessageView: View {
     }
 
     private var title: String {
-        if text.hasPrefix(Self.compactionSummaryOpening) { return "Summary of the Earlier Conversation" }
+        // Marked by its origin; told by Claude Code's own opening where the origin isn't sent.
+        if message.origin == "compaction" || text.hasPrefix(Self.compactionSummaryOpening) {
+            return "Summary of the Earlier Conversation"
+        }
         // A subagent's prompt, which Claude wrote.
         if message.synthetic != true, message.parentToolUseId != nil { return "Prompt from Claude" }
         return message.originName.map { "From “\($0)”" } ?? UserMessageView.originLabel(message.origin)
