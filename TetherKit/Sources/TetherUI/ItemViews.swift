@@ -324,6 +324,11 @@ struct UserMessageView: View {
                 return
             }
             sendGeometry?.activeMessageID = message.id
+            // Hidden where it will land until the transcript has scrolled back to its end.
+            for _ in 0..<60 where sendGeometry?.scrollingToEnd == true {
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            guard !Task.isCancelled else { prepared = true; arrived = true; return }
             launchFrame = frame
             sending = true
             arrived = false
@@ -556,10 +561,16 @@ final class MessageSendGeometry {
     @ObservationIgnored var submittedFrame: CGRect?
     @ObservationIgnored private var submittedAt: ContinuousClock.Instant?
     var activeMessageID: String?
+    /// Counts this window's sends, for the transcript to go to its end on each.
+    private(set) var sends = 0
+    /// While the transcript scrolls back to its end for a send, the prompt waits to fly until
+    /// it's there, so the reader sees the scroll and then the flight, not both at once.
+    @ObservationIgnored var scrollingToEnd = false
 
     func prepareSend() {
         submittedFrame = composerFrame
         submittedAt = .now
+        sends += 1
     }
 
     /// Whether a send from this window is waiting for its prompt: a failed one lapses.
