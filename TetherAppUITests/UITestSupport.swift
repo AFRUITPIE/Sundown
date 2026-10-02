@@ -17,8 +17,8 @@ class TetherUITestCase: XCTestCase {
         continueAfterFailure = false
     }
 
-    override func tearDown() {
-        app?.terminate()
+    override func tearDown() async throws {
+        await app?.terminate()
     }
 
     /// The app on a fixture scenario (the short fixture chat when nil), with the defaults kept in

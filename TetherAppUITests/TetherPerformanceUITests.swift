@@ -17,8 +17,8 @@ final class TetherPerformanceUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    override func tearDown() {
-        app?.terminate()
+    override func tearDown() async throws {
+        await app?.terminate()
     }
 
     /// The long chat, open and settled, at a fixed window size.
