@@ -441,9 +441,9 @@ struct Composer: View {
         .accessibilityIdentifier(showStop ? "composer.stop" : "composer.send")
         .contentTransition(.symbolEffect(.replace))
         .animation(reduceMotion ? nil : .snappy, value: symbol)
-        .buttonStyle(.glassProminent)
-        // Stop is the neutral glass of the controls beside it, Send the accent.
-        .tint(showStop ? .secondary : nil)
+        // Send in the accent's prominent glass; Stop in the clear glass of the + beside it. A
+        // prominent button fills with its tint, so a gray tint had made Stop a dark gray disc.
+        .buttonStyle(SendOrStopStyle(prominent: !showStop))
         // Not while an attachment is still being read.
         .disabled(!showStop && (!canSend || awaitingAnswer || attaching > 0))
         .help(showStop ? "Stop" : sendHelp)
@@ -815,6 +815,19 @@ private struct AttachmentStrip: View, Equatable {
             .frame(width: 72, height: 56)
             .background(.fill.tertiary, in: .rect(cornerRadius: 8))
             .help(name)
+        }
+    }
+}
+
+/// Send's glass or Stop's: the native styles, chosen by what the button does now.
+private struct SendOrStopStyle: PrimitiveButtonStyle {
+    let prominent: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        if prominent {
+            Button(configuration).buttonStyle(.glassProminent)
+        } else {
+            Button(configuration).buttonStyle(.glass)
         }
     }
 }

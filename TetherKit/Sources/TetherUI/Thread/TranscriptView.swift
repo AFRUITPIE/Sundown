@@ -12,6 +12,11 @@ struct TranscriptView: View {
     /// Whether the reader left the transcript at its end. Only their own scrolling changes it, so a
     /// resize that briefly pushes the end off screen doesn't count as scrolling away.
     @State private var followsEnd = true
+    /// More than a screen from the end: Jump to Latest is offered only then, so a nudge up (which
+    /// stops following the end) doesn't bring it up.
+    @State private var farFromEnd = false
+    /// Told when the reader opens a row, which stops following the end (below).
+    @State private var rowOpening = RowOpening()
     /// The rows on screen, for Chat ▸ Previous and Next Prompt. Not observed: it changes as rows
     /// scroll in and out, and nothing is drawn from it.
     @State private var onScreen = OnScreenRows()
@@ -31,13 +36,18 @@ struct TranscriptView: View {
                 // to the new one's height they lay outside what it showed, so the transcript stayed
                 // blank until the reader scrolled.
                 .id(appearance.toolCalls.folding)
+                .environment(\.rowOpening, rowOpening)
         }
         // Opens at the end and keeps it pinned through content and size changes. A transcript shorter
         // than the window sits at the top: aligned to the bottom, it was pushed down by a scroll offset
         // and the toolbar's edge effect followed its top edge down the window.
         .accessibilityLabel("Transcript")
         .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .defaultScrollAnchor(.bottom, for: .sizeChanges)
+        // While it follows the end: else, when the reader opens a row ("Ran a command") at the end,
+        // the end stayed put and the row and everything above it moved up under them. Opening a row
+        // is reading, so it stops following and the row opens downward. Switched by that click,
+        // never from layout, where switching the anchor made AppKit throw.
+        .defaultScrollAnchor(followsEnd ? .bottom : .top, for: .sizeChanges)
         .defaultScrollAnchor(.top, for: .alignment)
         .scrollPosition($position)
         // A prompt arriving makes room with the sending spring, and so does Thinking… coming and
@@ -53,7 +63,10 @@ struct TranscriptView: View {
             position.scrollTo(edge: .bottom)
         }
         .onScrollGeometryChange(for: Place.self, of: { Place($0) }) { keepPlace(from: $0, to: $1) }
-        .onAppear { older.page = thread.pageAnchor }
+        .onAppear {
+            older.page = thread.pageAnchor
+            rowOpening.willOpen = { if followsEnd { followsEnd = false } }
+        }
         // Find Next and Previous bring the match into view; the reader has left the end to read it.
         .onChange(of: find?.step) {
             guard let id = find?.current else { return }
@@ -78,10 +91,11 @@ struct TranscriptView: View {
             followsEnd = g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 24
         }
         // Offered once the reader has scrolled away, not whenever the end is off screen: a resize
-        // pushes it off for a frame or two, and the button flickered in and out.
+        // pushes it off for a frame or two, and the button flickered in and out. And only once
+        // they're more than a screen from the end, not for a nudge up.
         .overlay(alignment: .bottom) {
             ZStack {
-                if !followsEnd {
+                if !followsEnd && farFromEnd {
                     Button("Jump to Latest", systemImage: "arrow.down") {
                         onScreen.lastPrompt = nil
                         followsEnd = true
@@ -97,7 +111,7 @@ struct TranscriptView: View {
                 }
             }
             // Scoped to the button so the transcript's own layout changes don't animate.
-            .animation(.snappy, value: followsEnd)
+            .animation(.snappy, value: !followsEnd && farFromEnd)
         }
     }
 }
@@ -133,6 +147,8 @@ extension TranscriptView {
         let content: CGFloat
         let offset: CGFloat
         let nearTop: Bool
+        /// More than a screen of transcript below what's shown.
+        let farFromEnd: Bool
 
         init(_ g: ScrollGeometry) {
             content = g.contentSize.height
@@ -140,6 +156,7 @@ extension TranscriptView {
             // from under the toolbar, and moving on by it left the reader the toolbar's height out.
             offset = g.contentOffset.y + g.contentInsets.top
             nearTop = offset < g.containerSize.height * 1.5
+            farFromEnd = g.contentSize.height - (g.contentOffset.y + g.containerSize.height) > g.containerSize.height
         }
     }
 
@@ -151,6 +168,7 @@ extension TranscriptView {
     /// the frame that lays it out. `ThreadModel.pageAnchor` says a page added rows; the rows aren't
     /// read here, which would redraw this view whenever they change.
     private func keepPlace(from old: Place, to new: Place) {
+        if farFromEnd != new.farFromEnd { farFromEnd = new.farFromEnd }
         let nearTop = new.nearTop && !older.taken
         if older.nearTop != nearTop { older.nearTop = nearTop }
         guard let page = thread.pageAnchor, page != older.page, new.content > old.content else { return }
@@ -551,7 +569,12 @@ struct TranscriptTail: View {
 
     var body: some View {
         Group {
-            if thread.isThinking, !runSaysIt { ThinkingLine() }
+            // Compacting says so where Thinking would, not in a card under the transcript.
+            if thread.activity == "compacting" {
+                ActivityLine(text: "Compacting Conversation")
+            } else if thread.isThinking, !runSaysIt {
+                ThinkingLine()
+            }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
                 TurnOutcome(status: turn.status, error: turn.result?.errors?.first)
@@ -563,11 +586,18 @@ struct TranscriptTail: View {
 /// Marks the wait before a turn has anything to show. From the thread's status, so it works
 /// with thinking off or redacted. Its dots pulse, but not while the Mac saves energy.
 struct ThinkingLine: View {
+    var body: some View { ActivityLine(text: "Thinking") }
+}
+
+/// A shimmering line for what the turn is doing while it has nothing else to show.
+struct ActivityLine: View {
+    let text: String
+
     @Environment(\.reducesEffects) private var reducesEffects
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ActivityLabel(text: "Thinking", live: true)
+        ActivityLabel(text: text, live: true)
             .fontWeight(.medium)
             .scaledFont(.callout)
             // The model's changes carry no animation, so the transition brings its own.
@@ -667,7 +697,14 @@ final class TurnHover {
     }
 }
 
+/// The transcript's to tell when the reader opens a row. One object for the transcript's life, so
+/// the environment value never changes and no row redraws for it.
+final class RowOpening {
+    var willOpen: () -> Void = {}
+}
+
 extension EnvironmentValues {
     @Entry var turnHover: TurnHover? = nil
+    @Entry var rowOpening: RowOpening? = nil
     @Entry var turnPlace: TurnPlace? = nil
 }

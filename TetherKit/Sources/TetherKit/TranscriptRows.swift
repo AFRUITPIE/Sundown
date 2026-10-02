@@ -45,7 +45,8 @@ public enum TranscriptFolding: Sendable, Hashable {
 /// its own line — while it's still doing something worth watching, or when it's more than a line:
 ///   - still running (`.pending`/`.running`)
 ///   - `.todoWrite`, whose checklist is always shown inline and shouldn't be folded away
-///   - `.subagent`, whose nested transcript is a heavier construct than a plain tool line
+/// A finished subagent folds like any call ("Ran 3 agents"); its row in the opened run still opens
+/// it in the inspector.
 /// A single ungroupable-adjacent completed call is left as a plain `.item`, not a one-call group.
 ///
 /// Reasoning items are dropped here rather than rendered: the model's internal monologue competes
@@ -135,9 +136,9 @@ private func isGroupable(_ call: Item.ToolCall) -> Bool {
     call.status != .running && call.status != .pending && isFoldable(call)
 }
 
-/// A call that can be a line in a run at all: not a checklist or a subagent, which are shown whole.
+/// A call that can be a line in a run at all: not a checklist, which is shown whole.
 private func isFoldable(_ call: Item.ToolCall) -> Bool {
-    call.kind != .todoWrite && call.kind != .subagent
+    call.kind != .todoWrite
 }
 
 /// Folded rows with what goes between turns: a date above each prompt in `dates` (by prompt id,

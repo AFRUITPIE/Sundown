@@ -22,6 +22,10 @@ struct ItemView: View {
 
     var body: some View {
         switch item {
+        case .userMessage(let m) where m.synthetic == true || m.parentToolUseId != nil:
+            // Not typed here (Claude Code's, a subagent's, another session's): a quiet line in the
+            // middle, not a prompt on the person's side.
+            SyntheticMessageView(message: m)
         case .userMessage(let m):
             // The prompt that just arrived, in the window whose field sent it.
             let justSent = thread.arrivedPrompt == m.id && m.synthetic != true && m.origin == nil
@@ -39,15 +43,11 @@ struct ItemView: View {
         case .reasoning: EmptyView()
         case .toolCall(let t): ToolCallView(call: t, thread: thread)
         case .compaction(let c):
-            HStack {
-                VStack { Divider() }
-                Label(c.preTokens.map { "Conversation compacted · \(Format.tokens($0)) tokens" } ?? "Conversation compacted",
-                      systemImage: "arrow.down.right.and.arrow.up.left")
-                    .scaledFont(.caption).foregroundStyle(.secondary)
-                    // The rules on either side give way first.
-                    .layoutPriority(1)
-                VStack { Divider() }
-            }
+            // A quiet line in Claude's column, as a tool row; Claude Code's summary follows it.
+            Text(c.preTokens.map { "Conversation compacted from \(Format.tokens($0)) tokens" } ?? "Conversation compacted")
+                .scaledFont(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         // Quiet, like a failed call: said, selectable to copy, not alarming.
         case .error(let e):
             Label(e.message, systemImage: "exclamationmark.circle")
@@ -447,6 +447,59 @@ struct UserMessageView: View {
     }
 }
 
+/// A message Claude Code, a subagent or another session put in the chat, not typed here: a quiet
+/// line in Claude's column, as Claude's desktop app shows one ("Message from subagent ›"), the size
+/// and gray of a tool row, that opens to the message. Never a prompt on the person's side.
+struct SyntheticMessageView: View {
+    let message: Item.UserMessage
+    @State private var isOpen = false
+
+    /// Claude Code's own opening for the summary it writes when it compacts a chat.
+    static let compactionSummaryOpening = "This session is being continued from a previous conversation"
+
+    private var text: String {
+        message.content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n\n")
+    }
+
+    /// Who it's from, in words that follow "Message from".
+    private var sender: String {
+        if let name = message.originName { return name }
+        // A subagent's prompt, which Claude wrote.
+        if message.synthetic != true, message.parentToolUseId != nil { return "Claude" }
+        switch message.origin {
+        case "peer": return "another session"
+        case "channel": return "a channel"
+        case "coordinator", "teamLead", "team-lead": return "the team lead"
+        case nil: return "Claude Code"
+        case let other?: return other.humanized.lowercased()
+        }
+    }
+
+    private var label: Text {
+        // Marked by its origin; told by Claude Code's own opening where the origin isn't sent.
+        if message.origin == "compaction" || text.hasPrefix(Self.compactionSummaryOpening) {
+            return Text("Summary of the earlier conversation")
+        }
+        return Text("Message from \(Text(sender).foregroundStyle(.primary))")
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isOpen) {
+            VStack(alignment: .leading, spacing: 6) {
+                if let session = message.originSession { PeerSessionLink(sessionID: session) }
+                Text(text)
+                    .textSelection(.enabled)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            label.foregroundStyle(.secondary)
+        }
+        .scaledFont(.callout)
+        .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.synthetic"))
+    }
+}
+
 /// Transform the complete rendered surface, after its glass effect. Visual geometry leaves the
 /// final row's layout untouched and avoids reshaping or rewrapping selectable text in flight.
 private struct SentMessagePosition: ViewModifier {
@@ -630,24 +683,22 @@ enum MessageImages {
     }
 }
 
+/// A line the session itself adds (a background task settling, a stopped turn, a model fallback):
+/// quiet gray words in Claude's column, as a message from a subagent is. A warning keeps a glyph,
+/// so it's not said by color alone.
 struct NoticeView: View {
     let notice: Item.Notice
 
     var body: some View {
-        let symbol = switch notice.kind {
-        case "interrupted": "stop.circle"
-        case "localCommandOutput": "terminal"
-        case "modelFallback": "arrow.triangle.swap"
-        case "taskNotification": notice.level == .warning ? "exclamationmark.circle" : "checkmark.circle"
-        default: "info.circle"
-        }
-        Label {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if notice.level == .warning {
+                Image(systemName: "exclamationmark.circle").accessibilityHidden(true)
+            }
             Text(notice.text).textSelection(.enabled)
-        } icon: {
-            Image(systemName: symbol)
         }
-        .scaledFont(.caption)
+        .scaledFont(.callout)
         .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -727,6 +778,32 @@ private struct MessageSendPreview: View {
         .coordinateSpace(name: MessageSendGeometry.space)
         .environment(\.messageSendGeometry, geometry)
     }
+}
+
+/// Background subagents reporting back, as in Claude's desktop app: each message from one is a
+/// quiet line in Claude's column, then Claude's reply.
+#Preview("Messages from subagents") {
+    let thread = ThreadModel.sampleIdleChat()
+    let agents: [Item.ToolCall] = (1...3).map { n in
+        .sample(id: "agent-\(n)", name: "Agent", kind: .subagent,
+                input: ["description": .string("Timer for \(n * 5) seconds"), "prompt": .string("Wait, then say hello world.")],
+                secondsAgo: 60)
+    }
+    ScrollView {
+        VStack(alignment: .leading, spacing: 18) {
+            ItemView(item: .sampleUserMessage("Can you have 3 background subagents set timers for 5, 10 and 15 seconds, then respond \"hello world\"?", secondsAgo: 70), thread: thread)
+            ToolCallGroupView(calls: agents, thread: thread)
+            ItemView(item: .sampleAgentMessage("Three background agents are running, with timers of 5, 10 and 15 seconds. I'll report their results as they come in.", secondsAgo: 58), thread: thread)
+            ItemView(item: .sampleUserMessage("<task-notification>The 5-second agent finished: hello world</task-notification>", secondsAgo: 50, synthetic: true, origin: "subagent"), thread: thread)
+            ItemView(item: .sampleAgentMessage("The 5-second agent finished and replied \"hello world\". The 10- and 15-second agents are still running.", secondsAgo: 49), thread: thread)
+            ItemView(item: .sampleUserMessage("<task-notification>The 10-second agent finished: hello world</task-notification>", secondsAgo: 45, synthetic: true, origin: "subagent"), thread: thread)
+            ItemView(item: .sampleAgentMessage("The 10-second agent finished too. Only the 15-second agent is still running.", secondsAgo: 44), thread: thread)
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 20)
+        .frame(maxWidth: 760)
+    }
+    .frame(width: 760, height: 560)
 }
 
 #Preview("User message (synthetic)") {

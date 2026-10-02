@@ -132,7 +132,6 @@ struct StatusStrip: View {
         var out: [String] = []
         if let e = thread.lastError { out.append(e) }
         if let r = thread.apiRetry { out.append("Retrying API request (attempt \(r.attempt.formatted()) of \(r.maxRetries.formatted()))\(r.error.map { ": \($0)" } ?? "")") }
-        if thread.activity == "compacting" { out.append("Compacting conversation…") }
         if let warning = thread.rateLimit?.warning(now: now) { out.append(warning) }
         return out
     }

@@ -17,46 +17,71 @@ struct TasksPane: View {
         } else if entries.isEmpty {
             InspectorEmptyState("No Tasks", symbol: InspectorPane.tasks.symbol)
         } else {
+            // What's still going on top; what's finished in a group of its own below.
+            let finished = entries.filter { !$0.isGoing }
             Form {
-                Section {
-                    ForEach(entries) { entry in
-                        Button { selectedTaskID = entry.id } label: {
-                            TaskRow(entry: entry)
-                        }
-                        .buttonStyle(.plain)
-                    }
+                let going = entries.filter(\.isGoing)
+                if !going.isEmpty {
+                    Section { rows(going) }
+                }
+                if !finished.isEmpty {
+                    Section("Finished") { rows(finished) }
                 }
             }
         }
     }
 }
 
-/// One subagent or workflow run: what it is, and whether it's still going.
+extension TasksPane {
+    private func rows(_ entries: [InspectorTaskEntry]) -> some View {
+        ForEach(entries) { entry in
+            Button { selectedTaskID = entry.id } label: {
+                TaskRow(entry: entry)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+extension InspectorTaskEntry {
+    /// Still running, in the background or not.
+    var isGoing: Bool { isBackgrounded || SubagentLifecycle.isRunning(call: call, task: task) }
+}
+
+/// One subagent or workflow run: what it is, and whether it's still going, with the sidebar's dot.
 struct TaskRow: View {
     let entry: InspectorTaskEntry
 
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(entry.task?.description ?? entry.call?.summary
-                     ?? entry.call?.input.string("description") ?? entry.task?.taskId ?? "Task")
-                    .lineLimit(2)
+                // The dot on the title's line, the status line under the title, as in the sidebar.
+                HStack(alignment: .firstTextBaseline, spacing: ChatStatusDot.spacing) {
+                    ChatStatusDot(state: state)
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] }
+                    Text(entry.task?.description ?? entry.call?.summary
+                         ?? entry.call?.input.string("description") ?? entry.task?.taskId ?? "Task")
+                        .lineLimit(2)
+                }
                 Text(statusText).font(.caption).foregroundStyle(.secondary)
+                    .padding(.leading, ChatStatusDot.gutter)
             }
             Spacer(minLength: 4)
-            // The status line says it in words; the spinner and glyphs are for the eye, or the
-            // row would read as a progress indicator.
-            Group {
-                if SubagentLifecycle.isRunning(call: entry.call, task: entry.task) {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: statusSymbol).foregroundStyle(.secondary)
-                }
-                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-            }
-            .accessibilityHidden(true)
+            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
-        .accessibilityElement(children: .combine)
+        // The status line says it in words; the dot is for the eye.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(entry.task?.description ?? entry.call?.summary ?? "Task"))
+        .accessibilityValue(statusText)
+    }
+
+    private var state: ChatState {
+        if entry.isGoing { return .working }
+        let ended = (entry.task?.status ?? entry.task?.event ?? entry.call?.status.rawValue ?? "").lowercased()
+        if ended.contains("fail") || ended.contains("error") { return .failed }
+        if ended.contains("stop") || ended.contains("interrupt") || ended.contains("kill") { return .stopped }
+        return .idle
     }
 
     private var statusText: String {
@@ -68,12 +93,6 @@ struct TaskRow: View {
         return SubagentLifecycle.title(call: call, task: entry.task, isBackgrounded: entry.isBackgrounded)
     }
 
-    private var statusSymbol: String {
-        let state = (entry.task?.status ?? entry.task?.event ?? entry.call?.status.rawValue ?? "").lowercased()
-        if state.contains("fail") { return "exclamationmark.circle" }
-        if state.contains("stop") || state.contains("interrupt") { return "stop.circle" }
-        return "checkmark.circle"
-    }
 }
 
 /// One task on its own: how it's going, what it was asked, and what it has done so far.
