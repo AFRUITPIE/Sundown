@@ -27,6 +27,7 @@ struct TranscriptView: View {
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.reducesEffects) private var reducesEffects
+    @Environment(\.messageSendGeometry) private var sendGeometry
 
     var body: some View {
         ScrollView {
@@ -61,6 +62,20 @@ struct TranscriptView: View {
             guard thread.historyLoaded else { return }
             followsEnd = true
             position.scrollTo(edge: .bottom)
+        }
+        // Sending from this window goes back to the end, where the prompt is about to land, from
+        // wherever the reader had scrolled to.
+        // The prompt waits for the scroll to finish before it flies (`scrollingToEnd`).
+        .onChange(of: sendGeometry?.sends) {
+            guard !followsEnd else { return }
+            onScreen.lastPrompt = nil
+            followsEnd = true
+            sendGeometry?.scrollingToEnd = true
+            withAnimation(reduceMotion ? nil : .default, completionCriteria: .logicallyComplete) {
+                position.scrollTo(edge: .bottom)
+            } completion: {
+                sendGeometry?.scrollingToEnd = false
+            }
         }
         .onScrollGeometryChange(for: Place.self, of: { Place($0) }) { keepPlace(from: $0, to: $1) }
         .onAppear {
