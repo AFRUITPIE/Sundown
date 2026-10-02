@@ -560,6 +560,14 @@ struct TranscriptPlaceholder<Actions: View>: View {
 struct TranscriptTail: View {
     let thread: ThreadModel
     @Environment(\.appearance) private var appearance
+    @Environment(\.messageSendGeometry) private var sendGeometry
+
+    /// A prompt sent from this window is still flying into place (or about to: its row takes the
+    /// launch once it's drawn). The line under it waits for it to land, keeping its room so nothing
+    /// moves when it shows.
+    private var promptInFlight: Bool {
+        sendGeometry?.activeMessageID != nil || sendGeometry?.hasLaunch == true
+    }
 
     /// Whether the turn's run of calls is the last row, and says Thinking itself.
     private var runSaysIt: Bool {
@@ -579,7 +587,12 @@ struct TranscriptTail: View {
 
     var body: some View {
         Group {
-            if let activity { ActivityLine(text: activity) }
+            if let activity {
+                ActivityLine(text: activity)
+                    .opacity(promptInFlight ? 0 : 1)
+                    .animation(.easeOut(duration: 0.2), value: promptInFlight)
+                    .accessibilityHidden(promptInFlight)
+            }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
                 TurnOutcome(status: turn.status, error: turn.result?.errors?.first)
