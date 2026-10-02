@@ -133,7 +133,10 @@ private struct InspectorColumn: ViewModifier {
     func body(content: Content) -> some View {
         content.inspector(isPresented: $window.showInspector) {
             InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-                .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+                // As narrow as the tab bar allows, and no narrower: the bar's minimum moves between
+                // about 300 and 310 with the selected tab, and below 310 the column followed it,
+                // jumping 10 pt as tabs changed.
+                .inspectorColumnWidth(min: 310, ideal: 310, max: 420)
                 .toolbar {
                     ToolbarSpacer(.flexible)
                     ToolbarItem { InspectorToggle(window: window) }
