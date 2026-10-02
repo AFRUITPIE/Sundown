@@ -22,7 +22,7 @@ struct Composer: View {
     var awaitingAnswer = false
     var onStop: (() -> Void)?
     /// Whether the message went; when it didn't, the draft comes back to the field.
-    let submit: ([UserInput]) async -> Bool
+    let submit: @MainActor ([UserInput]) async -> Bool
     /// Told when the message field gains or loses focus.
     var onFocusChange: ((Bool) -> Void)?
     /// Takes a directory dropped on the field, as New Chat's directory, instead of mentioning it.
@@ -577,9 +577,19 @@ struct Composer: View {
         images = []
         Task {
             guard await !submit(input) else { return }
-            // Not over anything typed since.
-            if text.isEmpty && images.isEmpty { text = draft.text; images = draft.images }
+            // Never over anything typed since: after it.
+            text = Self.puttingBack(draft.text, into: text)
+            images += draft.images
         }
+    }
+
+    /// The field with a message that didn't go back in it: in place of nothing, or after what was
+    /// typed since, so neither is lost. In order, when two come back: a chat that fails to start
+    /// returns its prompt before what was sent while it started.
+    nonisolated static func puttingBack(_ unsent: String, into field: String) -> String {
+        if field.isEmpty { return unsent }
+        if unsent.isEmpty { return field }
+        return field + "\n\n" + unsent
     }
 
     /// What the field takes from outside it: a file (by URL), or an image that isn't one, such as

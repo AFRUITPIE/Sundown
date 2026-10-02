@@ -93,7 +93,7 @@ public struct RootView: View {
             DetailView(window: window)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
-                .navigationTitle(window.selectedThread?.title ?? "New Chat")
+                .navigationTitle(window.title)
                 .navigationSubtitle(window.subtitle)
                 // Not identified, and so not customizable: an identified toolbar is one AppKit keeps
                 // in step across every window, removing an item from all of them at once by its
@@ -145,7 +145,6 @@ private struct InspectorColumn: ViewModifier {
 /// The selected chat, or the New Chat screen. One container, so the detail column is never torn down.
 struct DetailView: View {
     let window: WindowModel
-    @State private var messageSendGeometry = MessageSendGeometry()
 
     var body: some View {
         // The column's root keeps one identity. When the root itself changed (the branch, or the
@@ -160,7 +159,7 @@ struct DetailView: View {
             }
         }
         .coordinateSpace(name: MessageSendGeometry.space)
-        .environment(\.messageSendGeometry, messageSendGeometry)
+        .environment(\.messageSendGeometry, window.sendGeometry)
     }
 }
 

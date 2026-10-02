@@ -307,14 +307,6 @@ extension ThreadModel {
         return t
     }
 
-    /// A chat just started here, before the host has answered: its prompt, and Starting Session.
-    public static func sampleStartingChat() -> ThreadModel {
-        let t = ThreadModel(id: "preview-starting")
-        t.beginStarting(info: .init(threadId: t.id, status: .running, cwd: "/Users/hayden/Code/tether-app", lastSeq: 0),
-                        prompt: .sampleUserMessage("Tidy up the build scripts and make the release one runnable locally.", secondsAgo: 0))
-        return t
-    }
-
     public static func sampleIdleChat() -> ThreadModel {
         sample(
             title: "Explain ThreadModel's turn tracking",

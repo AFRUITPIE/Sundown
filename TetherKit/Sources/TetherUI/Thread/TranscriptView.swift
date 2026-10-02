@@ -445,8 +445,10 @@ struct TranscriptRowView: View, Equatable {
         VStack(alignment: .leading, spacing: 0) {
             switch row {
             case .item(let item):
+                // A prompt that already flew here as a chat started doesn't fade in again either.
                 LiveItemView(box: thread.box(for: item), thread: thread)
-                    .modifier(FadesIn(isNew: thread.justStarted(item.id), bypass: isSendingPrompt))
+                    .modifier(FadesIn(isNew: thread.justStarted(item.id) && sendGeometry?.landedPrompt != item.id,
+                                      bypass: isSendingPrompt))
             case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread, rowID: row.id)
             case .turnWork(let id, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread, rowID: id)
             case .turnEdits(let edits): TurnEditsView(edits: edits, cwd: thread.cwd)
@@ -563,8 +565,8 @@ struct TranscriptTail: View {
     @Environment(\.messageSendGeometry) private var sendGeometry
 
     /// A prompt sent from this window is still flying into place (or about to: its row takes the
-    /// launch once it's drawn). The line under it waits for it to land, keeping its room so nothing
-    /// moves when it shows.
+    /// launch once it's drawn, under Reduce Motion too). The line under it waits for it to land,
+    /// keeping its room so nothing moves when it shows.
     private var promptInFlight: Bool {
         sendGeometry?.activeMessageID != nil || sendGeometry?.hasLaunch == true
     }
@@ -575,8 +577,8 @@ struct TranscriptTail: View {
         return call.kind != .todoWrite && call.kind != .subagent
     }
 
-    /// What the wait before anything shows is: starting the session (a chat started here, before
-    /// the host has answered), compacting, or thinking. One line whose words change in place.
+    /// What the wait before anything shows is: starting the session (New Chat's stand-in for a chat
+    /// the host hasn't answered for yet), compacting, or thinking. One line whose words change in place.
     private var activity: String? {
         if thread.isStarting { return "Starting Session" }
         // Compacting says so where Thinking would, not in a card under the transcript.
@@ -600,7 +602,6 @@ struct TranscriptTail: View {
         }
     }
 }
-
 
 /// A shimmering line for what the turn is doing while it has nothing else to show.
 struct ActivityLine: View {

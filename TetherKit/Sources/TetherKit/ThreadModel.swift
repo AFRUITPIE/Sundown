@@ -143,8 +143,8 @@ public final class ThreadModel: Identifiable {
     /// A turn is starting here and nothing of it has arrived yet: the running status and the turn
     /// come just before the prompt's echo. Until then, the transcript lays out as it did before.
     public private(set) var awaitingPrompt = false
-    /// Started here and shown before the host has answered: the chat and its first prompt are this
-    /// client's copies until then (`beginStarting`), and the transcript says Starting Session.
+    /// A New Chat window's stand-in for a chat it's starting (`PendingStart.placeholder`), before
+    /// the host has answered: the transcript says Starting Session.
     public private(set) var isStarting = false
 
     public init(id: String, summary: ThreadSummary? = nil) {
@@ -229,9 +229,9 @@ public final class ThreadModel: Identifiable {
         return nil
     }
 
-    /// A chat this client is starting, shown before the host answers: its settings as they were
-    /// asked for, and its first prompt as the host will echo it, under the same id, arriving as a
-    /// prompt sent from here does. The echo then replaces it where it is.
+    /// Sets up a stand-in for a chat being started (`PendingStart`): its settings as they were asked
+    /// for, and the prompt as it was sent, arriving as a prompt sent from the window does. Never one
+    /// of the host's chats, so nothing here is history: no sequence number, no subscription.
     func beginStarting(info: ThreadInfo, prompt: Item) {
         setInfo(info)
         loadHistory(items: [], turns: [], seq: nil)
@@ -241,7 +241,7 @@ public final class ThreadModel: Identifiable {
         upsert(prompt)
     }
 
-    /// The host has answered for a chat started here.
+    /// The host has answered for the chat this stands in for.
     func endStarting() {
         if isStarting { isStarting = false }
     }
@@ -408,9 +408,8 @@ public final class ThreadModel: Identifiable {
             if index[e.item.id] == nil {
                 noteStarted(e.item.id)
                 if case .userMessage(let m) = e.item, m.parentToolUseId == nil { arrivedPrompt = m.id }
+                if awaitingPrompt { awaitingPrompt = false }
             }
-            // Also for a prompt shown before its echo (`beginStarting`), which the echo replaces.
-            if awaitingPrompt { awaitingPrompt = false }
             upsert(e.item)
             if case .agentMessage(let m) = e.item, m.parentToolUseId == nil { setStreamingReply(m.id) }
         case .itemUpdated(let e): upsert(e.item)
@@ -671,6 +670,11 @@ public final class ThreadModel: Identifiable {
         if started.count > 64 { started = started.filter { now - $0.value < .seconds(2) } }
         started[id] = now
     }
+
+    #if DEBUG
+    /// For a `#Preview`'s still: nothing in it is arriving, so no row is caught mid-fade.
+    func settleArrivals() { started = [:] }
+    #endif
 
     /// Whether the item started live within the last moment, so its row fades in as it appears.
     /// False for one that came with history, or a row made again when scrolled back to.
