@@ -45,6 +45,14 @@ private struct ProxyIcon: ViewModifier {
     .frame(width: 900, height: 700)
 }
 
+/// Sent from New Chat, before the host has started the session.
+#Preview("Starting session") {
+    NavigationStack {
+        ThreadView(thread: .sampleStartingChat(), connection: .sample())
+    }
+    .frame(width: 900, height: 500)
+}
+
 /// Settings ▸ Advanced ▸ Tool Calls ▸ Every Call, and code that doesn't wrap.
 #Preview("Idle chat (every call)") {
     var appearance = Appearance()

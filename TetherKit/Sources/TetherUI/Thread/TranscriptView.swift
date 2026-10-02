@@ -567,14 +567,19 @@ struct TranscriptTail: View {
         return call.kind != .todoWrite && call.kind != .subagent
     }
 
+    /// What the wait before anything shows is: starting the session (a chat started here, before
+    /// the host has answered), compacting, or thinking. One line whose words change in place.
+    private var activity: String? {
+        if thread.isStarting { return "Starting Session" }
+        // Compacting says so where Thinking would, not in a card under the transcript.
+        if thread.activity == "compacting" { return "Compacting Conversation" }
+        if thread.isThinking, !runSaysIt { return "Thinking" }
+        return nil
+    }
+
     var body: some View {
         Group {
-            // Compacting says so where Thinking would, not in a card under the transcript.
-            if thread.activity == "compacting" {
-                ActivityLine(text: "Compacting Conversation")
-            } else if thread.isThinking, !runSaysIt {
-                ThinkingLine()
-            }
+            if let activity { ActivityLine(text: activity) }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
                 TurnOutcome(status: turn.status, error: turn.result?.errors?.first)
@@ -583,11 +588,6 @@ struct TranscriptTail: View {
     }
 }
 
-/// Marks the wait before a turn has anything to show. From the thread's status, so it works
-/// with thinking off or redacted. Its dots pulse, but not while the Mac saves energy.
-struct ThinkingLine: View {
-    var body: some View { ActivityLine(text: "Thinking") }
-}
 
 /// A shimmering line for what the turn is doing while it has nothing else to show.
 struct ActivityLine: View {

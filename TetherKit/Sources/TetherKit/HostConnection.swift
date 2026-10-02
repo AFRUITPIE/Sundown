@@ -43,6 +43,8 @@ public final class HostConnection: Identifiable {
     private var subscribed = Set<String>()
     /// Threads a view has asked to open, whether or not we were connected at the time.
     private var openRequested = Set<String>()
+    /// What waits for a chat started here to be answered for (`untilStarted`).
+    private var startWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
     private var chatsRefreshTask: Task<Void, Never>?
     @ObservationIgnored private let transportProvider: TransportProvider?
 
@@ -615,7 +617,63 @@ public final class HostConnection: Identifiable {
         return try? await client.call(Methods.SessionDefaults.self, .init(cwd: cwd, model: model))
     }
 
-    public func startThread(cwd: String, input: [UserInput], options: NewThreadOptions) async throws -> ThreadModel {
+    /// A chat to start, shown at once rather than when the host answers, which over SSH can take a
+    /// second: its id and its first prompt's are chosen here, and the host takes them
+    /// (`thread/start`'s `threadId` and `messageId`), so the prompt's echo lands on this copy.
+    /// `start(_:)` starts it.
+    public func prepareThread(cwd: String, input: [UserInput], options: NewThreadOptions,
+                              defaults: SessionDefaultsResult?) -> PendingThread {
+        let id = UUID().uuidString.lowercased()
+        let messageID = UUID().uuidString.lowercased()
+        let model = thread(id)
+        model.beginStarting(
+            info: ThreadInfo(threadId: id, status: .running, cwd: cwd,
+                             model: options.model ?? defaults?.model,
+                             effort: options.effort ?? defaults?.effort,
+                             permissionMode: options.permissionMode ?? defaults?.permissionMode,
+                             fastModeState: options.fastMode == true ? "on" : nil, lastSeq: 0),
+            prompt: .userMessage(.init(id: messageID, createdAt: Date().timeIntervalSince1970 * 1000, content: input)))
+        attach(model, toProject: cwd)
+        return PendingThread(thread: model, messageID: messageID, cwd: cwd, input: input, options: options)
+    }
+
+    /// Starts a chat `prepareThread` made. The chat to show: the same one, or, from a host too old
+    /// to take the client's id, the one it made instead. A chat that doesn't start is let go.
+    public func start(_ pending: PendingThread) async throws -> ThreadModel {
+        let model = pending.thread
+        defer { resumeStartWaiters(model.id) }
+        do {
+            let started = try await startThread(cwd: pending.cwd, input: pending.input, options: pending.options,
+                                                threadID: model.id, messageID: pending.messageID)
+            if started !== model { discard(model) }
+            return started
+        } catch {
+            discard(model)
+            throw error
+        }
+    }
+
+    /// A chat started here that didn't start, or that the host gave another id.
+    private func discard(_ model: ThreadModel) {
+        model.endStarting()
+        threads[model.id] = nil
+        chats.removeAll { $0 === model }
+        openRequested.remove(model.id)
+    }
+
+    /// Waits while a chat started here hasn't been answered for, so what's sent to it meanwhile
+    /// goes once the host has it.
+    private func untilStarted(_ model: ThreadModel) async {
+        guard model.isStarting else { return }
+        await withCheckedContinuation { startWaiters[model.id, default: []].append($0) }
+    }
+
+    private func resumeStartWaiters(_ id: String) {
+        for waiter in startWaiters.removeValue(forKey: id) ?? [] { waiter.resume() }
+    }
+
+    public func startThread(cwd: String, input: [UserInput], options: NewThreadOptions,
+                            threadID: String? = nil, messageID: String? = nil) async throws -> ThreadModel {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         let r = try await client.call(Methods.ThreadStart.self, .init(
             cwd: cwd,
@@ -625,11 +683,14 @@ public final class HostConnection: Identifiable {
             fastMode: options.fastMode,
             additionalDirectories: options.additionalDirectories.isEmpty ? nil : options.additionalDirectories,
             input: input.isEmpty ? nil : input,
+            threadId: threadID,
+            messageId: input.isEmpty ? nil : messageID,
             worktree: options.worktree ? true : nil,
             sessionTools: offersSessionTools ? true : nil))
         let model = thread(r.thread.threadId)
         model.setInfo(r.thread)
         model.loadHistory(items: model.items, turns: model.turns, seq: nil)
+        model.endStarting()
         subscribed.insert(model.id)
         // In a worktree the chat's folder is the worktree's, not the one chosen.
         attach(model, toProject: r.thread.cwd)
@@ -673,6 +734,7 @@ public final class HostConnection: Identifiable {
     }
 
     public func send(_ model: ThreadModel, input: [UserInput]) async {
+        await untilStarted(model)
         guard let client else { model.setError("Not connected"); return }
         do {
             try await makeLive(model, client)
@@ -684,6 +746,7 @@ public final class HostConnection: Identifiable {
     }
 
     public func interrupt(_ model: ThreadModel) async {
+        await untilStarted(model)
         _ = try? await client?.call(Methods.TurnInterrupt.self, .init(threadId: model.id))
     }
 
@@ -1051,6 +1114,16 @@ public final class HostConnection: Identifiable {
         log.append(m)
         if log.count > 500 { log.removeFirst(log.count - 500) }
     }
+}
+
+/// A chat started here that the host hasn't answered for yet (`HostConnection.prepareThread`).
+@MainActor
+public struct PendingThread {
+    public let thread: ThreadModel
+    let messageID: String
+    let cwd: String
+    let input: [UserInput]
+    let options: NewThreadOptions
 }
 
 public struct NewThreadOptions: Sendable {

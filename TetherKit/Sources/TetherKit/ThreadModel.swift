@@ -143,6 +143,9 @@ public final class ThreadModel: Identifiable {
     /// A turn is starting here and nothing of it has arrived yet: the running status and the turn
     /// come just before the prompt's echo. Until then, the transcript lays out as it did before.
     public private(set) var awaitingPrompt = false
+    /// Started here and shown before the host has answered: the chat and its first prompt are this
+    /// client's copies until then (`beginStarting`), and the transcript says Starting Session.
+    public private(set) var isStarting = false
 
     public init(id: String, summary: ThreadSummary? = nil) {
         self.id = id
@@ -224,6 +227,23 @@ public final class ThreadModel: Identifiable {
             for case .text(let t) in m.content { return String(t.text.prefix(80)) }
         }
         return nil
+    }
+
+    /// A chat this client is starting, shown before the host answers: its settings as they were
+    /// asked for, and its first prompt as the host will echo it, under the same id, arriving as a
+    /// prompt sent from here does. The echo then replaces it where it is.
+    func beginStarting(info: ThreadInfo, prompt: Item) {
+        setInfo(info)
+        loadHistory(items: [], turns: [], seq: nil)
+        isStarting = true
+        noteStarted(prompt.id)
+        if case .userMessage = prompt { arrivedPrompt = prompt.id }
+        upsert(prompt)
+    }
+
+    /// The host has answered for a chat started here.
+    func endStarting() {
+        if isStarting { isStarting = false }
     }
 
     /// Replace transcript with server history (thread/read or thread/resume includeHistory).
@@ -388,8 +408,9 @@ public final class ThreadModel: Identifiable {
             if index[e.item.id] == nil {
                 noteStarted(e.item.id)
                 if case .userMessage(let m) = e.item, m.parentToolUseId == nil { arrivedPrompt = m.id }
-                if awaitingPrompt { awaitingPrompt = false }
             }
+            // Also for a prompt shown before its echo (`beginStarting`), which the echo replaces.
+            if awaitingPrompt { awaitingPrompt = false }
             upsert(e.item)
             if case .agentMessage(let m) = e.item, m.parentToolUseId == nil { setStreamingReply(m.id) }
         case .itemUpdated(let e): upsert(e.item)

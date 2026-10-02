@@ -359,15 +359,26 @@ extension WindowModel {
         guard let connection else { return false }
         guard let cwd = draftDirectory else { draftError = "Choose a directory first."; return false }
         draftError = nil
+        // Shown at once, saying Starting Session, rather than when the host answers.
+        let pending = connection.prepareThread(cwd: cwd, input: input,
+                                               options: .init(model: draftModel, effort: draftEffort,
+                                                              permissionMode: draftPermissionMode, fastMode: draftFastMode,
+                                                              worktree: draftWorktree),
+                                               defaults: draftDefaults)
+        if hostID == connection.id { open(threadID: pending.thread.id, on: connection.id) }
         do {
-            let t = try await connection.startThread(cwd: cwd, input: input,
-                                                     options: .init(model: draftModel, effort: draftEffort,
-                                                                    permissionMode: draftPermissionMode, fastMode: draftFastMode,
-                                                                    worktree: draftWorktree))
-            if hostID == connection.id { open(threadID: t.id, on: connection.id) }
+            let t = try await connection.start(pending)
+            if hostID == connection.id, threadID == pending.thread.id, t !== pending.thread {
+                open(threadID: t.id, on: connection.id)
+            }
             return true
         } catch {
-            if hostID == connection.id { draftError = error.localizedDescription }
+            guard hostID == connection.id else { return false }
+            // Back to New Chat, as it was, with the prompt in the field again.
+            if threadID == pending.thread.id { threadID = nil }
+            draftError = error.localizedDescription
+            let text = input.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n")
+            if !text.isEmpty { app.deliverDraft(text, for: "new-chat:\(connection.id)") }
             return false
         }
     }
