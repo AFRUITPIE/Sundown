@@ -354,6 +354,8 @@ public final class HostConnection: Identifiable {
         guard let tid = n.threadId else { return }
         let model = thread(tid)
         guard model.apply(n) else { return }
+        // A chat started from New Chat, whose window moves to it once it has the prompt's echo.
+        if let op = awaitingEcho[tid], noteReadiness(op, in: model) { awaitingEcho[tid] = nil }
         if case .threadStarted(let e) = n, let cwd = Optional(e.thread.cwd) { attach(model, toProject: cwd) }
         // Its query is gone. The next send resumes it with history rather than streaming into a
         // subscription to the process that ended.
@@ -613,6 +615,72 @@ public final class HostConnection: Identifiable {
     public func sessionDefaults(cwd: String?, model: String?) async -> SessionDefaultsResult? {
         guard let client else { return nil }
         return try? await client.call(Methods.SessionDefaults.self, .init(cwd: cwd, model: model))
+    }
+
+    /// A chat to start from New Chat, for its window to show at once rather than when the host
+    /// answers, which over SSH can take a second. `start(_:)` starts it.
+    public func prepareStart(cwd: String, input: [UserInput], options: NewThreadOptions,
+                             defaults: SessionDefaultsResult?) -> PendingStart {
+        PendingStart(hostID: id, cwd: cwd, input: input, options: options, defaults: defaults)
+    }
+
+    /// Starts a chat `prepareStart` made, with `thread/start` as ever: the host's chat, which is
+    /// the model its notifications already went to if any came first. A Stop pressed meanwhile
+    /// interrupts it now. The start is ready for its window once the chat shows the prompt's echo.
+    /// A failure isn't tried again: the host may have started the chat before the connection went.
+    public func start(_ op: PendingStart) async throws -> ThreadModel {
+        let model: ThreadModel
+        do {
+            model = try await startThread(cwd: op.cwd, input: op.input, options: op.options)
+        } catch {
+            op.resolve(.failure(error))
+            throw error
+        }
+        op.resolve(.success(model))
+        watchForEcho(op, in: model)
+        if op.interruptRequested { await interrupt(model) }
+        return model
+    }
+
+    /// Starts that are waiting for their chat's echo of the prompt, by the chat's id.
+    @ObservationIgnored private var awaitingEcho: [String: PendingStart] = [:]
+    /// How long a start waits for its echo before its window moves to the chat anyway.
+    @ObservationIgnored var echoWait: Duration = .seconds(2)
+
+    private func watchForEcho(_ op: PendingStart, in model: ThreadModel) {
+        if noteReadiness(op, in: model) { return }
+        awaitingEcho[model.id] = op
+        let wait = echoWait
+        Task { [weak self] in
+            try? await Task.sleep(for: wait)
+            guard let self, self.awaitingEcho[model.id] === op else { return }
+            self.awaitingEcho[model.id] = nil
+            op.markReady(echo: nil)
+        }
+    }
+
+    /// Marks the start ready once its chat shows enough to take the placeholder's place.
+    private func noteReadiness(_ op: PendingStart, in model: ThreadModel) -> Bool {
+        let readiness = op.readiness(of: model)
+        if readiness.ready { op.markReady(echo: readiness.echo) }
+        return readiness.ready
+    }
+
+    /// Sent while a chat is starting: it goes to the chat once the host has started it. False,
+    /// with nothing sent, when the start failed.
+    public func send(_ op: PendingStart, input: [UserInput]) async -> Bool {
+        guard let model = try? await op.started() else { return false }
+        await send(model, input: input)
+        return true
+    }
+
+    /// Stop, while a chat is starting: the chat is interrupted as soon as it has started.
+    public func interrupt(_ op: PendingStart) async {
+        if let model = op.thread {
+            await interrupt(model)
+        } else if op.result == nil {
+            op.interruptRequested = true
+        }
     }
 
     public func startThread(cwd: String, input: [UserInput], options: NewThreadOptions) async throws -> ThreadModel {

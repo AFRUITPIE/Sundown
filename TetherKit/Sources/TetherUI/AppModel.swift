@@ -10,7 +10,12 @@ import TetherProtocol
 public enum SidebarGrouping: String, CaseIterable, Sendable {
     case date, directory
 
-    public var label: String { rawValue.capitalized }
+    public var label: String {
+        switch self {
+        case .date: "Date"
+        case .directory: "Directory"
+        }
+    }
 }
 
 /// Which chats the sidebar lists (persisted).
@@ -23,6 +28,16 @@ public enum SidebarFilter: String, CaseIterable, Sendable {
         case .working: "Working"
         case .waiting: "Waiting on You"
         case .archived: "Archived"
+        }
+    }
+
+    /// What the sidebar says when nothing passes the filter, as a whole title.
+    public var emptyTitle: String {
+        switch self {
+        case .all: "No Chats"
+        case .working: "No Working Chats"
+        case .waiting: "No Chats Waiting on You"
+        case .archived: "No Archived Chats"
         }
     }
 

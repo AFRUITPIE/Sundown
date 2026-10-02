@@ -102,17 +102,6 @@ private final class FakeTransport: Transport, @unchecked Sendable {
     func drop() { continuation.finish(throwing: TransportError.launchFailed("Dropped")) }
 }
 
-private enum WaitError: Error { case timeout }
-
-@MainActor
-private func eventually(_ condition: @MainActor () async -> Bool) async throws {
-    let deadline = ContinuousClock.now + .seconds(3)
-    while await !condition() {
-        if ContinuousClock.now > deadline { throw WaitError.timeout }
-        try await Task.sleep(for: .milliseconds(10))
-    }
-}
-
 private let sshHost = HostConfig(name: "Build box", kind: .ssh(destination: "build-box"))
 
 @MainActor
@@ -165,13 +154,13 @@ struct NetworkRetryTests {
         let c = connection(daemon, network: path)
 
         await c.connect()
-        guard case .failed = c.state else { Issue.record("expected a failure, got \(c.state)"); return }
+        #expect(c.state.failure != nil, "expected a failure, got \(c.state)")
         #expect(c.log.last == "Waiting for the network")
         #expect(c.reconnectAttempt == 0)
 
         await daemon.setRefusesConnections(false)
         path.update(satisfied: true, interfaces: ["en0"])
-        try await eventually { c.state == .connected }
+        try await eventually(timeout: .seconds(3)) { c.state == .connected }
         #expect(await daemon.connects == 2)
         await c.disconnect()
     }
@@ -186,19 +175,19 @@ struct NetworkRetryTests {
 
         await daemon.setRefusesConnections(true)
         await daemon.latest()?.drop()
-        try await eventually { if case .failed = c.state { true } else { false } }
+        try await eventually(timeout: .seconds(3)) { if case .failed = c.state { true } else { false } }
         #expect(c.reconnectAttempt == 1)
         #expect(c.log.last?.hasPrefix("Trying again in") == true)
 
         c.retryNow()
-        try await eventually { await daemon.connects == 2 }
-        try await eventually { if case .failed = c.state { true } else { false } }
+        try await eventually(timeout: .seconds(3)) { await daemon.connects == 2 }
+        try await eventually(timeout: .seconds(3)) { if case .failed = c.state { true } else { false } }
         // Started over: one failure since, not two.
         #expect(c.reconnectAttempt == 1)
 
         await daemon.setRefusesConnections(false)
         c.retryNow()
-        try await eventually { c.state == .connected }
+        try await eventually(timeout: .seconds(3)) { c.state == .connected }
         #expect(c.reconnectAttempt == 0)
         // Nothing to retry on a connection that's up.
         c.retryNow()
@@ -313,7 +302,7 @@ struct CommandCacheTests {
             "threadId": "a", "seq": 1,
             "turn": encoded(Turn(id: "t1", status: .completed, startedAt: 1, completedAt: 2)),
         ])
-        try await eventually { c.cachedCommands(cwd: a.cwd, thread: a) == nil }
+        try await eventually(timeout: .seconds(3)) { c.cachedCommands(cwd: a.cwd, thread: a) == nil }
         // Only that chat's folder.
         #expect(c.cachedCommands(cwd: other.cwd, thread: other) != nil)
         _ = await c.commands(cwd: a.cwd, thread: a)

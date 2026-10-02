@@ -28,7 +28,9 @@ struct ItemView: View {
             SyntheticMessageView(message: m)
         case .userMessage(let m):
             // The prompt that just arrived, in the window whose field sent it.
+            // Not the echo of one that already flew here, as a chat being started (`landedPrompt`).
             let justSent = thread.arrivedPrompt == m.id && m.synthetic != true && m.origin == nil
+                && sendGeometry?.landedPrompt != m.id
             let launches = justSent && sendGeometry?.hasLaunch == true
             UserMessageView(message: m, justSent: justSent, canAnimate: launches)
                 .messageMenu(id: m.id, text: m.plainText, isMarkdown: false, sentAt: m.createdAt,
@@ -86,6 +88,7 @@ private struct MessageMenu: ViewModifier {
     @Environment(\.turnHover) private var turnHover
     @Environment(\.forkChat) private var forkChat
     @Environment(\.restoreCode) private var restoreCode
+    @Environment(\.offersChatActions) private var offersChatActions
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.reducesEffects) private var reducesEffects
     @Environment(\.messageSendGeometry) private var sendGeometry
@@ -123,9 +126,11 @@ private struct MessageMenu: ViewModifier {
             .accessibilityCustomContent(Text("Sent"), Text(Date(timeIntervalSince1970: sentAt / 1000),
                                                             format: .dateTime.month(.abbreviated).day().hour().minute()))
             .accessibilityAction(named: "Copy", copyText)
-            .accessibilityAction(named: "Fork from Here") { forkChat(id) }
             .accessibilityActions {
-                if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
+                if offersChatActions {
+                    Button("Fork from Here") { forkChat(id) }
+                    if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
+                }
             }
             .task(id: arrivalID) {
                 arrivalPrepared = true
@@ -135,10 +140,12 @@ private struct MessageMenu: ViewModifier {
     @ViewBuilder private var actions: some View {
         Button("Copy", action: copyText)
         if isMarkdown { Button("Copy as Markdown") { Clipboard.copy(text) } }
-        Divider()
-        Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
-        if !isMarkdown {
-            Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
+        if offersChatActions {
+            Divider()
+            Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
+            if !isMarkdown {
+                Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
+            }
         }
     }
 
@@ -161,13 +168,15 @@ private struct MessageMenu: ViewModifier {
                 .accessibilityIdentifier("message.time")
             CopyButton(action: copyText)
                 .accessibilityIdentifier("message.copy.\(id)")
-            Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
-                .help("Fork from Here")
-                .accessibilityIdentifier("message.fork.\(id)")
-            if !isMarkdown {
-                Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
-                    .help("Restore Code to Here")
-                    .accessibilityIdentifier("message.restore.\(id)")
+            if offersChatActions {
+                Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
+                    .help("Fork from Here")
+                    .accessibilityIdentifier("message.fork.\(id)")
+                if !isMarkdown {
+                    Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
+                        .help("Restore Code to Here")
+                        .accessibilityIdentifier("message.restore.\(id)")
+                }
             }
         }
         .labelStyle(.iconOnly)
@@ -239,57 +248,54 @@ extension Item.UserMessage {
 }
 
 /// Branches the window's chat after a message, keeping everything up to it, and opens the branch.
-/// Compared by owner, like `InspectSubagentAction`, so a new closure doesn't redraw every message.
+/// Holds the window, like `InspectSubagentAction`, so the shell's updates don't redraw every message.
 struct ForkChatAction: Equatable {
-    private let owner: ObjectIdentifier?
-    private let fork: @MainActor (String) -> Void
+    weak var window: WindowModel?
 
-    init(owner: AnyObject?, fork: @escaping @MainActor (String) -> Void) {
-        self.owner = owner.map(ObjectIdentifier.init)
-        self.fork = fork
-    }
+    @MainActor func callAsFunction(_ messageID: String) { window?.fork(at: messageID) }
 
-    @MainActor func callAsFunction(_ messageID: String) { fork(messageID) }
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
+}
 
-    static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
+/// Restore Code to Here…, for a prompt. Like `ForkChatAction`.
+struct RestoreCodeAction: Equatable {
+    weak var window: WindowModel?
+
+    @MainActor func callAsFunction(_ messageID: String) { window?.restoreCode(before: messageID) }
+
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
 }
 
 extension EnvironmentValues {
-    @Entry var forkChat = ForkChatAction(owner: nil) { _ in }
-    /// Restore Code to Here…, for a prompt. The same shape as Fork from Here's.
-    @Entry var restoreCode = ForkChatAction(owner: nil) { _ in }
+    @Entry var forkChat = ForkChatAction()
+    @Entry var restoreCode = RestoreCodeAction()
+    /// False where a message isn't in a chat yet (New Chat's stand-in while one starts): Fork from
+    /// Here and Restore Code to Here… have nothing to act on.
+    @Entry var offersChatActions = true
     /// Shows a chat by id in the window, for a message that links to the chat it came from.
-    @Entry var openChat = OpenChatAction(owner: nil, resolve: { _ in nil }, open: { _ in })
+    @Entry var openChat = OpenChatAction()
 }
 
 /// Shows a chat in the window by an id a message carries, when it's one of this host's listed chats.
-/// Compared by owner, like `ForkChatAction`.
+/// Like `ForkChatAction`.
 struct OpenChatAction: Equatable {
-    private let owner: ObjectIdentifier?
-    private let resolveID: @MainActor (String) -> String?
-    private let open: @MainActor (String) -> Void
-
-    init(owner: AnyObject?, resolve: @escaping @MainActor (String) -> String?, open: @escaping @MainActor (String) -> Void) {
-        self.owner = owner.map(ObjectIdentifier.init)
-        self.resolveID = resolve
-        self.open = open
-    }
+    weak var window: WindowModel?
 
     /// The listed chat `id` names, or nil when this host's list doesn't have it.
-    @MainActor func resolve(_ id: String) -> String? { resolveID(id) }
+    @MainActor func resolve(_ id: String) -> String? { window?.listedChatID(id) }
 
     @MainActor func callAsFunction(_ id: String) {
-        if let listed = resolveID(id) { open(listed) }
+        if let listed = resolve(id) { window?.open(threadID: listed) }
     }
 
-    static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
 }
 
 struct UserMessageView: View {
     let message: Item.UserMessage
     let justSent: Bool
     let canAnimate: Bool
-    @State private var arrived: Bool
+    @State private var arrived = true
     @State private var sending = false
     @State private var prepared = false
     @State private var launchFrame: CGRect?
@@ -302,7 +308,6 @@ struct UserMessageView: View {
         self.message = message
         self.justSent = justSent
         self.canAnimate = canAnimate
-        _arrived = State(initialValue: true)
     }
 
     var body: some View {
@@ -318,17 +323,19 @@ struct UserMessageView: View {
         }
         .task(id: justSent) {
             guard justSent else { prepared = true; arrived = true; sending = false; return }
-            guard !reduceMotion, !reducesEffects, let frame = sendGeometry?.takeLaunch() else {
+            // Taken whether or not it flies, so the line under it doesn't wait for a flight.
+            let launch = sendGeometry?.takeLaunch(for: message.id)
+            guard !reduceMotion, !reducesEffects, let frame = launch else {
                 prepared = true
                 arrived = true
                 return
             }
-            sendGeometry?.activeMessageID = message.id
             // Hidden where it will land until the transcript has scrolled back to its end.
             for _ in 0..<60 where sendGeometry?.scrollingToEnd == true {
                 try? await Task.sleep(for: .milliseconds(16))
             }
             guard !Task.isCancelled else { prepared = true; arrived = true; return }
+            sendGeometry?.beginFlight(message.id)
             launchFrame = frame
             sending = true
             arrived = false
@@ -514,7 +521,7 @@ private struct SentMessagePosition: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
         if let origin {
             content.visualEffect { effect, geometry in
-                let target = geometry.frame(in: .named(MessageSendGeometry.space))
+                let target = geometry.frame(in: MessageSendGeometry.space)
                 return effect
                     .offset(x: arrived ? 0 : origin.maxX - target.maxX,
                             y: arrived ? 0 : origin.maxY - target.maxY)
@@ -549,45 +556,88 @@ private struct SendingMessageSurface: View {
     }
 }
 
-/// One stable coordinate space per detail column, preserved when New Chat becomes a chat.
+/// One stable coordinate space per detail column, preserved when New Chat becomes a chat. The
+/// window's own (`WindowModel.sendGeometry`), so starting a chat can wait for its prompt to land.
 /// Only a sending bubble reads the frame. No scroll-frame state reaches the transcript's rows.
 @MainActor @Observable
 final class MessageSendGeometry {
-    nonisolated static let space = "message.send"
+    nonisolated static var space: NamedCoordinateSpace { .named("message.send") }
     static let spring = Animation.spring(response: 0.52, dampingFraction: 0.74)
     var composerFrame: CGRect?
     /// The filled editor's frame as it sent, before clearing a multiline draft collapsed it, for
-    /// the next prompt to arrive here. Only the window that sent it holds one.
-    @ObservationIgnored var submittedFrame: CGRect?
-    @ObservationIgnored private var submittedAt: ContinuousClock.Instant?
+    /// the next prompt to arrive here. Only the window that sent it holds one, and only for a few
+    /// seconds: a send that failed lapses. Observed, so what waits for the prompt to land (the
+    /// line under it) sees it taken or lapsed.
+    private(set) var submittedFrame: CGRect?
+    @ObservationIgnored private var lapse: Task<Void, Never>?
     var activeMessageID: String?
     /// Counts this window's sends, for the transcript to go to its end on each.
     private(set) var sends = 0
     /// While the transcript scrolls back to its end for a send, the prompt waits to fly until
     /// it's there, so the reader sees the scroll and then the flight, not both at once.
     @ObservationIgnored var scrollingToEnd = false
+    /// When the current flight began, for `landed(_:)`.
+    @ObservationIgnored private var flightBegan: ContinuousClock.Instant?
+    /// How long after it begins a flight is where it lands to within a pixel: the spring is within
+    /// 0.1% of its travel by 0.7 s. Its completion (`.removed`) comes about a second later, at the
+    /// end of a tail nobody sees.
+    static let flightLands: Duration = .milliseconds(750)
+    /// A prompt that already flew in this window, in the stand-in New Chat showed while its chat
+    /// started: the chat's own copy of it, its echo, doesn't fly or fade in again. Read as a row is
+    /// made; unobserved.
+    @ObservationIgnored var landedPrompt: String?
 
     func prepareSend() {
         submittedFrame = composerFrame
-        submittedAt = .now
         sends += 1
+        lapse?.cancel()
+        lapse = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            self?.submittedFrame = nil
+        }
     }
 
-    /// Whether a send from this window is waiting for its prompt: a failed one lapses.
-    var hasLaunch: Bool {
-        guard submittedFrame != nil, let submittedAt else { return false }
-        return ContinuousClock.now - submittedAt < .seconds(3)
+    /// Whether a send from this window is waiting for its prompt.
+    var hasLaunch: Bool { submittedFrame != nil }
+
+    /// The prompt that took the last launch.
+    @ObservationIgnored private var launchedPrompt: String?
+
+    /// The sent field's frame, once, for prompt `id`: a row made again for the same prompt doesn't
+    /// fly again. Taken under Reduce Motion too, where nothing flies, so nothing waits for a flight
+    /// that never comes.
+    func takeLaunch(for id: String) -> CGRect? {
+        defer {
+            launchedPrompt = id
+            if submittedFrame != nil { submittedFrame = nil }
+            lapse?.cancel()
+            lapse = nil
+        }
+        return submittedFrame
     }
 
-    /// The sent field's frame, once: a row made again for the same prompt doesn't fly again.
-    func takeLaunch() -> CGRect? {
-        defer { submittedFrame = nil; submittedAt = nil }
-        return hasLaunch ? submittedFrame : nil
+    func beginFlight(_ id: String) {
+        activeMessageID = id
+        flightBegan = .now
     }
 
     func finishSend(_ id: String) {
         guard activeMessageID == id else { return }
         activeMessageID = nil
+    }
+
+    /// Returns once prompt `id` is in place: its launch taken (or lapsed), and its flight, if it
+    /// flies, where it lands (`flightLands`), not waiting out the spring's tail. A message sent
+    /// after it, waiting for its own row, doesn't count.
+    func landed(_ id: String) async {
+        while submittedFrame != nil && launchedPrompt != id {
+            await withCheckedContinuation { (resume: CheckedContinuation<Void, Never>) in
+                withObservationTracking { _ = submittedFrame } onChange: { resume.resume() }
+            }
+        }
+        guard activeMessageID == id, let flightBegan else { return }
+        try? await Task.sleep(until: flightBegan + Self.flightLands)
     }
 }
 
@@ -778,7 +828,7 @@ private struct MessageSendPreview: View {
                     .padding(.horizontal, 16).padding(.vertical, 12)
                     .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
                     .onGeometryChange(for: CGRect.self) {
-                        $0.frame(in: .named(MessageSendGeometry.space))
+                        $0.frame(in: MessageSendGeometry.space)
                     } action: { geometry.composerFrame = $0 }
                 Button("Send", systemImage: "arrow.up") { geometry.prepareSend(); sends += 1 }
                     .buttonStyle(.glassProminent)
@@ -786,7 +836,7 @@ private struct MessageSendPreview: View {
             }
             .padding(24)
         }
-        .coordinateSpace(name: MessageSendGeometry.space)
+        .coordinateSpace(MessageSendGeometry.space)
         .environment(\.messageSendGeometry, geometry)
     }
 }
@@ -862,15 +912,17 @@ private func previewScreenshot() -> String {
 /// A message from another session: its link opens the sender's chat when this host lists it, and
 /// is dimmed, saying why, when it doesn't.
 #Preview("User message (from another session)") {
+    let window = WindowModel.sample()
     let listed = Item.userMessage(.init(id: "peer-1", createdAt: 0, content: [.text(.init(text: "The API tests pass on main now."))],
-                                        synthetic: true, origin: "peer", originName: "CI babysitter", originSession: "listed"))
+                                        synthetic: true, origin: "peer", originName: "CI babysitter",
+                                        originSession: window.connection?.chats.first?.id))
     let unlisted = Item.userMessage(.init(id: "peer-2", createdAt: 0, content: [.text(.init(text: "Deploy finished."))],
                                           synthetic: true, origin: "peer", originSession: "elsewhere"))
     return VStack(spacing: 16) {
         ItemView(item: listed, thread: .sampleIdleChat())
         ItemView(item: unlisted, thread: .sampleIdleChat())
     }
-    .environment(\.openChat, OpenChatAction(owner: nil, resolve: { $0 == "listed" ? $0 : nil }, open: { _ in }))
+    .environment(\.openChat, OpenChatAction(window: window))
     .padding(28)
     .frame(width: 640)
 }

@@ -52,6 +52,7 @@ public final class WindowModel {
             if app.connections[hostID] == nil && !app.hosts.contains(where: { $0.id == hostID }) {
                 hostID = HostConfig.local.id
             }
+            leaveNewChat()
             threadID = nil
             seedDraft()
             app.remember(self)
@@ -64,6 +65,9 @@ public final class WindowModel {
         didSet {
             // A search belongs to the chat it was typed in.
             if threadID != oldValue { find.dismiss() }
+            // A chat on screen: a start this window was showing goes on, but the window isn't
+            // taken to its chat.
+            if threadID != nil { leaveNewChat() }
             guard started else { return }
             if let threadID, threadID != oldValue { Signposts.chatSwitchBegan(to: threadID) }
             resolveSelection()
@@ -71,6 +75,16 @@ public final class WindowModel {
         }
     }
     public private(set) var selectedThread: ThreadModel?
+    /// A chat New Chat sent and the host hasn't started yet, shown in New Chat's place (its prompt,
+    /// then Starting Session) until the window moves to the chat. Only this window shows it; the
+    /// window's scene value stays New Chat meanwhile.
+    public internal(set) var starting: PendingStart?
+    /// Bumped whenever the window leaves New Chat (a chat, another host, closing): a New Chat
+    /// composer from before then is gone, so a start sent from it that fails can't put its prompt
+    /// back there.
+    @ObservationIgnored private var newChatVisit = 0
+    /// Where a prompt sent from this window flies from and to, one per window.
+    let sendGeometry = MessageSendGeometry()
     /// Whether this is the key window, for deciding whether a chat is in front of you. Unobserved:
     /// nothing on screen depends on it.
     @ObservationIgnored var isKey = false
@@ -235,6 +249,7 @@ public final class WindowModel {
 
     /// The window closed: its chat is no longer on screen here.
     public func close() {
+        leaveNewChat()
         guard started else { return }
         app.unregister(self)
         app.release(selectedThread, on: selectedThreadHost)
@@ -266,15 +281,46 @@ public final class WindowModel {
     public func isInspecting(_ pane: InspectorPane) -> Bool { showInspector && inspectorPane == pane }
 
     /// Shows `pane`, opening the inspector if it is closed.
+    /// Shows a subagent's call in the Tasks pane.
+    func inspectSubagent(_ toolUseId: String) {
+        inspectedTaskID = toolUseId
+        openInspector(on: .tasks)
+    }
+
+    /// Branches the chat shown after `messageID`, keeping everything up to it, and shows the branch.
+    func fork(at messageID: String) {
+        guard let thread = selectedThread, let connection else { return }
+        Task { if let fork = await connection.fork(thread, at: messageID) { open(threadID: fork.id) } }
+    }
+
+    /// The listed chat a message's session id names, or nil when this host's list doesn't have it.
+    func listedChatID(_ id: String) -> String? {
+        // A desktop session's id carries a prefix ("local_…"); Claude Code's own is the rest.
+        let bare = id.split(separator: "_", maxSplits: 1).last.map(String.init) ?? id
+        return connection?.chats.first { $0.id == id || $0.id == bare }?.id
+    }
+
     public func openInspector(on pane: InspectorPane) {
         if inspectorPane != pane { inspectorPane = pane }
         if !showInspector { showInspector = true }
     }
 
-    /// Start composing a new chat on the host the sidebar is showing.
+    /// Start composing a new chat on the host the sidebar is showing. A chat still starting from
+    /// here goes on, to the sidebar, and the window stays on the new draft.
     public func newChat() {
+        starting = nil
         threadID = nil
         seedDraft()
+    }
+
+    /// The window's title: the chat's, or, while one is starting here, its prompt.
+    public var title: String {
+        selectedThread?.title ?? starting?.placeholder.title ?? "New Chat"
+    }
+
+    private func leaveNewChat() {
+        if starting != nil { starting = nil }
+        newChatVisit &+= 1
     }
 
     /// Show a chat, optionally switching host first (the debug launch hook does).
@@ -299,9 +345,9 @@ public final class WindowModel {
             let key = "new-chat:\(hostID)"
             let sends = TetherLink.redeem(sendToken)
             // Sent once the host is connected, which it may not be yet on a launch.
-            if sends, draftDirectory != nil, await connection?.connected() == true {
-                await startDraftChat([.text(.init(text: text))])
-                if draftError == nil { return }
+            if sends, draftDirectory != nil, await connection?.connected() == true,
+               await startDraftChat([.text(.init(text: text))]) {
+                return
             }
             // Otherwise it waits in the field. A link from anywhere but Shortcuts never replaces
             // a draft that's already there.
@@ -351,25 +397,113 @@ extension FocusedValues {
 }
 
 extension WindowModel {
-    /// Starts the New Chat draft as a chat with `input` as its first message, and opens it, unless
-    /// the window has moved to another host meanwhile: then the chat just starts on its own host,
-    /// and a failure isn't written into a draft it doesn't belong to. Whether the chat started.
+    /// Sends New Chat's message: starts the draft as a chat with `input` as its first message, or,
+    /// while a chat this window started is still starting, sends it to that chat once it has.
+    ///
+    /// The window shows the start at once (`starting`): the prompt flies up and "Starting Session"
+    /// waits under it. Once the host has started the chat, its prompt's echo is in and the prompt
+    /// here has landed, the window moves to the chat, unless it has gone elsewhere meanwhile; New
+    /// Chat's menus changed meanwhile apply to the chat. A start that fails leaves the window on
+    /// New Chat with the reason, its settings as they were, and returns false so the field puts the
+    /// prompt and its attachments back. When the window has left New Chat since, there's no field
+    /// to put them in: the text goes into New Chat's draft, if that's empty. Nothing is sent again:
+    /// a connection lost meanwhile may have started the chat.
+    ///
+    /// True when the message is taken care of; false when the field should have it back.
     @discardableResult
     func startDraftChat(_ input: [UserInput]) async -> Bool {
         guard let connection else { return false }
+        if let starting, starting.hostID == connection.id {
+            return await connection.send(starting, input: input)
+        }
         guard let cwd = draftDirectory else { draftError = "Choose a directory first."; return false }
         draftError = nil
+        let op = connection.prepareStart(cwd: cwd, input: input,
+                                         options: .init(model: draftModel, effort: draftEffort,
+                                                        permissionMode: draftPermissionMode, fastMode: draftFastMode,
+                                                        worktree: draftWorktree),
+                                         defaults: draftDefaults)
+        // Only while it's New Chat on that host, as it was a moment ago.
+        if hostID == connection.id, threadID == nil { starting = op }
+        let visit = newChatVisit
+        let thread: ThreadModel
         do {
-            let t = try await connection.startThread(cwd: cwd, input: input,
-                                                     options: .init(model: draftModel, effort: draftEffort,
-                                                                    permissionMode: draftPermissionMode, fastMode: draftFastMode,
-                                                                    worktree: draftWorktree))
-            if hostID == connection.id { open(threadID: t.id, on: connection.id) }
-            return true
+            thread = try await connection.start(op)
         } catch {
-            if hostID == connection.id { draftError = error.localizedDescription }
-            return false
+            if starting === op { starting = nil }
+            if visit == newChatVisit, hostID == connection.id, threadID == nil {
+                draftError = Self.startFailure(error)
+                return false
+            }
+            let key = "new-chat:\(connection.id)"
+            let text = input.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n")
+            if !text.isEmpty, app.draft(for: key).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                app.deliverDraft(text, for: key)
+            }
+            return true
         }
+        // The menus' changes so far, while the prompt lands and the echo arrives.
+        var applied = op.options
+        await applyDraftSettings(over: &applied, op, to: thread, via: connection)
+        await op.ready()
+        await sendGeometry.landed(op.promptID)
+        guard starting === op else { return true }
+        await applyDraftSettings(over: &applied, op, to: thread, via: connection)
+        guard starting === op else { return true }
+        handOff(op, to: thread)
+        return true
+    }
+
+    /// Why a chat didn't start. A connection lost meanwhile leaves it unknown whether the host
+    /// started it, so that says to look before sending again.
+    static func startFailure(_ error: any Error) -> String {
+        if case .closed? = error as? TransportError {
+            return "Lost the connection before the chat started. It may have started anyway: check the sidebar before sending again."
+        }
+        return error.localizedDescription
+    }
+
+    /// Stop, while a chat this window started is starting: the chat is interrupted once it has.
+    func stopStarting() {
+        guard let starting, let connection = app.connections[starting.hostID] else { return }
+        Task { await connection.interrupt(starting) }
+    }
+
+    /// What New Chat's menus say now that the chat wasn't started with, set on the chat. Only while
+    /// the window still shows the start: the menus are another draft's after that.
+    private func applyDraftSettings(over applied: inout NewThreadOptions, _ op: PendingStart, to thread: ThreadModel,
+                                    via connection: HostConnection) async {
+        guard starting === op else { return }
+        if draftModel != applied.model {
+            applied.model = draftModel
+            await connection.setModel(thread, draftModel)
+        }
+        if draftEffort != applied.effort {
+            applied.effort = draftEffort
+            await connection.setEffort(thread, draftEffort)
+        }
+        if let mode = draftPermissionMode, mode != applied.permissionMode {
+            applied.permissionMode = mode
+            await connection.setPermissionMode(thread, mode)
+        }
+        if draftFastMode != (applied.fastMode ?? false) {
+            applied.fastMode = draftFastMode
+            await connection.setFastMode(thread, draftFastMode)
+        }
+    }
+
+    /// From the start to its chat: one move, keeping the window (`WindowTarget.id`), with what was
+    /// typed meanwhile as the chat's draft, and the prompt that flew here not arriving again.
+    private func handOff(_ op: PendingStart, to thread: ThreadModel) {
+        starting = nil
+        let key = "new-chat:\(op.hostID)"
+        let typed = app.draft(for: key)
+        if !typed.isEmpty, app.draft(for: thread.id).isEmpty {
+            app.setDraft(typed, for: thread.id)
+            app.setDraft("", for: key)
+        }
+        sendGeometry.landedPrompt = op.echoID
+        open(threadID: thread.id, on: op.hostID)
     }
 }
 

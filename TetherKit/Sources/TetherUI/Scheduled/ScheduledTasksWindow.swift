@@ -7,12 +7,13 @@ import TetherProtocol
 public struct ScheduledTasksWindow: View {
     let app: AppModel
     let hostID: UUID?
-    @State private var tasks: Loaded<[ScheduledTask]> = .loading
+    @State private var tasks: Loaded<[ScheduledTask]>
     @State private var selection: String?
 
     public init(app: AppModel, hostID: UUID?) {
         self.app = app
         self.hostID = hostID
+        _tasks = State(initialValue: .loading)
     }
 
     /// Seeded, for a preview, which has no daemon to ask.
@@ -263,7 +264,7 @@ private struct ScheduledTaskEditor: View {
                 }
                 if cadence == .hourly {
                     Picker("At Minute", selection: $minute) {
-                        ForEach([0, 5, 10, 15, 20, 30, 45], id: \.self) { Text(":" + String(format: "%02d", $0)).tag($0) }
+                        ForEach([0, 5, 10, 15, 20, 30, 45], id: \.self) { Text(":\($0, format: .number.precision(.integerLength(2)))").tag($0) }
                     }
                 } else if cadence != .manual {
                     DatePicker("At", selection: $time, displayedComponents: .hourAndMinute)

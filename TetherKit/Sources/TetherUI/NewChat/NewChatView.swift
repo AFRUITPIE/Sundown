@@ -45,23 +45,30 @@ struct NewChatView: View {
         // doesn't have. The folder sits where a chat's status strip goes. A host that isn't
         // connected is said once, by the status card in the composer's place, as in a chat; the
         // folder waits with the draft until it is.
-        Color.clear
+        let starting = window.starting
+        content(starting)
             .safeAreaBar(edge: .bottom) {
                 if let connection {
                     VStack(alignment: .leading, spacing: 10) {
-                        if connection.state == .connected { chips(connection) }
+                        // Where the chat works is settled once it's sent.
+                        if connection.state == .connected, starting == nil { chips(connection) }
                         Group {
-                            if let error = window.draftError {
+                            if let error = window.draftError, starting == nil {
                                 Label(error, systemImage: "exclamationmark.circle")
                                     .foregroundStyle(.secondary)
                             }
+                            // The same composer throughout, so a start that fails puts its prompt
+                            // and attachments back in it. While the chat starts it's that chat's:
+                            // Stop, and a message sent goes once the chat has started.
                             GlassEffectContainer(spacing: 10) {
                                 Composer(connection: connection, cwd: window.draftDirectory,
+                                         thread: starting?.placeholder,
                                          draftKey: "new-chat:\(window.hostID)",
                                          placeholder: window.draftDirectory == nil ? "Choose a directory, then ask Claude…" : "Ask Claude…",
+                                         onStop: starting.map { _ in { window.stopStarting() } },
                                          submit: { input in await start(connection, input) },
                                          // Dropped on the field too, a directory is where the chat starts.
-                                         takesDirectory: connection.host.isLocal ? { choose($0) } : nil)
+                                         takesDirectory: connection.host.isLocal && starting == nil ? { choose($0) } : nil)
                             }
                         }
                         // The chips are controls, so they keep the system's size; what's written here scales.
@@ -77,7 +84,7 @@ struct NewChatView: View {
             // `AppModel` seeds the folder with the host's first project; these fill it when the
             // projects arrived after that.
             // A folder dragged from Finder is where the chat starts; this Mac's folders only.
-            .dropDestination(for: URL.self, isEnabled: connection?.host.isLocal == true) { urls, _ in
+            .dropDestination(for: URL.self, isEnabled: connection?.host.isLocal == true && starting == nil) { urls, _ in
                 if let folder = urls.first(where: \.hasDirectoryPath) { choose(folder.path) }
             }
             .accessibilityDropPoint(.center, description: Text("Work in Directory"))
@@ -93,6 +100,18 @@ struct NewChatView: View {
                                   model: window.draftModel, connected: connection?.state == .connected)) {
                 await readDefaults()
             }
+    }
+
+    /// Above the composer: nothing on a draft, and while a chat sent from here starts, its prompt
+    /// and Starting Session, laid out as the chat will be, so moving to it moves nothing.
+    @ViewBuilder private func content(_ starting: PendingStart?) -> some View {
+        if let starting {
+            TranscriptView(thread: starting.placeholder)
+                // Its prompt is the window's copy until the chat exists: nothing to fork or restore.
+                .environment(\.offersChatActions, false)
+        } else {
+            Color.clear
+        }
     }
 
     private struct DefaultsKey: Equatable {
@@ -257,6 +276,28 @@ private func newChatPreview(worktree: Bool = false, folder: String? = nil,
 
 #Preview("NewChatView (new worktree)") {
     newChatPreview(worktree: true, git: .init(isRepository: true, branch: "feature/new-chat-chips"))
+}
+
+/// Sent, before the host has started the session: the prompt, and Starting Session under it.
+#Preview("Starting session") {
+    let window = WindowModel.sample()
+    window.starting = .sample()
+    return NavigationStack {
+        NewChatView(window: window, previewGit: .init(isRepository: true, branch: "main"))
+    }
+    .frame(width: 900, height: 500)
+}
+
+/// The same with reduced effects (Low Power Mode, or the app in the background): nothing flies,
+/// and the line shows at once.
+#Preview("Starting session (reduced effects)") {
+    let window = WindowModel.sample()
+    window.starting = .sample()
+    return NavigationStack {
+        NewChatView(window: window, previewGit: .init(isRepository: true, branch: "main"))
+    }
+    .environment(\.reducesEffects, true)
+    .frame(width: 900, height: 500)
 }
 
 #Preview("NewChatView (not connected)") {

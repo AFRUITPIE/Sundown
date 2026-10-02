@@ -16,14 +16,13 @@ struct TranscriptRowsTests {
     @Test func singleToolCallStaysUngrouped() {
         let rows = foldTranscriptRows([message("m1"), call("t1"), message("m2")])
         #expect(rows.count == 3)
-        guard case .item(.toolCall(let t)) = rows[1] else { Issue.record("expected plain item"); return }
-        #expect(t.id == "t1")
+        #expect(rows[1].item?.toolCall?.id == "t1")
     }
 
-    @Test func consecutiveCompletedCallsGroup() {
+    @Test func consecutiveCompletedCallsGroup() throws {
         let rows = foldTranscriptRows([message("m1"), call("t1"), call("t2"), call("t3"), message("m2")])
         #expect(rows.count == 3)
-        guard case .toolGroup(let calls) = rows[1] else { Issue.record("expected a group"); return }
+        let calls = try #require(rows[1].toolGroup)
         #expect(calls.map(\.id) == ["t1", "t2", "t3"])
     }
 
@@ -37,12 +36,12 @@ struct TranscriptRowsTests {
         let rows = foldTranscriptRows([call("t1"), call("t2", status: .running), call("t3")])
         // t1 alone, t2 alone (running), t3 alone — none of these runs has 2+ members.
         #expect(rows.count == 3)
-        for row in rows { if case .toolGroup = row { Issue.record("did not expect a group") } }
+        #expect(!rows.contains { $0.toolGroup != nil })
     }
 
     /// In the running turn a run is one row from its first call, running ones included, and
     /// stays that row as calls join it; earlier turns fold as ever.
-    @Test func theRunningTurnsWorkIsOneRowAsItGrows() {
+    @Test func theRunningTurnsWorkIsOneRowAsItGrows() throws {
         let first = foldTranscriptRows([prompt("p1", at: 0), call("t1", status: .running)],
                                        folding: .summarized, lastTurnRunning: true)
         #expect(first.map(\.id) == ["p1", "group-t1"])
@@ -50,30 +49,29 @@ struct TranscriptRowsTests {
                                         prompt("p1", at: 2), call("t1"), call("t2", status: .running)],
                                        folding: .summarized, lastTurnRunning: true)
         #expect(later.map(\.id) == ["p0", "o1", "r0", "p1", "group-t1"])
-        guard case .toolGroup(let calls) = later.last else { Issue.record("expected the run"); return }
+        let calls = try #require(later.last?.toolGroup)
         #expect(calls.map(\.id) == ["t1", "t2"])
         // Settled, a lone call is its own line again.
         #expect(foldTranscriptRows([prompt("p1", at: 0), call("t1")], folding: .summarized, lastTurnRunning: false)
             .map(\.id) == ["p1", "t1"])
     }
 
-    @Test func runningCallStaysUngroupedBesideAFinishedGroup() {
+    @Test func runningCallStaysUngroupedBesideAFinishedGroup() throws {
         let rows = foldTranscriptRows([call("t1"), call("t2"), call("t3", status: .running)])
         #expect(rows.count == 2)
-        guard case .toolGroup(let calls) = rows[0] else { Issue.record("expected a group first"); return }
+        let calls = try #require(rows[0].toolGroup)
         #expect(calls.map(\.id) == ["t1", "t2"])
-        guard case .item(.toolCall(let running)) = rows[1] else { Issue.record("expected the running call alone"); return }
+        let running = try #require(rows[1].item?.toolCall)
         #expect(running.id == "t3" && running.status == .running)
     }
 
     /// A call that failed, was denied or stopped is finished work too: it folds into the run, which
     /// says quietly how many failed.
-    @Test func failedDeniedAndStoppedCallsJoinTheRun() {
+    @Test func failedDeniedAndStoppedCallsJoinTheRun() throws {
         let rows = foldTranscriptRows([call("t1"), call("t2", status: .failed), call("t3"),
                                        call("t4", status: .denied), call("t5", status: .interrupted)])
         #expect(rows.map(\.id) == ["group-t1"])
-        guard case .toolGroup(let calls) = rows[0] else { Issue.record("expected one group"); return }
-        #expect(calls.count == 5)
+        #expect(try #require(rows[0].toolGroup).count == 5)
     }
 
     private func prompt(_ id: String, at ms: Double) -> Item {
@@ -86,13 +84,13 @@ struct TranscriptRowsTests {
 
     /// Worked For: a finished turn keeps its prompt and last reply, and folds what came between,
     /// timed from the prompt to that reply.
-    @Test func workedForFoldsAFinishedTurnsWork() {
+    @Test func workedForFoldsAFinishedTurnsWork() throws {
         let items = [prompt("p1", at: 1_000), message("m1"), call("t1"), call("t2", status: .failed), reply("r1", at: 61_000)]
         let rows = foldTranscriptRows(items, folding: .workedFor, lastTurnRunning: false)
         #expect(rows.map(\.id) == ["p1", "work-p1", "r1"])
-        guard case .turnWork(_, let work, let duration) = rows[1] else { Issue.record("expected the work"); return }
-        #expect(work.map(\.id) == ["m1", "group-t1"])
-        #expect(duration == 60_000)
+        let work = try #require(rows[1].turnWork)
+        #expect(work.rows.map(\.id) == ["m1", "group-t1"])
+        #expect(work.durationMs == 60_000)
     }
 
     /// The running turn isn't folded yet; one with no reply after its work, or no work, never is.
@@ -112,13 +110,13 @@ struct TranscriptRowsTests {
     @Test func todoWriteNeverGroups() {
         let rows = foldTranscriptRows([call("t1"), call("todo", kind: .todoWrite), call("t2")])
         #expect(rows.count == 3)
-        for row in rows { if case .toolGroup = row { Issue.record("todoWrite should never be grouped") } }
+        #expect(!rows.contains { $0.toolGroup != nil })
     }
 
-    @Test func finishedSubagentsGroupAsAgents() {
+    @Test func finishedSubagentsGroupAsAgents() throws {
         let rows = foldTranscriptRows([call("a1", kind: .subagent), call("a2", kind: .subagent), call("a3", kind: .subagent)])
-        guard rows.count == 1, case .toolGroup(let calls) = rows[0] else { Issue.record("expected one group"); return }
-        #expect(calls.map(\.id) == ["a1", "a2", "a3"])
+        #expect(rows.count == 1)
+        #expect(try #require(rows[0].toolGroup).map(\.id) == ["a1", "a2", "a3"])
     }
 
     @Test func rowIdsAreStable() {
@@ -138,12 +136,11 @@ struct TranscriptRowsTests {
     }
 
     /// Reasoning between two tool calls mustn't split the run it sits in, now that it isn't drawn.
-    @Test func reasoningDoesNotBreakAToolGroup() {
+    @Test func reasoningDoesNotBreakAToolGroup() throws {
         let reasoning = Item.reasoning(.init(id: "r1", createdAt: 0, text: "picking the next step"))
         let rows = foldTranscriptRows([call("t1"), reasoning, call("t2")])
         #expect(rows.count == 1)
-        guard case .toolGroup(let calls) = rows[0] else { Issue.record("expected a group"); return }
-        #expect(calls.map(\.id) == ["t1", "t2"])
+        #expect(try #require(rows[0].toolGroup).map(\.id) == ["t1", "t2"])
     }
 }
 

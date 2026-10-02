@@ -24,10 +24,7 @@ struct ProtocolHandshakeTests {
 
         await connection.connect()
 
-        guard case .failed(let message) = connection.state else {
-            Issue.record("expected a failed connection, got \(connection.state)")
-            return
-        }
+        let message = try #require(connection.state.failure, "expected a failed connection, got \(connection.state)")
         #expect(message.contains("claude-box runs Tether 0.4.0"))
         #expect(message.contains("Update the server"))
         #expect(connection.serverInfo == nil)
@@ -41,10 +38,7 @@ struct ProtocolHandshakeTests {
 
         await connection.connect()
 
-        guard case .failed(let message) = connection.state else {
-            Issue.record("expected a failed connection, got \(connection.state)")
-            return
-        }
+        let message = try #require(connection.state.failure, "expected a failed connection, got \(connection.state)")
         #expect(message == "The Tether server on claude-box needs a newer version of this app.")
         try await Task.sleep(for: .seconds(2.5))
         #expect(await transport.initializeCount == 1)
