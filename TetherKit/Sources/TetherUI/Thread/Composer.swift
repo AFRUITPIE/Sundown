@@ -340,7 +340,7 @@ struct Composer: View {
 
         func body(content: Content) -> some View {
             content.onGeometryChange(for: CGRect.self) {
-                $0.frame(in: .named(MessageSendGeometry.space))
+                $0.frame(in: MessageSendGeometry.space)
             } action: { frame in
                 geometry?.composerFrame = frame
             }

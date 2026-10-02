@@ -266,6 +266,25 @@ public final class WindowModel {
     public func isInspecting(_ pane: InspectorPane) -> Bool { showInspector && inspectorPane == pane }
 
     /// Shows `pane`, opening the inspector if it is closed.
+    /// Shows a subagent's call in the Tasks pane.
+    func inspectSubagent(_ toolUseId: String) {
+        inspectedTaskID = toolUseId
+        openInspector(on: .tasks)
+    }
+
+    /// Branches the chat shown after `messageID`, keeping everything up to it, and shows the branch.
+    func fork(at messageID: String) {
+        guard let thread = selectedThread, let connection else { return }
+        Task { if let fork = await connection.fork(thread, at: messageID) { open(threadID: fork.id) } }
+    }
+
+    /// The listed chat a message's session id names, or nil when this host's list doesn't have it.
+    func listedChatID(_ id: String) -> String? {
+        // A desktop session's id carries a prefix ("local_…"); Claude Code's own is the rest.
+        let bare = id.split(separator: "_", maxSplits: 1).last.map(String.init) ?? id
+        return connection?.chats.first { $0.id == id || $0.id == bare }?.id
+    }
+
     public func openInspector(on pane: InspectorPane) {
         if inspectorPane != pane { inspectorPane = pane }
         if !showInspector { showInspector = true }

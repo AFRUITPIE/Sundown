@@ -23,11 +23,13 @@ struct StartChatIntent: AppIntent {
     }
 
     /// Opens a `tether://` link, which SwiftUI routes to a window of the app; one that sends
-    /// carries a token only this process knows.
+    /// carries a token only this process knows, and only when there's a prompt to send, since an
+    /// empty one is never sent and its token never spent.
     @MainActor
     func perform() async throws -> some IntentResult & OpensIntent {
+        let sends = send && !(prompt ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let link = TetherLink.newChat(host: HostConfig.local.id, folder: folder, prompt: prompt,
-                                      sendToken: send ? TetherLink.authorizeSend() : nil)
+                                      sendToken: sends ? TetherLink.authorizeSend() : nil)
         return .result(opensIntent: OpenURLIntent(link.url))
     }
 }

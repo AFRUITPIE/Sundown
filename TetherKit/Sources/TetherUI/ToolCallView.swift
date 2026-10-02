@@ -183,24 +183,18 @@ struct ToolCallView: View {
     }
 }
 
-/// Equal when the same owner made it, whatever the closure: the shell makes a new one each time its
-/// body runs, and a changed environment value redraws every tool call in the transcript.
-struct InspectSubagentAction: Sendable, Equatable {
-    private let owner: ObjectIdentifier?
-    private let open: @MainActor @Sendable (String) -> Void
+/// Shows a subagent's call in the window's Tasks pane. Holds the window, not a closure, so it's
+/// equal whenever it's the same window and the shell's updates don't redraw every tool call.
+struct InspectSubagentAction: Equatable {
+    weak var window: WindowModel?
 
-    init(owner: AnyObject?, open: @escaping @MainActor @Sendable (String) -> Void) {
-        self.owner = owner.map(ObjectIdentifier.init)
-        self.open = open
-    }
+    @MainActor func callAsFunction(_ toolUseId: String) { window?.inspectSubagent(toolUseId) }
 
-    @MainActor func callAsFunction(_ toolUseId: String) { open(toolUseId) }
-
-    static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
 }
 
 extension EnvironmentValues {
-    @Entry var inspectSubagent = InspectSubagentAction(owner: nil, open: { _ in })
+    @Entry var inspectSubagent = InspectSubagentAction()
 
     /// The row id of the turn's work a row is shown inside, for Find in Chat.
     @Entry var findFold: String?
@@ -328,7 +322,7 @@ struct ToolCallGroupView: View {
         DisclosureGroup(isExpanded: $expanded) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("\(calls.count) Tool Calls").scaledFont(.caption).foregroundStyle(.secondary)
+                    Text("^[\(calls.count) Tool Call](inflect: true)").scaledFont(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button(expandAll ? "Collapse All" : "Expand All") { expandAll.toggle() }
                         .buttonStyle(.bordered)

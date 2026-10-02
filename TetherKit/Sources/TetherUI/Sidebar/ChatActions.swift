@@ -63,7 +63,7 @@ struct ChatActionAlerts: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .alert("Rename Chat", isPresented: presented(\.renaming), presenting: window.renaming) { thread in
+            .alert("Rename Chat", item: $window.renaming) { thread in
                 TextField("Title", text: $window.renameTitle)
                 Button("Rename") {
                     window.rename(thread, to: window.renameTitle)
@@ -76,8 +76,8 @@ struct ChatActionAlerts: ViewModifier {
             .background {
                 // Deleting a chat removes its transcript from the host for good.
                 Color.clear
-                    .confirmationDialog("Delete “\(window.deleting?.title ?? "Chat")”?", isPresented: presented(\.deleting),
-                                        titleVisibility: .visible, presenting: window.deleting) { thread in
+                    .confirmationDialog("Delete “\(window.deleting?.title ?? "Chat")”?", item: $window.deleting,
+                                        titleVisibility: .visible) { thread in
                         Button("Delete", role: .destructive) { delete(thread) }
                     } message: { _ in
                         Text("Its transcript is removed from \(window.host?.name ?? "the host"). This can’t be undone.")
@@ -87,8 +87,8 @@ struct ChatActionAlerts: ViewModifier {
             .background {
                 // The first offer, which Don't Ask Again turns off.
                 Color.clear
-                    .confirmationDialog("Remove Its Worktree?", isPresented: worktreePresented(losesWork: false),
-                                        titleVisibility: .visible, presenting: window.worktreeToRemove) { target in
+                    .confirmationDialog("Remove Its Worktree?", item: worktreeToRemove(losesWork: false),
+                                        titleVisibility: .visible) { target in
                         Button("Remove Worktree") { removeWorktree(target) }
                         Button("Keep", role: .cancel) { window.worktreeToRemove = nil }
                     } message: { target in
@@ -100,8 +100,8 @@ struct ChatActionAlerts: ViewModifier {
             .background {
                 // Asked again, plainly, when removing it would lose work.
                 Color.clear
-                    .confirmationDialog(losingTitle, isPresented: worktreePresented(losesWork: true),
-                                        titleVisibility: .visible, presenting: window.worktreeToRemove) { target in
+                    .confirmationDialog(losingTitle, item: worktreeToRemove(losesWork: true),
+                                        titleVisibility: .visible) { target in
                         Button("Remove Anyway", role: .destructive) { removeWorktree(target) }
                         Button("Keep", role: .cancel) { window.worktreeToRemove = nil }
                     } message: { target in
@@ -111,7 +111,7 @@ struct ChatActionAlerts: ViewModifier {
                     }
                     .dialogSeverity(.critical)
             }
-            .alert("Couldn’t Remove the Worktree", isPresented: presented(\.worktreeError), presenting: window.worktreeError) { _ in
+            .alert("Couldn’t Remove the Worktree", item: $window.worktreeError) { _ in
                 Button("OK", role: .cancel) {}
             } message: { error in
                 Text(error)
@@ -121,7 +121,7 @@ struct ChatActionAlerts: ViewModifier {
                     SideQuestionSheet(thread: thread, connection: connection)
                 }
             }
-            .alert(restoreTitle, isPresented: presented(\.restoring), presenting: window.restoring) { _ in
+            .alert(restoreTitle, item: $window.restoring) { _ in
                 restoreActions()
             } message: { _ in
                 Text(restoreMessage)
@@ -204,15 +204,10 @@ struct ChatActionAlerts: ViewModifier {
         window.worktreeToRemove?.discardCommits == true ? "Its Branch Has Commits Nowhere Else" : "The Worktree Has Uncommitted Changes"
     }
 
-    /// The first offer, or a second ask that would lose work.
-    private func worktreePresented(losesWork: Bool) -> Binding<Bool> {
-        Binding(get: { window.worktreeToRemove.map { $0.losesWork == losesWork } ?? false },
-                set: { if !$0 { window.worktreeToRemove = nil } })
-    }
-
-    /// Shown while `key` holds something; dismissing clears it.
-    private func presented<Value>(_ key: ReferenceWritableKeyPath<WindowModel, Value?>) -> Binding<Bool> {
-        Binding(get: { window[keyPath: key] != nil }, set: { if !$0 { window[keyPath: key] = nil } })
+    /// The worktree to remove, for the first offer or for a second ask that would lose work.
+    private func worktreeToRemove(losesWork: Bool) -> Binding<WindowModel.WorktreeRemoval?> {
+        Binding(get: { window.worktreeToRemove.flatMap { $0.losesWork == losesWork ? $0 : nil } },
+                set: { if $0 == nil { window.worktreeToRemove = nil } })
     }
 
     private func delete(_ thread: ThreadModel) {
