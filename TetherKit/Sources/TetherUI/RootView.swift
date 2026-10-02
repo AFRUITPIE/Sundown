@@ -133,10 +133,11 @@ private struct InspectorColumn: ViewModifier {
     func body(content: Content) -> some View {
         content.inspector(isPresented: $window.showInspector) {
             InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-                // As narrow as the tab bar allows, and no narrower: the bar's minimum moves between
-                // about 300 and 310 with the selected tab, and below 310 the column followed it,
-                // jumping 10 pt as tabs changed.
-                .inspectorColumnWidth(min: 310, ideal: 310, max: 420)
+                // One width, not resizable. Narrower than the tab bar, the column followed the bar's
+                // minimum, which moves about 10 pt with the selected tab. And dragging the column
+                // wider could crash: SwiftUI's split view loops AppKit's Update Constraints until it
+                // throws (#83, an Apple bug), so there's no divider to drag until that's fixed.
+                .inspectorColumnWidth(Layout.inspectorWidth)
                 .toolbar {
                     ToolbarSpacer(.flexible)
                     ToolbarItem { InspectorToggle(window: window) }
