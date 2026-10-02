@@ -11,34 +11,29 @@ struct SessionSymbolTests {
         #expect(NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil, comment)
     }
 
-    @Test func fixedSymbolsResolve() {
-        for name in [SessionSymbol.model, SessionSymbol.fastMode, SessionSymbol.automaticEffort] {
-            expectResolves(name, "\(name) does not exist on this OS")
-        }
+    @Test(arguments: [SessionSymbol.model, SessionSymbol.fastMode, SessionSymbol.automaticEffort])
+    func fixedSymbolsResolve(name: String) {
+        expectResolves(name, "\(name) does not exist on this OS")
     }
 
-    @Test func inspectorPaneSymbolsResolve() {
-        for pane in InspectorPane.allCases {
-            expectResolves(pane.symbol, "\(pane) → \(pane.symbol) does not exist on this OS")
-        }
+    @Test(arguments: InspectorPane.allCases)
+    func inspectorPaneSymbolsResolve(pane: InspectorPane) {
+        expectResolves(pane.symbol, "\(pane) → \(pane.symbol) does not exist on this OS")
     }
 
-    @Test func permissionModeSymbolsResolve() {
-        for mode in PermissionMode.allCases + [PermissionMode(rawValue: "somethingNewerServersSend")] {
-            expectResolves(mode.symbol, "\(mode.rawValue) → \(mode.symbol) does not exist on this OS")
-        }
+    @Test(arguments: PermissionMode.allCases + [PermissionMode(rawValue: "somethingNewerServersSend")])
+    func permissionModeSymbolsResolve(mode: PermissionMode) {
+        expectResolves(mode.symbol, "\(mode.rawValue) → \(mode.symbol) does not exist on this OS")
     }
 
     /// Every catalog shape the app can meet: one level up to all of them, plus a level the model
     /// doesn't list and Automatic.
-    @Test func effortSymbolsResolve() {
-        let catalogs: [[EffortLevel]] = (1...EffortLevel.allCases.count).map { Array(EffortLevel.allCases.prefix($0)) }
-        for levels in catalogs {
-            expectResolves(EffortLevel?.none.symbol(in: levels), "Automatic symbol does not exist on this OS")
-            for level in EffortLevel.allCases {
-                let symbol = Optional(level).symbol(in: levels)
-                expectResolves(symbol, "\(level.rawValue) in \(levels.map(\.rawValue)) → \(symbol) does not exist")
-            }
+    @Test(arguments: (1...EffortLevel.allCases.count).map { Array(EffortLevel.allCases.prefix($0)) })
+    func effortSymbolsResolve(levels: [EffortLevel]) {
+        expectResolves(EffortLevel?.none.symbol(in: levels), "Automatic symbol does not exist on this OS")
+        for level in EffortLevel.allCases {
+            let symbol = Optional(level).symbol(in: levels)
+            expectResolves(symbol, "\(level.rawValue) in \(levels.map(\.rawValue)) → \(symbol) does not exist")
         }
     }
 

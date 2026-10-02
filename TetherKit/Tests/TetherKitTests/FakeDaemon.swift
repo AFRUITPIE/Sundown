@@ -95,15 +95,3 @@ actor DaemonScript {
 func encoded(_ value: some Encodable) -> JSONValue {
     try! JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
 }
-
-/// Waits for what the notification pump does on its own time.
-@MainActor
-func eventually(_ condition: () async -> Bool) async throws {
-    let deadline = ContinuousClock.now + .seconds(2)
-    while await !condition() {
-        if ContinuousClock.now > deadline { throw EventuallyTimedOut() }
-        try await Task.sleep(for: .milliseconds(10))
-    }
-}
-
-struct EventuallyTimedOut: Error {}

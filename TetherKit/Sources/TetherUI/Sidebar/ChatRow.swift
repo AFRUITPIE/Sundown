@@ -85,7 +85,7 @@ struct ChatStatusDot: View {
             case .needsYou: Circle().fill(.orange)
             case .newReply: Circle().fill(.green)
             case .failed: Circle().fill(.red)
-            case .stopped: Circle().fill(.white).overlay(Circle().strokeBorder(.secondary, lineWidth: 1.5))
+            case .stopped: Circle().fill(.white).overlay { Circle().strokeBorder(.secondary, lineWidth: 1.5) }
             case .idle: Color.clear
             }
         }

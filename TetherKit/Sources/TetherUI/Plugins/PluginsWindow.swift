@@ -8,7 +8,7 @@ import TetherProtocol
 public struct PluginsWindow: View {
     let app: AppModel
     let hostID: UUID?
-    @State private var catalog: Loaded<PluginCatalog> = .loading
+    @State private var catalog: Loaded<PluginCatalog>
     @State private var search = ""
     @State private var folder: String?
     @State private var working: String?
@@ -18,6 +18,7 @@ public struct PluginsWindow: View {
     public init(app: AppModel, hostID: UUID?) {
         self.app = app
         self.hostID = hostID
+        _catalog = State(initialValue: .loading)
     }
 
     /// Seeded, for a preview.
@@ -36,13 +37,12 @@ public struct PluginsWindow: View {
 
     public var body: some View {
         decorated
-            .alert("Couldn’t Change the Plugin", isPresented: showingError, presenting: error) { _ in
+            .alert("Couldn’t Change the Plugin", item: $error) { _ in
                 Button("OK", role: .cancel) {}
             } message: { error in
                 Text(error)
             }
-            .confirmationDialog(uninstallTitle, isPresented: showingUninstall, titleVisibility: .visible,
-                                presenting: uninstalling) { plugin in
+            .confirmationDialog(uninstallTitle, item: $uninstalling, titleVisibility: .visible) { plugin in
                 Button("Uninstall", role: .destructive) { uninstall(plugin) }
             } message: { _ in
                 Text("New chats won’t have its skills, agents or commands.")
@@ -73,14 +73,6 @@ public struct PluginsWindow: View {
         ToolbarItem {
             Button("Refresh", systemImage: "arrow.clockwise") { Task { await reload() } }
         }
-    }
-
-    private var showingError: Binding<Bool> {
-        Binding(get: { error != nil }, set: { if !$0 { error = nil } })
-    }
-
-    private var showingUninstall: Binding<Bool> {
-        Binding(get: { uninstalling != nil }, set: { if !$0 { uninstalling = nil } })
     }
 
     private var uninstallTitle: String { "Uninstall \(uninstalling?.name ?? "")?" }
@@ -173,7 +165,7 @@ public struct PluginsWindow: View {
             Text(plugin.name)
             Text(plugin.description).lineLimit(2)
             if let count = plugin.installCount {
-                Text("\(count.formatted()) installs")
+                Text("Installed ^[\(count) time](inflect: true)")
             }
         }
     }

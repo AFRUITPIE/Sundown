@@ -120,7 +120,7 @@ struct ThreadModelTests {
 
     /// A streamed token redraws its own row, not the transcript: it changes the item's box, and the
     /// rows only on the first token, which ends "Thinking…".
-    @Test func streamedTextGoesToTheItemsBoxNotTheTranscript() {
+    @Test func streamedTextGoesToTheItemsBoxNotTheTranscript() throws {
         let thread = ThreadModel(id: threadID)
         thread.apply(started(userMessage("Explain the reducer"), seq: 1))
         thread.apply(.turnStarted(.init(threadId: threadID, seq: 2, turn: .init(id: "t1", status: .inProgress, startedAt: 0))))
@@ -142,10 +142,10 @@ struct ThreadModelTests {
 
         #expect(!transcript.happened)
         #expect(row.happened)
-        guard case .agentMessage(let m) = box.item else { Issue.record("expected an agent message"); return }
+        let m = try #require(box.item.agentMessage)
         #expect(m.text == "It folds items.")
         // Readers of `items` still see the current text, though they aren't told about each token.
-        guard case .agentMessage(let stored) = thread.items.last else { Issue.record("expected an agent message"); return }
+        let stored = try #require(thread.items.last?.agentMessage)
         #expect(stored.text == "It folds items.")
     }
 

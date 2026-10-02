@@ -23,15 +23,17 @@ struct ThreadView: View {
 
 /// The chat's directory as the window's proxy icon, on this Mac: dragged, it's the directory, and
 /// ⌘-clicking the title shows its path. Here rather than on the shell, which keeps one identity
-/// while the chat changes.
+/// while the chat changes. On an empty view behind the chat, never around it: a chat opened
+/// before its directory is known gets one once the catalog arrives, and a branch around the
+/// content would make the whole chat new then.
 private struct ProxyIcon: ViewModifier {
     let directory: String?
 
     func body(content: Content) -> some View {
-        if let directory {
-            content.navigationDocument(URL(filePath: directory, directoryHint: .isDirectory))
-        } else {
-            content
+        content.background {
+            if let directory {
+                Color.clear.navigationDocument(URL(filePath: directory, directoryHint: .isDirectory))
+            }
         }
     }
 }

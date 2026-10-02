@@ -53,8 +53,8 @@ struct TurnEditsTests {
     }
 
     /// A Write's content is all added; a MultiEdit's edits are each a change; a NotebookEdit's source is added.
-    @Test func eachKindOfEditIsReadFromItsInput() {
-        guard case .toolCall(let w) = write("w", "/r/new.swift", "one\ntwo\nthree\n") else { return }
+    @Test func eachKindOfEditIsReadFromItsInput() throws {
+        let w = try #require(write("w", "/r/new.swift", "one\ntwo\nthree\n").toolCall)
         #expect(FileChange.changes(of: w).map { [$0.added, $0.removed] } == [[3, 0]])
 
         let multi = Item.ToolCall.sample(name: "MultiEdit", kind: .fileEdit, input: [
@@ -70,12 +70,14 @@ struct TurnEditsTests {
     }
 
     /// Only a finished call changed anything: one that failed, was denied or stopped didn't.
-    @Test func onlyCompletedEditsCount() {
-        for status in [ToolStatus.failed, .denied, .interrupted, .running, .pending] {
-            guard case .toolCall(let call) = edit("e", "/r/a.swift", old: "a", new: "b", status: status) else { return }
-            #expect(FileChange.changes(of: call).isEmpty)
-        }
-        guard case .toolCall(let r) = read("r", "/r/a.swift") else { return }
+    @Test(arguments: [ToolStatus.failed, .denied, .interrupted, .running, .pending])
+    func onlyCompletedEditsCount(status: ToolStatus) throws {
+        let call = try #require(edit("e", "/r/a.swift", old: "a", new: "b", status: status).toolCall)
+        #expect(FileChange.changes(of: call).isEmpty)
+    }
+
+    @Test func aReadChangesNothing() throws {
+        let r = try #require(read("r", "/r/a.swift").toolCall)
         #expect(FileChange.changes(of: r).isEmpty)
     }
 
@@ -149,16 +151,13 @@ struct TurnEditsTests {
     }
 
     /// The thread shows a turn's edits once it's finished, in every folding, and not while it runs.
-    @Test func theThreadShowsEditsOnlyForFinishedTurns() {
+    @Test(arguments: [TranscriptFolding.summarized, .workedFor, .everyCall])
+    func theThreadShowsEditsOnlyForFinishedTurns(folding: TranscriptFolding) {
         let items = [prompt("p1"), edit("e1", "/r/a.swift", old: "a", new: "b"), reply("m1")]
         let running = ThreadModel.sample(status: .running, items: items)
-        for folding in [TranscriptFolding.summarized, .workedFor, .everyCall] {
-            #expect(!running.rows(folding).contains { $0.id == "edits-p1" })
-        }
+        #expect(!running.rows(folding).contains { $0.id == "edits-p1" })
         let idle = ThreadModel.sample(status: .idle, items: items)
-        for folding in [TranscriptFolding.summarized, .workedFor, .everyCall] {
-            #expect(idle.rows(folding).last?.id == "edits-p1")
-        }
+        #expect(idle.rows(folding).last?.id == "edits-p1")
     }
 
     /// Streamed text doesn't bump the transcript's version, so the rows (and the edits) aren't

@@ -3,9 +3,8 @@ import Foundation
 import PackageDescription
 
 /// Local development: with a tether-server checkout beside this repo, the protocol package comes
-/// from it, so a protocol change is seen on the next build with no release. The build phase
-/// compiles the server binaries from the same checkout. `TETHER_USE_RELEASE=1`, or no sibling
-/// (a fresh clone, CI), uses the published package instead.
+/// from it, so a protocol change is seen on the next build with no release. `TETHER_USE_RELEASE=1`,
+/// or no sibling (a fresh clone, CI), uses the published package instead.
 let siblingServer = Context.packageDirectory + "/../../tether-server"
 let useSiblingServer = Context.environment["TETHER_USE_RELEASE"] != "1"
     && FileManager.default.fileExists(atPath: siblingServer + "/Package.swift")

@@ -44,13 +44,10 @@ struct SubagentInspectorTests {
         #expect(entry.map { SubagentLifecycle.title(call: $0.call!, task: $0.task) } == "Agent running")
     }
 
-    @Test func terminalLifecycleUsesQuietChatSummaries() {
+    @Test func terminalLifecycleUsesQuietChatSummaries() throws {
         let thread = ThreadModel.sampleToolCalls()
-        guard let call = thread.taskEntries
-            .first(where: { $0.id == "tool-subagent-explore" })?.call else {
-            Issue.record("Missing subagent fixture")
-            return
-        }
+        let call = try #require(thread.taskEntries.first(where: { $0.id == "tool-subagent-explore" })?.call,
+                                "Missing subagent fixture")
         let completed = TaskEventNotification(
             threadId: thread.id, seq: 21, event: "updated", taskId: "task-explore",
             toolUseId: call.id, description: nil, status: "completed", summary: nil, data: [:]
@@ -60,7 +57,7 @@ struct SubagentInspectorTests {
         #expect(!SubagentLifecycle.isRunning(call: call, task: completed))
     }
 
-    @Test func backgroundSnapshotUpdatesTheChatAndInspectorLifecycle() {
+    @Test func backgroundSnapshotUpdatesTheChatAndInspectorLifecycle() throws {
         let thread = ThreadModel.sampleToolCalls()
         thread.apply(.taskEvent(.init(
             threadId: thread.id,
@@ -83,11 +80,9 @@ struct SubagentInspectorTests {
             ]]
         )))
 
-        guard let entry = thread.taskEntries
-            .first(where: { $0.id == "tool-subagent-explore" }), let call = entry.call else {
-            Issue.record("Missing subagent fixture")
-            return
-        }
+        let entry = try #require(thread.taskEntries.first(where: { $0.id == "tool-subagent-explore" }),
+                                 "Missing subagent fixture")
+        let call = try #require(entry.call, "Missing subagent fixture")
 
         #expect(entry.isBackgrounded)
         #expect(SubagentLifecycle.title(
