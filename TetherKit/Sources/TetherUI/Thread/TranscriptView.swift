@@ -27,6 +27,7 @@ struct TranscriptView: View {
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.reducesEffects) private var reducesEffects
+    @Environment(\.messageSendGeometry) private var sendGeometry
 
     var body: some View {
         ScrollView {
@@ -61,6 +62,20 @@ struct TranscriptView: View {
             guard thread.historyLoaded else { return }
             followsEnd = true
             position.scrollTo(edge: .bottom)
+        }
+        // Sending from this window goes back to the end, where the prompt is about to land, from
+        // wherever the reader had scrolled to.
+        // The prompt waits for the scroll to finish before it flies (`scrollingToEnd`).
+        .onChange(of: sendGeometry?.sends) {
+            guard !followsEnd else { return }
+            onScreen.lastPrompt = nil
+            followsEnd = true
+            sendGeometry?.scrollingToEnd = true
+            withAnimation(reduceMotion ? nil : .default, completionCriteria: .logicallyComplete) {
+                position.scrollTo(edge: .bottom)
+            } completion: {
+                sendGeometry?.scrollingToEnd = false
+            }
         }
         .onScrollGeometryChange(for: Place.self, of: { Place($0) }) { keepPlace(from: $0, to: $1) }
         .onAppear {
@@ -445,8 +460,10 @@ struct TranscriptRowView: View, Equatable {
         VStack(alignment: .leading, spacing: 0) {
             switch row {
             case .item(let item):
+                // A prompt that already flew here as a chat started doesn't fade in again either.
                 LiveItemView(box: thread.box(for: item), thread: thread)
-                    .modifier(FadesIn(isNew: thread.justStarted(item.id), bypass: isSendingPrompt))
+                    .modifier(FadesIn(isNew: thread.justStarted(item.id) && sendGeometry?.landedPrompt != item.id,
+                                      bypass: isSendingPrompt))
             case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread, rowID: row.id)
             case .turnWork(let id, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread, rowID: id)
             case .turnEdits(let edits): TurnEditsView(edits: edits, cwd: thread.cwd)
@@ -560,6 +577,14 @@ struct TranscriptPlaceholder<Actions: View>: View {
 struct TranscriptTail: View {
     let thread: ThreadModel
     @Environment(\.appearance) private var appearance
+    @Environment(\.messageSendGeometry) private var sendGeometry
+
+    /// A prompt sent from this window is still flying into place (or about to: its row takes the
+    /// launch once it's drawn, under Reduce Motion too). The line under it waits for it to land,
+    /// keeping its room so nothing moves when it shows.
+    private var promptInFlight: Bool {
+        sendGeometry?.activeMessageID != nil || sendGeometry?.hasLaunch == true
+    }
 
     /// Whether the turn's run of calls is the last row, and says Thinking itself.
     private var runSaysIt: Bool {
@@ -567,13 +592,23 @@ struct TranscriptTail: View {
         return call.kind != .todoWrite && call.kind != .subagent
     }
 
+    /// What the wait before anything shows is: starting the session (New Chat's stand-in for a chat
+    /// the host hasn't answered for yet), compacting, or thinking. One line whose words change in place.
+    private var activity: String? {
+        if thread.isStarting { return "Starting Session" }
+        // Compacting says so where Thinking would, not in a card under the transcript.
+        if thread.activity == "compacting" { return "Compacting Conversation" }
+        if thread.isThinking, !runSaysIt { return "Thinking" }
+        return nil
+    }
+
     var body: some View {
         Group {
-            // Compacting says so where Thinking would, not in a card under the transcript.
-            if thread.activity == "compacting" {
-                ActivityLine(text: "Compacting Conversation")
-            } else if thread.isThinking, !runSaysIt {
-                ThinkingLine()
+            if let activity {
+                ActivityLine(text: activity)
+                    .opacity(promptInFlight ? 0 : 1)
+                    .animation(.easeOut(duration: 0.2), value: promptInFlight)
+                    .accessibilityHidden(promptInFlight)
             }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
@@ -581,12 +616,6 @@ struct TranscriptTail: View {
             }
         }
     }
-}
-
-/// Marks the wait before a turn has anything to show. From the thread's status, so it works
-/// with thinking off or redacted. Its dots pulse, but not while the Mac saves energy.
-struct ThinkingLine: View {
-    var body: some View { ActivityLine(text: "Thinking") }
 }
 
 /// A shimmering line for what the turn is doing while it has nothing else to show.

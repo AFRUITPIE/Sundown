@@ -317,10 +317,13 @@ public struct ChatCommands: View {
             Button("Stop") {
                 if let thread = window.selectedThread, let connection = window.connection {
                     Task { await connection.interrupt(thread) }
+                } else {
+                    window.stopStarting()
                 }
             }
             .keyboardShortcut(".")
-            .disabled(window.selectedThread?.isRunning != true)
+            // A chat New Chat is starting can be stopped too: it's interrupted once it has started.
+            .disabled(window.selectedThread?.isRunning != true && window.starting == nil)
             Divider()
             // ⌥⌘, not ⌘ or ⌃⌘: a text field keeps ⌘↑ and ⌘↓ (start and end of the text) and ⌃⌘↓
             // (writing direction); it has nothing on ⌥⌘↑ or ⌥⌘↓, so these work from the composer.

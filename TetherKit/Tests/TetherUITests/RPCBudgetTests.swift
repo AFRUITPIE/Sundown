@@ -21,6 +21,9 @@ struct RPCBudgetTests {
     /// The same for the chat switched to, and thread/unsubscribe for the one left: a chat the
     /// daemon isn't running is let go when no window shows it.
     static let switchingChats = 3
+    /// thread/start alone: New Chat shows the chat at once from what it sent, and the chat it moves
+    /// to has its history and subscription from the start, so ThreadView asks for nothing more.
+    static let startingAChat = 1
 
     @Test func openingAndSwitchingChatsStayWithinBudget() async throws {
         let host = CountingHost()
@@ -52,6 +55,24 @@ struct RPCBudgetTests {
         #expect(back.count <= Self.switchingChats, "switching back: \(back)")
         await connection.disconnect()
     }
+
+    @Test func startingAChatStaysWithinBudget() async throws {
+        let host = CountingHost()
+        let connection = HostConnection(host: HostConfig(name: "Budget", kind: .ssh(destination: "budget.invalid")),
+                                        transportProvider: { _ in host })
+        await connection.connect()
+        let window = WindowModel(app: .sample(connections: [connection]), target: WindowTarget(hostID: connection.id))
+        window.start()
+        window.draftDirectory = "/work/project"
+        _ = host.take()
+
+        #expect(await window.startDraftChat([.text(.init(text: "Hello"))]))
+        let thread = try #require(window.selectedThread)
+        await connection.open(thread) // ThreadView's task
+        let started = host.take()
+        #expect(started.count <= Self.startingAChat, "starting a chat: \(started)")
+        await connection.disconnect()
+    }
 }
 
 /// A host with two idle chats it isn't running, which answers what connecting, opening and switching
@@ -77,6 +98,17 @@ private final class CountingHost: Transport, @unchecked Sendable {
         let message = try JSONDecoder().decode(JSONValue.self, from: line)
         guard let id = message["id"], let method = message["method"]?.stringValue else { return }
         lock.withLock { methods.append(method) }
+        // As the daemon does, the prompt's echo comes before the answer.
+        if method == "thread/start" {
+            for (name, body) in [
+                ("turn/started", json(TurnStartedNotification(threadId: "chat-new", seq: 1,
+                                                              turn: .init(id: "turn", status: .inProgress, startedAt: 1)))),
+                ("item/started", json(ItemStartedNotification(threadId: "chat-new", seq: 2, item: .userMessage(.init(
+                    id: "chat-new-prompt", turnId: "turn", createdAt: 1, content: [.text(.init(text: "Hello"))]))))),
+            ] {
+                continuation.yield(try JSONEncoder().encode(["method": .string(name), "params": body] as JSONValue))
+            }
+        }
         let reply: JSONValue = if let result = Self.result(method, message["params"] ?? [:]) {
             ["id": id, "result": result]
         } else {
@@ -109,6 +141,8 @@ private final class CountingHost: Transport, @unchecked Sendable {
                                               replayed: 0, gap: false))
         case "thread/unsubscribe": return [:]
         case "command/list": return ["commands": []]
+        case "thread/start":
+            return json(ThreadStartResult(thread: .init(threadId: "chat-new", status: .running, cwd: "/work/project", lastSeq: 2)))
         default: return nil
         }
     }

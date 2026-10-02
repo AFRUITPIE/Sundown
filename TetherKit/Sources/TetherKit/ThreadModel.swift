@@ -143,6 +143,9 @@ public final class ThreadModel: Identifiable {
     /// A turn is starting here and nothing of it has arrived yet: the running status and the turn
     /// come just before the prompt's echo. Until then, the transcript lays out as it did before.
     public private(set) var awaitingPrompt = false
+    /// A New Chat window's stand-in for a chat it's starting (`PendingStart.placeholder`), before
+    /// the host has answered: the transcript says Starting Session.
+    public private(set) var isStarting = false
 
     public init(id: String, summary: ThreadSummary? = nil) {
         self.id = id
@@ -224,6 +227,23 @@ public final class ThreadModel: Identifiable {
             for case .text(let t) in m.content { return String(t.text.prefix(80)) }
         }
         return nil
+    }
+
+    /// Sets up a stand-in for a chat being started (`PendingStart`): its settings as they were asked
+    /// for, and the prompt as it was sent, arriving as a prompt sent from the window does. Never one
+    /// of the host's chats, so nothing here is history: no sequence number, no subscription.
+    func beginStarting(info: ThreadInfo, prompt: Item) {
+        setInfo(info)
+        loadHistory(items: [], turns: [], seq: nil)
+        isStarting = true
+        noteStarted(prompt.id)
+        if case .userMessage = prompt { arrivedPrompt = prompt.id }
+        upsert(prompt)
+    }
+
+    /// The host has answered for the chat this stands in for.
+    func endStarting() {
+        if isStarting { isStarting = false }
     }
 
     /// Replace transcript with server history (thread/read or thread/resume includeHistory).
@@ -650,6 +670,11 @@ public final class ThreadModel: Identifiable {
         if started.count > 64 { started = started.filter { now - $0.value < .seconds(2) } }
         started[id] = now
     }
+
+    #if DEBUG
+    /// For a `#Preview`'s still: nothing in it is arriving, so no row is caught mid-fade.
+    func settleArrivals() { started = [:] }
+    #endif
 
     /// Whether the item started live within the last moment, so its row fades in as it appears.
     /// False for one that came with history, or a row made again when scrolled back to.
