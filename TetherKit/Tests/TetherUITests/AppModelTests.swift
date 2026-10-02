@@ -89,12 +89,9 @@ struct WindowModelTests {
         #expect(w.subtitle == "staging")
     }
 
-    @Test func subtitleFollowsTheOpenChatsFolder() {
+    @Test func subtitleFollowsTheOpenChatsFolder() throws {
         let w = window(.sample())
-        guard let chat = w.connection?.chats.first(where: { $0.cwd != nil }) else {
-            Issue.record("the sample host has no chat with a folder")
-            return
-        }
+        let chat = try #require(w.connection?.chats.first(where: { $0.cwd != nil }), "the sample host has no chat with a folder")
         w.open(threadID: chat.id)
         #expect(w.subtitle == (chat.cwd! as NSString).lastPathComponent)
     }

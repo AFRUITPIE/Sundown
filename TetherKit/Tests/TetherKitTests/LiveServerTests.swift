@@ -11,12 +11,12 @@ struct LiveServerTests {
     static let server = ProcessInfo.processInfo.environment["TETHER_SERVER_BIN"]
         ?? NSString(string: "~/Code/tether-server/dist/tether-0.1.0-darwin-arm64").expandingTildeInPath
 
-    func waitUntil(_ timeout: Duration = .seconds(120), _ cond: @MainActor () -> Bool) async throws {
-        let deadline = ContinuousClock.now + timeout
-        while !cond() {
-            if ContinuousClock.now > deadline { throw CancellationError() }
-            try await Task.sleep(for: .milliseconds(100))
-        }
+    /// A real model takes its time: minutes by default, polled gently.
+    func waitUntil(_ timeout: Duration = .seconds(120),
+                   fileID: String = #fileID, filePath: String = #filePath, line: Int = #line, column: Int = #column,
+                   _ condition: () async -> Bool) async throws {
+        try await eventually(timeout: timeout, interval: .milliseconds(100),
+                             fileID: fileID, filePath: filePath, line: line, column: column, condition)
     }
 
     @Test func startSendApproveAndReconnect() async throws {
@@ -33,7 +33,7 @@ struct LiveServerTests {
         let thread = try await conn.startThread(cwd: cwd.path, input: [], options: .init(model: "sonnet", effort: .low))
         await conn.send(thread, input: [.text(.init(text: "Write the word swift to swift.txt, then reply ok."))])
         try await waitUntil { !thread.pending.isEmpty }
-        guard case .permissionRequest(let p) = thread.pending[0].request else { Issue.record("expected permission"); return }
+        let p = try #require(thread.pending[0].request.permissionRequest)
         #expect(p.toolName == "Write")
 
         // Drop the connection while the approval is pending; the daemon parks it.

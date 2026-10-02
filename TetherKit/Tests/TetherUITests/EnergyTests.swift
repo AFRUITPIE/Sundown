@@ -218,15 +218,6 @@ struct ReducedEffectsTests {
     }
 }
 
-@MainActor
-private func eventually(_ condition: @MainActor () -> Bool) async throws {
-    let deadline = ContinuousClock.now + .seconds(3)
-    while !condition() {
-        if ContinuousClock.now > deadline { Issue.record("timed out"); return }
-        try await Task.sleep(for: .milliseconds(10))
-    }
-}
-
 /// Records which keys are written.
 private final class CountingDefaults: UserDefaults, @unchecked Sendable {
     var keys: [String] = []

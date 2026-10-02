@@ -38,10 +38,9 @@ struct OpenFilesTests {
         #expect(Appearance.FileEditor.visualStudioCode.openTitle == "Open in Visual Studio Code")
     }
 
-    @Test func everyEditorButTheDefaultHasAnApp() {
-        for editor in Appearance.FileEditor.allCases {
-            #expect(editor.bundleIdentifiers.isEmpty == (editor == .defaultApp), "\(editor)")
-        }
+    @Test(arguments: Appearance.FileEditor.allCases)
+    func everyEditorButTheDefaultHasAnApp(editor: Appearance.FileEditor) {
+        #expect(editor.bundleIdentifiers.isEmpty == (editor == .defaultApp), "\(editor)")
     }
 
     /// git's paths are relative to the repository's top, which a chat's folder may be below; a
