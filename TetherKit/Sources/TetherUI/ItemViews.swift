@@ -248,60 +248,54 @@ extension Item.UserMessage {
 }
 
 /// Branches the window's chat after a message, keeping everything up to it, and opens the branch.
-/// Compared by owner, like `InspectSubagentAction`, so a new closure doesn't redraw every message.
+/// Holds the window, like `InspectSubagentAction`, so the shell's updates don't redraw every message.
 struct ForkChatAction: Equatable {
-    private let owner: ObjectIdentifier?
-    private let fork: @MainActor (String) -> Void
+    weak var window: WindowModel?
 
-    init(owner: AnyObject?, fork: @escaping @MainActor (String) -> Void) {
-        self.owner = owner.map(ObjectIdentifier.init)
-        self.fork = fork
-    }
+    @MainActor func callAsFunction(_ messageID: String) { window?.fork(at: messageID) }
 
-    @MainActor func callAsFunction(_ messageID: String) { fork(messageID) }
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
+}
 
-    static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
+/// Restore Code to Here…, for a prompt. Like `ForkChatAction`.
+struct RestoreCodeAction: Equatable {
+    weak var window: WindowModel?
+
+    @MainActor func callAsFunction(_ messageID: String) { window?.restoreCode(before: messageID) }
+
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
 }
 
 extension EnvironmentValues {
-    @Entry var forkChat = ForkChatAction(owner: nil) { _ in }
-    /// Restore Code to Here…, for a prompt. The same shape as Fork from Here's.
-    @Entry var restoreCode = ForkChatAction(owner: nil) { _ in }
+    @Entry var forkChat = ForkChatAction()
+    @Entry var restoreCode = RestoreCodeAction()
     /// False where a message isn't in a chat yet (New Chat's stand-in while one starts): Fork from
     /// Here and Restore Code to Here… have nothing to act on.
     @Entry var offersChatActions = true
     /// Shows a chat by id in the window, for a message that links to the chat it came from.
-    @Entry var openChat = OpenChatAction(owner: nil, resolve: { _ in nil }, open: { _ in })
+    @Entry var openChat = OpenChatAction()
 }
 
 /// Shows a chat in the window by an id a message carries, when it's one of this host's listed chats.
-/// Compared by owner, like `ForkChatAction`.
+/// Like `ForkChatAction`.
 struct OpenChatAction: Equatable {
-    private let owner: ObjectIdentifier?
-    private let resolveID: @MainActor (String) -> String?
-    private let open: @MainActor (String) -> Void
-
-    init(owner: AnyObject?, resolve: @escaping @MainActor (String) -> String?, open: @escaping @MainActor (String) -> Void) {
-        self.owner = owner.map(ObjectIdentifier.init)
-        self.resolveID = resolve
-        self.open = open
-    }
+    weak var window: WindowModel?
 
     /// The listed chat `id` names, or nil when this host's list doesn't have it.
-    @MainActor func resolve(_ id: String) -> String? { resolveID(id) }
+    @MainActor func resolve(_ id: String) -> String? { window?.listedChatID(id) }
 
     @MainActor func callAsFunction(_ id: String) {
-        if let listed = resolveID(id) { open(listed) }
+        if let listed = resolve(id) { window?.open(threadID: listed) }
     }
 
-    static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
 }
 
 struct UserMessageView: View {
     let message: Item.UserMessage
     let justSent: Bool
     let canAnimate: Bool
-    @State private var arrived: Bool
+    @State private var arrived = true
     @State private var sending = false
     @State private var prepared = false
     @State private var launchFrame: CGRect?
@@ -314,7 +308,6 @@ struct UserMessageView: View {
         self.message = message
         self.justSent = justSent
         self.canAnimate = canAnimate
-        _arrived = State(initialValue: true)
     }
 
     var body: some View {
@@ -523,7 +516,7 @@ private struct SentMessagePosition: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
         if let origin {
             content.visualEffect { effect, geometry in
-                let target = geometry.frame(in: .named(MessageSendGeometry.space))
+                let target = geometry.frame(in: MessageSendGeometry.space)
                 return effect
                     .offset(x: arrived ? 0 : origin.maxX - target.maxX,
                             y: arrived ? 0 : origin.maxY - target.maxY)
@@ -563,7 +556,7 @@ private struct SendingMessageSurface: View {
 /// Only a sending bubble reads the frame. No scroll-frame state reaches the transcript's rows.
 @MainActor @Observable
 final class MessageSendGeometry {
-    nonisolated static let space = "message.send"
+    nonisolated static var space: NamedCoordinateSpace { .named("message.send") }
     static let spring = Animation.spring(response: 0.52, dampingFraction: 0.74)
     var composerFrame: CGRect?
     /// The filled editor's frame as it sent, before clearing a multiline draft collapsed it, for
@@ -824,7 +817,7 @@ private struct MessageSendPreview: View {
                     .padding(.horizontal, 16).padding(.vertical, 12)
                     .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
                     .onGeometryChange(for: CGRect.self) {
-                        $0.frame(in: .named(MessageSendGeometry.space))
+                        $0.frame(in: MessageSendGeometry.space)
                     } action: { geometry.composerFrame = $0 }
                 Button("Send", systemImage: "arrow.up") { geometry.prepareSend(); sends += 1 }
                     .buttonStyle(.glassProminent)
@@ -832,7 +825,7 @@ private struct MessageSendPreview: View {
             }
             .padding(24)
         }
-        .coordinateSpace(name: MessageSendGeometry.space)
+        .coordinateSpace(MessageSendGeometry.space)
         .environment(\.messageSendGeometry, geometry)
     }
 }
@@ -908,15 +901,17 @@ private func previewScreenshot() -> String {
 /// A message from another session: its link opens the sender's chat when this host lists it, and
 /// is dimmed, saying why, when it doesn't.
 #Preview("User message (from another session)") {
+    let window = WindowModel.sample()
     let listed = Item.userMessage(.init(id: "peer-1", createdAt: 0, content: [.text(.init(text: "The API tests pass on main now."))],
-                                        synthetic: true, origin: "peer", originName: "CI babysitter", originSession: "listed"))
+                                        synthetic: true, origin: "peer", originName: "CI babysitter",
+                                        originSession: window.connection?.chats.first?.id))
     let unlisted = Item.userMessage(.init(id: "peer-2", createdAt: 0, content: [.text(.init(text: "Deploy finished."))],
                                           synthetic: true, origin: "peer", originSession: "elsewhere"))
     return VStack(spacing: 16) {
         ItemView(item: listed, thread: .sampleIdleChat())
         ItemView(item: unlisted, thread: .sampleIdleChat())
     }
-    .environment(\.openChat, OpenChatAction(owner: nil, resolve: { $0 == "listed" ? $0 : nil }, open: { _ in }))
+    .environment(\.openChat, OpenChatAction(window: window))
     .padding(28)
     .frame(width: 640)
 }

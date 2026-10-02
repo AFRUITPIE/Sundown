@@ -29,10 +29,8 @@ struct HostsSettings: View {
                 selection = host.id
             }
         }
-        .confirmationDialog("Remove “\(hostToRemove?.name ?? "")”?", isPresented: Binding(
-            get: { hostToRemove != nil },
-            set: { if !$0 { hostToRemove = nil } }
-        ), titleVisibility: .visible, presenting: hostToRemove) { host in
+        .confirmationDialog("Remove “\(hostToRemove?.name ?? "")”?", item: $hostToRemove,
+                            titleVisibility: .visible) { host in
             Button("Remove", role: .destructive) {
                 app.removeHost(host.id)
                 selection = HostConfig.local.id

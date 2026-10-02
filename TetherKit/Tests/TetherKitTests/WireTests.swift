@@ -94,10 +94,7 @@ struct WireMessageTests {
         #expect(m.method == "item/agentMessage/delta")
         #expect(m.id == nil)
         let n = try ServerNotification(method: m.method!, params: try #require(m.params))
-        guard case .itemAgentMessageDelta(let delta) = n else {
-            Issue.record("expected a delta, got \(n)")
-            return
-        }
+        let delta = try #require(n.itemAgentMessageDelta, "expected a delta, got \(n)")
         #expect(delta.delta == #"a "quote", {brace} [x] \ back\\"#)
         #expect(delta.seq == 3)
     }
@@ -184,20 +181,14 @@ struct RPCClientTests {
 
         transport.emit(#"{"id":"req-7","method":"permission/request","params":{"threadId":"t","requestId":"r","toolUseId":"u","toolName":"Bash","input":{"command":"ls"}}}"#)
         transport.emit(#"{"id":8,"method":"something/new","params":{"threadId":"t","requestId":"r2"}}"#)
-        try await waitUntil { await transport.sent.count == 2 }
+        try await eventually { await transport.sent.count == 2 }
 
         let requests = await received.values
-        guard case .permissionRequest(let p) = requests.first else {
-            Issue.record("expected a permission request, got \(requests)")
-            return
-        }
+        let p = try #require(requests.first?.permissionRequest, "expected a permission request, got \(requests)")
         #expect(p.input["command"]?.stringValue == "ls")
-        guard case .unknown(let method, let params) = requests.last else {
-            Issue.record("expected an unknown request, got \(requests)")
-            return
-        }
-        #expect(method == "something/new")
-        #expect(params["requestId"]?.stringValue == "r2")
+        let unknown = try #require(requests.last?.unknown, "expected an unknown request, got \(requests)")
+        #expect(unknown.method == "something/new")
+        #expect(unknown.params["requestId"]?.stringValue == "r2")
         let answers = await transport.sent
         #expect(Set(answers.compactMap { $0["id"] }) == [.string("req-7"), .number(8)])
         #expect(answers.allSatisfy { $0["result"]?["behavior"]?.stringValue == "allow" && $0["method"] == nil })
@@ -224,12 +215,9 @@ struct RPCClientTests {
             if batches.count == 2 { break }
         }
         #expect(batches.map { $0.map(\.seq) } == [[2, 3, 4], [5, 6, 7]])
-        guard case .unknown(let method, let params) = batches.last?.last else {
-            Issue.record("expected an unknown notification, got \(batches)")
-            return
-        }
-        #expect(method == "something/new")
-        #expect(params["threadId"]?.stringValue == "t")
+        let unknown = try #require(batches.last?.last?.unknown, "expected an unknown notification, got \(batches)")
+        #expect(unknown.method == "something/new")
+        #expect(unknown.params["threadId"]?.stringValue == "t")
         await client.close()
     }
 
@@ -414,7 +402,7 @@ struct HostWireTests {
 
         transport.emit(["method": "thread/status/changed", "params": ["threadId": "t", "seq": 3, "status": "running"]])
         transport.emit(["method": "thread/status/changed", "params": ["threadId": "t", "seq": 9, "status": "idle"]])
-        try await waitUntil { thread.lastSeq == 9 }
+        try await eventually { thread.lastSeq == 9 }
 
         #expect(thread.status == .idle)
         await connection.disconnect()
@@ -428,7 +416,7 @@ struct HostWireTests {
         await connection.connect()
         let thread = connection.thread("t")
         transport.emit(#"{"id":"req-1","method":"permission/request","params":{"threadId":"t","requestId":"p","toolUseId":"u","toolName":"Bash","input":{}}}"#)
-        try await waitUntil { thread.pending.count == 1 }
+        try await eventually { thread.pending.count == 1 }
         let prompt = thread.pending[0]
 
         await connection.delete(thread)
@@ -507,12 +495,3 @@ private actor Received<Value: Sendable> {
     func append(_ value: Value) { values.append(value) }
 }
 
-private enum WireTestError: Error { case timeout }
-
-private func waitUntil(isolation: isolated (any Actor)? = #isolation, _ condition: () async -> Bool) async throws {
-    let deadline = ContinuousClock.now + .seconds(2)
-    while await !condition() {
-        if ContinuousClock.now > deadline { throw WireTestError.timeout }
-        try await Task.sleep(for: .milliseconds(5))
-    }
-}

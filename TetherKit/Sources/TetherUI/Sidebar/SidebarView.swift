@@ -176,7 +176,7 @@ struct SidebarView: View {
             // Activity lists by day whatever the grouping, so it isn't offered there.
             if appearance.sidebar == .chats {
                 Picker("Group By", selection: Bindable(app).sidebarGrouping) {
-                    ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+                    ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
             }
             Picker("Show", selection: Bindable(app).sidebarFilter) {
@@ -201,7 +201,7 @@ struct SidebarView: View {
             case .connected:
                 if search.isEmpty, app.sidebarFilter != .all {
                     ContentUnavailableView {
-                        Label("No \(app.sidebarFilter.label) Chats", systemImage: "line.3.horizontal.decrease.circle")
+                        Label(app.sidebarFilter.emptyTitle, systemImage: "line.3.horizontal.decrease.circle")
                     } actions: {
                         Button("Show All Chats") { app.sidebarFilter = .all }
                     }

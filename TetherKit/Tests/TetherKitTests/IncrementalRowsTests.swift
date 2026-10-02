@@ -208,7 +208,7 @@ struct IncrementalRowsTests {
 
     /// A running call's row keeps the value it was folded with; its progress goes to its box, which
     /// the row draws. It folds again with its item once it finishes.
-    @Test func progressGoesToTheBoxNotTheRows() {
+    @Test func progressGoesToTheBoxNotTheRows() throws {
         let thread = ThreadModel(id: threadID)
         thread.loadHistory(items: [prompt("p1", 0), call("bg", 1, status: .running), reply("a1", 2),
                                    prompt("p2", 3)], turns: [], seq: 1)
@@ -217,7 +217,7 @@ struct IncrementalRowsTests {
         thread.apply(.itemStarted(.init(threadId: threadID, seq: 3, item: call("c2", 4))))
         let rows = thread.rows(.summarized)
         #expect(rows.map(\.id) == fromScratch(thread, .summarized).map(\.id))
-        guard case .toolCall(let live) = thread.box(for: thread.items[1]).item else { Issue.record("expected the call"); return }
+        let live = try #require(thread.box(for: thread.items[1]).item.toolCall)
         #expect(live.elapsedSeconds == 30)
 
         thread.apply(.itemCompleted(.init(threadId: threadID, seq: 4, item: call("bg", 1))))
@@ -228,7 +228,7 @@ struct IncrementalRowsTests {
 
     /// A subagent's steps show in its card, not the transcript: they don't fold the rows again, and
     /// only its card, which reads `children(of:)`, hears of them.
-    @Test func aSubagentsStepsLeaveTheTranscriptAlone() {
+    @Test func aSubagentsStepsLeaveTheTranscriptAlone() throws {
         let thread = ThreadModel(id: threadID)
         thread.loadHistory(items: [prompt("p1", 0), subagent("s1", 1, status: .running)], turns: [], seq: 1)
         let transcript = Changed()
@@ -242,7 +242,7 @@ struct IncrementalRowsTests {
         #expect(!transcript.happened)
         #expect(card.happened)
         #expect(thread.children(of: "s1").map(\.id) == ["s1-read"])
-        guard case .toolCall(let child) = thread.children(of: "s1").first else { Issue.record("expected the call"); return }
+        let child = try #require(thread.children(of: "s1").first?.toolCall)
         #expect(child.status == .completed)
     }
 

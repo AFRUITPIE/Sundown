@@ -38,10 +38,12 @@ struct PermissionMenuItemsTests {
         #expect(!titles.contains(PermissionMode.bypassPermissions.longLabel))
     }
 
-    @Test func everyListedModeHasALine() {
-        for mode in PermissionMode.selectable {
-            #expect(mode.summary?.isEmpty == false, "\(mode.rawValue) has no line under its name")
-        }
+    @Test(arguments: PermissionMode.selectable)
+    func everyListedModeHasALine(mode: PermissionMode) {
+        #expect(mode.summary?.isEmpty == false, "\(mode.rawValue) has no line under its name")
+    }
+
+    @Test func anUnknownModeHasNoLine() {
         #expect(PermissionMode(rawValue: "somethingNewerServersSend").summary == nil)
     }
 }

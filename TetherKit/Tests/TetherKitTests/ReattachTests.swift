@@ -28,7 +28,7 @@ struct ReattachTests {
         firstTransport.emit(method: "item/agentMessage/delta", params: [
             "threadId": .string(threadID), "seq": 41, "itemId": "answer", "delta": " during",
         ])
-        try await waitUntil { thread.lastSeq == 41 }
+        try await eventually { thread.lastSeq == 41 }
 
         let originalIdentity = ObjectIdentifier(thread)
         await connection.reconnect()
@@ -42,7 +42,7 @@ struct ReattachTests {
         secondTransport.emit(method: "thread/status/changed", params: [
             "threadId": .string(threadID), "seq": 43, "status": "idle",
         ])
-        try await waitUntil { thread.lastSeq == 43 }
+        try await eventually { thread.lastSeq == 43 }
 
         #expect(agentText(in: thread) == "before during after")
         #expect(thread.items.filter { $0.id == "answer" }.count == 1)
@@ -70,7 +70,7 @@ struct ReattachTests {
         firstTransport.emit(method: "item/agentMessage/delta", params: [
             "threadId": .string(threadID), "seq": 41, "itemId": "answer", "delta": " during",
         ])
-        try await waitUntil { thread.lastSeq == 41 }
+        try await eventually { thread.lastSeq == 41 }
 
         await connection.reconnect()
 
@@ -97,7 +97,7 @@ struct ReattachTests {
 
         #expect(!thread.historyLoaded)
         #expect(thread.items.isEmpty)
-            try await waitUntilAsync { await script.calls().contains("thread/unsubscribe") }
+            try await eventually { await script.calls().contains("thread/unsubscribe") }
         await connection.disconnect()
     }
 
@@ -125,7 +125,7 @@ struct ReattachTests {
         transport.emit(method: "thread/status/changed", params: [
             "threadId": .string(threadID), "seq": 4, "status": "running",
         ])
-        try await waitUntil { thread.status == .running }
+        try await eventually { thread.status == .running }
         await connection.disconnect()
     }
 
@@ -147,7 +147,7 @@ struct ReattachTests {
         let thread = connection.thread(threadID)
         await connection.open(thread)
         transport.emit(method: "thread/closed", params: ["threadId": .string(threadID), "seq": 41])
-        try await waitUntil { thread.status == .closed }
+        try await eventually { thread.status == .closed }
 
         await connection.send(thread, input: [.text(.init(text: "again"))])
 
@@ -156,7 +156,7 @@ struct ReattachTests {
         transport.emit(method: "thread/status/changed", params: [
             "threadId": .string(threadID), "seq": .number(Double(newStream + 3)), "status": "running",
         ])
-        try await waitUntil { thread.status == .running }
+        try await eventually { thread.status == .running }
         await connection.disconnect()
     }
 
@@ -219,26 +219,10 @@ struct ReattachTests {
         }.first
     }
 
-    private func waitUntilAsync(_ condition: () async -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(2)
-        while await !condition() {
-            if ContinuousClock.now > deadline { throw ReattachTestError.timeout }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
-
-    private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(2)
-        while !condition() {
-            if ContinuousClock.now > deadline { throw ReattachTestError.timeout }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
 }
 
 private enum ReattachTestError: Error {
     case noTransport
-    case timeout
 }
 
 private actor TransportQueue {

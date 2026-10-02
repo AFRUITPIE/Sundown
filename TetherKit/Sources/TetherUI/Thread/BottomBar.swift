@@ -78,23 +78,19 @@ struct SuggestedTasksBar: View {
     }
 }
 
-/// Starts a suggested task as a new chat in the window. Compared by owner, like the others.
+/// Starts a suggested task as a new chat in the window. Holds the window, like the others.
 struct StartSuggestedTaskAction: Equatable {
-    private let owner: ObjectIdentifier?
-    private let run: @MainActor (SuggestedTask, ThreadModel) -> Void
+    weak var window: WindowModel?
 
-    init(owner: AnyObject?, run: @escaping @MainActor (SuggestedTask, ThreadModel) -> Void) {
-        self.owner = owner.map(ObjectIdentifier.init)
-        self.run = run
+    @MainActor func callAsFunction(_ task: SuggestedTask, _ thread: ThreadModel) {
+        window?.startSuggestedTask(task, from: thread)
     }
 
-    @MainActor func callAsFunction(_ task: SuggestedTask, _ thread: ThreadModel) { run(task, thread) }
-
-    static func == (a: Self, b: Self) -> Bool { a.owner == b.owner }
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
 }
 
 extension EnvironmentValues {
-    @Entry var startSuggestedTask = StartSuggestedTaskAction(owner: nil) { _, _ in }
+    @Entry var startSuggestedTask = StartSuggestedTaskAction()
 }
 
 /// What's going on that the transcript doesn't say: an error, a retry, compacting, a plan limit

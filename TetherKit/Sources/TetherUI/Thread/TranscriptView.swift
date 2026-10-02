@@ -607,9 +607,6 @@ struct TranscriptTail: View {
 struct ActivityLine: View {
     let text: String
 
-    @Environment(\.reducesEffects) private var reducesEffects
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
         ActivityLabel(text: text, live: true)
             .fontWeight(.medium)

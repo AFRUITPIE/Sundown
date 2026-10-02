@@ -5,16 +5,15 @@ import Testing
 @MainActor
 @Suite
 struct TetherLinkTests {
-    @Test func linksRoundTripThroughTheirURL() {
-        let host = UUID()
-        let links: [TetherLink] = [
-            .chat(host: host, thread: "abc-123"),
-            .newChat(),
-            .newChat(host: host, folder: "~/Code/my app", prompt: "Fix the build & run tests", sendToken: UUID()),
-        ]
-        for link in links {
-            #expect(TetherLink(link.url) == link)
-        }
+    private nonisolated static let host = UUID()
+
+    @Test(arguments: [
+        TetherLink.chat(host: host, thread: "abc-123"),
+        .newChat(),
+        .newChat(host: host, folder: "~/Code/my app", prompt: "Fix the build & run tests", sendToken: UUID()),
+    ])
+    func linksRoundTripThroughTheirURL(link: TetherLink) {
+        #expect(TetherLink(link.url) == link)
     }
 
     @Test func otherURLsAreNotLinks() {

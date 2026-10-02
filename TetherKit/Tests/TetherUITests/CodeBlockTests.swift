@@ -4,12 +4,14 @@ import Testing
 /// A code block counts its lines once, in bytes, and draws only what's shown while collapsed.
 @Suite
 struct CodeBlockTests {
-    @Test func countsLinesAsTheCharactersDid() {
-        for code in ["", "one", "one\n", "one\ntwo\nthree", "\n\n", "é\nñ👍🏽\n日本"] {
-            let characters = code.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
-            #expect(CodeBlock.measure(code, limit: nil).lines == characters, "\(code.debugDescription)")
-        }
-        // A Windows line ending is one Character, which the old count missed; Text breaks there.
+    @Test(arguments: ["", "one", "one\n", "one\ntwo\nthree", "\n\n", "é\nñ👍🏽\n日本"])
+    func countsLinesAsTheCharactersDid(code: String) {
+        let characters = code.reduce(1) { $1 == "\n" ? $0 + 1 : $0 }
+        #expect(CodeBlock.measure(code, limit: nil).lines == characters, "\(code.debugDescription)")
+    }
+
+    /// A Windows line ending is one Character, which the old count missed; Text breaks there.
+    @Test func aWindowsLineEndingIsOneBreak() {
         #expect(CodeBlock.measure("a\r\nb", limit: nil).lines == 2)
     }
 

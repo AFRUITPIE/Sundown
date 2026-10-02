@@ -28,9 +28,9 @@ struct ComposerAttachmentTests {
     @Test func aSmallImageIsSentAsItCame() throws {
         let data = try Self.encoded(width: 200, height: 100, as: .jpeg)
         let attachment = try #require(Composer.prepareImage(data))
-        guard case .image(let base64, let mediaType) = attachment.kind else { Issue.record("not an image"); return }
-        #expect(mediaType == .imageJpeg)
-        #expect(Data(base64Encoded: base64) == data)
+        let image = try #require(attachment.kind.image, "not an image")
+        #expect(image.mediaType == .imageJpeg)
+        #expect(Data(base64Encoded: image.base64) == data)
         // The chip's picture fills 56 points at 2x without being larger than the image.
         #expect(attachment.thumbnail?.width == 200)
     }
@@ -38,9 +38,9 @@ struct ComposerAttachmentTests {
     @Test func aLargeImageIsScaledDownToWhatClaudeReads() throws {
         let data = try Self.encoded(width: 3_000, height: 2_000, as: .png)
         let attachment = try #require(Composer.prepareImage(data))
-        guard case .image(let base64, let mediaType) = attachment.kind else { Issue.record("not an image"); return }
-        #expect(mediaType == .imagePng)
-        let sent = try #require(Data(base64Encoded: base64).flatMap { CGImageSourceCreateWithData($0 as CFData, nil) })
+        let image = try #require(attachment.kind.image, "not an image")
+        #expect(image.mediaType == .imagePng)
+        let sent = try #require(Data(base64Encoded: image.base64).flatMap { CGImageSourceCreateWithData($0 as CFData, nil) })
         let properties = CGImageSourceCopyPropertiesAtIndex(sent, 0, nil) as? [CFString: Any]
         #expect(properties?[kCGImagePropertyPixelWidth] as? Int == 1_568)
         #expect(properties?[kCGImagePropertyPixelHeight] as? Int == 1_045)
@@ -63,14 +63,11 @@ struct ComposerAttachmentTests {
         try Data("hello".utf8).write(to: small)
         try Data(repeating: UInt8(ascii: "a"), count: Composer.maxTextAttachment + 1).write(to: large)
 
-        guard case .attachment(let a) = Composer.read(file: small, hostIsLocal: false), case .text(let content, let name) = a.kind else {
-            Issue.record("not attached as text"); return
-        }
-        #expect(content == "hello" && name == "notes.txt")
-        guard case .mention(let path) = Composer.read(file: large, hostIsLocal: false) else { Issue.record("not mentioned"); return }
-        #expect(path == large.path)
+        let text = try #require(Composer.read(file: small, hostIsLocal: false).attachment?.kind.text, "not attached as text")
+        #expect(text.content == "hello" && text.name == "notes.txt")
+        #expect(Composer.read(file: large, hostIsLocal: false).mention == large.path)
         // This Mac's Claude reads it where it is.
-        guard case .mention = Composer.read(file: small, hostIsLocal: true) else { Issue.record("not mentioned"); return }
+        #expect(Composer.read(file: small, hostIsLocal: true).mention != nil)
     }
 
     /// A prompt's image is decoded small, off the main actor, keeping the size it had whole.

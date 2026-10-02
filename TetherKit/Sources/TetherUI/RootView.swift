@@ -61,21 +61,11 @@ public struct RootView: View {
     public var body: some View {
         splitView
         // Reaches the inspector too, whose task list shows subagents the same way.
-        .environment(\.inspectSubagent, InspectSubagentAction(owner: window) { toolUseId in
-            window.inspectedTaskID = toolUseId
-            window.openInspector(on: .tasks)
-        })
-        .environment(\.restoreCode, ForkChatAction(owner: window) { window.restoreCode(before: $0) })
-        .environment(\.startSuggestedTask, StartSuggestedTaskAction(owner: window) { window.startSuggestedTask($0, from: $1) })
-        .environment(\.openChat, OpenChatAction(owner: window, resolve: { id in
-            // A desktop session's id carries a prefix ("local_…"); Claude Code's own is the rest.
-            let bare = id.split(separator: "_", maxSplits: 1).last.map(String.init) ?? id
-            return window.connection?.chats.first { $0.id == id || $0.id == bare }?.id
-        }, open: { window.open(threadID: $0) }))
-        .environment(\.forkChat, ForkChatAction(owner: window) { messageID in
-            guard let thread = window.selectedThread, let connection = window.connection else { return }
-            Task { if let fork = await connection.fork(thread, at: messageID) { window.open(threadID: fork.id) } }
-        })
+        .environment(\.inspectSubagent, InspectSubagentAction(window: window))
+        .environment(\.restoreCode, RestoreCodeAction(window: window))
+        .environment(\.startSuggestedTask, StartSuggestedTaskAction(window: window))
+        .environment(\.openChat, OpenChatAction(window: window))
+        .environment(\.forkChat, ForkChatAction(window: window))
         .environment(\.hostIsLocal, window.connection?.host.isLocal == true)
         .environment(\.transcriptFind, window.find)
         .environment(\.promptNavigator, window.prompts)
@@ -107,7 +97,7 @@ public struct RootView: View {
                     ToolbarItem(placement: .primaryAction) {
                         ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
-                    .visibilityPriority(.high)
+                    .visibilityPriority(ToolbarItemVisibilityPriority(higherThan: .high))
                     // Keeps the chat's settings apart from the inspector button beside them.
                     ToolbarSpacer(.fixed, placement: .primaryAction)
                 }
@@ -133,7 +123,11 @@ private struct InspectorColumn: ViewModifier {
     func body(content: Content) -> some View {
         content.inspector(isPresented: $window.showInspector) {
             InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-                .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+                // One width, not resizable. Narrower than the tab bar, the column followed the bar's
+                // minimum, which moves about 10 pt with the selected tab. And dragging the column
+                // wider could crash: SwiftUI's split view loops AppKit's Update Constraints until it
+                // throws (#83, an Apple bug), so there's no divider to drag until that's fixed.
+                .inspectorColumnWidth(Layout.inspectorWidth)
                 .toolbar {
                     ToolbarSpacer(.flexible)
                     ToolbarItem { InspectorToggle(window: window) }
@@ -158,7 +152,7 @@ struct DetailView: View {
                 NewChatView(window: window)
             }
         }
-        .coordinateSpace(name: MessageSendGeometry.space)
+        .coordinateSpace(MessageSendGeometry.space)
         .environment(\.messageSendGeometry, window.sendGeometry)
     }
 }
