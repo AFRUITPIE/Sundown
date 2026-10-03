@@ -78,9 +78,17 @@ public struct RootView: View {
         // No columnVisibility binding: writing it on every sidebar toggle rebuilt the toolbar mid-animation.
         NavigationSplitView {
             SidebarView(window: window)
+                // A flexible frame reports a minimum of 0 whatever its child wants, so the column's
+                // minimum comes only from the declared widths: a content-derived one that moved during
+                // constraint updates looped AppKit's Update Constraints when the window narrowed.
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
             DetailView(window: window)
+                // A flexible frame reports a minimum of 0 whatever its child wants, so the column's
+                // minimum comes only from the declared widths: a content-derived one that moved during
+                // constraint updates looped AppKit's Update Constraints when the window narrowed.
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(window.title)
@@ -116,6 +124,10 @@ private struct InspectorColumn: ViewModifier {
     func body(content: Content) -> some View {
         content.inspector(isPresented: $window.showInspector) {
             InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
+                // A flexible frame reports a minimum of 0 whatever its child wants, so the column's
+                // minimum comes only from the declared widths: a content-derived one that moved during
+                // constraint updates looped AppKit's Update Constraints when the window narrowed.
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 // Resizable. Dragging the column wider once crashed SwiftUI's split view (#83, an
                 // Apple bug); re-check that on each macOS build.
                 .inspectorColumnWidth(min: 260, ideal: 310, max: 420)
