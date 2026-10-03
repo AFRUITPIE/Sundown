@@ -155,8 +155,7 @@ struct ModelMenu: View {
             Divider()
             FastModeToggle(settings: settings)
         } label: {
-            ReservedWidthLabel(settings.modelLabel, systemImage: SessionSymbol.model,
-                               widestOf: settings.models.concrete.map(\.displayName) + [settings.modelLabel])
+            Label(settings.modelLabel, systemImage: SessionSymbol.model)
                 // Toolbar items are icon-only by default; this is the one that has to say a name.
                 // On the label, not the menu, which would pass it on to the menu's items.
                 .labelStyle(.titleAndIcon)
@@ -182,8 +181,8 @@ struct EffortMenu: View {
                 .pickerStyle(.inline)
         } label: {
             // The needle says the level in use, chosen or Claude Code's default.
-            ReservedWidthLabel("Effort", systemImage: settings.effectiveEffort.symbol(in: levels),
-                               symbols: [SessionSymbol.automaticEffort] + levels.map { $0.symbol(in: levels) })
+            Label("Effort", systemImage: settings.effectiveEffort.symbol(in: levels))
+                .contentTransition(.symbolEffect(.replace))
         }
         .disabled(!settings.isEnabled || settings.effortUnavailable)
         .help(settings.effortUnavailable ? "\(settings.modelLabel) doesn’t take an effort level" : "Effort, \(settings.effortLabel)")
@@ -202,9 +201,8 @@ struct PermissionsMenu: View {
         Menu {
             Section("Permissions") { PermissionModeItems(settings: settings) }
         } label: {
-            let label = ReservedWidthLabel(mode.label, systemImage: mode.symbol,
-                                           // Every mode, offered or not, so hiding one never resizes the control.
-                                           symbols: PermissionMode.selectable.map(\.symbol))
+            let label = Label(mode.label, systemImage: mode.symbol)
+                .contentTransition(.symbolEffect(.replace))
             // Only the dangerous mode styles its label: an unconditional `.foregroundStyle` would
             // also paint over the disabled appearance.
             if mode.isDangerous {

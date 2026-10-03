@@ -180,8 +180,8 @@ struct CopyButton: View {
             action()
             copied = true
         } label: {
-            ReservedWidthLabel(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc",
-                               widestOf: ["Copy", "Copied"], symbols: ["doc.on.doc", "checkmark"])
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .contentTransition(.symbolEffect(.replace))
         }
         .task(id: copied) {
             guard copied else { return }

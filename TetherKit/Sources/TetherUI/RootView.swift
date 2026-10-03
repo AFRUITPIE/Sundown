@@ -102,13 +102,6 @@ public struct RootView: View {
                     ToolbarSpacer(.fixed, placement: .primaryAction)
                 }
         }
-        // The sidebar at its usual width and room for every toolbar item (280 + 520), on the split
-        // view itself, inside the inspector: the inspector's column adds its own width to it, so
-        // the window widens only when the chat would get narrower than this, and shrinks back to
-        // it. Not a minimum on the detail column: SwiftUI counts the inspector's width twice
-        // there, so opening it set the window 600 pt past the closed minimum and held it; nor a
-        // minimum that changes as the inspector opens, which widened the window every time.
-        .frame(minWidth: 800, minHeight: 400)
         // Attached to the split view, so it is full height and present on every screen.
         .modifier(InspectorColumn(window: window))
     }
@@ -123,11 +116,9 @@ private struct InspectorColumn: ViewModifier {
     func body(content: Content) -> some View {
         content.inspector(isPresented: $window.showInspector) {
             InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-                // One width, not resizable. Narrower than the tab bar, the column followed the bar's
-                // minimum, which moves about 10 pt with the selected tab. And dragging the column
-                // wider could crash: SwiftUI's split view loops AppKit's Update Constraints until it
-                // throws (#83, an Apple bug), so there's no divider to drag until that's fixed.
-                .inspectorColumnWidth(Layout.inspectorWidth)
+                // Resizable. Dragging the column wider once crashed SwiftUI's split view (#83, an
+                // Apple bug); re-check that on each macOS build.
+                .inspectorColumnWidth(min: 260, ideal: 310, max: 420)
                 .toolbar {
                     ToolbarSpacer(.flexible)
                     ToolbarItem { InspectorToggle(window: window) }

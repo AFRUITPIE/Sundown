@@ -90,8 +90,6 @@ enum Layout {
     static let cardCornerRadius: CGFloat = 22
     /// Below the composer, in a chat and on New Chat alike, so it doesn't move when a chat starts.
     static let composerBottom: CGFloat = 14
-    /// The inspector's one width: the tab bar's, fixed (see `InspectorColumn`, #83).
-    static let inspectorWidth: CGFloat = 310
 }
 
 extension View {
