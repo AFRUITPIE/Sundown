@@ -409,7 +409,6 @@ struct SyntheticMessageView: View {
 /// New Chat's stand-in showed isn't faded in again as its chat's echo.
 @MainActor @Observable
 final class MessageSendGeometry {
-    static let spring = Animation.spring(response: 0.52, dampingFraction: 0.74)
     /// Counts this window's sends, for the transcript to go to its end on each.
     private(set) var sends = 0
     /// A prompt already shown in this window, in the stand-in New Chat showed while its chat

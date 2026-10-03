@@ -585,7 +585,7 @@ public final class HostConnection: Identifiable {
     /// The first is kept small: a chat opens at its end, and the lazy transcript measures every loaded
     /// row above the end to get there. 150 items made switching to a long chat cost about 0.5 s of
     /// main-thread work. Older pages are big: each one going in above the reader shows the wrong rows
-    /// for a few frames (`TranscriptView.keepPlace`), and at 50 items, a few turns of tool calls, that
+    /// for a few frames (the reader is held in place by the bottom anchor), and at 50 items, a few turns of tool calls, that
     /// was every couple of screens. With 550 items loaded, a resize took 5% more CPU than with 50.
     public static let initialHistoryLimit = 50
     public static let olderHistoryPageSize = 500

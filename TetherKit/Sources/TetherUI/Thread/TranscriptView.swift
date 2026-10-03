@@ -9,105 +9,63 @@ struct TranscriptView: View {
     let thread: ThreadModel
     var connection: HostConnection?
     @State private var position = ScrollPosition(edge: .bottom)
-    /// Whether the reader left the transcript at its end. Only their own scrolling changes it, so a
-    /// resize that briefly pushes the end off screen doesn't count as scrolling away.
-    @State private var followsEnd = true
-    /// More than a screen from the end: Jump to Latest is offered only then, so a nudge up (which
-    /// stops following the end) doesn't bring it up.
+    /// More than a screen from the end: Jump to Latest is offered only then.
     @State private var farFromEnd = false
-    /// Told when the reader opens a row, which stops following the end (below).
-    @State private var rowOpening = RowOpening()
     /// The rows on screen, for Chat ▸ Previous and Next Prompt. Not observed: it changes as rows
     /// scroll in and out, and nothing is drawn from it.
     @State private var onScreen = OnScreenRows()
-    /// Where the reader is, for loading older pages.
-    @State private var older = OlderPages()
     @Environment(\.transcriptFind) private var find
     @Environment(\.promptNavigator) private var promptNavigator
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.reducesEffects) private var reducesEffects
     @Environment(\.messageSendGeometry) private var sendGeometry
 
     var body: some View {
         ScrollView {
-            TranscriptContent(thread: thread, connection: connection, older: older)
+            TranscriptContent(thread: thread, connection: connection)
                 // A different Tool Calls folding is a different list of rows, made new: the lazy
                 // stack kept the rows it had built for the old one, and once the content had shrunk
                 // to the new one's height they lay outside what it showed, so the transcript stayed
                 // blank until the reader scrolled.
                 .id(appearance.toolCalls.folding)
-                .environment(\.rowOpening, rowOpening)
         }
-        // Opens at the end and keeps it pinned through content and size changes. A transcript shorter
-        // than the window sits at the top: aligned to the bottom, it was pushed down by a scroll offset
-        // and the toolbar's edge effect followed its top edge down the window.
         .accessibilityLabel("Transcript")
-        .defaultScrollAnchor(.bottom, for: .initialOffset)
-        // While it follows the end: else, when the reader opens a row ("Ran a command") at the end,
-        // the end stayed put and the row and everything above it moved up under them. Opening a row
-        // is reading, so it stops following and the row opens downward. Switched by that click,
-        // never from layout, where switching the anchor made AppKit throw.
-        .defaultScrollAnchor(followsEnd ? .bottom : .top, for: .sizeChanges)
-        .defaultScrollAnchor(.top, for: .alignment)
+        .defaultScrollAnchor(.bottom)
         .scrollPosition($position)
-        // A prompt arriving makes room with the sending spring, and so does Thinking… coming and
-        // going: the end anchor carries the transaction's animation, so the whole transcript glides
-        // up rather than jumping. On the scroll view, not its content, which the anchor's adjustment
-        // doesn't read. Streamed text and resizing keep the native, unanimated anchor.
-        .animation(motion, value: thread.arrivedPrompt)
-        .animation(motion, value: thread.isThinking)
         // A newly opened chat starts at its latest message.
         .onChange(of: thread.historyLoaded) {
             guard thread.historyLoaded else { return }
-            followsEnd = true
             position.scrollTo(edge: .bottom)
         }
-        // Sending from this window goes back to the end, where the prompt is about to land, from
-        // wherever the reader had scrolled to.
+        // Sending from this window goes back to the end, where the prompt is about to land.
         .onChange(of: sendGeometry?.sends) {
-            guard !followsEnd else { return }
             onScreen.lastPrompt = nil
-            followsEnd = true
             withAnimation(reduceMotion ? nil : .default) { position.scrollTo(edge: .bottom) }
         }
-        .onScrollGeometryChange(for: Place.self, of: { Place($0) }) { keepPlace(from: $0, to: $1) }
-        .onAppear {
-            older.page = thread.pageAnchor
-            rowOpening.willOpen = { if followsEnd { followsEnd = false } }
-        }
-        // Find Next and Previous bring the match into view; the reader has left the end to read it.
+        // Find Next and Previous bring the match into view.
         .onChange(of: find?.step) {
             guard let id = find?.current else { return }
             onScreen.lastPrompt = nil
-            older.taken = true
-            followsEnd = false
             withAnimation(reduceMotion ? nil : .default) { position.scrollTo(id: id, anchor: .center) }
         }
         // Chat ▸ Previous and Next Prompt, from where the reader is.
         .onChange(of: promptNavigator?.step) { goToPrompt() }
         .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { onScreen.ids = Set($0) }
-        .onScrollPhaseChange { old, new, context in
-            older.scrolling = new != .idle
-            // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
-            // Previous or Next last went to.
-            if new == .interacting {
-                onScreen.lastPrompt = nil
-                older.taken = false
-            }
-            guard new == .idle, old == .interacting || old == .decelerating else { return }
-            let g = context.geometry
-            followsEnd = g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 24
+        // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
+        // Previous or Next last went to.
+        .onScrollPhaseChange { _, new in
+            if new == .interacting { onScreen.lastPrompt = nil }
         }
-        // Offered once the reader has scrolled away, not whenever the end is off screen: a resize
-        // pushes it off for a frame or two, and the button flickered in and out. And only once
-        // they're more than a screen from the end, not for a nudge up.
+        .onScrollGeometryChange(for: Bool.self) { g in
+            g.contentSize.height - (g.contentOffset.y + g.containerSize.height) > g.containerSize.height
+        } action: { _, far in
+            farFromEnd = far
+        }
         .overlay(alignment: .bottom) {
             ZStack {
-                if !followsEnd && farFromEnd {
+                if farFromEnd {
                     Button("Jump to Latest", systemImage: "arrow.down") {
                         onScreen.lastPrompt = nil
-                        followsEnd = true
                         withAnimation(reduceMotion ? nil : .default) { position.scrollTo(edge: .bottom) }
                     }
                     .labelStyle(.iconOnly)
@@ -120,74 +78,12 @@ struct TranscriptView: View {
                 }
             }
             // Scoped to the button so the transcript's own layout changes don't animate.
-            .animation(.snappy, value: !followsEnd && farFromEnd)
+            .animation(.snappy, value: farFromEnd)
         }
     }
 }
 
 extension TranscriptView {
-    /// Keep a small settled tail measured exactly, without eagerly laying out a whole long turn.
-    static let eagerTailLimit = 8
-
-    /// Where the lazy stack ends and the eager tail begins. A live turn stays in one container as it
-    /// grows: moving its rows across the split would discard their view state. Once settled, only a
-    /// bounded tail needs exact measurements. Starting a turn keeps the settled tail where it was:
-    /// moved into the lazy stack, its rows were counted at guessed heights and the transcript
-    /// lurched by hundreds of points as the prompt went in.
-    static func split(_ rows: [TranscriptRow], prompts: [TranscriptPrompt], running: Bool) -> Int {
-        // Where a prompt's turn starts among the rows: at the date above it, when it has one.
-        func start(of prompt: TranscriptPrompt) -> Int? {
-            rows.lastIndex { $0.id == prompt.id }.map { i in
-                if i > 0, case .dateSeparator = rows[i - 1] { i - 1 } else { i }
-            }
-        }
-        let turnStart = prompts.last.flatMap(start) ?? rows.count
-        return if running {
-            max(prompts.dropLast().last.flatMap(start) ?? 0, turnStart - eagerTailLimit)
-        } else {
-            max(turnStart, rows.count - eagerTailLimit)
-        }
-    }
-
-    private var motion: Animation? { reduceMotion || reducesEffects ? nil : MessageSendGeometry.spring }
-
-    /// Where the reader is, and how tall what they're reading is.
-    struct Place: Equatable {
-        let content: CGFloat
-        let offset: CGFloat
-        let nearTop: Bool
-        /// More than a screen of transcript below what's shown.
-        let farFromEnd: Bool
-
-        init(_ g: ScrollGeometry) {
-            content = g.contentSize.height
-            // From the top of the content, as `scrollTo(y:)` takes it: the content offset counts
-            // from under the toolbar, and moving on by it left the reader the toolbar's height out.
-            offset = g.contentOffset.y + g.contentInsets.top
-            nearTop = offset < g.containerSize.height * 1.5
-            farFromEnd = g.contentSize.height - (g.contentOffset.y + g.containerSize.height) > g.containerSize.height
-        }
-    }
-
-    /// An older page goes in above the reader, who stays on the row they were reading. The scroll
-    /// view keeps the same offset from the top, which showed the page's first rows, so once the
-    /// page is laid out the reader is moved on by what it added. A frame late: SwiftUI holds a
-    /// place as content goes in above only at the end, not by a row's identity (`scrollTo(id:)`,
-    /// a position typed by row) or a size-change anchor, and nothing set as the page goes in reaches
-    /// the frame that lays it out. `ThreadModel.pageAnchor` says a page added rows; the rows aren't
-    /// read here, which would redraw this view whenever they change.
-    private func keepPlace(from old: Place, to new: Place) {
-        if farFromEnd != new.farFromEnd { farFromEnd = new.farFromEnd }
-        let nearTop = new.nearTop && !older.taken
-        if older.nearTop != nearTop { older.nearTop = nearTop }
-        guard let page = thread.pageAnchor, page != older.page, new.content > old.content else { return }
-        older.page = page
-        // At the end the scroll view keeps the place itself. Not told by the offset having moved:
-        // the scroll for a page just before can land in the same frame as the next.
-        guard !followsEnd else { return }
-        position.scrollTo(point: CGPoint(x: 0, y: new.offset + new.content - old.content))
-    }
-
     /// Which rows are on screen, and the prompt Previous or Next Prompt last went to, which the next
     /// press goes on from until the reader scrolls.
     final class OnScreenRows {
@@ -196,7 +92,7 @@ extension TranscriptView {
     }
 
     /// Brings the prompt before or after the reader's place to the top; past the last one, Next goes
-    /// to the end. The reader has left the end to read it, as with Find. Before the first prompt
+    /// to the end. Before the first prompt
     /// held, Previous loads older pages until one has a prompt: only the latest page is loaded when
     /// a chat opens, and Previous stopped there.
     private func goToPrompt() {
@@ -206,7 +102,6 @@ extension TranscriptView {
             show(prompt: id)
         } else if direction == .next {
             onScreen.lastPrompt = nil
-            followsEnd = true
             withAnimation(reduceMotion ? nil : .default) { position.scrollTo(edge: .bottom) }
         } else if thread.hasMoreHistory, let connection {
             Task {
@@ -222,9 +117,6 @@ extension TranscriptView {
                     case .failed, .unavailable, .complete: break pages
                     }
                 }
-                // Going to the prompt, not held in place as the pages go in above (`keepPlace`): that
-                // scroll came after this one when a big page took a while to lay out, and undid it.
-                older.page = thread.pageAnchor
                 // Once the pages' rows exist.
                 try? await Task.sleep(for: .milliseconds(50))
                 if let id = promptTarget(.previous) { show(prompt: id) }
@@ -239,8 +131,6 @@ extension TranscriptView {
 
     private func show(prompt id: String) {
         onScreen.lastPrompt = id
-        older.taken = true
-        followsEnd = false
         withAnimation(reduceMotion ? nil : .default) { position.scrollTo(id: id, anchor: .top) }
     }
 }
@@ -250,7 +140,6 @@ extension TranscriptView {
 private struct TranscriptContent: View {
     let thread: ThreadModel
     let connection: HostConnection?
-    let older: OlderPages
     @Environment(\.appearance) private var appearance
     @State private var turnHover = TurnHover()
 
@@ -258,41 +147,22 @@ private struct TranscriptContent: View {
         let folding = appearance.toolCalls.folding
         let rows = thread.rows(folding)
         let places = TurnPlaces(rows, prompts: thread.prompts(folding), running: thread.isRunning)
-        // Live once the turn's prompt is in, whichever of the turn, the running status and the
-        // prompt's echo comes first: in between, the tail moved and moved back.
-        let split = TranscriptView.split(rows, prompts: thread.prompts(folding),
-                                          running: (thread.isRunning || thread.currentTurn != nil) && !thread.awaitingPrompt)
-        VStack(alignment: .leading, spacing: 14) {
-            if !thread.historyLoaded || thread.hasMoreHistory || split > 0 {
-                LazyVStack(alignment: .leading, spacing: 14) {
-                    if !thread.historyLoaded {
-                        TranscriptUnavailable(thread: thread, connection: connection)
-                    }
-                    if thread.historyLoaded, thread.hasMoreHistory {
-                        OlderHistoryTrigger(thread: thread, connection: connection, older: older)
-                    }
-                    // One plain view per row, identified by the ForEach alone: an `.id()` here adds a
-                    // node to every row, and the lazy stack walks every row on each layout pass.
-                    ForEach(rows[..<split], id: \.id) { row in
-                        TranscriptRowView(row: row, thread: thread, place: place(of: row, in: places))
-                    }
-                }
-                // Rows are scroll targets by their ids, so an older page can keep the reader where they were.
-                .scrollTargetLayout()
+        LazyVStack(alignment: .leading, spacing: 14) {
+            if !thread.historyLoaded {
+                TranscriptUnavailable(thread: thread, connection: connection)
             }
-            // The live turn, or a bounded tail of a settled turn, built in full rather than lazily. The lazy
-            // stack counts a row it hasn't built at a guessed height; a row just added at the end was
-            // counted that way until built, then at its own, a different total, and the scroll view's
-            // anchor on the end moved the transcript by the difference, which changed which rows the
-            // stack built, and so on: the transcript bounced between two places while a reply streamed.
-            VStack(alignment: .leading, spacing: 14) {
-                ForEach(rows[split...], id: \.id) { row in
-                    TranscriptRowView(row: row, thread: thread, place: place(of: row, in: places))
-                }
-                TranscriptTail(thread: thread)
+            if thread.historyLoaded, thread.hasMoreHistory {
+                OlderHistoryTrigger(thread: thread, connection: connection)
             }
-            .scrollTargetLayout()
+            // One plain view per row, identified by the ForEach alone: an `.id()` here adds a
+            // node to every row, and the lazy stack walks every row on each layout pass.
+            ForEach(rows, id: \.id) { row in
+                TranscriptRowView(row: row, thread: thread, place: place(of: row, in: places))
+            }
+            TranscriptTail(thread: thread)
         }
+        // Rows are scroll targets by their ids: Previous Prompt and Find scroll to them.
+        .scrollTargetLayout()
         .environment(\.turnHover, turnHover)
         // VoiceOver's way from prompt to prompt, which reaches the ones the lazy stack hasn't built.
         // On a container element, as a rotor has to be. Made with the rows, not from them per draw.
@@ -323,49 +193,23 @@ private struct TranscriptContent: View {
     }
 }
 
-/// Where the reader is, as loading older pages needs it. Only the spinner that loads them observes
-/// it, so nothing else redraws as the reader nears the top.
-@MainActor @Observable
-final class OlderPages {
-    /// Within a screen and a half of the top: the page before is asked for from there, so it's
-    /// usually in before the reader gets to the top.
-    var nearTop = false
-    /// Whether the reader is scrolling. SwiftUI ignores a scroll position set meanwhile, so the
-    /// reader's place couldn't be kept: a page waits for them to stop (`settled`).
-    @ObservationIgnored var scrolling = false
-    /// Whether Previous Prompt or Find took the reader where they are, and they haven't scrolled
-    /// since. No page is asked for meanwhile: going in, it moved what they were taken to a little,
-    /// as the lazy stack measured the page's rows. Previous Prompt loads the pages it needs itself.
-    @ObservationIgnored var taken = false
-    /// The last page the reader was kept in place past.
-    @ObservationIgnored var page: ThreadModel.PageAnchor?
-
-    func settled() async {
-        while scrolling, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(50)) }
-    }
-}
-
-/// Asks for the previous page while the reader is near the top of the transcript, one page at a
-/// time. Not while the host is down, and after a failure it waits longer each time before asking
-/// again, then says it couldn't, with Try Again: every 300 ms it asked a host that couldn't answer.
-/// Scrolling away from the top and back, or the host coming back, starts it over too.
-private struct OlderHistoryTrigger: View {
+/// Asks for the previous page when it appears at the top of the transcript, one page at a time.
+/// Not while the host is down, and after a failure it waits longer each time before asking again,
+/// then says it couldn't, with Try Again. A page that leaves it on screen is followed by the next.
+struct OlderHistoryTrigger: View {
     let thread: ThreadModel
     let connection: HostConnection?
-    let older: OlderPages
     @State private var gaveUp: Bool
     @State private var attempt = 0
 
-    init(thread: ThreadModel, connection: HostConnection?, older: OlderPages, gaveUp: Bool = false) {
+    init(thread: ThreadModel, connection: HostConnection?, gaveUp: Bool = false) {
         self.thread = thread
         self.connection = connection
-        self.older = older
         _gaveUp = State(initialValue: gaveUp)
     }
 
-    /// What the asking depends on: a change of any starts it over.
+    /// What the asking depends on: a change of either starts it over.
     private struct Asking: Equatable {
-        let nearTop: Bool
         let connected: Bool
         let attempt: Int
     }
@@ -389,14 +233,13 @@ private struct OlderHistoryTrigger: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
-        // A page goes in above the reader and normally takes them away from the top, which ends
-        // this. One short enough to leave them near it changes nothing, so after a moment for the
-        // scroll to settle the next page is asked for here.
-        .task(id: Asking(nearTop: older.nearTop, connected: connected, attempt: attempt)) {
+        // Runs while the row is on screen; leaving it cancels. `loadOlderHistory` answers `.busy`
+        // for a page already in flight, so asking again doesn't duplicate it.
+        .task(id: Asking(connected: connected, attempt: attempt)) {
             var failures = 0
-            while older.nearTop, connected, thread.hasMoreHistory, let connection, !Task.isCancelled {
+            while connected, thread.hasMoreHistory, let connection, !Task.isCancelled {
                 gaveUp = false
-                switch await connection.loadOlderHistory(thread, whenReady: older.settled) {
+                switch await connection.loadOlderHistory(thread) {
                 case .loaded, .busy:
                     failures = 0
                     try? await Task.sleep(for: .milliseconds(300))
@@ -660,7 +503,7 @@ struct TurnOutcome: View {
 
 /// Older history that couldn't be loaded after a few tries: said once, quietly, with Try Again.
 #Preview("Earlier messages (couldn’t load)") {
-    OlderHistoryTrigger(thread: .sampleIdleChat(), connection: nil, older: OlderPages(), gaveUp: true)
+    OlderHistoryTrigger(thread: .sampleIdleChat(), connection: nil, gaveUp: true)
         .padding(20)
         .frame(width: 500)
 }
@@ -695,14 +538,7 @@ final class TurnHover {
     }
 }
 
-/// The transcript's to tell when the reader opens a row. One object for the transcript's life, so
-/// the environment value never changes and no row redraws for it.
-final class RowOpening {
-    var willOpen: () -> Void = {}
-}
-
 extension EnvironmentValues {
     @Entry var turnHover: TurnHover? = nil
-    @Entry var rowOpening: RowOpening? = nil
     @Entry var turnPlace: TurnPlace? = nil
 }
