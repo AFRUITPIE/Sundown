@@ -854,11 +854,10 @@ public final class HostConnection: Identifiable {
         case failed
     }
 
-    /// Fetch the page before the items already held, one page at a time. It goes in once `whenReady`
-    /// returns: the transcript holds it until the reader stops scrolling. Cancelled meanwhile, it
+    /// Fetch the page before the items already held, one page at a time. Cancelled meanwhile, it
     /// doesn't go in.
     @discardableResult
-    public func loadOlderHistory(_ model: ThreadModel, whenReady: @MainActor () async -> Void = {}) async -> OlderHistoryOutcome {
+    public func loadOlderHistory(_ model: ThreadModel) async -> OlderHistoryOutcome {
         guard model.hasMoreHistory, let oldest = model.items.first?.id else { return .complete }
         guard !model.loadingOlder else { return .busy }
         guard let client else { return .unavailable }
@@ -870,7 +869,6 @@ public final class HostConnection: Identifiable {
             let r = try await client.call(Methods.ThreadRead.self, .init(
                 threadId: model.id, cwd: model.cwd, limit: Self.olderHistoryPageSize, before: oldest))
             let changes = await FileChange.changes(ofCallsIn: r.items)
-            await whenReady()
             // Only onto what it was asked before: a chat trimmed or let go meanwhile would be left
             // with a gap between the page and what it now holds. Asked again, from what it holds.
             guard !Task.isCancelled, model.itemIndex(of: oldest) == 0 else { return .busy }

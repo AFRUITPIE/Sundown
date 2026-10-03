@@ -101,17 +101,6 @@ public final class ThreadModel: Identifiable {
     /// an unnamed chat's title doesn't turn into a later prompt.
     @ObservationIgnored private var openingPrompt: String?
 
-    /// Where the reader was when an older page last went in above them: the row that was first.
-    /// The transcript keeps that row where it was. Set only by a page, so the transcript's scroll
-    /// state observes this rather than the rows.
-    public private(set) var pageAnchor: PageAnchor?
-
-    public struct PageAnchor: Equatable, Sendable {
-        public let rowID: String
-        /// Tells apart two pages that went in above the same row.
-        let serial: Int
-    }
-
     /// Claude's name for the session once it has one, else the opening prompt. Stored rather than
     /// computed: a title that reads `items` would make every streamed delta invalidate the sidebar
     /// row and the window title.
@@ -267,18 +256,8 @@ public final class ThreadModel: Identifiable {
         remember(changes)
         let fresh = older.filter { index[$0.id] == nil }
         guard !fresh.isEmpty else { return }
-        let drawn = folded
         storage.insert(contentsOf: fresh, at: 0)
         reindex()
-        // The row the reader had at the top, as last drawn, stays where it is: the first one still
-        // there, since a page can take the date off the prompt that was first. Folded now for that,
-        // and the transcript's next draw finds them made. Nothing moves while the page adds no rows.
-        guard let drawn, let top = drawn.rows.first?.id else { return }
-        let now = rows(drawn.folding)
-        guard now.first?.id != top else { return }
-        let ids = Set(now.lazy.map(\.id))
-        guard let anchor = drawn.rows.lazy.map(\.id).first(where: ids.contains) else { return }
-        pageAnchor = PageAnchor(rowID: anchor, serial: (pageAnchor?.serial ?? 0) &+ 1)
     }
 
     /// Changes counted ahead of drawing, for the calls not already counted.

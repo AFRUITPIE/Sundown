@@ -272,45 +272,4 @@ struct IncrementalRowsTests {
         #expect(tail.happened)
         #expect(thread.isThinking)
     }
-
-    /// The transcript's scroll state keeps the reader's row in place when an older page goes in
-    /// above it, from `pageAnchor`, which nothing but a page changes.
-    @Test func onlyAnOlderPageMovesTheAnchor() {
-        let thread = ThreadModel(id: threadID)
-        thread.loadHistory(items: [prompt("p2", 0), reply("a2", 1)], turns: [], seq: 1, hasMore: true)
-        #expect(thread.rows(.summarized).first?.id == "date-p2")
-        let anchor = Changed()
-        withObservationTracking { _ = thread.pageAnchor } onChange: { anchor.happened = true }
-
-        thread.apply(.itemStarted(.init(threadId: threadID, seq: 2, item: prompt("p3", 2))))
-        thread.apply(.threadStatusChanged(.init(threadId: threadID, seq: 3, status: .running)))
-        #expect(!anchor.happened)
-        #expect(thread.pageAnchor == nil)
-
-        // A page from five minutes before takes the date off p2 (unless midnight came between):
-        // then its prompt keeps its place instead.
-        thread.prependHistory(items: [prompt("p1", -5), call("o1", -4)], hasMore: true)
-        let rows = thread.rows(.summarized)
-        #expect(anchor.happened)
-        #expect(thread.pageAnchor?.rowID == (rows.contains { $0.id == "date-p2" } ? "date-p2" : "p2"))
-        #expect(rows.first?.id == "date-p1")
-
-        // The same page again adds nothing, and moves nothing.
-        let again = thread.pageAnchor
-        thread.prependHistory(items: [prompt("p1", -5)], hasMore: false)
-        #expect(thread.pageAnchor == again)
-    }
-
-    @Test func aPageThatAddsNoRowsMovesNothing() {
-        let thread = ThreadModel(id: threadID)
-        thread.loadHistory(items: [prompt("p2", 0)], turns: [], seq: 1, hasMore: true)
-        _ = thread.rows(.everyCall)
-        thread.prependHistory(items: [reasoning("r0", -1)], hasMore: false)
-        #expect(thread.pageAnchor == nil)
-    }
-}
-
-/// Observation's `onChange` is `@Sendable`, so the flag it sets needs a reference to live in.
-private final class Changed: @unchecked Sendable {
-    var happened = false
 }
