@@ -31,6 +31,8 @@ struct TranscriptView: View {
         }
         .accessibilityLabel("Transcript")
         .defaultScrollAnchor(.bottom)
+        // Bottom-aligned short content pushed the top edge effect down the window.
+        .defaultScrollAnchor(.top, for: .alignment)
         .scrollPosition($position)
         // A newly opened chat starts at its latest message.
         .onChange(of: thread.historyLoaded) {
