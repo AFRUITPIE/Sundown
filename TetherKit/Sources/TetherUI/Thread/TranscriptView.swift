@@ -65,17 +65,11 @@ struct TranscriptView: View {
         }
         // Sending from this window goes back to the end, where the prompt is about to land, from
         // wherever the reader had scrolled to.
-        // The prompt waits for the scroll to finish before it flies (`scrollingToEnd`).
         .onChange(of: sendGeometry?.sends) {
             guard !followsEnd else { return }
             onScreen.lastPrompt = nil
             followsEnd = true
-            sendGeometry?.scrollingToEnd = true
-            withAnimation(reduceMotion ? nil : .default, completionCriteria: .logicallyComplete) {
-                position.scrollTo(edge: .bottom)
-            } completion: {
-                sendGeometry?.scrollingToEnd = false
-            }
+            withAnimation(reduceMotion ? nil : .default) { position.scrollTo(edge: .bottom) }
         }
         .onScrollGeometryChange(for: Place.self, of: { Place($0) }) { keepPlace(from: $0, to: $1) }
         .onAppear {
@@ -435,11 +429,6 @@ struct TranscriptRowView: View, Equatable {
     @Environment(\.messageSendGeometry) private var sendGeometry
     @Environment(\.turnHover) private var turnHover
 
-    private var isSendingPrompt: Bool {
-        guard case .item(.userMessage(let message)) = row else { return false }
-        return sendGeometry?.activeMessageID == message.id
-    }
-
     nonisolated static func == (a: Self, b: Self) -> Bool {
         guard a.thread === b.thread, a.place == b.place else { return false }
         switch (a.row, b.row) {
@@ -460,10 +449,9 @@ struct TranscriptRowView: View, Equatable {
         VStack(alignment: .leading, spacing: 0) {
             switch row {
             case .item(let item):
-                // A prompt that already flew here as a chat started doesn't fade in again either.
+                // A prompt already shown here as a chat started doesn't fade in again.
                 LiveItemView(box: thread.box(for: item), thread: thread)
-                    .modifier(FadesIn(isNew: thread.justStarted(item.id) && sendGeometry?.landedPrompt != item.id,
-                                      bypass: isSendingPrompt))
+                    .modifier(FadesIn(isNew: thread.justStarted(item.id) && sendGeometry?.landedPrompt != item.id))
             case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread, rowID: row.id)
             case .turnWork(let id, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread, rowID: id)
             case .turnEdits(let edits): TurnEditsView(edits: edits, cwd: thread.cwd)
@@ -474,26 +462,21 @@ struct TranscriptRowView: View, Equatable {
         .transformEnvironment(\.turnPlace) { if let place { $0 = place } }
         // Anywhere in a turn shows its actions, after its last reply.
         .onHover { inside in if let place { turnHover?.pointer(inside, turn: place.turn) } }
-        // A reply can begin immediately. Keep the moving surface above its sibling text while
-        // crossing that row, then return to normal drawing order when the handoff settles.
-        .zIndex(isSendingPrompt ? 1 : 0)
     }
 }
 
 /// A row for an item that just started fades in rather than popping in. Opacity only, so it suits
 /// Reduce Motion as it is.
 private struct FadesIn: ViewModifier {
-    let bypass: Bool
     @State private var shown: Bool
 
-    init(isNew: Bool, bypass: Bool = false) {
-        self.bypass = bypass
+    init(isNew: Bool) {
         _shown = State(initialValue: !isNew)
     }
 
     func body(content: Content) -> some View {
         content
-            .opacity(bypass || shown ? 1 : 0)
+            .opacity(shown ? 1 : 0)
             .onAppear {
                 guard !shown else { return }
                 withAnimation(.easeOut(duration: FadeInRenderer.duration)) { shown = true }
@@ -577,14 +560,6 @@ struct TranscriptPlaceholder<Actions: View>: View {
 struct TranscriptTail: View {
     let thread: ThreadModel
     @Environment(\.appearance) private var appearance
-    @Environment(\.messageSendGeometry) private var sendGeometry
-
-    /// A prompt sent from this window is still flying into place (or about to: its row takes the
-    /// launch once it's drawn, under Reduce Motion too). The line under it waits for it to land,
-    /// keeping its room so nothing moves when it shows.
-    private var promptInFlight: Bool {
-        sendGeometry?.activeMessageID != nil || sendGeometry?.hasLaunch == true
-    }
 
     /// Whether the turn's run of calls is the last row, and says Thinking itself.
     private var runSaysIt: Bool {
@@ -606,9 +581,6 @@ struct TranscriptTail: View {
         Group {
             if let activity {
                 ActivityLine(text: activity)
-                    .opacity(promptInFlight ? 0 : 1)
-                    .animation(.easeOut(duration: 0.2), value: promptInFlight)
-                    .accessibilityHidden(promptInFlight)
             }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {

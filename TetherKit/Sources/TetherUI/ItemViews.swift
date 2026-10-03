@@ -18,8 +18,6 @@ struct LiveItemView: View {
 struct ItemView: View {
     let item: Item
     let thread: ThreadModel
-    @Environment(\.messageSendGeometry) private var sendGeometry
-
     var body: some View {
         switch item {
         case .userMessage(let m) where m.synthetic == true || m.parentToolUseId != nil:
@@ -27,14 +25,8 @@ struct ItemView: View {
             // middle, not a prompt on the person's side.
             SyntheticMessageView(message: m)
         case .userMessage(let m):
-            // The prompt that just arrived, in the window whose field sent it.
-            // Not the echo of one that already flew here, as a chat being started (`landedPrompt`).
-            let justSent = thread.arrivedPrompt == m.id && m.synthetic != true && m.origin == nil
-                && sendGeometry?.landedPrompt != m.id
-            let launches = justSent && sendGeometry?.hasLaunch == true
-            UserMessageView(message: m, justSent: justSent, canAnimate: launches)
-                .messageMenu(id: m.id, text: m.plainText, isMarkdown: false, sentAt: m.createdAt,
-                             arrivalID: justSent ? m.id : nil, animateArrival: launches)
+            UserMessageView(message: m)
+                .messageMenu(id: m.id, text: m.plainText, isMarkdown: false, sentAt: m.createdAt)
         case .agentMessage(let m):
             // Only the reply being streamed into fades its new text in; every other reply is settled.
             MarkdownView(text: m.text, streams: thread.streamingReplyID == m.id)
@@ -78,25 +70,14 @@ private struct MessageMenu: ViewModifier {
     let isMarkdown: Bool
     /// Milliseconds since 1970.
     let sentAt: Double
-    let arrivalID: String?
-    let animateArrival: Bool
     /// All of Claude's messages in the turn, for the turn's Copy.
     var turnText: (() -> String)?
-    @State private var arrivalPrepared = false
     @State private var hovering = false
     @Environment(\.turnPlace) private var place
     @Environment(\.turnHover) private var turnHover
     @Environment(\.forkChat) private var forkChat
     @Environment(\.restoreCode) private var restoreCode
     @Environment(\.offersChatActions) private var offersChatActions
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.reducesEffects) private var reducesEffects
-    @Environment(\.messageSendGeometry) private var sendGeometry
-
-    private var hidesActions: Bool {
-        !reduceMotion && !reducesEffects &&
-        (sendGeometry?.activeMessageID == id || (animateArrival && !arrivalPrepared))
-    }
 
     /// A prompt's bubble sits at the trailing edge; a reply at the leading one.
     private var trailing: Bool { !isMarkdown }
@@ -113,8 +94,6 @@ private struct MessageMenu: ViewModifier {
             if hasBar {
                 bar
                     .opacity(showsActions ? 1 : 0)
-                    .allowsHitTesting(!hidesActions)
-                    .accessibilityHidden(hidesActions)
                     .animation(.easeOut(duration: 0.12), value: showsActions)
             }
         }
@@ -131,9 +110,6 @@ private struct MessageMenu: ViewModifier {
                     Button("Fork from Here") { forkChat(id) }
                     if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
                 }
-            }
-            .task(id: arrivalID) {
-                arrivalPrepared = true
             }
     }
 
@@ -153,7 +129,6 @@ private struct MessageMenu: ViewModifier {
     private var hasBar: Bool { !isMarkdown || place == nil || place?.isEnd == true }
 
     private var showsActions: Bool {
-        guard !hidesActions else { return false }
         if hovering { return true }
         guard isMarkdown, let place else { return false }
         return turnHover?.turn == place.turn
@@ -219,10 +194,8 @@ struct CopyButton: View {
 
 extension View {
     func messageMenu(id: String, text: String, isMarkdown: Bool, sentAt: Double,
-                     arrivalID: String? = nil, animateArrival: Bool = false,
                      turnText: (() -> String)? = nil) -> some View {
-        modifier(MessageMenu(id: id, text: text, isMarkdown: isMarkdown, sentAt: sentAt,
-                             arrivalID: arrivalID, animateArrival: animateArrival, turnText: turnText))
+        modifier(MessageMenu(id: id, text: text, isMarkdown: isMarkdown, sentAt: sentAt, turnText: turnText))
     }
 }
 
@@ -293,97 +266,17 @@ struct OpenChatAction: Equatable {
 
 struct UserMessageView: View {
     let message: Item.UserMessage
-    let justSent: Bool
-    let canAnimate: Bool
-    @State private var arrived = true
-    @State private var sending = false
-    @State private var prepared = false
-    @State private var launchFrame: CGRect?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.reducesEffects) private var reducesEffects
-    @Environment(\.messageSendGeometry) private var sendGeometry
     @Environment(\.colorSchemeContrast) private var contrast
-
-    init(message: Item.UserMessage, justSent: Bool = false, canAnimate: Bool = true) {
-        self.message = message
-        self.justSent = justSent
-        self.canAnimate = canAnimate
-    }
 
     var body: some View {
         HStack {
             Spacer(minLength: 60)
-            surface
-                .modifier(SentMessagePosition(arrived: arrived || reduceMotion || reducesEffects,
-                                              origin: sending ? launchFrame : nil))
-                .opacity(justSent && canAnimate && !prepared && !reduceMotion && !reducesEffects ? 0 : 1)
-                // The transient subtree settles before selection starts, so a mid-flight drag
-                // cannot begin a selection that the glass-to-fill handoff would discard.
-                .allowsHitTesting(!sending)
+            parts(alignment: .trailing)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(message.synthetic == true ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(bubbleBlue),
+                            in: .rect(cornerRadius: Layout.cardCornerRadius))
         }
-        .task(id: justSent) {
-            guard justSent else { prepared = true; arrived = true; sending = false; return }
-            // Taken whether or not it flies, so the line under it doesn't wait for a flight.
-            let launch = sendGeometry?.takeLaunch(for: message.id)
-            guard !reduceMotion, !reducesEffects, let frame = launch else {
-                prepared = true
-                arrived = true
-                return
-            }
-            // Hidden where it will land until the transcript has scrolled back to its end.
-            for _ in 0..<60 where sendGeometry?.scrollingToEnd == true {
-                try? await Task.sleep(for: .milliseconds(16))
-            }
-            guard !Task.isCancelled else { prepared = true; arrived = true; return }
-            sendGeometry?.beginFlight(message.id)
-            launchFrame = frame
-            sending = true
-            arrived = false
-            prepared = true
-            defer {
-                arrived = true
-                sending = false
-                sendGeometry?.finishSend(message.id)
-            }
-            // Give the visual effect its initial render at the composer before lifting into the row.
-            try? await Task.sleep(for: .milliseconds(16))
-            guard !Task.isCancelled else { arrived = true; sending = false; return }
-            // A damped spring gives the reference's acceleration, small overshoot and soft return.
-            // Completion follows the actual spring tail, rather than replacing glass on a timer.
-            await withCheckedContinuation { continuation in
-                withAnimation(MessageSendGeometry.spring, completionCriteria: .removed) {
-                    arrived = true
-                } completion: {
-                    continuation.resume()
-                }
-            }
-            guard !Task.isCancelled else { return }
-        }
-        .onDisappear {
-            arrived = true
-            sending = false
-            sendGeometry?.finishSend(message.id)
-        }
-    }
-
-    /// Only the active handoff's background needs a glass renderer. Its text stays outside the
-    /// capture so an independently morphing surface cannot composite over the message.
-    private var surface: some View { bubble }
-
-    private var bubble: some View {
-        parts(alignment: .trailing)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .scaleEffect(sending && !arrived ? 0.92 : 1, anchor: .bottomTrailing)
-            .background(alignment: .bottomTrailing) {
-                if sending {
-                    SendingMessageSurface(arrived: arrived, origin: launchFrame, blue: bubbleBlue)
-                        .transition(.identity)
-                } else {
-                    RoundedRectangle(cornerRadius: Layout.cardCornerRadius)
-                        .fill(message.synthetic == true ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(bubbleBlue))
-                }
-            }
     }
 
     /// System blue keeps the Messages-inspired identity across appearances. A modest dark mix
@@ -512,133 +405,19 @@ struct SyntheticMessageView: View {
     }
 }
 
-/// Transform the complete rendered surface, after its glass effect. Visual geometry leaves the
-/// final row's layout untouched and avoids reshaping or rewrapping selectable text in flight.
-private struct SentMessagePosition: ViewModifier {
-    let arrived: Bool
-    let origin: CGRect?
-
-    @ViewBuilder func body(content: Content) -> some View {
-        if let origin {
-            content.visualEffect { effect, geometry in
-                let target = geometry.frame(in: MessageSendGeometry.space)
-                return effect
-                    .offset(x: arrived ? 0 : origin.maxX - target.maxX,
-                            y: arrived ? 0 : origin.maxY - target.maxY)
-            }
-        } else {
-            content
-        }
-    }
-}
-
-/// Only the background's inexpensive shape changes size. Its rounded corners stay circular,
-/// while the independently drawn text keeps its final measurement and line breaks.
-private struct SendingMessageSurface: View {
-    let arrived: Bool
-    let origin: CGRect?
-    let blue: Color
-    @State private var size: CGSize = .zero
-
-    var body: some View {
-        Color.clear
-            .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
-            .overlay(alignment: .bottomTrailing) {
-                GlassEffectContainer {
-                    RoundedRectangle(cornerRadius: Layout.cardCornerRadius)
-                        .fill(blue)
-                        .frame(width: arrived ? size.width : origin?.width ?? size.width,
-                               height: arrived ? size.height : origin?.height ?? size.height)
-                        .glassEffect(.regular.tint(blue), in: .rect(cornerRadius: Layout.cardCornerRadius))
-                        .animation(.spring(response: 0.26, dampingFraction: 0.8), value: arrived)
-                }
-            }
-    }
-}
-
-/// One stable coordinate space per detail column, preserved when New Chat becomes a chat. The
-/// window's own (`WindowModel.sendGeometry`), so starting a chat can wait for its prompt to land.
-/// Only a sending bubble reads the frame. No scroll-frame state reaches the transcript's rows.
+/// What a window's sends do to its chat: the transcript goes to its end on each, and the prompt
+/// New Chat's stand-in showed isn't faded in again as its chat's echo.
 @MainActor @Observable
 final class MessageSendGeometry {
-    nonisolated static var space: NamedCoordinateSpace { .named("message.send") }
     static let spring = Animation.spring(response: 0.52, dampingFraction: 0.74)
-    var composerFrame: CGRect?
-    /// The filled editor's frame as it sent, before clearing a multiline draft collapsed it, for
-    /// the next prompt to arrive here. Only the window that sent it holds one, and only for a few
-    /// seconds: a send that failed lapses. Observed, so what waits for the prompt to land (the
-    /// line under it) sees it taken or lapsed.
-    private(set) var submittedFrame: CGRect?
-    @ObservationIgnored private var lapse: Task<Void, Never>?
-    var activeMessageID: String?
     /// Counts this window's sends, for the transcript to go to its end on each.
     private(set) var sends = 0
-    /// While the transcript scrolls back to its end for a send, the prompt waits to fly until
-    /// it's there, so the reader sees the scroll and then the flight, not both at once.
-    @ObservationIgnored var scrollingToEnd = false
-    /// When the current flight began, for `landed(_:)`.
-    @ObservationIgnored private var flightBegan: ContinuousClock.Instant?
-    /// How long after it begins a flight is where it lands to within a pixel: the spring is within
-    /// 0.1% of its travel by 0.7 s. Its completion (`.removed`) comes about a second later, at the
-    /// end of a tail nobody sees.
-    static let flightLands: Duration = .milliseconds(750)
-    /// A prompt that already flew in this window, in the stand-in New Chat showed while its chat
-    /// started: the chat's own copy of it, its echo, doesn't fly or fade in again. Read as a row is
-    /// made; unobserved.
+    /// A prompt already shown in this window, in the stand-in New Chat showed while its chat
+    /// started: the chat's own copy of it, its echo, doesn't fade in again. Read as a row is made;
+    /// unobserved.
     @ObservationIgnored var landedPrompt: String?
 
-    func prepareSend() {
-        submittedFrame = composerFrame
-        sends += 1
-        lapse?.cancel()
-        lapse = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled else { return }
-            self?.submittedFrame = nil
-        }
-    }
-
-    /// Whether a send from this window is waiting for its prompt.
-    var hasLaunch: Bool { submittedFrame != nil }
-
-    /// The prompt that took the last launch.
-    @ObservationIgnored private var launchedPrompt: String?
-
-    /// The sent field's frame, once, for prompt `id`: a row made again for the same prompt doesn't
-    /// fly again. Taken under Reduce Motion too, where nothing flies, so nothing waits for a flight
-    /// that never comes.
-    func takeLaunch(for id: String) -> CGRect? {
-        defer {
-            launchedPrompt = id
-            if submittedFrame != nil { submittedFrame = nil }
-            lapse?.cancel()
-            lapse = nil
-        }
-        return submittedFrame
-    }
-
-    func beginFlight(_ id: String) {
-        activeMessageID = id
-        flightBegan = .now
-    }
-
-    func finishSend(_ id: String) {
-        guard activeMessageID == id else { return }
-        activeMessageID = nil
-    }
-
-    /// Returns once prompt `id` is in place: its launch taken (or lapsed), and its flight, if it
-    /// flies, where it lands (`flightLands`), not waiting out the spring's tail. A message sent
-    /// after it, waiting for its own row, doesn't count.
-    func landed(_ id: String) async {
-        while submittedFrame != nil && launchedPrompt != id {
-            await withCheckedContinuation { (resume: CheckedContinuation<Void, Never>) in
-                withObservationTracking { _ = submittedFrame } onChange: { resume.resume() }
-            }
-        }
-        guard activeMessageID == id, let flightBegan else { return }
-        try? await Task.sleep(until: flightBegan + Self.flightLands)
-    }
+    func prepareSend() { sends += 1 }
 }
 
 extension EnvironmentValues {
@@ -800,45 +579,6 @@ struct NoticeView: View {
         .padding(28)
     }
     .frame(width: 640, height: 340)
-}
-
-#Preview("Sending handoff") {
-    MessageSendPreview()
-        .frame(width: 640, height: 360)
-}
-
-private struct MessageSendPreview: View {
-    @State private var geometry = MessageSendGeometry()
-    @State private var sends = 0
-    @State private var draft = "Make the interface feel at home on macOS."
-
-    var body: some View {
-        VStack(spacing: 16) {
-            ScrollView {
-                if sends > 0 {
-                    UserMessageView(message: .init(id: "preview-send", createdAt: 0,
-                                                   content: [.text(.init(text: draft))]), justSent: true)
-                        .id(sends)
-                        .padding(24)
-                }
-            }
-            HStack(alignment: .bottom) {
-                TextField("Message", text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 16).padding(.vertical, 12)
-                    .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
-                    .onGeometryChange(for: CGRect.self) {
-                        $0.frame(in: MessageSendGeometry.space)
-                    } action: { geometry.composerFrame = $0 }
-                Button("Send", systemImage: "arrow.up") { geometry.prepareSend(); sends += 1 }
-                    .buttonStyle(.glassProminent)
-                    .controlSize(.large)
-            }
-            .padding(24)
-        }
-        .coordinateSpace(MessageSendGeometry.space)
-        .environment(\.messageSendGeometry, geometry)
-    }
 }
 
 /// Background subagents reporting back, as in Claude's desktop app: each message from one is a

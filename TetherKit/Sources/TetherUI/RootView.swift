@@ -152,7 +152,6 @@ struct DetailView: View {
                 NewChatView(window: window)
             }
         }
-        .coordinateSpace(MessageSendGeometry.space)
         .environment(\.messageSendGeometry, window.sendGeometry)
     }
 }

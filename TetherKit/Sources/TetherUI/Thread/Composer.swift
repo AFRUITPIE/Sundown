@@ -298,7 +298,6 @@ struct Composer: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
-            .modifier(MessageSendSource())
             .onSubmit {
                 if !suggestions.isEmpty { completeSuggestion() }
                 else if appearance.sendShortcut == .returnKey { send() }
@@ -331,20 +330,6 @@ struct Composer: View {
                     return .ignored
                 }
             }
-    }
-
-    /// Share the editing surface's native layout with only the active sending bubble. Changes
-    /// are observed by that bubble, rather than invalidating the transcript during a resize.
-    private struct MessageSendSource: ViewModifier {
-        @Environment(\.messageSendGeometry) private var geometry
-
-        func body(content: Content) -> some View {
-            content.onGeometryChange(for: CGRect.self) {
-                $0.frame(in: MessageSendGeometry.space)
-            } action: { frame in
-                geometry?.composerFrame = frame
-            }
-        }
     }
 
     /// Completion choices, as a menu reads: a glass panel floating just above the field, over the

@@ -446,7 +446,6 @@ extension WindowModel {
         var applied = op.options
         await applyDraftSettings(over: &applied, op, to: thread, via: connection)
         await op.ready()
-        await sendGeometry.landed(op.promptID)
         guard starting === op else { return true }
         await applyDraftSettings(over: &applied, op, to: thread, via: connection)
         guard starting === op else { return true }
