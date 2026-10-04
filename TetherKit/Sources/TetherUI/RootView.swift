@@ -70,21 +70,30 @@ public struct RootView: View {
     }
 
     private var splitView: some View {
-        NavigationSplitView {
+        @Bindable var window = window
+        return NavigationSplitView {
             SidebarView(window: window)
         } detail: {
             DetailView(window: window)
-                // The toolbar belongs to the container, not to whichever tab is inside it: every item
-                // is declared once and unconditionally, so nothing moves on selection.
+                // Title, subtitle and toolbar belong to the container, not to whichever screen is inside
+                // it: every item is declared once and unconditionally, so nothing moves on selection.
+                .navigationTitle(window.title)
+                .navigationSubtitle(window.subtitle)
                 // Customizable (View ▸ Customize Toolbar…), so Plan Usage can be added. Every item
                 // is declared in every window, whatever it shows: an identified toolbar is kept in
                 // step across windows by AppKit, and two windows with different items made it throw.
                 .toolbar(id: "chat") {
-                    // The system hides the window's title while the tabs hold the toolbar's center,
-                    // so the chat's title and directory are said here, at the leading edge.
-                    ToolbarItem(id: "title", placement: .navigation) { WindowTitle(window: window) }
-                        .customizationBehavior(.disabled)
-                        .sharedBackgroundVisibility(.hidden)
+                    // Chat, Tasks and Diff. A segmented picker, not a `TabView`: in an active window a
+                    // `TabView`'s content lost the toolbar's scroll edge effect, and its tabs hid the
+                    // window's title.
+                    ToolbarItem(id: "tabs", placement: .principal) {
+                        Picker("View", selection: $window.tab) {
+                            ForEach(WindowTab.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    }
+                    .customizationBehavior(.disabled)
                     ToolbarItem(id: "session", placement: .primaryAction) {
                         ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
@@ -115,59 +124,31 @@ public struct RootView: View {
     }
 }
 
-/// The chat's title over its directory, as the window's own title would show them.
-struct WindowTitle: View {
-    let window: WindowModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(window.title)
-                .font(.headline)
-            if !window.subtitle.isEmpty {
-                Text(window.subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .lineLimit(1)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
-    }
-}
-
-/// The window's content: Chat, Tasks and Diff as SwiftUI's tabs. One container, so the detail column
-/// is never torn down.
+/// The window's content: the chat, its tasks or its diff, as the toolbar's Chat, Tasks and Diff
+/// say. One container, so the detail column is never torn down.
 struct DetailView: View {
     @Bindable var window: WindowModel
     @Environment(\.previewChanges) private var previewChanges
 
     var body: some View {
-        TabView(selection: $window.tab) {
-            Tab(WindowTab.chat.label, systemImage: WindowTab.chat.symbol, value: WindowTab.chat) { titled(chat) }
-            Tab(WindowTab.tasks.label, systemImage: WindowTab.tasks.symbol, value: WindowTab.tasks) {
+        ZStack {
+            switch window.tab {
+            case .chat: chat
+            case .tasks:
                 if let thread = window.selectedThread, let connection = window.connection {
-                    titled(TasksPane(thread: thread, connection: connection, selectedTaskID: $window.inspectedTaskID)
-                        .paneStyle())
+                    TasksPane(thread: thread, connection: connection, selectedTaskID: $window.inspectedTaskID)
+                        .paneStyle()
                 } else {
-                    titled(PaneEmptyState("No Chat", symbol: WindowTab.tasks.symbol))
+                    PaneEmptyState("No Chat", symbol: WindowTab.tasks.symbol)
                 }
-            }
-            Tab(WindowTab.diff.label, systemImage: WindowTab.diff.symbol, value: WindowTab.diff) {
+            case .diff:
                 if let thread = window.selectedThread, let connection = window.connection {
-                    titled(ChangesPane(thread: thread, connection: connection, changes: previewChanges))
+                    ChangesPane(thread: thread, connection: connection, changes: previewChanges)
                 } else {
-                    titled(PaneEmptyState("No Chat", symbol: WindowTab.diff.symbol))
+                    PaneEmptyState("No Chat", symbol: WindowTab.diff.symbol)
                 }
             }
         }
-    }
-
-    /// The window's title and subtitle, on each tab's content: set on the `TabView`, they were
-    /// replaced by the tabs' own.
-    private func titled(_ content: some View) -> some View {
-        content
-            .navigationTitle(window.title)
-            .navigationSubtitle(window.subtitle)
     }
 
     /// The selected chat, or the New Chat screen.
