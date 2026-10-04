@@ -138,11 +138,11 @@ struct WindowModelTests {
 
         a.open(threadID: chats[0].id)
         b.open(threadID: chats[1].id)
-        b.showInspector = true
+        b.tab = .tasks
 
         #expect(a.selectedThread === chats[0])
         #expect(b.selectedThread === chats[1])
-        #expect(!a.showInspector)
+        #expect(a.tab == .chat)
     }
 
     /// A chat shown in two windows stays loaded until the last one moves off it.
@@ -160,18 +160,18 @@ struct WindowModelTests {
     }
 
     /// The launch's first window reopens the last chat; a later one is New Chat on the same host,
-    /// with the inspector as the last window left it.
-    @Test func aNewWindowOpensOnNewChatWithTheLastInspector() {
+    /// on the Chat tab, whatever tab the last window was on.
+    @Test func aNewWindowOpensOnNewChat() {
         let app = AppModel.sample()
         let a = window(app)
         a.open(threadID: "thread-1")
-        a.openInspector(on: .mcp)
+        a.tab = .diff
 
         let b = window(app)
 
         #expect(b.hostID == a.hostID)
         #expect(b.threadID == nil)
-        #expect(b.isInspecting(.mcp))
+        #expect(b.tab == .chat)
         // A window opened on a target starts there instead.
         let c = window(app, target: WindowTarget(hostID: app.lastHostID))
         #expect(c.threadID == nil)
@@ -184,23 +184,19 @@ struct WindowModelTests {
         let other = app.hosts[1].id
         w.hostID = other
         w.open(threadID: "thread-9")
-        w.showInspector = true
-        w.inspectorPane = .mcp
 
         let restored = window(AppModel(defaults: defaults))
 
         #expect(restored.hostID == other)
         #expect(restored.threadID == "thread-9")
-        // A window's own inspector state.
-        #expect(restored.inspectorPane == .mcp)
     }
 
-    /// Each window has its own inspector: opening one on a pane leaves the other window's alone.
-    @Test func eachWindowHasItsOwnInspector() {
+    /// Each window has its own tab: switching one leaves the other window's alone.
+    @Test func eachWindowHasItsOwnTab() {
         let app = AppModel.sample()
         let a = window(app), b = window(app)
-        a.openInspector(on: .changes)
-        #expect(a.isInspecting(.changes) && !b.showInspector)
+        a.tab = .diff
+        #expect(a.tab == .diff && b.tab == .chat)
     }
 
     @Test func draftsArePerChatAndSurviveRelaunch() {
@@ -318,21 +314,16 @@ struct WindowModelTests {
         let app = AppModel(defaults: defaults)
 
         #expect(app.transcriptWidth == .medium)
-        #expect(!app.lastShowInspector)
-        #expect(app.lastInspectorPane == .tasks)
         #expect(app.sidebarGrouping == .date)
         #expect(app.lastHostID == HostConfig.local.id)
     }
 
-    @Test func aPaneShortcutShowsItsPaneAndOpensTheInspector() {
+    /// New Chat always shows the chat, from whatever tab the window was on.
+    @Test func newChatShowsTheChatTab() {
         let w = window(AppModel(defaults: isolatedDefaults()))
-        w.openInspector(on: .session)
-        #expect(w.isInspecting(.session))
-        w.openInspector(on: .session)
-        #expect(w.isInspecting(.session))
-        w.showInspector = false
-        // The pane is kept, so ⌥⌘I reopens where the inspector was.
-        #expect(w.inspectorPane == .session)
+        w.tab = .tasks
+        w.newChat()
+        #expect(w.tab == .chat)
     }
 
     /// ⌃⇥ and ⌃⇧⇥ step through the chats in the sidebar's order, wrapping at the ends.

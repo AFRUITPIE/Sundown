@@ -52,37 +52,35 @@ public enum SidebarFilter: String, CaseIterable, Sendable {
     }
 }
 
-/// The inspector's panes, in toolbar order (persisted).
-public enum InspectorPane: String, CaseIterable, Identifiable, Sendable {
-    case tasks, session, mcp, changes
+/// What a window's content shows: the chat, its tasks, or its working-tree diff. Each window's
+/// own, kept as it moves between chats.
+public enum WindowTab: String, CaseIterable, Identifiable, Sendable {
+    case chat, tasks, diff
 
     public var id: Self { self }
 
     public var label: String {
         switch self {
+        case .chat: "Chat"
         case .tasks: "Tasks"
-        case .session: "Session"
-        case .mcp: "MCP"
-        case .changes: "Changes"
+        case .diff: "Diff"
         }
     }
 
     var symbol: String {
         switch self {
+        case .chat: "bubble.left.and.text.bubble.right"
         case .tasks: "checklist"
-        case .session: "info"
-        case .mcp: "puzzlepiece.extension"
-        case .changes: "plus.forwardslash.minus"
+        case .diff: "plus.forwardslash.minus"
         }
     }
 
-    /// ⌥⌘1, ⌥⌘2, ⌥⌘3, as Xcode numbers its inspectors.
+    /// ⌘1, ⌘2, ⌘3.
     var shortcut: KeyEquivalent {
         switch self {
-        case .tasks: "1"
-        case .session: "2"
-        case .mcp: "3"
-        case .changes: "4"
+        case .chat: "1"
+        case .tasks: "2"
+        case .diff: "3"
         }
     }
 }
@@ -96,10 +94,9 @@ public final class AppModel {
     public private(set) var hosts: [HostConfig] = []
     public private(set) var connections: [UUID: HostConnection] = [:]
 
-    /// The most recently used window's host, chat and inspector (persisted).
+    /// The most recently used window's host and chat (persisted).
     public private(set) var lastHostID: UUID = HostConfig.local.id
     public private(set) var lastThreadID: String?
-    public private(set) var lastInspectorPane: InspectorPane = .tasks
 
     /// How the sidebar groups chats (persisted).
     public var sidebarGrouping: SidebarGrouping = .date { didSet { save() } }
@@ -428,7 +425,6 @@ public final class AppModel {
     func remember(_ window: WindowModel) {
         lastHostID = window.hostID
         lastThreadID = window.threadID
-        lastInspectorPane = window.inspectorPane
         saveWindow()
         connectIfWaiting(window.hostID)
     }
@@ -544,12 +540,11 @@ public final class AppModel {
     }
 
     /// Where the most recently used window was, under a key of its own: it changes with every chat
-    /// switch and inspector change, and with the rest it wrote the hosts, pins and preferences again
+    /// switch, and with the rest it wrote the hosts, pins and preferences again
     /// each time.
     private struct LastWindow: Codable {
         var hostID: UUID?
         var threadID: String?
-        var inspectorPane: String?
     }
 
     /// Sorted keys, so the same values are the same bytes and an unchanged save writes nothing.
@@ -590,8 +585,7 @@ public final class AppModel {
         written[Self.windowKey] = windowData
         let window = windowData.flatMap { try? JSONDecoder().decode(LastWindow.self, from: $0) }
             // Kept with the rest by an older build: taken from there, once.
-            ?? stored.map { LastWindow(hostID: $0.hostID, threadID: $0.threadID, inspectorPane: $0.inspectorPane) }
-        lastInspectorPane = window?.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
+            ?? stored.map { LastWindow(hostID: $0.hostID, threadID: $0.threadID) }
         // A remembered host can disappear between launches; this Mac is always configured.
         if let id = window?.hostID, hosts.contains(where: { $0.id == id }) {
             lastHostID = id
@@ -631,8 +625,7 @@ public final class AppModel {
 
     private func saveWindow() {
         guard !isLoading else { return }
-        let window = LastWindow(hostID: lastHostID, threadID: lastThreadID,
-                                inspectorPane: lastInspectorPane.rawValue)
+        let window = LastWindow(hostID: lastHostID, threadID: lastThreadID)
         write(try? Self.encoder.encode(window), forKey: Self.windowKey)
     }
 

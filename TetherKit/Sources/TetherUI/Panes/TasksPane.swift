@@ -15,7 +15,7 @@ struct TasksPane: View {
         if let selectedTaskID, let entry = entries.first(where: { $0.id == selectedTaskID }) {
             InspectorTaskDetail(entry: entry, thread: thread, connection: connection) { self.selectedTaskID = nil }
         } else if entries.isEmpty {
-            InspectorEmptyState("No Tasks", symbol: InspectorPane.tasks.symbol)
+            PaneEmptyState("No Tasks", symbol: WindowTab.tasks.symbol)
         } else {
             // What's still going on top; what's finished in a group of its own below.
             let finished = entries.filter { !$0.isGoing }
@@ -178,30 +178,32 @@ struct InspectorTaskDetail: View {
 
 #if DEBUG
 #Preview("Tasks") {
-    inspectorPreview {
-        ThreadInspector(thread: .sampleWithTasks(), connection: .sample())
+    @Previewable @State var selection: String?
+    panePreview {
+        TasksPane(thread: .sampleWithTasks(), connection: .sample(), selectedTaskID: $selection).paneStyle()
     }
 }
 
 #Preview("Tasks (empty)") {
-    inspectorPreview {
-        ThreadInspector(thread: .sampleIdleChat(), connection: .sample())
+    @Previewable @State var selection: String?
+    panePreview {
+        TasksPane(thread: .sampleIdleChat(), connection: .sample(), selectedTaskID: $selection).paneStyle()
     }
 }
 
 #Preview("Tasks (subagent detail)") {
     // Live, so All Tasks goes back to the list in the canvas.
     @Previewable @State var selection: String? = "tool-subagent-explore"
-    inspectorPreview {
-        ThreadInspector(thread: .sampleToolCalls(), connection: .sample(), selectedTaskID: $selection)
+    panePreview {
+        TasksPane(thread: .sampleToolCalls(), connection: .sample(), selectedTaskID: $selection).paneStyle()
     }
 }
 
 /// A task still running: it can be stopped from here.
 #Preview("Tasks (running task detail)") {
     @Previewable @State var selection: String? = "task:task-1"
-    inspectorPreview {
-        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), selectedTaskID: $selection)
+    panePreview {
+        TasksPane(thread: .sampleWithTasks(), connection: .sample(), selectedTaskID: $selection).paneStyle()
     }
 }
 

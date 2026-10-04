@@ -3,12 +3,12 @@ import TetherKit
 
 /// One window: creates its `WindowModel` once, starts it when the window appears and lets its chat
 /// go when the window closes, and hands it to the menu bar while the window is frontmost. Keeps the
-/// scene's value on what the window shows, and its inspector in scene storage, so the system
-/// restores each window as it was.
+/// scene's value on what the window shows, and its tab in scene storage, so the system restores
+/// each window as it was.
 public struct WindowRoot: View {
     @State private var window: WindowModel
     @Binding private var target: WindowTarget
-    @SceneStorage("inspectorPane") private var storedInspectorPane: InspectorPane?
+    @SceneStorage("tab") private var storedTab: WindowTab?
     @Environment(\.appearsActive) private var appearsActive
     @Environment(\.undoManager) private var undoManager
 
@@ -22,16 +22,16 @@ public struct WindowRoot: View {
         RootView(window: window)
             .focusedSceneValue(\.window, window)
             .onAppear {
-                window.start(pane: storedInspectorPane)
-                // Kept from the start, so a window never restores another window's pane.
-                storedInspectorPane = window.inspectorPane
+                window.start(tab: storedTab)
+                // Kept from the start, so a window never restores another window's tab.
+                storedTab = window.tab
             }
             // The window's own, so Edit ▸ Undo takes back an archive, a pin or a rename made in it.
             .onChange(of: undoManager, initial: true) { window.undoManager = undoManager }
             .onChange(of: window.hostID) { target = window.target(keeping: target.id) }
             .onChange(of: window.threadID) { target = window.target(keeping: target.id) }
             // Not initial: `start()` reads the stored values first.
-            .onChange(of: window.inspectorPane) { storedInspectorPane = window.inspectorPane }
+            .onChange(of: window.tab) { storedTab = window.tab }
             // A chat's link: this window if it shows the chat, else any. New Chat's link always
             // opens a window of its own, so it never takes over the chat or draft of one in use.
             .handlesExternalEvents(preferring: TetherLink.preference(host: window.hostID, thread: window.threadID),
@@ -56,7 +56,6 @@ public struct RootView: View {
 
     public var body: some View {
         splitView
-        // Reaches the inspector too, whose task list shows subagents the same way.
         .environment(\.inspectSubagent, InspectSubagentAction(window: window))
         .environment(\.restoreCode, RestoreCodeAction(window: window))
         .environment(\.startSuggestedTask, StartSuggestedTaskAction(window: window))
@@ -71,39 +70,81 @@ public struct RootView: View {
     }
 
     private var splitView: some View {
-        @Bindable var window = window
-        return NavigationSplitView {
+        NavigationSplitView {
             SidebarView(window: window)
         } detail: {
             DetailView(window: window)
-                // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
-                // the item is declared once and unconditionally, so nothing moves on selection.
-                .navigationTitle(window.title)
-                .navigationSubtitle(window.subtitle)
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) {
+                // The toolbar belongs to the container, not to whichever tab is inside it: every item
+                // is declared once and unconditionally, so nothing moves on selection.
+                // Customizable (View ▸ Customize Toolbar…), so Plan Usage can be added. Every item
+                // is declared in every window, whatever it shows: an identified toolbar is kept in
+                // step across windows by AppKit, and two windows with different items made it throw.
+                .toolbar(id: "chat") {
+                    ToolbarItem(id: "session", placement: .primaryAction) {
                         ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
-                }
-        }
-        // Attached to the split view, so it is full height and present on every screen. Apple's
-        // defaults throughout: no declared widths or minimums. The pane tabs are in the pane, not
-        // the toolbar: there, every change of tab made AppKit lay the whole toolbar out again.
-        .inspector(isPresented: $window.showInspector) {
-            InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-                .toolbar {
-                    ToolbarSpacer(.flexible)
-                    ToolbarItem { InspectorToggle(window: window) }
+                    ToolbarItem(id: "context", placement: .primaryAction) {
+                        ChatPopoverButton(title: "Context", systemImage: "chart.bar.horizontal.page", window: window) {
+                            ContextView(thread: $0, connection: $1)
+                                .popoverSize(width: 340)
+                        }
+                    }
+                    ToolbarItem(id: "mcp", placement: .primaryAction) {
+                        ChatPopoverButton(title: "MCP Servers", systemImage: "puzzlepiece.extension", window: window) {
+                            MCPPane(thread: $0, connection: $1)
+                                .paneStyle()
+                                .popoverSize(width: 360)
+                        }
+                    }
+                    ToolbarItem(id: "planUsage", placement: .primaryAction) {
+                        ChatPopoverButton(title: "Plan Usage", systemImage: "gauge.with.dots.needle.33percent", window: window) { thread, _ in
+                            PlanUsageView(thread: thread)
+                                .popoverSize(width: 300)
+                        }
+                    }
+                    .defaultCustomization(.hidden)
                 }
         }
     }
 }
 
-/// The selected chat, or the New Chat screen. One container, so the detail column is never torn down.
+/// The window's content: Chat, Tasks and Diff as SwiftUI's tabs. One container, so the detail column
+/// is never torn down.
 struct DetailView: View {
-    let window: WindowModel
+    @Bindable var window: WindowModel
+    @Environment(\.previewChanges) private var previewChanges
 
     var body: some View {
+        TabView(selection: $window.tab) {
+            Tab(WindowTab.chat.label, systemImage: WindowTab.chat.symbol, value: WindowTab.chat) { titled(chat) }
+            Tab(WindowTab.tasks.label, systemImage: WindowTab.tasks.symbol, value: WindowTab.tasks) {
+                if let thread = window.selectedThread, let connection = window.connection {
+                    titled(TasksPane(thread: thread, connection: connection, selectedTaskID: $window.inspectedTaskID)
+                        .paneStyle())
+                } else {
+                    titled(PaneEmptyState("No Chat", symbol: WindowTab.tasks.symbol))
+                }
+            }
+            Tab(WindowTab.diff.label, systemImage: WindowTab.diff.symbol, value: WindowTab.diff) {
+                if let thread = window.selectedThread, let connection = window.connection {
+                    titled(ChangesPane(thread: thread, connection: connection, changes: previewChanges))
+                } else {
+                    titled(PaneEmptyState("No Chat", symbol: WindowTab.diff.symbol))
+                }
+            }
+        }
+    }
+
+    /// The window's title and subtitle, on each tab's content: set on the `TabView`, they were
+    /// replaced by the tabs' own.
+    private func titled(_ content: some View) -> some View {
+        content
+            .navigationTitle(window.title)
+            .navigationSubtitle(window.subtitle)
+    }
+
+    /// The selected chat, or the New Chat screen.
+    private var chat: some View {
         // The column's root keeps one identity. When the root itself changed (the branch, or the
         // chat's `.id`), the column's toolbar items were torn down and rebuilt, fading in on every switch.
         ZStack {
@@ -219,8 +260,8 @@ public struct TranscriptWidthCommands: View {
     }
 }
 
-/// View-menu items for the shell. Kept here with the views they drive. The inspector items act on
-/// the frontmost window, and are disabled when there is none.
+/// View-menu items for the shell. Kept here with the views they drive. The tab items act on the
+/// frontmost window, and are disabled when there is none.
 public struct ShellViewCommands: View {
     @Bindable var app: AppModel
     @FocusedValue(\.window) private var window
@@ -239,16 +280,15 @@ public struct ShellViewCommands: View {
             ForEach(SidebarFilter.allCases, id: \.self) { Text($0.label).tag($0) }
         }
         Divider()
-        // One of the panes, checked only while it's showing. Choosing one (or its shortcut) always
-        // shows it, opening the inspector if needed; ⌥⌘I hides it.
-        Picker("Inspector", selection: Binding(get: { window?.showInspector == true ? window?.inspectorPane : nil },
-                                               set: { if let pane = $0 { window?.openInspector(on: pane) } })) {
-            ForEach(InspectorPane.allCases) { pane in
-                Text(pane.label)
-                    .tag(Optional(pane))
-                    .keyboardShortcut(pane.shortcut, modifiers: [.command, .option])
+        // Chat, Tasks and Diff, the window's tabs, as ⌘1–3.
+        Picker("Tab", selection: Binding(get: { window?.tab }, set: { if let tab = $0 { window?.tab = tab } })) {
+            ForEach(WindowTab.allCases) { tab in
+                Text(tab.label)
+                    .tag(Optional(tab))
+                    .keyboardShortcut(tab.shortcut, modifiers: .command)
             }
         }
+        .pickerStyle(.inline)
         .disabled(window == nil)
     }
 }
@@ -277,11 +317,11 @@ private func rootPreviewWindow() -> WindowModel {
         .frame(width: 1100, height: 760)
 }
 
-#Preview("RootView (inspector open)") {
+#Preview("RootView (Tasks tab)") {
     let window = rootPreviewWindow()
-    window.openInspector(on: .tasks)
+    window.tab = .tasks
     return RootPreview(window: window)
-        .frame(width: 1160, height: 760)
+        .frame(width: 1100, height: 760)
 }
 
 #Preview("RootView (wide transcript)") {

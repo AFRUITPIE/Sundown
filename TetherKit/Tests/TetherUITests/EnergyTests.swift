@@ -20,7 +20,7 @@ struct PreferenceWriteTests {
 
         w.open(threadID: chats[0].id)
         w.open(threadID: chats[1].id)
-        w.openInspector(on: .mcp)
+        w.tab = .diff
 
         #expect(!defaults.keys.contains("tether.hosts.v1"))
         #expect(defaults.keys.allSatisfy { $0 == "tether.window.v1" })
@@ -42,7 +42,6 @@ struct PreferenceWriteTests {
 
         let app = AppModel(defaults: defaults)
         #expect(app.lastHostID == host && app.lastThreadID == "t-7")
-        #expect(app.lastInspectorPane == .changes)
         #expect(defaults.data(forKey: "tether.window.v1") != nil)
 
         // The next save of the rest leaves the old fields out; the window is still found.
@@ -51,7 +50,6 @@ struct PreferenceWriteTests {
         #expect(!raw.contains("t-7"))
         let restored = AppModel(defaults: defaults)
         #expect(restored.lastHostID == host && restored.lastThreadID == "t-7")
-        #expect(restored.lastInspectorPane == .changes)
     }
 }
 

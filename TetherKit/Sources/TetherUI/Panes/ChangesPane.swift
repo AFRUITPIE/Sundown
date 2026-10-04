@@ -89,9 +89,9 @@ struct ChangesPane: View {
                 Button("Try Again") { Task { await refresh() } }
             }
         case .ready(nil):
-            InspectorEmptyState("Not a Git Repository", symbol: "folder")
+            PaneEmptyState("Not a Git Repository", symbol: "folder")
         case .ready(let changes?) where changes.files.isEmpty:
-            InspectorEmptyState("No Changes", symbol: "checkmark.circle")
+            PaneEmptyState("No Changes", symbol: "checkmark.circle")
         case .ready(let changes?):
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
@@ -435,11 +435,8 @@ extension WorkingChanges {
 }
 
 #Preview("Changes") {
-    // Live, so the preview canvas can switch tabs.
-    @Previewable @State var pane = InspectorPane.changes
-    inspectorPreview {
-        ThreadInspector(thread: .sampleIdleChat(), connection: .sample(), pane: $pane)
-            .environment(\.previewChanges, .sample)
+    panePreview {
+        ChangesPane(thread: .sampleIdleChat(), connection: .sample(), changes: .sample)
     }
 }
 
@@ -456,11 +453,8 @@ extension WorkingChanges {
 /// A diff too big to show whole: each file shows its first lines with Show All, and a file past
 /// what's kept says how much was left out.
 #Preview("Changes (large diff)") {
-    // Live, so the preview canvas can switch tabs.
-    @Previewable @State var pane = InspectorPane.changes
-    inspectorPreview {
-        ThreadInspector(thread: .sampleIdleChat(), connection: .sample(), pane: $pane)
-            .environment(\.previewChanges, .large)
+    panePreview {
+        ChangesPane(thread: .sampleIdleChat(), connection: .sample(), changes: .large)
     }
 }
 #endif

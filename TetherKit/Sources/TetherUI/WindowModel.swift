@@ -91,11 +91,9 @@ public final class WindowModel {
     /// Which host `selectedThread` came from, so it is let go on the right connection.
     private var selectedThreadHost: UUID?
 
-    /// Whether the trailing inspector is shown.
-    public var showInspector: Bool
-    /// The pane the inspector shows, kept while it is closed.
-    public var inspectorPane: InspectorPane { didSet { app.remember(self) } }
-    /// The task the Tasks pane has open, wherever the inspector is.
+    /// What the window's content shows: the chat, its tasks or its diff.
+    public var tab: WindowTab = .chat
+    /// The task the Tasks tab has open.
     public var inspectedTaskID: String?
 
     /// The New Chat screen's session controls, reset to the defaults by `newChat()`.
@@ -218,16 +216,12 @@ public final class WindowModel {
         self.app = app
         self.hostID = target.hostID
         self.threadID = target.threadID
-        self.showInspector = false
-        self.inspectorPane = .tasks
     }
 
-    /// Shows the chat and seeds the draft. Called once the window is on screen, with the inspector
-    /// as the window had it (restored), or as the most recently used window had it (a new window).
-    public func start(pane: InspectorPane? = nil) {
+    /// Shows the chat and seeds the draft. Called once the window is on screen, with the tab the
+    /// window had (restored); a new window shows the chat.
+    public func start(tab: WindowTab? = nil) {
         guard !started else { return }
-        // Read before anything below changes this window, which is remembered as the last used.
-        let pane = pane ?? app.lastInspectorPane
         // The debug launch hook's chat, in the launch's first window, restored or new.
         if let chat = app.takeLaunchChat() {
             hostID = chat.host
@@ -237,7 +231,7 @@ public final class WindowModel {
         if app.connections[hostID] == nil && !app.hosts.contains(where: { $0.id == hostID }) {
             hostID = HostConfig.local.id
         }
-        inspectorPane = pane
+        if let tab { self.tab = tab }
         started = true
         app.register(self)
         seedDraft()
@@ -276,14 +270,10 @@ public final class WindowModel {
         return name.isEmpty ? host : "\(host) · \(name)"
     }
 
-    /// True when the inspector is open on `pane`.
-    public func isInspecting(_ pane: InspectorPane) -> Bool { showInspector && inspectorPane == pane }
-
-    /// Shows `pane`, opening the inspector if it is closed.
-    /// Shows a subagent's call in the Tasks pane.
+    /// Shows a subagent's call in the Tasks tab.
     func inspectSubagent(_ toolUseId: String) {
         inspectedTaskID = toolUseId
-        openInspector(on: .tasks)
+        tab = .tasks
     }
 
     /// Branches the chat shown after `messageID`, keeping everything up to it, and shows the branch.
@@ -299,16 +289,12 @@ public final class WindowModel {
         return connection?.chats.first { $0.id == id || $0.id == bare }?.id
     }
 
-    public func openInspector(on pane: InspectorPane) {
-        if inspectorPane != pane { inspectorPane = pane }
-        showInspector = true
-    }
-
     /// Start composing a new chat on the host the sidebar is showing. A chat still starting from
     /// here goes on, to the sidebar, and the window stays on the new draft.
     public func newChat() {
         starting = nil
         threadID = nil
+        tab = .chat
         seedDraft()
     }
 

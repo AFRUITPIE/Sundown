@@ -17,7 +17,7 @@ struct MCPPane: View {
     var body: some View {
         Group {
             if servers.isEmpty {
-                InspectorEmptyState("No MCP Servers", symbol: "puzzlepiece.extension")
+                PaneEmptyState("No MCP Servers", symbol: "puzzlepiece.extension")
             } else {
                 Form {
                     Section {
@@ -126,20 +126,16 @@ struct MCPPane: View {
 
 #if DEBUG
 #Preview("MCP") {
-    // Live, so the preview canvas can switch tabs.
-    @Previewable @State var pane = InspectorPane.mcp
-    inspectorPreview {
-        ThreadInspector(thread: .sampleWithTasks(), connection: .sample(), pane: $pane)
-    }
+    MCPPane(thread: .sampleWithTasks(), connection: .sample())
+        .paneStyle()
+        .frame(width: 360, height: 320)
 }
 
 /// A chat whose Claude Code has no MCP servers configured — same state as one that hasn't
 /// reported yet, and the title says all there is to say about either.
 #Preview("MCP (none)") {
-    // Live, so the preview canvas can switch tabs.
-    @Previewable @State var pane = InspectorPane.mcp
-    inspectorPreview {
-        ThreadInspector(thread: .sampleIdleChat(), connection: .sample(), pane: $pane)
-    }
+    MCPPane(thread: .sampleIdleChat(), connection: .sample())
+        .paneStyle()
+        .frame(width: 360, height: 320)
 }
 #endif

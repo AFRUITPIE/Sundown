@@ -64,11 +64,11 @@ struct TetherApp: App {
             CommandMenu("Host") { HostCommands(app: app) }
             CommandMenu("Chat") { ChatCommands() }
             SidebarCommands()
-            InspectorCommands()
+            // View ▸ Customize Toolbar…, for Plan Usage.
+            ToolbarCommands()
         }
         HostWindows(app: app)
             .appEnvironment(app)
-        // The Settings view supplies the split window's minimum size.
         Settings { SettingsView(app: app) }
             .restorationBehavior(.disabled)
         // No menu bar extra: declared at all, even hidden, it kept SwiftUI updating its label in a
