@@ -85,12 +85,10 @@ public struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
             DetailView(window: window)
-                // The chat never gets narrower than the inspector's 310 pt. A flexible frame reports
-                // exactly its declared minimum whatever its child wants, so this is a constant: a
-                // content-derived one that moved during constraint updates looped AppKit's Update
-                // Constraints when the window narrowed. No detail column width: SwiftUI counts the
-                // inspector's width twice there.
-                .frame(minWidth: 310, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                // No minimum here: a detail minimum made the window grow to 1150 pt when the inspector
+                // opened beside the sidebar (SwiftUI counts the inspector's width twice in it). The
+                // window's minimum is on the split view in `InspectorColumn` instead.
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(window.title)
@@ -138,6 +136,10 @@ private struct InspectorColumn: ViewModifier {
                     ToolbarItem { InspectorToggle(window: window) }
                 }
         }
+        // The window's minimum, a constant: sidebar 280 + chat 310 + inspector 310. The inspector then
+        // takes its width from the chat and never widens the window. As a minimum on the split view
+        // inside the inspector modifier it instead widened the window by the inspector's whole width.
+        .frame(minWidth: 900)
     }
 }
 
