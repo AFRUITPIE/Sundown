@@ -63,22 +63,11 @@ struct TetherApp: App {
             }
             CommandMenu("Host") { HostCommands(app: app) }
             CommandMenu("Chat") { ChatCommands() }
-            #if DEBUG
-            CommandMenu("Debug") {
-                Button("Activity Indicators…") { openWindow(id: "activity-indicators") }
-            }
-            #endif
             // View ▸ Show Sidebar, for the toolbar's sidebar button.
             SidebarCommands()
         }
         HostWindows(app: app)
             .appEnvironment(app)
-        #if DEBUG
-        Window("Activity Indicators", id: "activity-indicators") { ActivityIndicatorGallery() }
-            .defaultSize(width: 420, height: 520)
-            .restorationBehavior(.disabled)
-            .handlesExternalEvents(matching: [])
-        #endif
         // The Settings view supplies the split window's minimum size.
         Settings { SettingsView(app: app) }
             .restorationBehavior(.disabled)
