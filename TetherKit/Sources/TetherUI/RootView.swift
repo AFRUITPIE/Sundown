@@ -112,6 +112,9 @@ private struct InspectorColumn: ViewModifier {
     func body(content: Content) -> some View {
         content.inspector(isPresented: $window.showInspector) {
             InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
+                // The tab bar's minimum width changes with the selected tab; a zero minimum here keeps
+                // the split view from re-invalidating (Update Constraints crash, Anglesite#1139).
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 // Wide enough for the tab bar (Tasks, Session, MCP, Changes) not to clip; no maximum.
                 .inspectorColumnWidth(min: 310, ideal: 310)
                 .toolbar {
