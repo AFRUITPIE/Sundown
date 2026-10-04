@@ -160,6 +160,9 @@ struct DetailView: View {
                 }
             }
         }
+        // A hard edge under the toolbar: with text scrolling right up beneath the title and the
+        // tabs, the soft edge left both hard to read.
+        .scrollEdgeEffectStyle(.hard, for: .top)
     }
 
     /// The window's title and subtitle, on each tab's content: set on the `TabView`, they were
