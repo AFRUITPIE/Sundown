@@ -76,13 +76,6 @@ public struct RootView: View {
             SidebarView(window: window)
         } detail: {
             DetailView(window: window)
-                .inspector(isPresented: $window.showInspector) {
-                    InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-                        .toolbar {
-                            ToolbarSpacer(.flexible)
-                            ToolbarItem { InspectorToggle(window: window) }
-                        }
-                }
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // the item is declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(window.title)
@@ -91,6 +84,16 @@ public struct RootView: View {
                     ToolbarItem(placement: .primaryAction) {
                         ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
+                }
+        }
+        // Attached to the split view, so it is full height and present on every screen. Apple's
+        // defaults throughout: no declared widths or minimums. The pane tabs are in the pane, not
+        // the toolbar: there, every change of tab made AppKit lay the whole toolbar out again.
+        .inspector(isPresented: $window.showInspector) {
+            InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
+                .toolbar {
+                    ToolbarSpacer(.flexible)
+                    ToolbarItem { InspectorToggle(window: window) }
                 }
         }
     }
