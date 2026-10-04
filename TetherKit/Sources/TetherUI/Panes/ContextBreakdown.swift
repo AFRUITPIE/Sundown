@@ -19,6 +19,9 @@ struct ContextBreakdown: Equatable {
     let total: Double
     let limit: Double
 
+    /// How full the window is, 0–1.
+    var fill: Double { limit > 0 ? min(total / limit, 1) : 0 }
+
     init?(_ usage: JSONValue) {
         var used = 0
         categories = (usage["categories"]?.arrayValue ?? []).compactMap { c in

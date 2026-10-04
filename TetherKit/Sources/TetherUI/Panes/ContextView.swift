@@ -63,7 +63,9 @@ struct ContextView: View {
         }
         usage = .loading
         do {
-            usage = .ready(try await connection.contextUsage(thread))
+            let u = try await connection.contextUsage(thread)
+            usage = .ready(u)
+            if let breakdown = u.flatMap(ContextBreakdown.init) { thread.contextFill = breakdown.fill }
         } catch is CancellationError {
             // Superseded by a newer refresh; that one owns the state from here.
         } catch {

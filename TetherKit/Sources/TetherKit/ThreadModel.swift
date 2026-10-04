@@ -59,6 +59,9 @@ public final class ThreadModel: Identifiable {
     public private(set) var suggestedTasks: [SuggestedTask] = []
     /// The plan's usage limit as Claude Code last reported it (claude.ai subscriptions).
     public private(set) var rateLimit: RateLimit?
+    /// How full the context window was when last asked (0–1), for the toolbar's gauge. Set by
+    /// whoever asks (`thread/contextUsage`), after a turn ends or when the breakdown is opened.
+    public var contextFill: Double?
     public private(set) var lastError: String?
     /// Settings chosen while the daemon hasn't loaded the thread, applied when it resumes.
     public private(set) var pendingSettings = PendingSettings()
