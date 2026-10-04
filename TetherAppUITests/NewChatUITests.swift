@@ -39,7 +39,7 @@ final class NewChatUITests: TetherUITestCase {
 
         // New Chat keeps its directory with the composer, not in a form under the toolbar: the
         // directory, the branch checked out there, and Work In, in one row above the field.
-        app.buttons["New Chat"].click()
+        app.typeKey("n", modifierFlags: .command)
         let folder = app.descendants(matching: .any)["newChat.folder"]
         XCTAssertTrue(folder.appears(timeout: 5), "New Chat has no directory menu")
         XCTAssertEqual(folder.value as? String, "/tmp/tether-fixture")

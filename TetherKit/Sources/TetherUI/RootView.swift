@@ -74,6 +74,9 @@ public struct RootView: View {
         // No columnVisibility binding: writing it on every sidebar toggle rebuilt the toolbar mid-animation.
         NavigationSplitView {
             SidebarView(window: window)
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) { NewChatButton(window: window) }
+                }
         } detail: {
             DetailView(window: window)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
@@ -86,14 +89,17 @@ public struct RootView: View {
                 // inspector open): the other window had no item at that index and AppKit threw
                 // (`-[NSToolbar _itemAtIndex:]`, `_currentItems`).
                 .toolbar {
-                    ToolbarItem(placement: .navigation) { NewChatButton(window: window) }
                     ToolbarItem(placement: .primaryAction) {
                         ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
+                    .visibilityPriority(.low)
                 }
         }
         // Attached to the split view, so it is full height and present on every screen.
         .modifier(InspectorColumn(window: window))
+        // One constant window minimum, outside `.inspector` and independent of it: the sidebar
+        // (279 pt) plus about 320 pt of chat. Inside the inspector it added the inspector's width.
+        .frame(minWidth: 600)
     }
 }
 
@@ -106,6 +112,8 @@ private struct InspectorColumn: ViewModifier {
     func body(content: Content) -> some View {
         content.inspector(isPresented: $window.showInspector) {
             InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
+                // Wide enough for the tab bar (Tasks, Session, MCP, Changes) not to clip; no maximum.
+                .inspectorColumnWidth(min: 310, ideal: 310)
                 .toolbar {
                     ToolbarSpacer(.flexible)
                     ToolbarItem { InspectorToggle(window: window) }
@@ -134,11 +142,12 @@ struct DetailView: View {
     }
 }
 
+/// New Chat in the sidebar's own toolbar, over the sidebar, as Messages has it. Titled, for VoiceOver
+/// and the » menu.
 struct NewChatButton: View {
     let window: WindowModel
 
     var body: some View {
-        // Titled, for VoiceOver and the » menu.
         Button("New Chat", systemImage: "square.and.pencil") { window.newChat() }
             .help("New Chat")
     }
