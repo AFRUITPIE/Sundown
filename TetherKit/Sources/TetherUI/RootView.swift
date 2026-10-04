@@ -80,6 +80,11 @@ public struct RootView: View {
                 // is declared in every window, whatever it shows: an identified toolbar is kept in
                 // step across windows by AppKit, and two windows with different items made it throw.
                 .toolbar(id: "chat") {
+                    // The system hides the window's title while the tabs hold the toolbar's center,
+                    // so the chat's title and directory are said here, at the leading edge.
+                    ToolbarItem(id: "title", placement: .navigation) { WindowTitle(window: window) }
+                        .customizationBehavior(.disabled)
+                        .sharedBackgroundVisibility(.hidden)
                     ToolbarItem(id: "session", placement: .primaryAction) {
                         ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
@@ -105,6 +110,26 @@ public struct RootView: View {
                     .defaultCustomization(.hidden)
                 }
         }
+    }
+}
+
+/// The chat's title over its directory, as the window's own title would show them.
+struct WindowTitle: View {
+    let window: WindowModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(window.title)
+                .font(.headline)
+            if !window.subtitle.isEmpty {
+                Text(window.subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .lineLimit(1)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 
