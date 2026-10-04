@@ -33,6 +33,11 @@ struct TranscriptView: View {
         .defaultScrollAnchor(.bottom)
         // Bottom-aligned short content pushed the top edge effect down the window.
         .defaultScrollAnchor(.top, for: .alignment)
+        // The anchor's adjustment carries the transaction's animation, so a prompt's arrival and
+        // Thinking glide everything above up with the push's spring. Only these two, on the scroll
+        // view: streamed text and `itemsVersion` stay unanimated (looped Update Constraints).
+        .animation(reduceMotion ? nil : TranscriptMotion.spring, value: thread.arrivedPrompt)
+        .animation(reduceMotion ? nil : TranscriptMotion.spring, value: thread.isThinking)
         .scrollPosition($position)
         // A newly opened chat starts at its latest message.
         .onChange(of: thread.historyLoaded) {
@@ -336,7 +341,7 @@ private struct FadesIn: ViewModifier {
             .onAppear {
                 guard !shown else { return }
                 if push {
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) { shown = true }
+                    withAnimation(TranscriptMotion.spring) { shown = true }
                 } else {
                     withAnimation(.easeOut(duration: FadeInRenderer.duration)) { shown = true }
                 }
@@ -566,4 +571,9 @@ final class TurnHover {
 extension EnvironmentValues {
     @Entry var turnHover: TurnHover? = nil
     @Entry var turnPlace: TurnPlace? = nil
+}
+
+/// The spring a sent prompt pushes in with and the transcript glides up on, kept as one value.
+private enum TranscriptMotion {
+    static let spring = Animation.spring(response: 0.45, dampingFraction: 0.8)
 }
