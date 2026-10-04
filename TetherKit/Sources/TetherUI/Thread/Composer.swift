@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 /// It also reads the connection's state: while the host isn't connected, `ConnectionStatusCard`
 /// takes the field's place.
 struct Composer: View {
+    @Environment(\.textScale) private var textScale
     let connection: HostConnection
     let cwd: String?
     var thread: ThreadModel?
@@ -421,7 +422,7 @@ struct Composer: View {
         } label: {
             Label(title, systemImage: symbol)
                 // The glass button adds its own padding around the symbol, up to the diameter.
-                .frame(width: Self.circleDiameter - 21, height: Self.circleDiameter - 21)
+                .frame(width: circleDiameter - 21, height: circleDiameter - 21)
                 // Hops as it sends.
                 .symbolEffect(.bounce.up, options: reduceMotion ? .nonRepeating.speed(0) : .nonRepeating, value: sent)
         }
@@ -473,7 +474,10 @@ struct Composer: View {
     /// The + menu, as the desktop app has it: attach, mention a file, or browse the commands
     /// that typing / offers, for someone who doesn't know them yet.
     /// The Add circle's diameter: the one-line field's height, as the Send circle's extra large control size draws it.
-    private static let circleDiameter: CGFloat = 41
+    private static let baseCircleDiameter: CGFloat = 41
+    /// Follows View ▸ Bigger / Smaller with the field's line (17 pt of the 41 at 100%), whose
+    /// padding doesn't scale, so the circles stay as tall as a one-line field.
+    private var circleDiameter: CGFloat { (Self.baseCircleDiameter - 17) + 17 * textScale }
 
     private func addButton(dim: Double) -> some View {
         Menu {
@@ -501,7 +505,7 @@ struct Composer: View {
                 // A plain label doesn't fade with its window as the glass buttons' do.
                 .foregroundStyle(appearsActive ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                 .opacity(dim)
-                .frame(width: Self.circleDiameter, height: Self.circleDiameter)
+                .frame(width: circleDiameter, height: circleDiameter)
         }
         .menuIndicator(.hidden)
         .menuStyle(.button)
