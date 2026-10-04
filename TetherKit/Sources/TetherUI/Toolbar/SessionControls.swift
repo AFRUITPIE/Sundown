@@ -127,13 +127,21 @@ struct ToolbarSessionControl<Control: View>: View {
 /// popover with the models, Fast Mode and the effort levels together.
 struct ModelEffortButton: View {
     let settings: SessionSettings
+    /// The sparkle alone, for Customize Toolbar's icon-only version: unlike the name, it can share a
+    /// glass capsule with the buttons beside it.
+    var iconOnly = false
     @State private var isPresented = false
 
     var body: some View {
         Button { isPresented.toggle() } label: {
-            // Titled "Model", which Customize Toolbar and the » menu read; drawn as the model's name.
-            Label("Model", systemImage: SessionSymbol.model)
-                .labelStyle(ValueLabelStyle(value: settings.modelLabel))
+            // Titled "Model", which Customize Toolbar and the » menu read; drawn as the model's name
+            // unless it's the icon-only version.
+            if iconOnly {
+                Label("Model", systemImage: SessionSymbol.model)
+            } else {
+                Label("Model", systemImage: SessionSymbol.model)
+                    .labelStyle(ValueLabelStyle(value: settings.modelLabel))
+            }
         }
         .disabled(!settings.isEnabled)
         .help("Model and Effort")
@@ -176,15 +184,16 @@ struct ModelEffortForm: View {
 }
 
 /// The mode's symbol, and the only control that ever shows colour: bypass means Claude stops asking.
-struct PermissionsMenu: View {
+/// A button opening a popover of the modes, not a menu: a toolbar menu never shares a glass capsule
+/// with the buttons beside it.
+struct PermissionsButton: View {
     let settings: SessionSettings
+    @State private var isPresented = false
 
     private var mode: PermissionMode { settings.permissionMode.wrappedValue }
 
     var body: some View {
-        Menu {
-            Section("Permissions") { PermissionModeItems(settings: settings) }
-        } label: {
+        Button { isPresented.toggle() } label: {
             // Titled "Permissions" for Customize Toolbar and the » menu; the toolbar shows the symbol.
             let label = Label("Permissions", systemImage: mode.symbol)
                 .contentTransition(.symbolEffect(.replace))
@@ -196,11 +205,42 @@ struct PermissionsMenu: View {
                 label
             }
         }
-        .menuIndicator(.visible)
         .disabled(!settings.isEnabled)
-        .help("Permissions")
-        // The choice in the label, which VoiceOver reads for a toolbar menu.
+        .help("Permissions, \(mode.longLabel)")
         .accessibilityLabel("Permissions, \(mode.longLabel)")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            PermissionsForm(settings: settings)
+                .popoverSize(width: 320)
+        }
+    }
+}
+
+/// The popover's modes, each with the line saying what it does.
+struct PermissionsForm: View {
+    let settings: SessionSettings
+
+    var body: some View {
+        Form {
+            Section("Permissions") {
+                Picker("Permissions", selection: settings.permissionMode) {
+                    ForEach(settings.offeredModes, id: \.self) { mode in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label(mode.longLabel, systemImage: mode.symbol)
+                            if let summary = mode.summary {
+                                Text(summary).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .lineLimit(nil)
+                        .tag(mode)
+                        .disabled(mode == .auto && settings.autoModeUnavailable)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
     }
 }
 
@@ -370,7 +410,7 @@ private struct SessionControlsPreview: View {
             Color.clear
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) { ModelEffortButton(settings: settings) }
-                    ToolbarItem(placement: .primaryAction) { PermissionsMenu(settings: settings) }
+                    ToolbarItem(placement: .primaryAction) { PermissionsButton(settings: settings) }
                 }
         }
         // Wide enough that the preview window's own title never pushes a control into the `»` overflow.
@@ -410,6 +450,13 @@ private struct SessionControlsPreview: View {
 
 /// A preview can't open a menu, so the same pickers are laid out here to check the rows'
 /// symbols and wording.
+#Preview("Permissions popover") {
+    var settings = previewSettings(thread: .sample(model: "sonnet", effort: .medium, permissionMode: .acceptEdits))
+    settings.offersBypass = true
+    return PermissionsForm(settings: settings)
+        .popoverSize(width: 320)
+}
+
 #Preview("Model and Effort popover") {
     ModelEffortForm(settings: previewSettings(thread: .sample(model: "sonnet", effort: .medium, fastModeState: .on)))
         .popoverSize(width: 300)

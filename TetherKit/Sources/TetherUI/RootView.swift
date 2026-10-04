@@ -70,11 +70,11 @@ public struct RootView: View {
     }
 
     private var modelEffort: some View {
-        ToolbarSessionControl(window: window, control: ModelEffortButton.init(settings:))
+        ToolbarSessionControl(window: window) { ModelEffortButton(settings: $0) }
     }
 
     private var permissions: some View {
-        ToolbarSessionControl(window: window, control: PermissionsMenu.init(settings:))
+        ToolbarSessionControl(window: window, control: PermissionsButton.init(settings:))
     }
 
     private var context: some View {
@@ -133,6 +133,10 @@ public struct RootView: View {
                     ToolbarItem(id: "modelEffort") {
                         modelEffort
                     }
+                    ToolbarItem(id: "modelEffortIcon") {
+                        ToolbarSessionControl(window: window) { ModelEffortButton(settings: $0, iconOnly: true) }
+                    }
+                    .defaultCustomization(.hidden)
                     ToolbarItem(id: "permissions") {
                         permissions
                     }
