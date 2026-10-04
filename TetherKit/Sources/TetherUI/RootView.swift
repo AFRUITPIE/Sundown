@@ -94,13 +94,10 @@ public struct RootView: View {
                         .labelsHidden()
                     }
                     .customizationBehavior(.disabled)
-                    // Model, effort and permissions as items of their own, so Customize Toolbar can
-                    // move or remove each; side by side, they share one glass capsule.
-                    ToolbarItem(id: "model", placement: .primaryAction) {
-                        ToolbarSessionControl(window: window, control: ModelMenu.init(settings:))
-                    }
-                    ToolbarItem(id: "effort", placement: .primaryAction) {
-                        ToolbarSessionControl(window: window, control: EffortMenu.init(settings:))
+                    // Model and effort as one popover; permissions a menu of its own. Items of their
+                    // own, so Customize Toolbar can move or remove each.
+                    ToolbarItem(id: "modelEffort", placement: .primaryAction) {
+                        ToolbarSessionControl(window: window, control: ModelEffortButton.init(settings:))
                     }
                     ToolbarItem(id: "permissions", placement: .primaryAction) {
                         ToolbarSessionControl(window: window, control: PermissionsMenu.init(settings:))

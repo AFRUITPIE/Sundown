@@ -123,53 +123,55 @@ struct ToolbarSessionControl<Control: View>: View {
     var body: some View { control(.current(window)) }
 }
 
-/// The one control that shows a word: which model is answering is what people look for.
-/// Fast Mode rides in its menu because it is a property of the model, not a fourth control.
-struct ModelMenu: View {
+/// Model and effort as one toolbar button, the model's name beside the effort's gauge, opening a
+/// popover with the models, Fast Mode and the effort levels together.
+struct ModelEffortButton: View {
     let settings: SessionSettings
+    @State private var isPresented = false
 
     var body: some View {
-        Menu {
-            ModelPicker(settings: settings)
-                .pickerStyle(.inline)
-            Divider()
-            FastModeToggle(settings: settings)
-        } label: {
-            Label(settings.modelLabel, systemImage: SessionSymbol.model)
-                // Toolbar items are icon-only by default; this is the one that has to say a name.
-                // On the label, not the menu, which would pass it on to the menu's items.
-                .labelStyle(.titleAndIcon)
+        Button { isPresented.toggle() } label: {
+            Label {
+                Text(settings.modelLabel)
+            } icon: {
+                // The needle says the level in use, chosen or Claude Code's default.
+                Image(systemName: settings.effortUnavailable ? SessionSymbol.model
+                                  : settings.effectiveEffort.symbol(in: settings.effortLevels))
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            // Toolbar items are icon-only by default; this one has to say which model.
+            .labelStyle(.titleAndIcon)
         }
-        .menuIndicator(.visible)
         .disabled(!settings.isEnabled)
-        .help("Model")
-        // The choice in the label, which VoiceOver reads for a toolbar menu.
-        .accessibilityLabel("Model, \(settings.modelLabel)")
+        .help("Model and Effort")
+        .accessibilityLabel("Model, \(settings.modelLabel), Effort, \(settings.effortLabel)")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            ModelEffortForm(settings: settings)
+                .popoverSize(width: 300)
+        }
     }
 }
 
-/// A gauge whose needle carries the value, the tooltip spelling it out, shown as the toolbar's
-/// display mode says (icon only by default). A pull-down with a checked list, like the model's,
-/// because a pop-up here would show its rows as bare gauges.
-struct EffortMenu: View {
+/// The popover's contents: the models with Fast Mode under them, then the effort levels.
+struct ModelEffortForm: View {
     let settings: SessionSettings
 
-    private var levels: [EffortLevel] { settings.effortLevels }
-
     var body: some View {
-        Menu {
-            EffortPicker(settings: settings)
-                .pickerStyle(.inline)
-        } label: {
-            // The needle says the level in use, chosen or Claude Code's default.
-            Label("Effort", systemImage: settings.effectiveEffort.symbol(in: levels))
-                .contentTransition(.symbolEffect(.replace))
+        Form {
+            Section("Model") {
+                ModelPicker(settings: settings)
+                    .labelsHidden()
+                FastModeToggle(settings: settings)
+            }
+            Section("Effort") {
+                EffortPicker(settings: settings)
+                    .labelsHidden()
+                    .disabled(settings.effortUnavailable)
+            }
         }
-        .menuIndicator(.visible)
-        .disabled(!settings.isEnabled || settings.effortUnavailable)
-        .help(settings.effortUnavailable ? "\(settings.modelLabel) doesn’t take an effort level" : "Effort, \(settings.effortLabel)")
-        // The choice in the label, which VoiceOver reads for a toolbar menu.
-        .accessibilityLabel("Effort, \(settings.effortLabel)")
+        .pickerStyle(.inline)
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
     }
 }
 
@@ -366,8 +368,7 @@ private struct SessionControlsPreview: View {
         NavigationStack {
             Color.clear
                 .toolbar {
-                    ToolbarItem(placement: .primaryAction) { ModelMenu(settings: settings) }
-                    ToolbarItem(placement: .primaryAction) { EffortMenu(settings: settings) }
+                    ToolbarItem(placement: .primaryAction) { ModelEffortButton(settings: settings) }
                     ToolbarItem(placement: .primaryAction) { PermissionsMenu(settings: settings) }
                 }
         }
@@ -396,7 +397,7 @@ private struct SessionControlsPreview: View {
 }
 
 #Preview("SessionControls (no fast mode)") {
-    // Opus has no fast mode, so the toggle in the model menu is disabled with a reason.
+    // Opus has no fast mode, so the toggle in the popover is disabled with a reason.
     SessionControlsPreview(settings: previewSettings(thread: .sample(model: "opus", effort: nil)))
 }
 
@@ -408,6 +409,11 @@ private struct SessionControlsPreview: View {
 
 /// A preview can't open a menu, so the same pickers are laid out here to check the rows'
 /// symbols and wording.
+#Preview("Model and Effort popover") {
+    ModelEffortForm(settings: previewSettings(thread: .sample(model: "sonnet", effort: .medium, fastModeState: .on)))
+        .popoverSize(width: 300)
+}
+
 #Preview("Session menu contents") {
     let settings = previewSettings(thread: .sample(model: "sonnet", effort: .medium, fastModeState: .on))
     return Form {
