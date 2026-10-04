@@ -85,10 +85,12 @@ public struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
             DetailView(window: window)
-                // A flexible frame reports a minimum of 0 whatever its child wants, so the column's
-                // minimum comes only from the declared widths: a content-derived one that moved during
-                // constraint updates looped AppKit's Update Constraints when the window narrowed.
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                // The chat never gets narrower than the inspector's 310 pt. A flexible frame reports
+                // exactly its declared minimum whatever its child wants, so this is a constant: a
+                // content-derived one that moved during constraint updates looped AppKit's Update
+                // Constraints when the window narrowed. No detail column width: SwiftUI counts the
+                // inspector's width twice there.
+                .frame(minWidth: 310, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(window.title)
