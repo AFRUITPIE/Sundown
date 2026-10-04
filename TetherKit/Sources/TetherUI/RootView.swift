@@ -78,17 +78,9 @@ public struct RootView: View {
         // No columnVisibility binding: writing it on every sidebar toggle rebuilt the toolbar mid-animation.
         NavigationSplitView {
             SidebarView(window: window)
-                // A flexible frame reports a minimum of 0 whatever its child wants, so the column's
-                // minimum comes only from the declared widths: a content-derived one that moved during
-                // constraint updates looped AppKit's Update Constraints when the window narrowed.
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
             DetailView(window: window)
-                // No minimum here: a detail minimum made the window grow to 1150 pt when the inspector
-                // opened beside the sidebar (SwiftUI counts the inspector's width twice in it). The
-                // window's minimum is on the split view in `InspectorColumn` instead.
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
                 // every item is then declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(window.title)
@@ -124,22 +116,10 @@ private struct InspectorColumn: ViewModifier {
     func body(content: Content) -> some View {
         content.inspector(isPresented: $window.showInspector) {
             InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-                // A flexible frame reports a minimum of 0 whatever its child wants, so the column's
-                // minimum comes only from the declared widths: a content-derived one that moved during
-                // constraint updates looped AppKit's Update Constraints when the window narrowed.
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                // Resizable. Dragging the column wider once crashed SwiftUI's split view (#83, an
-                // Apple bug); re-check that on each macOS build.
-                .inspectorColumnWidth(min: 310, ideal: 310, max: 900)
                 .toolbar {
-                    ToolbarSpacer(.flexible)
                     ToolbarItem { InspectorToggle(window: window) }
                 }
         }
-        // The window's minimum, constant per state and changed only by `setInspector`: sidebar 280 +
-        // chat 320 closed, plus the inspector's 310 open. As a minimum on the split view inside the
-        // inspector modifier it instead widened the window by the inspector's whole width.
-        .frame(minWidth: window.windowMinimum)
     }
 }
 
@@ -304,7 +284,7 @@ public struct ShellViewCommands: View {
             }
         }
         .disabled(window == nil)
-        Button(window?.showInspector == true ? "Hide Inspector" : "Show Inspector") { window?.setInspector(window?.showInspector != true) }
+        Button(window?.showInspector == true ? "Hide Inspector" : "Show Inspector") { window?.showInspector.toggle() }
             .keyboardShortcut("i", modifiers: [.command, .option])
             .disabled(window == nil)
     }

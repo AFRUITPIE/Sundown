@@ -77,7 +77,7 @@ struct InspectorToggle: View {
     let window: WindowModel
 
     var body: some View {
-        Button("Inspector", systemImage: "sidebar.trailing") { window.setInspector(!window.showInspector) }
+        Button("Inspector", systemImage: "sidebar.trailing") { window.showInspector.toggle() }
             .help(window.showInspector ? "Hide Inspector" : "Show Inspector")
     }
 }
@@ -126,7 +126,6 @@ func inspectorPreview<Content: View>(@ViewBuilder _ content: () -> Content) -> s
     }
     .inspector(isPresented: .constant(true)) {
         content()
-            .inspectorColumnWidth(min: 310, ideal: 310, max: 900)
     }
     .frame(width: 900, height: 640)
 }

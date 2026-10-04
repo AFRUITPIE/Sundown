@@ -93,9 +93,6 @@ public final class WindowModel {
 
     /// Whether the trailing inspector is shown.
     public var showInspector: Bool { didSet { app.remember(self) } }
-    /// The window's minimum width: room for the sidebar and a chat while the inspector is closed,
-    /// and for the inspector too once it's open. Changed only by `setInspector`, never in layout.
-    public var windowMinimum: CGFloat = Layout.closedWindowMinimum
     /// The pane the inspector shows, kept while it is closed.
     public var inspectorPane: InspectorPane { didSet { app.remember(self) } }
     /// The task the Tasks pane has open, wherever the inspector is.
@@ -241,7 +238,6 @@ public final class WindowModel {
             hostID = HostConfig.local.id
         }
         showInspector = inspector.shown
-        windowMinimum = inspector.shown ? Layout.openWindowMinimum : Layout.closedWindowMinimum
         inspectorPane = inspector.pane
         started = true
         app.register(self)
@@ -306,23 +302,7 @@ public final class WindowModel {
 
     public func openInspector(on pane: InspectorPane) {
         if inspectorPane != pane { inspectorPane = pane }
-        setInspector(true)
-    }
-
-    /// Shows or hides the inspector. The window's minimum is raised a transaction before it opens,
-    /// so the window grows by the shortfall rather than by the inspector's width, and lowered as it closes.
-    public func setInspector(_ shown: Bool) {
-        guard shown != showInspector else { return }
-        if shown {
-            windowMinimum = Layout.openWindowMinimum
-            Task { @MainActor in
-                await Task.yield()
-                showInspector = true
-            }
-        } else {
-            showInspector = false
-            windowMinimum = Layout.closedWindowMinimum
-        }
+        showInspector = true
     }
 
     /// Start composing a new chat on the host the sidebar is showing. A chat still starting from

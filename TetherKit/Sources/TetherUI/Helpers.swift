@@ -84,9 +84,6 @@ struct ComposerDrafts: Equatable {
 }
 
 enum Layout {
-    /// Window minimum widths: sidebar 280 + chat 320, and with the inspector's 310 beside them.
-    static let closedWindowMinimum: CGFloat = 600
-    static let openWindowMinimum: CGFloat = 900
     static let gutter: CGFloat = 28
     /// The corners every card shares (the message field, the prompt, status and connection cards),
     /// so shapes stacked together read as one family.
