@@ -94,15 +94,18 @@ public struct RootView: View {
                         .labelsHidden()
                     }
                     .customizationBehavior(.disabled)
-                    // Model and effort as one popover; permissions a menu of its own. Items of their
-                    // own, so Customize Toolbar can move or remove each.
-                    ToolbarItem(id: "modelEffort", placement: .primaryAction) {
+                    // Everything after the tabs has the default placement, so Customize Toolbar can
+                    // move it anywhere; spacers group items, and people can drag in more of their own.
+                    ToolbarSpacer(.flexible)
+                    // Model and effort as one popover; permissions a menu of its own.
+                    ToolbarItem(id: "modelEffort") {
                         ToolbarSessionControl(window: window, control: ModelEffortButton.init(settings:))
                     }
-                    ToolbarItem(id: "permissions", placement: .primaryAction) {
+                    ToolbarItem(id: "permissions") {
                         ToolbarSessionControl(window: window, control: PermissionsMenu.init(settings:))
                     }
-                    ToolbarItem(id: "context", placement: .primaryAction) {
+                    ToolbarSpacer(.fixed)
+                    ToolbarItem(id: "context") {
                         ChatPopoverButton(title: "Context", window: window) {
                             ContextGauge(window: window)
                         } content: {
@@ -110,14 +113,14 @@ public struct RootView: View {
                                 .popoverSize(width: 340)
                         }
                     }
-                    ToolbarItem(id: "mcp", placement: .primaryAction) {
+                    ToolbarItem(id: "mcp") {
                         ChatPopoverButton(title: "MCP Servers", systemImage: "puzzlepiece.extension", window: window) {
                             MCPPane(thread: $0, connection: $1)
                                 .paneStyle()
                                 .popoverSize(width: 360)
                         }
                     }
-                    ToolbarItem(id: "planUsage", placement: .primaryAction) {
+                    ToolbarItem(id: "planUsage") {
                         ChatPopoverButton(title: "Plan Usage", systemImage: "gauge.with.dots.needle.33percent", window: window) { thread, _ in
                             PlanUsageView(thread: thread)
                                 .popoverSize(width: 300)
