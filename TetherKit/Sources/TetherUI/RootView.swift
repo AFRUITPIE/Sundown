@@ -89,7 +89,7 @@ public struct RootView: View {
                         ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
                     ToolbarItem(id: "context", placement: .primaryAction) {
-                        ChatPopoverButton(title: "Context", systemImage: "chart.bar.horizontal.page", window: window) {
+                        ChatPopoverButton(title: "Context", systemImage: "gauge.with.needle", window: window) {
                             ContextView(thread: $0, connection: $1)
                                 .popoverSize(width: 340)
                         }
