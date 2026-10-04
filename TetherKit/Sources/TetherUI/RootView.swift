@@ -1,5 +1,6 @@
 import SwiftUI
 import TetherKit
+import TetherProtocol
 
 /// One window: creates its `WindowModel` once, starts it when the window appears and lets its chat
 /// go when the window closes, and hands it to the menu bar while the window is frontmost. Keeps the
@@ -69,6 +70,38 @@ public struct RootView: View {
         .task { app.connectAll() }
     }
 
+    private var modelEffort: some View {
+        ToolbarSessionControl(window: window, control: ModelEffortButton.init(settings:))
+    }
+
+    private var permissions: some View {
+        ToolbarSessionControl(window: window, control: PermissionsMenu.init(settings:))
+    }
+
+    private var context: some View {
+        ChatPopoverButton(title: "Context", window: window) {
+            ContextGauge(window: window)
+        } content: {
+            ContextView(thread: $0, connection: $1)
+                .popoverSize(width: 340)
+        }
+    }
+
+    private var mcp: some View {
+        ChatPopoverButton(title: "MCP Servers", systemImage: "puzzlepiece.extension", window: window) {
+            MCPPane(thread: $0, connection: $1)
+                .paneStyle()
+                .popoverSize(width: 360)
+        }
+    }
+
+    private var planUsage: some View {
+        ChatPopoverButton(title: "Plan Usage", systemImage: "gauge.with.dots.needle.33percent", window: window) { thread, _ in
+            PlanUsageView(thread: thread)
+                .popoverSize(width: 300)
+        }
+    }
+
     private var splitView: some View {
         @Bindable var window = window
         return NavigationSplitView {
@@ -99,31 +132,34 @@ public struct RootView: View {
                     ToolbarSpacer(.flexible)
                     // Model and effort as one popover; permissions a menu of its own.
                     ToolbarItem(id: "modelEffort") {
-                        ToolbarSessionControl(window: window, control: ModelEffortButton.init(settings:))
+                        PaletteNamed("Model", systemImage: SessionSymbol.model) { modelEffort }
                     }
                     ToolbarItem(id: "permissions") {
-                        ToolbarSessionControl(window: window, control: PermissionsMenu.init(settings:))
+                        PaletteNamed("Permissions", systemImage: PermissionMode.default.symbol) { permissions }
                     }
                     ToolbarSpacer(.fixed)
-                    ToolbarItem(id: "context") {
-                        ChatPopoverButton(title: "Context", window: window) {
-                            ContextGauge(window: window)
-                        } content: {
-                            ContextView(thread: $0, connection: $1)
-                                .popoverSize(width: 340)
+                    ToolbarItem(id: "context") { context }
+                    ToolbarItem(id: "mcp") { mcp }
+                    ToolbarItem(id: "planUsage") { planUsage }
+                        .defaultCustomization(.hidden)
+                    // The same controls as groups in one capsule, as Mail offers Reply, Reply All and
+                    // Forward both together and apart: in the palette only.
+                    ToolbarItem(id: "sessionGroup") {
+                        ControlGroup {
+                            modelEffort
+                            permissions
+                        } label: {
+                            Label("Session", systemImage: SessionSymbol.model)
                         }
                     }
-                    ToolbarItem(id: "mcp") {
-                        ChatPopoverButton(title: "MCP Servers", systemImage: "puzzlepiece.extension", window: window) {
-                            MCPPane(thread: $0, connection: $1)
-                                .paneStyle()
-                                .popoverSize(width: 360)
-                        }
-                    }
-                    ToolbarItem(id: "planUsage") {
-                        ChatPopoverButton(title: "Plan Usage", systemImage: "gauge.with.dots.needle.33percent", window: window) { thread, _ in
-                            PlanUsageView(thread: thread)
-                                .popoverSize(width: 300)
+                    .defaultCustomization(.hidden)
+                    ToolbarItem(id: "chatInfoGroup") {
+                        ControlGroup {
+                            context
+                            planUsage
+                            mcp
+                        } label: {
+                            Label("Chat Info", systemImage: "info.circle")
                         }
                     }
                     .defaultCustomization(.hidden)
@@ -361,3 +397,22 @@ private func rootPreviewWindow() -> WindowModel {
 }
 
 #endif
+
+/// A toolbar control whose palette and » names are fixed ("Model", "Permissions") while the
+/// toolbar shows its current value: a one-control group, whose own label is what Customize
+/// Toolbar and the overflow menu read.
+struct PaletteNamed<Content: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, systemImage: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.systemImage = systemImage
+        self.content = content
+    }
+
+    var body: some View {
+        ControlGroup { content() } label: { Label(title, systemImage: systemImage) }
+    }
+}
