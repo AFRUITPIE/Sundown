@@ -192,7 +192,7 @@ struct WindowModelTests {
         #expect(restored.hostID == other)
         #expect(restored.threadID == "thread-9")
         // A window's own inspector state.
-        #expect(restored.showInspector && restored.inspectorPane == .mcp)
+        #expect(restored.inspectorPane == .mcp)
     }
 
     /// Each window has its own inspector: opening one on a pane leaves the other window's alone.

@@ -8,7 +8,6 @@ import TetherKit
 public struct WindowRoot: View {
     @State private var window: WindowModel
     @Binding private var target: WindowTarget
-    @SceneStorage("showInspector") private var storedShowInspector: Bool?
     @SceneStorage("inspectorPane") private var storedInspectorPane: InspectorPane?
     @Environment(\.appearsActive) private var appearsActive
     @Environment(\.undoManager) private var undoManager
@@ -23,10 +22,8 @@ public struct WindowRoot: View {
         RootView(window: window)
             .focusedSceneValue(\.window, window)
             .onAppear {
-                let restored = storedShowInspector.map { ($0, storedInspectorPane ?? .tasks) }
-                window.start(inspector: restored)
-                // Kept from the start, so a window never restores another window's inspector.
-                storedShowInspector = window.showInspector
+                window.start(pane: storedInspectorPane)
+                // Kept from the start, so a window never restores another window's pane.
                 storedInspectorPane = window.inspectorPane
             }
             // The window's own, so Edit ▸ Undo takes back an archive, a pin or a rename made in it.
@@ -34,7 +31,6 @@ public struct WindowRoot: View {
             .onChange(of: window.hostID) { target = window.target(keeping: target.id) }
             .onChange(of: window.threadID) { target = window.target(keeping: target.id) }
             // Not initial: `start()` reads the stored values first.
-            .onChange(of: window.showInspector) { storedShowInspector = window.showInspector }
             .onChange(of: window.inspectorPane) { storedInspectorPane = window.inspectorPane }
             // A chat's link: this window if it shows the chat, else any. New Chat's link always
             // opens a window of its own, so it never takes over the chat or draft of one in use.
@@ -78,7 +74,6 @@ public struct RootView: View {
         // No columnVisibility binding: writing it on every sidebar toggle rebuilt the toolbar mid-animation.
         NavigationSplitView {
             SidebarView(window: window)
-                .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
         } detail: {
             DetailView(window: window)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
@@ -92,14 +87,9 @@ public struct RootView: View {
                 // (`-[NSToolbar _itemAtIndex:]`, `_currentItems`).
                 .toolbar {
                     ToolbarItem(placement: .navigation) { NewChatButton(window: window) }
-                        .visibilityPriority(.high)
-                    // The last to go to the » menu when the window is narrow; the title gives way first.
                     ToolbarItem(placement: .primaryAction) {
                         ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
-                    .visibilityPriority(ToolbarItemVisibilityPriority(higherThan: .high))
-                    // Keeps the chat's settings apart from the inspector button beside them.
-                    ToolbarSpacer(.fixed, placement: .primaryAction)
                 }
         }
         // Attached to the split view, so it is full height and present on every screen.
@@ -117,6 +107,7 @@ private struct InspectorColumn: ViewModifier {
         content.inspector(isPresented: $window.showInspector) {
             InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
                 .toolbar {
+                    ToolbarSpacer(.flexible)
                     ToolbarItem { InspectorToggle(window: window) }
                 }
         }
@@ -284,9 +275,6 @@ public struct ShellViewCommands: View {
             }
         }
         .disabled(window == nil)
-        Button(window?.showInspector == true ? "Hide Inspector" : "Show Inspector") { window?.showInspector.toggle() }
-            .keyboardShortcut("i", modifiers: [.command, .option])
-            .disabled(window == nil)
     }
 }
 

@@ -99,7 +99,6 @@ public final class AppModel {
     /// The most recently used window's host, chat and inspector (persisted).
     public private(set) var lastHostID: UUID = HostConfig.local.id
     public private(set) var lastThreadID: String?
-    public private(set) var lastShowInspector = false
     public private(set) var lastInspectorPane: InspectorPane = .tasks
 
     /// How the sidebar groups chats (persisted).
@@ -429,7 +428,6 @@ public final class AppModel {
     func remember(_ window: WindowModel) {
         lastHostID = window.hostID
         lastThreadID = window.threadID
-        lastShowInspector = window.showInspector
         lastInspectorPane = window.inspectorPane
         saveWindow()
         connectIfWaiting(window.hostID)
@@ -551,7 +549,6 @@ public final class AppModel {
     private struct LastWindow: Codable {
         var hostID: UUID?
         var threadID: String?
-        var showInspector: Bool?
         var inspectorPane: String?
     }
 
@@ -593,8 +590,7 @@ public final class AppModel {
         written[Self.windowKey] = windowData
         let window = windowData.flatMap { try? JSONDecoder().decode(LastWindow.self, from: $0) }
             // Kept with the rest by an older build: taken from there, once.
-            ?? stored.map { LastWindow(hostID: $0.hostID, threadID: $0.threadID, showInspector: $0.showInspector, inspectorPane: $0.inspectorPane) }
-        lastShowInspector = window?.showInspector ?? false
+            ?? stored.map { LastWindow(hostID: $0.hostID, threadID: $0.threadID, inspectorPane: $0.inspectorPane) }
         lastInspectorPane = window?.inspectorPane.flatMap(InspectorPane.init(rawValue:)) ?? .tasks
         // A remembered host can disappear between launches; this Mac is always configured.
         if let id = window?.hostID, hosts.contains(where: { $0.id == id }) {
@@ -636,7 +632,7 @@ public final class AppModel {
     private func saveWindow() {
         guard !isLoading else { return }
         let window = LastWindow(hostID: lastHostID, threadID: lastThreadID,
-                                showInspector: lastShowInspector, inspectorPane: lastInspectorPane.rawValue)
+                                inspectorPane: lastInspectorPane.rawValue)
         write(try? Self.encoder.encode(window), forKey: Self.windowKey)
     }
 

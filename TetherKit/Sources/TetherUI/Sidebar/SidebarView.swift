@@ -279,7 +279,6 @@ private func sidebarPreview(_ app: AppModel, host: UUID? = nil, search: String =
     if let host { window.hostID = host }
     return NavigationSplitView {
         SidebarView(window: window, search: search)
-            .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
     } detail: {
         Text("Detail").foregroundStyle(.secondary)
     }

@@ -92,7 +92,7 @@ public final class WindowModel {
     private var selectedThreadHost: UUID?
 
     /// Whether the trailing inspector is shown.
-    public var showInspector: Bool { didSet { app.remember(self) } }
+    public var showInspector: Bool
     /// The pane the inspector shows, kept while it is closed.
     public var inspectorPane: InspectorPane { didSet { app.remember(self) } }
     /// The task the Tasks pane has open, wherever the inspector is.
@@ -224,10 +224,10 @@ public final class WindowModel {
 
     /// Shows the chat and seeds the draft. Called once the window is on screen, with the inspector
     /// as the window had it (restored), or as the most recently used window had it (a new window).
-    public func start(inspector: (shown: Bool, pane: InspectorPane)? = nil) {
+    public func start(pane: InspectorPane? = nil) {
         guard !started else { return }
         // Read before anything below changes this window, which is remembered as the last used.
-        let inspector = inspector ?? (app.lastShowInspector, app.lastInspectorPane)
+        let pane = pane ?? app.lastInspectorPane
         // The debug launch hook's chat, in the launch's first window, restored or new.
         if let chat = app.takeLaunchChat() {
             hostID = chat.host
@@ -237,8 +237,7 @@ public final class WindowModel {
         if app.connections[hostID] == nil && !app.hosts.contains(where: { $0.id == hostID }) {
             hostID = HostConfig.local.id
         }
-        showInspector = inspector.shown
-        inspectorPane = inspector.pane
+        inspectorPane = pane
         started = true
         app.register(self)
         seedDraft()
