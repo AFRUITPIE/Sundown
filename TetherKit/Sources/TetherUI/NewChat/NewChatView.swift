@@ -153,8 +153,25 @@ struct NewChatView: View {
     /// changes width with the choice (a menu button's label can't reserve it), and nothing
     /// should move when it does.
     private func chips(_ connection: HostConnection) -> some View {
+        // The full row while it fits, else the same controls as icons, so the window may be narrow.
+        ViewThatFits(in: .horizontal) {
+            chipRow(connection, compact: false)
+            chipRow(connection, compact: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private func chipRow(_ connection: HostConnection, compact: Bool) -> some View {
+        if compact {
+            chipControls(connection, compact: true).labelStyle(.iconOnly)
+        } else {
+            chipControls(connection, compact: false).labelStyle(.titleAndIcon)
+        }
+    }
+
+    private func chipControls(_ connection: HostConnection, compact: Bool) -> some View {
         HStack(spacing: 16) {
-            folderMenu(connection)
+            folderMenu(connection, compact: compact)
             if let branch = git?.branch {
                 Label(branch, systemImage: "arrow.triangle.branch")
                     // Spaced like the menus' labels beside it.
@@ -170,15 +187,13 @@ struct NewChatView: View {
             }
             workInMenu
         }
-        .labelStyle(.titleAndIcon)
         .menuStyle(.button)
         .buttonStyle(.borderless)
         .controlSize(.small)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Recent folders, then Choose Folder… for any other.
-    private func folderMenu(_ connection: HostConnection) -> some View {
+    private func folderMenu(_ connection: HostConnection, compact: Bool) -> some View {
         let folder = window.draftDirectory
         return Menu {
             Picker("Directory", selection: Binding(get: { window.draftDirectory }, set: { choose($0) })) {
@@ -196,9 +211,13 @@ struct NewChatView: View {
         } label: {
             // The whole path, since the window's subtitle already names the folder. No symbol:
             // Work In's folder beside it would read as a second one.
-            Text(folder?.abbreviatingHome ?? "Choose Directory")
-                .lineLimit(1)
-                .truncationMode(.middle)
+            if compact {
+                Label(folder?.abbreviatingHome ?? "Choose Directory", systemImage: "folder")
+            } else {
+                Text(folder?.abbreviatingHome ?? "Choose Directory")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
         }
         // Gives way before the others: a long path truncates in its middle instead.
         .layoutPriority(-1)
