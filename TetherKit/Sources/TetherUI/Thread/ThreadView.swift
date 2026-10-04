@@ -13,8 +13,10 @@ struct ThreadView: View {
             .safeAreaBar(edge: .bottom) {
                 BottomBar(thread: thread, connection: connection)
             }
-            // Find in Chat's bar, over the transcript while it's open.
-            .safeAreaBar(edge: .top) { FindBarHost(thread: thread) }
+            // Find in Chat's bar, above the transcript while it's open. An inset, not a `safeAreaBar`:
+            // a top bar, even empty while Find is closed, took the toolbar's scroll edge effect, and
+            // text scrolled up under the title and tabs unblurred.
+            .safeAreaInset(edge: .top, spacing: 0) { FindBarHost(thread: thread) }
             .task(id: thread.id) { await connection.open(thread) }
             .modifier(ProxyIcon(directory: connection.host.isLocal ? thread.cwd : nil))
             .modifier(OpensFileLinks(cwd: thread.cwd))
