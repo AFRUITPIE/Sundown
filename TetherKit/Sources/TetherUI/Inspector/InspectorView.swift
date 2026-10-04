@@ -126,7 +126,7 @@ func inspectorPreview<Content: View>(@ViewBuilder _ content: () -> Content) -> s
     }
     .inspector(isPresented: .constant(true)) {
         content()
-            .inspectorColumnWidth(min: 260, ideal: 310, max: 560)
+            .inspectorColumnWidth(min: 300, ideal: 310, max: 900)
     }
     .frame(width: 900, height: 640)
 }
