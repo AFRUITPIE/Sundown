@@ -93,6 +93,9 @@ public final class WindowModel {
 
     /// Whether the trailing inspector is shown.
     public var showInspector: Bool
+    /// The split view's columns. Written only by `toggleSidebar()`: the system's own sidebar button
+    /// goes to the toolbar's » menu whenever the sidebar is hidden, so the app has its own.
+    public var columnVisibility: NavigationSplitViewVisibility = .all
     /// The pane the inspector shows, kept while it is closed.
     public var inspectorPane: InspectorPane { didSet { app.remember(self) } }
     /// The task the Tasks pane has open, wherever the inspector is.
@@ -297,6 +300,10 @@ public final class WindowModel {
         // A desktop session's id carries a prefix ("local_…"); Claude Code's own is the rest.
         let bare = id.split(separator: "_", maxSplits: 1).last.map(String.init) ?? id
         return connection?.chats.first { $0.id == id || $0.id == bare }?.id
+    }
+
+    public func toggleSidebar() {
+        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
     }
 
     public func openInspector(on pane: InspectorPane) {

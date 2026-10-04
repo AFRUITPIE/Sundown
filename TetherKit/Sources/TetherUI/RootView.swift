@@ -71,9 +71,12 @@ public struct RootView: View {
     }
 
     private var splitView: some View {
-        // No columnVisibility binding: writing it on every sidebar toggle rebuilt the toolbar mid-animation.
-        NavigationSplitView {
+        @Bindable var window = window
+        // The binding is written only by `toggleSidebar()`, from the toolbar button and View ▸ Hide Sidebar.
+        return NavigationSplitView(columnVisibility: $window.columnVisibility) {
             SidebarView(window: window)
+                // The system's toggle goes to » while the sidebar is hidden; the detail toolbar has its own.
+                .toolbar(removing: .sidebarToggle)
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) { NewChatButton(window: window) }
                 }
@@ -89,6 +92,11 @@ public struct RootView: View {
                 // inspector open): the other window had no item at that index and AppKit threw
                 // (`-[NSToolbar _itemAtIndex:]`, `_currentItems`).
                 .toolbar {
+                    ToolbarItem(placement: .navigation) {
+                        Button("Toggle Sidebar", systemImage: "sidebar.leading") { window.toggleSidebar() }
+                            .help("Toggle Sidebar")
+                    }
+                    .visibilityPriority(.high)
                     ToolbarItem(placement: .primaryAction) {
                         ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
@@ -253,6 +261,20 @@ public struct TranscriptWidthCommands: View {
         Picker("Transcript Width", selection: $app.transcriptWidth) {
             ForEach(TranscriptWidth.allCases) { Text($0.label).tag($0) }
         }
+    }
+}
+
+/// View ▸ Show/Hide Sidebar (⌃⌘S) for the frontmost window, in place of `SidebarCommands`, which
+/// drives only the system's own toggle.
+public struct SidebarToggleCommand: View {
+    @FocusedValue(\.window) private var window
+
+    public init() {}
+
+    public var body: some View {
+        Button(window?.columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar") { window?.toggleSidebar() }
+            .keyboardShortcut("s", modifiers: [.command, .control])
+            .disabled(window == nil)
     }
 }
 

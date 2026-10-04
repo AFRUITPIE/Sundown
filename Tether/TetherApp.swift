@@ -63,8 +63,8 @@ struct TetherApp: App {
             }
             CommandMenu("Host") { HostCommands(app: app) }
             CommandMenu("Chat") { ChatCommands() }
-            // View ▸ Show Sidebar, for the toolbar's sidebar button.
-            SidebarCommands()
+            // View ▸ Show Sidebar, for the toolbar's sidebar button (the app's own).
+            CommandGroup(replacing: .sidebar) { SidebarToggleCommand() }
             InspectorCommands()
         }
         HostWindows(app: app)
