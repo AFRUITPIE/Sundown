@@ -94,8 +94,16 @@ public struct RootView: View {
                         .labelsHidden()
                     }
                     .customizationBehavior(.disabled)
-                    ToolbarItem(id: "session", placement: .primaryAction) {
-                        ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
+                    // Model, effort and permissions as items of their own, so Customize Toolbar can
+                    // move or remove each; side by side, they share one glass capsule.
+                    ToolbarItem(id: "model", placement: .primaryAction) {
+                        ToolbarSessionControl(window: window, control: ModelMenu.init(settings:))
+                    }
+                    ToolbarItem(id: "effort", placement: .primaryAction) {
+                        ToolbarSessionControl(window: window, control: EffortMenu.init(settings:))
+                    }
+                    ToolbarItem(id: "permissions", placement: .primaryAction) {
+                        ToolbarSessionControl(window: window, control: PermissionsMenu.init(settings:))
                     }
                     ToolbarItem(id: "context", placement: .primaryAction) {
                         ChatPopoverButton(title: "Context", window: window) {

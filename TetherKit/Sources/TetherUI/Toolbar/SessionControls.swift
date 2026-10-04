@@ -123,26 +123,6 @@ struct ToolbarSessionControl<Control: View>: View {
     var body: some View { control(.current(window)) }
 }
 
-/// The chat's three settings as one toolbar item, a control group, so they share one glass capsule
-/// the way Xcode's scheme and run destination do, and the » menu calls them Session.
-struct SessionMenus: View {
-    let settings: SessionSettings
-
-    var body: some View {
-        ControlGroup {
-            ModelMenu(settings: settings)
-            EffortMenu(settings: settings)
-            PermissionsMenu(settings: settings)
-        } label: {
-            Label("Session", systemImage: SessionSymbol.model)
-        }
-        // One capsule, as Safari's back and forward share one (the default style gave each menu its
-        // own); the chevrons still say each is a menu.
-        .controlGroupStyle(.navigation)
-        .menuIndicator(.visible)
-    }
-}
-
 /// The one control that shows a word: which model is answering is what people look for.
 /// Fast Mode rides in its menu because it is a property of the model, not a fourth control.
 struct ModelMenu: View {
@@ -160,9 +140,10 @@ struct ModelMenu: View {
                 // On the label, not the menu, which would pass it on to the menu's items.
                 .labelStyle(.titleAndIcon)
         }
+        .menuIndicator(.visible)
         .disabled(!settings.isEnabled)
         .help("Model")
-        // The choice in the label: in the toolbar's control group a value never reaches VoiceOver.
+        // The choice in the label, which VoiceOver reads for a toolbar menu.
         .accessibilityLabel("Model, \(settings.modelLabel)")
     }
 }
@@ -184,9 +165,10 @@ struct EffortMenu: View {
             Label("Effort", systemImage: settings.effectiveEffort.symbol(in: levels))
                 .contentTransition(.symbolEffect(.replace))
         }
+        .menuIndicator(.visible)
         .disabled(!settings.isEnabled || settings.effortUnavailable)
         .help(settings.effortUnavailable ? "\(settings.modelLabel) doesn’t take an effort level" : "Effort, \(settings.effortLabel)")
-        // The choice in the label: in the toolbar's control group a value never reaches VoiceOver.
+        // The choice in the label, which VoiceOver reads for a toolbar menu.
         .accessibilityLabel("Effort, \(settings.effortLabel)")
     }
 }
@@ -211,9 +193,10 @@ struct PermissionsMenu: View {
                 label
             }
         }
+        .menuIndicator(.visible)
         .disabled(!settings.isEnabled)
         .help("Permissions")
-        // The choice in the label: in the toolbar's control group a value never reaches VoiceOver.
+        // The choice in the label, which VoiceOver reads for a toolbar menu.
         .accessibilityLabel("Permissions, \(mode.longLabel)")
     }
 }
@@ -383,7 +366,9 @@ private struct SessionControlsPreview: View {
         NavigationStack {
             Color.clear
                 .toolbar {
-                    ToolbarItem(placement: .primaryAction) { SessionMenus(settings: settings) }
+                    ToolbarItem(placement: .primaryAction) { ModelMenu(settings: settings) }
+                    ToolbarItem(placement: .primaryAction) { EffortMenu(settings: settings) }
+                    ToolbarItem(placement: .primaryAction) { PermissionsMenu(settings: settings) }
                 }
         }
         // Wide enough that the preview window's own title never pushes a control into the `»` overflow.
