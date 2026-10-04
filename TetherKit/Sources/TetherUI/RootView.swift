@@ -130,7 +130,7 @@ private struct InspectorColumn: ViewModifier {
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 // Resizable. Dragging the column wider once crashed SwiftUI's split view (#83, an
                 // Apple bug); re-check that on each macOS build.
-                .inspectorColumnWidth(min: 300, ideal: 310, max: 900)
+                .inspectorColumnWidth(min: 310, ideal: 310, max: 900)
                 .toolbar {
                     ToolbarSpacer(.flexible)
                     ToolbarItem { InspectorToggle(window: window) }
