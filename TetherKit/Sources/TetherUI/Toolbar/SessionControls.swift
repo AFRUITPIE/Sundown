@@ -131,9 +131,9 @@ struct ModelEffortButton: View {
 
     var body: some View {
         Button { isPresented.toggle() } label: {
-            // The model's name alone. The symbol stays on the label for Customize Toolbar's palette.
-            Label(settings.modelLabel, systemImage: SessionSymbol.model)
-                .labelStyle(.titleOnly)
+            // Titled "Model", which Customize Toolbar and the » menu read; drawn as the model's name.
+            Label("Model", systemImage: SessionSymbol.model)
+                .labelStyle(ValueLabelStyle(value: settings.modelLabel))
         }
         .disabled(!settings.isEnabled)
         .help("Model and Effort")
@@ -143,6 +143,13 @@ struct ModelEffortButton: View {
                 .popoverSize(width: 300)
         }
     }
+}
+
+/// Draws a label as a value ("Opus 5.5") while its title, which Customize Toolbar and the » menu
+/// read, stays the control's name ("Model").
+struct ValueLabelStyle: LabelStyle {
+    let value: String
+    func makeBody(configuration: Configuration) -> some View { Text(value) }
 }
 
 /// The popover's contents: the models with Fast Mode under them, then the effort levels.
@@ -178,7 +185,8 @@ struct PermissionsMenu: View {
         Menu {
             Section("Permissions") { PermissionModeItems(settings: settings) }
         } label: {
-            let label = Label(mode.label, systemImage: mode.symbol)
+            // Titled "Permissions" for Customize Toolbar and the » menu; the toolbar shows the symbol.
+            let label = Label("Permissions", systemImage: mode.symbol)
                 .contentTransition(.symbolEffect(.replace))
             // Only the dangerous mode styles its label: an unconditional `.foregroundStyle` would
             // also paint over the disabled appearance.

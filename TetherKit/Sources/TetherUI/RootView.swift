@@ -1,6 +1,5 @@
 import SwiftUI
 import TetherKit
-import TetherProtocol
 
 /// One window: creates its `WindowModel` once, starts it when the window appears and lets its chat
 /// go when the window closes, and hands it to the menu bar while the window is frontmost. Keeps the
@@ -132,10 +131,10 @@ public struct RootView: View {
                     ToolbarSpacer(.flexible)
                     // Model and effort as one popover; permissions a menu of its own.
                     ToolbarItem(id: "modelEffort") {
-                        PaletteNamed("Model", systemImage: SessionSymbol.model) { modelEffort }
+                        modelEffort
                     }
                     ToolbarItem(id: "permissions") {
-                        PaletteNamed("Permissions", systemImage: PermissionMode.default.symbol) { permissions }
+                        permissions
                     }
                     ToolbarSpacer(.fixed)
                     ToolbarItem(id: "context") { context }
@@ -151,6 +150,8 @@ public struct RootView: View {
                         } label: {
                             Label("Session", systemImage: SessionSymbol.model)
                         }
+                        // One capsule for the group, as Mail's Reply, Reply All and Forward share one.
+                        .controlGroupStyle(.navigation)
                     }
                     .defaultCustomization(.hidden)
                     ToolbarItem(id: "chatInfoGroup") {
@@ -161,6 +162,7 @@ public struct RootView: View {
                         } label: {
                             Label("Chat Info", systemImage: "info.circle")
                         }
+                        .controlGroupStyle(.navigation)
                     }
                     .defaultCustomization(.hidden)
                 }
@@ -398,21 +400,3 @@ private func rootPreviewWindow() -> WindowModel {
 
 #endif
 
-/// A toolbar control whose palette and » names are fixed ("Model", "Permissions") while the
-/// toolbar shows its current value: a one-control group, whose own label is what Customize
-/// Toolbar and the overflow menu read.
-struct PaletteNamed<Content: View>: View {
-    let title: String
-    let systemImage: String
-    @ViewBuilder let content: () -> Content
-
-    init(_ title: String, systemImage: String, @ViewBuilder content: @escaping () -> Content) {
-        self.title = title
-        self.systemImage = systemImage
-        self.content = content
-    }
-
-    var body: some View {
-        ControlGroup { content() } label: { Label(title, systemImage: systemImage) }
-    }
-}
