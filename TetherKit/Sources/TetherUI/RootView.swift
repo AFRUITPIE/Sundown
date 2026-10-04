@@ -72,56 +72,25 @@ public struct RootView: View {
 
     private var splitView: some View {
         @Bindable var window = window
-        // The binding is written only by `toggleSidebar()`, from the toolbar button and View ▸ Hide Sidebar.
-        return NavigationSplitView(columnVisibility: $window.columnVisibility) {
+        return NavigationSplitView {
             SidebarView(window: window)
-                // The system's toggle goes to » while the sidebar is hidden; the detail toolbar has its own.
-                .toolbar(removing: .sidebarToggle)
         } detail: {
             DetailView(window: window)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
-                // every item is then declared once and unconditionally, so nothing moves on selection.
+                // the item is declared once and unconditionally, so nothing moves on selection.
                 .navigationTitle(window.title)
                 .navigationSubtitle(window.subtitle)
-                // Not identified, and so not customizable: an identified toolbar is one AppKit keeps
-                // in step across every window, removing an item from all of them at once by its
-                // index, and two windows' items differ for a moment (one going to New Chat, one
-                // inspector open): the other window had no item at that index and AppKit threw
-                // (`-[NSToolbar _itemAtIndex:]`, `_currentItems`).
                 .toolbar {
-                    ToolbarItem(placement: .navigation) {
-                        Button("Toggle Sidebar", systemImage: "sidebar.leading") { window.toggleSidebar() }
-                            .help("Toggle Sidebar")
-                    }
-                    .visibilityPriority(.high)
                     ToolbarItem(placement: .primaryAction) {
                         ToolbarSessionControl(window: window, control: SessionMenus.init(settings:))
                     }
-                    .visibilityPriority(.low)
                 }
         }
-        // Attached to the split view, so it is full height and present on every screen.
-        .modifier(InspectorColumn(window: window))
-        // One constant window minimum, outside `.inspector` and independent of it: the sidebar
-        // (279 pt) plus about 320 pt of chat. Inside the inspector it added the inspector's width.
-        .frame(minWidth: 600)
-    }
-}
-
-/// SwiftUI's inspector on the split view, full height, with its button in its own toolbar over
-/// the column, so it never tints. The pane tabs are in the pane, not the toolbar: there, every
-/// change of tab made AppKit lay the whole toolbar out again.
-private struct InspectorColumn: ViewModifier {
-    @Bindable var window: WindowModel
-
-    func body(content: Content) -> some View {
-        content.inspector(isPresented: $window.showInspector) {
+        // Attached to the split view, so it is full height and present on every screen. Apple's
+        // defaults throughout: no declared widths or minimums. The pane tabs are in the pane, not
+        // the toolbar: there, every change of tab made AppKit lay the whole toolbar out again.
+        .inspector(isPresented: $window.showInspector) {
             InspectorView(window: window, selectedTaskID: $window.inspectedTaskID)
-                // The tab bar's minimum width changes with the selected tab; a zero minimum here keeps
-                // the split view from re-invalidating (Update Constraints crash, Anglesite#1139).
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                // Wide enough for the tab bar (Tasks, Session, MCP, Changes) not to clip; no maximum.
-                .inspectorColumnWidth(min: 310, ideal: 310)
                 .toolbar {
                     ToolbarSpacer(.flexible)
                     ToolbarItem { InspectorToggle(window: window) }
@@ -247,20 +216,6 @@ public struct TranscriptWidthCommands: View {
         Picker("Transcript Width", selection: $app.transcriptWidth) {
             ForEach(TranscriptWidth.allCases) { Text($0.label).tag($0) }
         }
-    }
-}
-
-/// View ▸ Show/Hide Sidebar (⌃⌘S) for the frontmost window, in place of `SidebarCommands`, which
-/// drives only the system's own toggle.
-public struct SidebarToggleCommand: View {
-    @FocusedValue(\.window) private var window
-
-    public init() {}
-
-    public var body: some View {
-        Button(window?.columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar") { window?.toggleSidebar() }
-            .keyboardShortcut("s", modifiers: [.command, .control])
-            .disabled(window == nil)
     }
 }
 
