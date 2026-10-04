@@ -296,7 +296,8 @@ struct TranscriptRowView: View, Equatable {
             case .item(let item):
                 // A prompt already shown here as a chat started doesn't fade in again.
                 LiveItemView(box: thread.box(for: item), thread: thread)
-                    .modifier(FadesIn(isNew: thread.justStarted(item.id) && sendGeometry?.landedPrompt != item.id))
+                    .modifier(FadesIn(isNew: thread.justStarted(item.id) && sendGeometry?.landedPrompt != item.id,
+                                      pushes: item.isOwnPrompt))
             case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread, rowID: row.id)
             case .turnWork(let id, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread, rowID: id)
             case .turnEdits(let edits): TurnEditsView(edits: edits, cwd: thread.cwd)
@@ -312,20 +313,42 @@ struct TranscriptRowView: View, Equatable {
 
 /// A row for an item that just started fades in rather than popping in. Opacity only, so it suits
 /// Reduce Motion as it is.
+/// The person's own just-sent prompt pushes in from below instead, on a spring, driven from
+/// `onAppear` like the fade: the lazy stack builds the row as it appears, so an insertion
+/// `.transition` has no transaction to run in. Reduce Motion keeps the fade.
 private struct FadesIn: ViewModifier {
     @State private var shown: Bool
+    private let pushes: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(isNew: Bool) {
+    init(isNew: Bool, pushes: Bool = false) {
         _shown = State(initialValue: !isNew)
+        self.pushes = pushes
     }
 
     func body(content: Content) -> some View {
+        let push = pushes && !reduceMotion
         content
+            .visualEffect { view, proxy in
+                view.offset(y: push && !shown ? proxy.size.height : 0)
+            }
             .opacity(shown ? 1 : 0)
             .onAppear {
                 guard !shown else { return }
-                withAnimation(.easeOut(duration: FadeInRenderer.duration)) { shown = true }
+                if push {
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) { shown = true }
+                } else {
+                    withAnimation(.easeOut(duration: FadeInRenderer.duration)) { shown = true }
+                }
             }
+    }
+}
+
+private extension Item {
+    /// A prompt the person typed here: not synthetic, not a subagent's.
+    var isOwnPrompt: Bool {
+        if case .userMessage(let m) = self { return m.synthetic != true && m.parentToolUseId == nil }
+        return false
     }
 }
 
