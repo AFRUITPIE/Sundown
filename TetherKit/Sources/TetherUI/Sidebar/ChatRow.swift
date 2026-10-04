@@ -64,7 +64,7 @@ enum ChatState: Hashable {
 }
 
 /// The sidebar row's status dot. Working pulses with the symbol's own effect (opacity only, so the
-/// dot never moves), except under Reduce Motion or while the Mac saves energy.
+/// dot never moves), except under Reduce Motion.
 struct ChatStatusDot: View {
     let state: ChatState
     static let size: CGFloat = 8
@@ -72,7 +72,6 @@ struct ChatStatusDot: View {
     /// The dot and its spacing: how far the row's other lines are indented to line up with the title.
     static let gutter = size + spacing
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.reducesEffects) private var reducesEffects
 
     var body: some View {
         ZStack {
@@ -81,7 +80,7 @@ struct ChatStatusDot: View {
                 Image(systemName: "circle.fill")
                     .resizable()
                     .foregroundStyle(.blue)
-                    .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion && !reducesEffects)
+                    .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
             case .needsYou: Circle().fill(.orange)
             case .newReply: Circle().fill(.green)
             case .failed: Circle().fill(.red)

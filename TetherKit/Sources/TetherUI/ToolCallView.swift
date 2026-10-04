@@ -791,7 +791,6 @@ struct ActivityLabel: View {
     let text: String
     let live: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.reducesEffects) private var reducesEffects
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -804,17 +803,46 @@ struct ActivityLabel: View {
     }
 
     @ViewBuilder private var words: some View {
-        if live, !reduceMotion, !reducesEffects {
-            // A band of the primary color sweeping across the secondary, every 1.6 s.
-            TimelineView(.animation) { context in
-                let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
-                let start = -0.8 + 2.2 * phase
-                Text(text).foregroundStyle(LinearGradient(colors: [.secondary, .primary, .secondary],
-                                                          startPoint: UnitPoint(x: start, y: 0.5),
-                                                          endPoint: UnitPoint(x: start + 0.6, y: 0.5)))
-            }
+        if live, !reduceMotion {
+            ShimmerText(text: text)
         } else {
             Text(text).foregroundStyle(.secondary)
         }
     }
 }
+
+/// Secondary text with a band of the primary color sweeping across it every 1.6 s. Built once: the
+/// band's gradient points are the animated value, so no body runs per frame.
+struct ShimmerText: View {
+    let text: String
+    @State private var sweeping = false
+
+    var body: some View {
+        Text(text)
+            .foregroundStyle(.secondary)
+            .overlay {
+                Text(text)
+                    .foregroundStyle(.primary)
+                    .mask {
+                        let start = sweeping ? 1.4 : -0.8
+                        LinearGradient(colors: [.clear, .black, .clear],
+                                       startPoint: UnitPoint(x: start, y: 0.5),
+                                       endPoint: UnitPoint(x: start + 0.6, y: 0.5))
+                    }
+            }
+            .onAppear {
+                withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) { sweeping = true }
+            }
+    }
+}
+
+#if DEBUG
+#Preview("Shimmer") {
+    VStack(alignment: .leading) {
+        ActivityLabel(text: "Running a command", live: true)
+        ActivityLabel(text: "Thinking", live: true)
+        ActivityLabel(text: "Settled", live: false)
+    }
+    .padding()
+}
+#endif

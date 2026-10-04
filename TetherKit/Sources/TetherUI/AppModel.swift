@@ -248,10 +248,6 @@ public final class AppModel {
     /// What each defaults key was last written with, or read as, so the same bytes aren't written again.
     @ObservationIgnored private var written: [String: Data] = [:]
 
-    /// Whether decorative motion is left out to save energy (`ReducedEffects`), put in the
-    /// environment beside the settings.
-    public var reducesEffects: Bool { effects.savingEnergy || !isActive }
-    private let effects = ReducedEffects()
     /// How many windows show each thread: a followed thread is let go only when none does.
     @ObservationIgnored private var viewers: [ObjectIdentifier: Int] = [:]
 

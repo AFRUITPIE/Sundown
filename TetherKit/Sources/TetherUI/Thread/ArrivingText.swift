@@ -7,8 +7,7 @@ import SwiftUI
 /// Only the last block of the reply being streamed into uses it (`ThreadModel.streamingReplyID`),
 /// since only it grows; every settled reply, and every code block, is plain text. It redraws only
 /// while something is still fading, at most 60 times a second: a fade that short looks the same,
-/// and on a 120 Hz display the stream drew twice as often. None of it while the Mac saves energy
-/// (`reducesEffects`): the words just appear.
+/// and on a 120 Hz display the stream drew twice as often.
 struct ArrivingText: View {
     let text: AttributedString
     /// Whether the text already there when the view appears is arriving too: true for a block that
@@ -17,19 +16,8 @@ struct ArrivingText: View {
     @State private var arrivals = Arrivals()
     /// Bumped when the last piece has finished fading, to draw once more without the clock.
     @State private var settled = 0
-    @Environment(\.reducesEffects) private var reducesEffects
 
     var body: some View {
-        if reducesEffects {
-            // Kept up to date, so what arrived meanwhile doesn't fade in when the effects come back.
-            let _ = arrivals.settle(text)
-            Text(text)
-        } else {
-            fading
-        }
-    }
-
-    private var fading: some View {
         let _ = settled
         let now = Date.timeIntervalSinceReferenceDate
         let pieces = arrivals.text(for: text, at: now, arrives: arrives)
@@ -54,12 +42,6 @@ final class Arrivals {
     private var pieces: [(start: Int, at: TimeInterval)] = []
 
     var latest: TimeInterval? { pieces.last?.at }
-
-    /// Everything in `text` has arrived and nothing is fading.
-    func settle(_ text: AttributedString) {
-        known = text.characters.count
-        pieces = []
-    }
 
     func isFading(at now: TimeInterval) -> Bool {
         guard let latest else { return false }

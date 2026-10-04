@@ -288,18 +288,6 @@ private func newChatPreview(worktree: Bool = false, folder: String? = nil,
     .frame(width: 900, height: 500)
 }
 
-/// The same with reduced effects (Low Power Mode, or the app in the background): nothing flies,
-/// and the line shows at once.
-#Preview("Starting session (reduced effects)") {
-    let window = WindowModel.sample()
-    window.starting = .sample()
-    return NavigationStack {
-        NewChatView(window: window, previewGit: .init(isRepository: true, branch: "main"))
-    }
-    .environment(\.reducesEffects, true)
-    .frame(width: 900, height: 500)
-}
-
 #Preview("NewChatView (not connected)") {
     NavigationStack {
         NewChatView(window: .sample(.sample(connections: [.sampleFailed()])))
