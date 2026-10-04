@@ -24,6 +24,15 @@ struct SidebarView: View {
         let byID = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let sections = resolve(window.sidebarList(threads, style: appearance.sidebar, search: search), byID)
         List(selection: $window.threadID) {
+            // First in the list, under the search field: an action, not a chat, so it has no tag and
+            // is never the selection.
+            Section {
+                Button { window.newChat() } label: {
+                    Label("New Chat", systemImage: "square.and.pencil")
+                }
+                .buttonStyle(.plain)
+                .help("New Chat")
+            }
             ForEach(sections) { section in
                 Section {
                     ForEach(section.rows) { row in

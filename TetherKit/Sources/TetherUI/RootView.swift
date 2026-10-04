@@ -77,9 +77,6 @@ public struct RootView: View {
             SidebarView(window: window)
                 // The system's toggle goes to » while the sidebar is hidden; the detail toolbar has its own.
                 .toolbar(removing: .sidebarToggle)
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) { NewChatButton(window: window) }
-                }
         } detail: {
             DetailView(window: window)
                 // Title, subtitle and toolbar belong to the container, not to whichever screen is inside it:
@@ -150,17 +147,6 @@ struct DetailView: View {
             }
         }
         .environment(\.messageSendGeometry, window.sendGeometry)
-    }
-}
-
-/// New Chat in the sidebar's own toolbar, over the sidebar, as Messages has it. Titled, for VoiceOver
-/// and the » menu.
-struct NewChatButton: View {
-    let window: WindowModel
-
-    var body: some View {
-        Button("New Chat", systemImage: "square.and.pencil") { window.newChat() }
-            .help("New Chat")
     }
 }
 
