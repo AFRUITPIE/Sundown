@@ -136,10 +136,10 @@ private struct InspectorColumn: ViewModifier {
                     ToolbarItem { InspectorToggle(window: window) }
                 }
         }
-        // The window's minimum, a constant: sidebar 280 + chat 310 + inspector 310. The inspector then
-        // takes its width from the chat and never widens the window. As a minimum on the split view
-        // inside the inspector modifier it instead widened the window by the inspector's whole width.
-        .frame(minWidth: 900)
+        // The window's minimum, constant per state and changed only by `setInspector`: sidebar 280 +
+        // chat 320 closed, plus the inspector's 310 open. As a minimum on the split view inside the
+        // inspector modifier it instead widened the window by the inspector's whole width.
+        .frame(minWidth: window.windowMinimum)
     }
 }
 
@@ -304,7 +304,7 @@ public struct ShellViewCommands: View {
             }
         }
         .disabled(window == nil)
-        Button(window?.showInspector == true ? "Hide Inspector" : "Show Inspector") { window?.showInspector.toggle() }
+        Button(window?.showInspector == true ? "Hide Inspector" : "Show Inspector") { window?.setInspector(window?.showInspector != true) }
             .keyboardShortcut("i", modifiers: [.command, .option])
             .disabled(window == nil)
     }

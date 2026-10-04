@@ -77,7 +77,7 @@ struct InspectorToggle: View {
     let window: WindowModel
 
     var body: some View {
-        Button("Inspector", systemImage: "sidebar.trailing") { window.showInspector.toggle() }
+        Button("Inspector", systemImage: "sidebar.trailing") { window.setInspector(!window.showInspector) }
             .help(window.showInspector ? "Hide Inspector" : "Show Inspector")
     }
 }
