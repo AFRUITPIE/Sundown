@@ -123,7 +123,7 @@ struct ToolbarSessionControl<Control: View>: View {
     var body: some View { control(.current(window)) }
 }
 
-/// Model and effort as one toolbar button, the model's name beside the effort's gauge, opening a
+/// Model and effort as one toolbar button, the model's name, opening a
 /// popover with the models, Fast Mode and the effort levels together.
 struct ModelEffortButton: View {
     let settings: SessionSettings
@@ -131,16 +131,9 @@ struct ModelEffortButton: View {
 
     var body: some View {
         Button { isPresented.toggle() } label: {
-            Label {
-                Text(settings.modelLabel)
-            } icon: {
-                // The needle says the level in use, chosen or Claude Code's default.
-                Image(systemName: settings.effortUnavailable ? SessionSymbol.model
-                                  : settings.effectiveEffort.symbol(in: settings.effortLevels))
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            // Toolbar items are icon-only by default; this one has to say which model.
-            .labelStyle(.titleAndIcon)
+            // The model's name alone. The symbol stays on the label for Customize Toolbar's palette.
+            Label(settings.modelLabel, systemImage: SessionSymbol.model)
+                .labelStyle(.titleOnly)
         }
         .disabled(!settings.isEnabled)
         .help("Model and Effort")
