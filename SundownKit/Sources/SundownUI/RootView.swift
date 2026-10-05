@@ -1,0 +1,409 @@
+import SwiftUI
+import SundownKit
+
+/// One window: creates its `WindowModel` once, starts it when the window appears and lets its chat
+/// go when the window closes, and hands it to the menu bar while the window is frontmost. Keeps the
+/// scene's value on what the window shows, and its tab in scene storage, so the system restores
+/// each window as it was.
+public struct WindowRoot: View {
+    @State private var window: WindowModel
+    @Binding private var target: WindowTarget
+    @SceneStorage("tab") private var storedTab: WindowTab?
+    @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.undoManager) private var undoManager
+
+    public init(app: AppModel, target: Binding<WindowTarget>) {
+        _target = target
+        // Side-effect free until `start()`, so a discarded instance leaves nothing behind.
+        _window = State(initialValue: WindowModel(app: app, target: target.wrappedValue))
+    }
+
+    public var body: some View {
+        RootView(window: window)
+            .focusedSceneValue(\.window, window)
+            .onAppear {
+                window.start(tab: storedTab)
+                // Kept from the start, so a window never restores another window's tab.
+                storedTab = window.tab
+            }
+            // The window's own, so Edit ▸ Undo takes back an archive, a pin or a rename made in it.
+            .onChange(of: undoManager, initial: true) { window.undoManager = undoManager }
+            .onChange(of: window.hostID) { target = window.target(keeping: target.id) }
+            .onChange(of: window.threadID) { target = window.target(keeping: target.id) }
+            // Not initial: `start()` reads the stored values first.
+            .onChange(of: window.tab) { storedTab = window.tab }
+            // A chat's link: this window if it shows the chat, else any. New Chat's link always
+            // opens a window of its own, so it never takes over the chat or draft of one in use.
+            .handlesExternalEvents(preferring: SundownLink.preference(host: window.hostID, thread: window.threadID),
+                                   allowing: [SundownLink.chatPrefix])
+            .onOpenURL { url in
+                guard let link = SundownLink(url) else { return }
+                Task { await window.handle(link) }
+            }
+            .onDisappear { window.close() }
+            .onChange(of: appearsActive, initial: true) { window.isKey = appearsActive }
+    }
+}
+
+public struct RootView: View {
+    let window: WindowModel
+
+    public init(window: WindowModel) {
+        self.window = window
+    }
+
+    private var app: AppModel { window.app }
+
+    public var body: some View {
+        splitView
+        .environment(\.inspectSubagent, InspectSubagentAction(window: window))
+        .environment(\.restoreCode, RestoreCodeAction(window: window))
+        .environment(\.startSuggestedTask, StartSuggestedTaskAction(window: window))
+        .environment(\.openChat, OpenChatAction(window: window))
+        .environment(\.forkChat, ForkChatAction(window: window))
+        .environment(\.hostIsLocal, window.connection?.host.isLocal == true)
+        .environment(\.transcriptFind, window.find)
+        .environment(\.promptNavigator, window.prompts)
+        .environment(\.composerDrafts, ComposerDrafts(app: app))
+        .chatActionAlerts(window)
+        .task { app.connectAll() }
+    }
+
+    private var modelEffort: some View {
+        ToolbarSessionControl(window: window) { ModelEffortButton(settings: $0) }
+    }
+
+    private var permissions: some View {
+        ToolbarSessionControl(window: window, control: PermissionsButton.init(settings:))
+    }
+
+    private var context: some View {
+        ChatPopoverButton(title: "Context", window: window) {
+            ContextGauge(window: window)
+        } content: {
+            ContextView(thread: $0, connection: $1)
+                .popoverSize(width: 340)
+        }
+    }
+
+    private var mcp: some View {
+        ChatPopoverButton(title: "MCP Servers", systemImage: "puzzlepiece.extension", window: window) {
+            MCPPane(thread: $0, connection: $1)
+                .paneStyle()
+                .popoverSize(width: 360)
+        }
+    }
+
+    private var planUsage: some View {
+        ChatPopoverButton(title: "Plan Usage", systemImage: "gauge.with.dots.needle.33percent", window: window) { thread, _ in
+            PlanUsageView(thread: thread)
+                .popoverSize(width: 300)
+        }
+    }
+
+    private var splitView: some View {
+        @Bindable var window = window
+        return NavigationSplitView {
+            SidebarView(window: window)
+        } detail: {
+            DetailView(window: window)
+                // Title, subtitle and toolbar belong to the container, not to whichever screen is inside
+                // it: every item is declared once and unconditionally, so nothing moves on selection.
+                .navigationTitle(window.title)
+                .navigationSubtitle(window.subtitle)
+                // Customizable (View ▸ Customize Toolbar…), so Plan Usage can be added. Every item
+                // is declared in every window, whatever it shows: an identified toolbar is kept in
+                // step across windows by AppKit, and two windows with different items made it throw.
+                .toolbar(id: "chat") {
+                    // Chat, Tasks and Diff. A segmented picker, not a `TabView`: in an active window a
+                    // `TabView`'s content lost the toolbar's scroll edge effect, and its tabs hid the
+                    // window's title.
+                    ToolbarItem(id: "tabs", placement: .principal) {
+                        Picker("View", selection: $window.tab) {
+                            ForEach(WindowTab.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    }
+                    .customizationBehavior(.disabled)
+                    // Everything after the tabs has the default placement, so Customize Toolbar can
+                    // move it anywhere; spacers group items, and people can drag in more of their own.
+                    ToolbarSpacer(.flexible)
+                    // Model and effort as one popover; permissions a menu of its own.
+                    ToolbarItem(id: "modelEffort") {
+                        modelEffort
+                    }
+                    ToolbarItem(id: "modelEffortIcon") {
+                        ToolbarSessionControl(window: window) { ModelEffortButton(settings: $0, iconOnly: true) }
+                    }
+                    .defaultCustomization(.hidden)
+                    ToolbarItem(id: "permissions") {
+                        permissions
+                    }
+                    ToolbarSpacer(.fixed)
+                    ToolbarItem(id: "context") { context }
+                    ToolbarItem(id: "mcp") { mcp }
+                    ToolbarItem(id: "planUsage") { planUsage }
+                        .defaultCustomization(.hidden)
+                    // The same controls as groups in one capsule, as Mail offers Reply, Reply All and
+                    // Forward both together and apart: in the palette only.
+                    ToolbarItem(id: "sessionGroup") {
+                        ControlGroup {
+                            modelEffort
+                            permissions
+                        } label: {
+                            Label("Session", systemImage: SessionSymbol.model)
+                        }
+                        // One capsule for the group, as Mail's Reply, Reply All and Forward share one.
+                        .controlGroupStyle(.navigation)
+                    }
+                    .defaultCustomization(.hidden)
+                    ToolbarItem(id: "chatInfoGroup") {
+                        ControlGroup {
+                            context
+                            planUsage
+                            mcp
+                        } label: {
+                            Label("Chat Info", systemImage: "info.circle")
+                        }
+                        .controlGroupStyle(.navigation)
+                    }
+                    .defaultCustomization(.hidden)
+                }
+        }
+    }
+}
+
+/// The window's content: the chat, its tasks or its diff, as the toolbar's Chat, Tasks and Diff
+/// say. One container, so the detail column is never torn down.
+struct DetailView: View {
+    @Bindable var window: WindowModel
+    @Environment(\.previewChanges) private var previewChanges
+
+    var body: some View {
+        ZStack {
+            switch window.tab {
+            case .chat: chat
+            case .tasks:
+                if let thread = window.selectedThread, let connection = window.connection {
+                    TasksPane(thread: thread, connection: connection, selectedTaskID: $window.inspectedTaskID)
+                        .paneStyle()
+                } else {
+                    PaneEmptyState("No Chat", symbol: WindowTab.tasks.symbol)
+                }
+            case .diff:
+                if let thread = window.selectedThread, let connection = window.connection {
+                    ChangesPane(thread: thread, connection: connection, changes: previewChanges)
+                } else {
+                    PaneEmptyState("No Chat", symbol: WindowTab.diff.symbol)
+                }
+            }
+        }
+    }
+
+    /// The selected chat, or the New Chat screen.
+    private var chat: some View {
+        // The column's root keeps one identity. When the root itself changed (the branch, or the
+        // chat's `.id`), the column's toolbar items were torn down and rebuilt, fading in on every switch.
+        ZStack {
+            if let thread = window.selectedThread, let connection = window.connection {
+                // The only `.id()` in the shell: a different chat gets its own composer draft and scroll position.
+                ThreadView(thread: thread, connection: connection)
+                    .id(thread.id)
+            } else {
+                NewChatView(window: window)
+            }
+        }
+        .environment(\.messageSendGeometry, window.sendGeometry)
+    }
+}
+
+/// File ▸ New Chat and New Window. New Chat acts on the frontmost window, opening one if there is
+/// none; the first window opened this launch shows the last chat, and later ones New Chat.
+public struct FileCommands: View {
+    let app: AppModel
+    @FocusedValue(\.window) private var window
+    @Environment(\.openWindow) private var openWindow
+
+    public init(app: AppModel) {
+        self.app = app
+    }
+
+    public var body: some View {
+        Button("New Chat") {
+            if let window { window.newChat() } else { openWindow(value: app.newWindowTarget()) }
+        }
+        .keyboardShortcut("n")
+        Button("New Window") { openWindow(value: app.newWindowTarget()) }
+            .keyboardShortcut("n", modifiers: [.command, .option])
+    }
+}
+
+/// Edit ▸ Find, for the frontmost window's chat: Find… opens the bar over the transcript, and Find
+/// Next and Previous step through what it matched, dimmed on New Chat, where there's nothing to
+/// find; and Search Chats, the sidebar's field.
+public struct FindCommands: View {
+    @FocusedValue(\.window) private var window
+
+    public init() {}
+
+    public var body: some View {
+        let find = window?.selectedThread == nil ? nil : window?.find
+        Menu("Find") {
+            Group {
+                Button("Find…") { find?.show() }
+                    .keyboardShortcut("f")
+                Button("Find Next") { if find?.isPresented == true { find?.next() } else { find?.show() } }
+                    .keyboardShortcut("g")
+                Button("Find Previous") { if find?.isPresented == true { find?.previous() } else { find?.show() } }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+            }
+            .disabled(find == nil)
+            Divider()
+            // The sidebar's search field, as Mail's Mailbox Search is ⌥⌘F.
+            Button("Search Chats") { window?.searchingChats = true }
+                .keyboardShortcut("f", modifiers: [.command, .option])
+                .disabled(window == nil)
+        }
+    }
+}
+
+/// The Help menu: Sundown's own documentation, then Claude Code's, which covers what the chats run.
+public struct HelpCommands: View {
+    @Environment(\.openURL) private var openURL
+
+    public init() {}
+
+    public var body: some View {
+        Button("Sundown Help") { openURL(URL(string: "https://github.com/AFRUITPIE/tether-app#readme")!) }
+            .keyboardShortcut("?")
+        Button("Claude Code Documentation") { openURL(URL(string: "https://code.claude.com/docs/en/overview")!) }
+    }
+}
+
+/// View ▸ Bigger, Smaller and Actual Size, for the transcript and composer's text.
+public struct TextSizeCommands: View {
+    let app: AppModel
+
+    public init(app: AppModel) {
+        self.app = app
+    }
+
+    public var body: some View {
+        Button("Bigger") { if let next = TextScale.bigger(than: app.textScale) { app.textScale = next } }
+            .keyboardShortcut("+")
+            .disabled(TextScale.bigger(than: app.textScale) == nil)
+        Button("Smaller") { if let next = TextScale.smaller(than: app.textScale) { app.textScale = next } }
+            .keyboardShortcut("-")
+            .disabled(TextScale.smaller(than: app.textScale) == nil)
+        Button("Actual Size") { app.textScale = 1 }
+            .keyboardShortcut("0")
+            .disabled(app.textScale == 1)
+    }
+}
+
+/// The transcript width as a View submenu with the current value checked. Also in Settings ▸
+/// General, so changing it doesn't mean opening Settings.
+public struct TranscriptWidthCommands: View {
+    @Bindable var app: AppModel
+
+    public init(app: AppModel) {
+        self.app = app
+    }
+
+    public var body: some View {
+        Picker("Transcript Width", selection: $app.transcriptWidth) {
+            ForEach(TranscriptWidth.allCases) { Text($0.label).tag($0) }
+        }
+    }
+}
+
+/// View-menu items for the shell. Kept here with the views they drive. The tab items act on the
+/// frontmost window, and are disabled when there is none.
+public struct ShellViewCommands: View {
+    @Bindable var app: AppModel
+    @FocusedValue(\.window) private var window
+
+    public init(app: AppModel) {
+        self.app = app
+    }
+
+    public var body: some View {
+        Picker("Group By", selection: $app.sidebarGrouping) {
+            ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
+        }
+        Picker("Show", selection: $app.sidebarFilter) {
+            ForEach(SidebarFilter.allCases, id: \.self) { Text($0.label).tag($0) }
+        }
+        Divider()
+        Picker("Tool Calls", selection: $app.appearance.toolCalls) {
+            ForEach(Appearance.ToolCallDisplay.allCases) { Text($0.label).tag($0) }
+        }
+        .pickerStyle(.inline)
+        Divider()
+        // Chat, Tasks and Diff, the window's tabs, as ⌘1–3.
+        Picker("Tab", selection: Binding(get: { window?.tab }, set: { if let tab = $0 { window?.tab = tab } })) {
+            ForEach(WindowTab.allCases) { tab in
+                Text(tab.label)
+                    .tag(Optional(tab))
+                    .keyboardShortcut(tab.shortcut, modifiers: .command)
+            }
+        }
+        .pickerStyle(.inline)
+        .disabled(window == nil)
+    }
+}
+
+#if DEBUG
+/// RootView as its scene shows it, with the app-wide values the scene sets.
+private struct RootPreview: View {
+    let window: WindowModel
+    var body: some View { RootView(window: window).appEnvironment(window.app) }
+}
+
+// #Preview bodies are result-builder closures (no `if`/control flow), so the selection is set here.
+@MainActor
+private func rootPreviewWindow() -> WindowModel {
+    let app = AppModel.sample()
+    return .sample(app, threadID: app.connection(app.lastHostID)?.chats.first?.id)
+}
+
+#Preview("RootView") {
+    RootPreview(window: rootPreviewWindow())
+        .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (default new chat)") {
+    RootPreview(window: .sample())
+        .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (Tasks tab)") {
+    let window = rootPreviewWindow()
+    window.tab = .tasks
+    return RootPreview(window: window)
+        .frame(width: 1100, height: 760)
+}
+
+#Preview("RootView (wide transcript)") {
+    let window = rootPreviewWindow()
+    window.app.transcriptWidth = .wide
+    return RootPreview(window: window)
+        .frame(width: 1400, height: 760)
+}
+
+#Preview("RootView (bigger text)") {
+    let window = rootPreviewWindow()
+    window.app.textScale = 1.5
+    return RootPreview(window: window)
+        .frame(width: 1100, height: 760)
+}
+
+// The narrowest window without the inspector: every toolbar item must still fit.
+#Preview("RootView (narrow window)") {
+    RootPreview(window: rootPreviewWindow())
+        .frame(width: 800, height: 600)
+}
+
+#endif
+

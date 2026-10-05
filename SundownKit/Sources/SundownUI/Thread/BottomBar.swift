@@ -1,0 +1,238 @@
+import SwiftUI
+import SundownKit
+import TetherProtocol
+
+/// Status, any pending prompt, and the composer, grouped so their glass shapes blend.
+struct BottomBar: View {
+    let thread: ThreadModel
+    let connection: HostConnection
+    /// Whether the message field has focus, so a prompt card's default button doesn't take Return
+    /// from a draft.
+    @State private var composerFocused = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        // One read of `pending`: it decides both the card and whether the composer can send.
+        let pending = thread.pending.first
+        GlassEffectContainer(spacing: 10) {
+            VStack(spacing: 10) {
+                StatusStrip(thread: thread)
+                if let pending {
+                    PendingRequestView(pending: pending, thread: thread)
+                        .environment(\.composerHasFocus, composerFocused)
+                        .id(pending.id)
+                        .transition(.moving(.move(edge: .bottom).combined(with: .opacity), reduceMotion: reduceMotion))
+                }
+                if !thread.suggestedTasks.isEmpty {
+                    SuggestedTasksBar(thread: thread)
+                }
+                // Always mounted, so a draft survives a prompt arriving (#3). The prompt is answered
+                // first — Send is disabled under it, Stop is not.
+                Composer(connection: connection, cwd: thread.cwd, thread: thread, draftKey: thread.id,
+                         awaitingAnswer: pending != nil, onStop: {
+                    Task { await connection.interrupt(thread) }
+                },
+                submit: { input in
+                    await connection.send(thread, input: input)
+                    return true
+                }, onFocusChange: { composerFocused = $0 })
+            }
+            // The only explicit animation down here, and it runs only when a prompt comes or goes.
+            // It has to sit on the stack the prompt is inserted into for the transition to have an
+            // animation to use.
+            .animation(.snappy, value: pending?.id)
+        }
+        .padding(.bottom, Layout.composerBottom)
+        .readingColumn()
+        .scaledFont(.body)
+    }
+}
+
+/// Tasks Claude suggested starting separately, as buttons above the composer, like prompt
+/// suggestions: each opens New Chat with its prompt as a draft, to read before sending.
+struct SuggestedTasksBar: View {
+    let thread: ThreadModel
+    @Environment(\.startSuggestedTask) private var start
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(thread.suggestedTasks) { task in
+                HStack(spacing: 4) {
+                    Button { start(task, thread) } label: {
+                        Label(task.title, systemImage: "square.and.pencil").lineLimit(1)
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
+                    .help("Open in New Chat")
+                    // Named for its task: several of these can be listed at once.
+                    Button("Dismiss “\(task.title)”", systemImage: "xmark") { thread.dismissSuggestedTask(task.id) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                }
+                .controlSize(.regular)
+                .scaledFont(.callout)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Starts a suggested task as a new chat in the window. Holds the window, like the others.
+struct StartSuggestedTaskAction: Equatable {
+    weak var window: WindowModel?
+
+    @MainActor func callAsFunction(_ task: SuggestedTask, _ thread: ThreadModel) {
+        window?.startSuggestedTask(task, from: thread)
+    }
+
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
+}
+
+extension EnvironmentValues {
+    @Entry var startSuggestedTask = StartSuggestedTaskAction()
+}
+
+/// What's going on that the transcript doesn't say: an error, a retry, compacting, a plan limit
+/// near or reached, sign-in output. Information, not a control, so on the bar's material rather
+/// than glass.
+struct StatusStrip: View {
+    let thread: ThreadModel
+
+    var body: some View {
+        // Drawn again when the plan's limit resets, so what it says about the limit goes then.
+        TimelineView(.explicit(thread.rateLimit?.resetsAt.map { [$0.addingTimeInterval(1)] } ?? [])) { context in
+            strip(now: context.date)
+        }
+    }
+
+    @ViewBuilder private func strip(now: Date) -> some View {
+        let parts = messages(now: now)
+        let auth = thread.authStatus.flatMap { $0.isAuthenticating || $0.error != nil ? $0 : nil }
+        if !parts.isEmpty || auth != nil {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(parts, id: \.self) { m in
+                    // Selectable, so an error can be copied into a search or a bug report.
+                    Text(m).font(.callout).lineLimit(3).textSelection(.enabled)
+                }
+                if let auth { AuthStatusView(status: auth) }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.bar, in: .rect(cornerRadius: Layout.cardCornerRadius))
+        }
+    }
+
+    private func messages(now: Date) -> [String] {
+        var out: [String] = []
+        if let e = thread.lastError { out.append(e) }
+        if let r = thread.apiRetry { out.append("Retrying API request (attempt \(r.attempt.formatted()) of \(r.maxRetries.formatted()))\(r.error.map { ": \($0)" } ?? "")") }
+        if let warning = thread.rateLimit?.warning(now: now) { out.append(warning) }
+        return out
+    }
+}
+
+/// Shows `awsAuthRefresh` / login helper output (e.g. AWS SSO device-code URLs) with clickable links.
+struct AuthStatusView: View {
+    let status: ThreadAuthStatusNotification
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(status.isAuthenticating ? "Refreshing credentials…" : "Authentication problem", systemImage: "key")
+                .font(.caption.bold())
+            ForEach(Array(status.output.suffix(8).enumerated()), id: \.offset) { _, line in
+                if let url = line.firstMatch(of: /https?:\/\/\S+/).flatMap({ URL(string: String($0.output)) }) {
+                    Link(line, destination: url).font(.caption.monospaced())
+                } else {
+                    Text(line).font(.caption.monospaced()).textSelection(.enabled)
+                        .accessibilityTextContentType(.console)
+                        // A device code ("ABCD-EFGH") is read letter by letter, as it has to be
+                        // typed; the rest of the output as words.
+                        .speechSpellsOutCharacters(line.contains(/\b[A-Z0-9]{4,}-[A-Z0-9]{4,}\b/))
+                }
+            }
+            if let e = status.error { Text(e).font(.caption).foregroundStyle(.secondary) }
+        }
+    }
+}
+
+#if DEBUG
+#Preview("BottomBar (composer)") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.sampleIdleChat()
+    VStack {
+        Spacer()
+        BottomBar(thread: thread, connection: connection)
+    }
+    .frame(width: 900, height: 220)
+}
+
+#Preview("BottomBar (suggested task)") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.sampleWithSuggestedTask()
+    VStack {
+        Spacer()
+        BottomBar(thread: thread, connection: connection)
+    }
+    .frame(width: 900, height: 260)
+}
+
+#Preview("BottomBar (pending request)") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.samplePendingPermission()
+    VStack {
+        Spacer()
+        BottomBar(thread: thread, connection: connection)
+    }
+    .frame(width: 900, height: 380)
+}
+
+/// Issue #3: the draft has to still be there under the prompt, with Send disabled until it is answered.
+#Preview("BottomBar (pending request + draft)") {
+    let connection = HostConnection.sample()
+    let thread = ThreadModel.samplePendingPermission()
+    VStack {
+        Spacer()
+        BottomBar(thread: thread, connection: connection)
+    }
+    .environment(\.composerDraft, "…and once that's done, run the package tests")
+    .frame(width: 900, height: 380)
+}
+
+#Preview("BottomBar (error + retry)") {
+    let connection = HostConnection.sample()
+    VStack {
+        Spacer()
+        BottomBar(thread: .sampleErrorTurn(), connection: connection)
+        BottomBar(thread: .sampleApiRetry(), connection: connection)
+    }
+    .frame(width: 900, height: 420)
+}
+
+#Preview("StatusStrip") {
+    VStack(alignment: .leading, spacing: 16) {
+        StatusStrip(thread: .sampleErrorTurn())
+        StatusStrip(thread: .sampleApiRetry())
+    }
+    .padding(20)
+    .frame(width: 560)
+}
+
+/// A plan's limit nearing today, and a weekly one reached, which says the day it resets.
+#Preview("StatusStrip (plan limits)") {
+    VStack(alignment: .leading, spacing: 16) {
+        StatusStrip(thread: .sampleRateLimited("allowed_warning", kind: "five_hour", utilization: 0.85, resetsIn: 2 * 3600))
+        StatusStrip(thread: .sampleRateLimited("rejected", kind: "seven_day", utilization: 1.02, resetsIn: 3 * 86_400))
+    }
+    .padding(20)
+    .frame(width: 560)
+}
+
+#Preview("AuthStatusView") {
+    AuthStatusView(status: .init(threadId: "preview-thread", seq: 1, isAuthenticating: true,
+                                  output: ["Visit https://device.sso.us-west-2.amazonaws.com/", "Enter code: ABCD-EFGH"], error: nil))
+        .padding(20)
+        .frame(width: 480)
+}
+
+#endif
