@@ -60,8 +60,8 @@ final class NewChatUITests: TetherUITestCase {
             let popover = app.popovers.firstMatch
             XCTAssertTrue(popover.appears(timeout: 5), "\(button.label) opened no popover")
             popover.settle()
-            // Each row is a radio button labelled "<group>, <choice>, <summary>".
-            let item = popover.radioButtons.matching(NSPredicate(format: "label CONTAINS %@", ", \(option)")).firstMatch
+            // Each row is a button naming the choice, selected when it is the chosen one.
+            let item = popover.buttons.matching(NSPredicate(format: "label CONTAINS %@", option)).firstMatch
             XCTAssertTrue(item.appears(timeout: 5), "no \(option) in the popover")
             // A tall popover scrolls: the row is brought into it first.
             // Pointed at first: a popover's row takes the click only once the pointer has hovered it.
@@ -76,12 +76,18 @@ final class NewChatUITests: TetherUITestCase {
         // The toolbar buttons' labels are their names only: the chosen row is the popover's.
         func assertChosen(_ button: XCUIElement, _ option: String) {
             button.click()
-            let item = app.popovers.radioButtons.matching(NSPredicate(format: "label CONTAINS %@", ", \(option)")).firstMatch
+            let item = app.popovers.buttons.matching(NSPredicate(format: "label CONTAINS %@", option)).firstMatch
             XCTAssertTrue(item.appears(timeout: 5), "no \(option) in the popover")
-            for _ in 0..<6 where !item.isHittable {
-                app.popovers.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: -150)
-            }
-            XCTAssertTrue(waitUntil(5) { (item.value as? NSNumber)?.intValue == 1 }, "\(option) isn't the chosen row: \(app.popovers.radioButtons.allElementsBoundByIndex.map { "\($0.label)=\($0.value ?? "nil")" })")
+            XCTAssertTrue(waitUntil(5) { item.isSelected }, "\(option) isn't the chosen row: \(app.popovers.buttons.allElementsBoundByIndex.map { "\($0.label)=\($0.isSelected)" })")
+            app.typeKey(.escape, modifierFlags: [])
+            XCTAssertTrue(app.popovers.firstMatch.disappears(timeout: 5))
+        }
+        // Effort is a slider in the model's popover, whose value is the level's name.
+        func assertEffort(_ level: String) {
+            model.click()
+            let slider = app.popovers.sliders.firstMatch
+            XCTAssertTrue(slider.appears(timeout: 5), "no effort slider in the model popover")
+            XCTAssertTrue(waitUntil(5) { (slider.value as? String)?.contains(level) == true }, "effort isn't \(level): \(String(describing: slider.value))")
             app.typeKey(.escape, modifierFlags: [])
             XCTAssertTrue(app.popovers.firstMatch.disappears(timeout: 5))
         }
@@ -92,7 +98,7 @@ final class NewChatUITests: TetherUITestCase {
         chooseInPopover(permissions, "Don't Ask")
         assertChosen(permissions, "Don't Ask")
         chooseMenuItem("Chat", "Max", in: "Effort")
-        assertChosen(model, "Max")
+        assertEffort("Max")
         // Within a point: AppKit rounds the toolbar's items to the pixel grid by where their symbol sits.
         XCTAssertEqual(permissions.frame.minX, before.minX, accuracy: 1, "Permissions moved")
         XCTAssertEqual(permissions.frame.width, before.width, accuracy: 1, "Permissions changed width")

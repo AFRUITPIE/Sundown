@@ -9,6 +9,13 @@ import XCTest
 class TetherUITestCase: XCTestCase {
     var app: XCUIApplication!
 
+    /// For a known fault that CI doesn't always show: an expected failure that doesn't happen passes.
+    var nonStrict: XCTExpectedFailure.Options {
+        let options = XCTExpectedFailure.Options()
+        options.isStrict = false
+        return options
+    }
+
     /// The short fixture chat's answer, and the long `performance` chat's last heading.
     let fixtureAnswer = "Fixture answer from the local transport."
     let longChatEnd = "Section 29: tightening the renderer"

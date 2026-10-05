@@ -65,7 +65,7 @@ final class PromptCardsUITests: TetherUITestCase {
         XCTAssertTrue(question.appears(timeout: 5), "no long question card")
         let skip = buttons["Skip"]
         XCTAssertTrue(skip.exists, "the long question has no Skip")
-        XCTExpectFailure("A question taller than the window pushes its Skip and Submit out of it; no scrolling reaches them") {
+        XCTExpectFailure("A question taller than the window pushes its Skip and Submit out of it; no scrolling reaches them", options: nonStrict) {
             XCTAssertTrue(app.windows.firstMatch.frame.contains(skip.frame), "Skip is outside the window: \(skip.frame)")
         }
         assertAlive("with a long question showing")

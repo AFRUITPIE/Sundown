@@ -40,7 +40,9 @@ final class ComposerUITests: TetherUITestCase {
         XCTAssertTrue(status.appears(timeout: 3), "/sta doesn't offer /status")
         status.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertEqual(input.value as? String, "/status ", "clicking a completion")
-        // The arrow keys choose, Tab inserts.
+        // The arrow keys choose, Tab inserts. The pointer is left over the clicked row, which
+        // would choose it as the menu reopens under it, so it moves off first.
+        input.hover()
         input.typeKey("a", modifierFlags: .command)
         input.typeText("/")
         XCTAssertTrue(compact.appears(timeout: 3))
