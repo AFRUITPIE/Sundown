@@ -303,6 +303,8 @@ struct Composer: View {
             .background {
                 Color.clear
                     .contentShape(.rect)
+                    // The text cursor there too, as over the text itself.
+                    .pointerStyle(.horizontalText)
                     .onTapGesture { focused = true }
             }
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
