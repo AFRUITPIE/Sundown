@@ -51,7 +51,7 @@ struct ContextGauge: View {
         let fill = window.selectedThread?.contextFill
         Image(systemName: "circle", variableValue: fill ?? 0)
             // A little heavier than the toolbar's other symbols, so the arc reads at a glance.
-            .fontWeight(.semibold)
+            .fontWeight(.bold)
             // Drawn as far round as the value, not dimmed in layers.
             .symbolVariableValueMode(.draw)
             // Shaded as the SF Symbols app's Gradients option shades it.
