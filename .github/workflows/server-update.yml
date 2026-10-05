@@ -24,7 +24,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           latest=$(npm view tether-server version)
-          current=$(sed -n 's/.*public static let version = "\(.*\)"/\1/p' TetherKit/Sources/TetherKit/Bootstrap.swift)
+          current=$(sed -n 's/.*public static let version = "\(.*\)"/\1/p' SundownKit/Sources/SundownKit/Bootstrap.swift)
           branch="tether-server-$latest"
           if [ "$latest" = "$current" ]; then echo "Already on tether-server $current."; exit 0; fi
           if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then echo "$branch is already open."; exit 0; fi
@@ -34,8 +34,8 @@ jobs:
           [ -n "$revision" ] || revision=$(git ls-remote https://github.com/AFRUITPIE/tether-server.git "refs/tags/v$latest" | cut -f1)
           [ -n "$revision" ] || { echo "No v$latest tag."; exit 1; }
 
-          sed -i "s/public static let version = \"$current\"/public static let version = \"$latest\"/" TetherKit/Sources/TetherKit/Bootstrap.swift
-          for resolved in TetherKit/Package.resolved Tether.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved; do
+          sed -i "s/public static let version = \"$current\"/public static let version = \"$latest\"/" SundownKit/Sources/SundownKit/Bootstrap.swift
+          for resolved in SundownKit/Package.resolved Sundown.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved; do
             python3 - "$resolved" "$revision" "$latest" <<'PY'
           import json, sys
           path, revision, version = sys.argv[1:]
@@ -48,7 +48,7 @@ jobs:
           done
 
           # The app's next patch version, and its next build.
-          project=Tether.xcodeproj/project.pbxproj
+          project=Sundown.xcodeproj/project.pbxproj
           app=$(grep -m1 'MARKETING_VERSION = ' "$project" | sed 's/.*= \(.*\);/\1/')
           build=$(grep -m1 'CURRENT_PROJECT_VERSION = ' "$project" | sed 's/.*= \(.*\);/\1/')
           next=$(echo "$app" | awk -F. '{ if (NF < 3) print $0 ".1"; else { $NF = $NF + 1; print } }' OFS=.)
@@ -57,7 +57,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git commit -am "Use tether-server $latest, as Tether $next"
+          git commit -am "Use tether-server $latest, as Sundown $next"
           git push origin "$branch"
           gh pr create --head "$branch" --title "Use tether-server $latest" \
             --body "tether-server $latest is on npm. This pins it (\`ServerRelease.version\` and the protocol package) and makes the app $next, so merging it releases the app with that server."

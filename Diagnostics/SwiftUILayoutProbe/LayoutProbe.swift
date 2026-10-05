@@ -4,7 +4,7 @@ import SwiftUI
 struct LayoutProbe: App {
     var body: some Scene {
         WindowGroup("Layout Probe") {
-            ProbeView(mode: ProcessInfo.processInfo.environment["TETHER_PROBE_MODE"] ?? "plain")
+            ProbeView(mode: ProcessInfo.processInfo.environment["SUNDOWN_PROBE_MODE"] ?? "plain")
         }
         .defaultSize(width: 1000, height: 740)
         .windowResizability(.contentMinSize)

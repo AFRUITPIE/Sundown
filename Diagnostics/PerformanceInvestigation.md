@@ -12,9 +12,9 @@ Five repeated Release resize measurements on a 12-core M4 Pro, 24 GiB, macOS 27.
 | Standalone native split view | 0.797 |
 | Split view with native toolbar menus | 0.811 |
 | Also a simple glass composer | 0.889 |
-| Tether New Chat, earlier clean run | 0.962 |
-| Tether settled transcript, diagnostic logging run | 1.192 |
-| Tether long live turn, full eager turn | 5.909 |
+| Sundown New Chat, earlier clean run | 0.962 |
+| Sundown settled transcript, diagnostic logging run | 1.192 |
+| Sundown long live turn, full eager turn | 5.909 |
 | Long live turn, temporary eight-row eager cap | 3.668 |
 | Long live turn, signed Xcode confirmation | 5.874 |
 | Eight-row live cap, signed Xcode confirmation | 3.623 |
@@ -48,8 +48,8 @@ Six UI tests passed: resizing while at the end and after Jump to Latest, inspect
 
 ## Reproduction
 
-`Tether Performance` scheme: `testResizingNewChat`, `testResizingTheWindow`, `testResizingLongTurn`, `testScrollingTheTranscript`, and the new `testResizingDuringLongLiveTurn`. The fixture uses no Claude processes or real hosts. The standalone control is in `SwiftUILayoutProbe/`.
+`Sundown Performance` scheme: `testResizingNewChat`, `testResizingTheWindow`, `testResizingLongTurn`, `testScrollingTheTranscript`, and the new `testResizingDuringLongLiveTurn`. The fixture uses no Claude processes or real hosts. The standalone control is in `SwiftUILayoutProbe/`.
 
-Local recordings and console evidence for this investigation are in `/private/tmp`: `tether-swiftui-resize.trace`, `tether-minimal-split.trace`, `tether-native-scroll.trace`, `tether-body-changes.jsonl`, `tether-probe-*-test.log`, `tether-long-live-test.log`, and `tether-live-cap-experiment.log`. Preserve or re-record before relying on temporary files later.
+Local recordings and console evidence for this investigation are in `/private/tmp`: `sundown-swiftui-resize.trace`, `sundown-minimal-split.trace`, `sundown-native-scroll.trace`, `sundown-body-changes.jsonl`, `sundown-probe-*-test.log`, `sundown-long-live-test.log`, and `sundown-live-cap-experiment.log`. Preserve or re-record before relying on temporary files later.
 
 Apple references: [SwiftUI performance](https://developer.apple.com/documentation/xcode/understanding-and-improving-swiftui-performance), [app responsiveness](https://developer.apple.com/documentation/xcode/improving-app-responsiveness), [frame hitches](https://developer.apple.com/documentation/xcode/understanding-hitches-in-your-app).

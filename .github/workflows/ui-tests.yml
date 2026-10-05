@@ -15,19 +15,19 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run package tests
-        run: swift test --package-path TetherKit
+        run: swift test --package-path SundownKit
 
       - name: Run app UI tests
         run: |
           xcodebuild test \
-            -project Tether.xcodeproj \
-            -scheme Tether \
+            -project Sundown.xcodeproj \
+            -scheme Sundown \
             -destination 'platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/TetherDerivedData" \
-            -resultBundlePath "$RUNNER_TEMP/TetherUITests.xcresult" \
+            -derivedDataPath "$RUNNER_TEMP/SundownDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/SundownUITests.xcresult" \
             -parallel-testing-enabled NO \
-            -skip-testing:TetherAppUITests/TetherPerformanceUITests \
-            TETHER_APP_BUNDLE_IDENTIFIER=com.haydenhong.TetherUITestFixture \
+            -skip-testing:SundownAppUITests/SundownPerformanceUITests \
+            SUNDOWN_APP_BUNDLE_IDENTIFIER=com.haydenhong.SundownUITestFixture \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM=
@@ -36,7 +36,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: TetherUITests-xcresult
-          path: ${{ runner.temp }}/TetherUITests.xcresult
+          name: SundownUITests-xcresult
+          path: ${{ runner.temp }}/SundownUITests.xcresult
           if-no-files-found: ignore
           retention-days: 7
