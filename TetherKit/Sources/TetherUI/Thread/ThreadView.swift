@@ -18,25 +18,7 @@ struct ThreadView: View {
             // text scrolled up under the title and tabs unblurred.
             .safeAreaInset(edge: .top, spacing: 0) { FindBarHost(thread: thread) }
             .task(id: thread.id) { await connection.open(thread) }
-            .modifier(ProxyIcon(directory: connection.host.isLocal ? thread.cwd : nil))
             .modifier(OpensFileLinks(cwd: thread.cwd))
-    }
-}
-
-/// The chat's directory as the window's proxy icon, on this Mac: dragged, it's the directory, and
-/// ⌘-clicking the title shows its path. Here rather than on the shell, which keeps one identity
-/// while the chat changes. On an empty view behind the chat, never around it: a chat opened
-/// before its directory is known gets one once the catalog arrives, and a branch around the
-/// content would make the whole chat new then.
-private struct ProxyIcon: ViewModifier {
-    let directory: String?
-
-    func body(content: Content) -> some View {
-        content.background {
-            if let directory {
-                Color.clear.navigationDocument(URL(filePath: directory, directoryHint: .isDirectory))
-            }
-        }
     }
 }
 
