@@ -1,7 +1,7 @@
 import XCTest
 
 /// Hitches during the interactions whose smoothness matters, measured by XCTest while the tests
-/// drive the real app: the inspector, its tabs, the sidebar, switching chats, resizing the window,
+/// drive the real app: the toolbar's tabs, the sidebar, switching chats, resizing the window,
 /// and a long reply streaming in. Each runs against the fixture's performance scenario, a long chat
 /// shaped like real work (bursts of tool calls between Markdown answers), with nothing else running.
 ///
@@ -92,27 +92,14 @@ final class TetherPerformanceUITests: XCTestCase {
     }
 
     @MainActor
-    func testInspectorOpenAndClose() {
+    func testSwitchingTabs() {
         let app = launch()
         measureHitches(app) {
-            app.typeKey("i", modifierFlags: [.command, .option])
-            settle()
-            app.typeKey("i", modifierFlags: [.command, .option])
-            settle()
-        }
-    }
-
-    @MainActor
-    func testInspectorTabs() {
-        let app = launch()
-        app.typeKey("1", modifierFlags: [.command, .option])
-        settle()
-        measureHitches(app) {
-            app.typeKey("2", modifierFlags: [.command, .option])
+            app.typeKey("2", modifierFlags: .command)
             settle(0.5)
-            app.typeKey("3", modifierFlags: [.command, .option])
+            app.typeKey("3", modifierFlags: .command)
             settle(0.5)
-            app.typeKey("1", modifierFlags: [.command, .option])
+            app.typeKey("1", modifierFlags: .command)
             settle(0.5)
         }
     }

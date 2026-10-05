@@ -33,6 +33,13 @@ class TetherUITestCase: XCTestCase {
         for (key, value) in environment { app.launchEnvironment[key] = value }
         // The windows a debug run left open (or none, if it was stopped) are not restored.
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+        // Customize Toolbar's saved layout lives in the app's own defaults, which a debug run
+        // shares: ignore it, so the toolbar is the default one.
+        app.launchArguments += ["-NSToolbar Configuration chat", "{}"]
+        // Each run saves where its window ended up and the next opens a little further right, until
+        // it is partly off the screen and nothing in it is hittable: start from the same place.
+        app.launchArguments += ["-NSWindow Frame SwiftUI.WindowGroup<SwiftUI.PresentedWindowContent<TetherUI.WindowTarget, SwiftUI.ModifiedContent<TetherUI.WindowRoot, SwiftUI._AppearanceActionModifier>>>-1-AppWindow-1",
+                                "60 60 1000 889 0 0 1512 949"]
         app.launch()
         self.app = app
         return app
@@ -78,6 +85,21 @@ class TetherUITestCase: XCTestCase {
         element.exists && mainWindow().frame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY))
     }
 
+    /// Moves the pointer over `element` until `reveal` holds: a hover-only control shows once the
+    /// pointer moves (SwiftUI sees no hover from a pointer that is already there, or from a
+    /// window that isn't key yet), so the pointer is nudged between tries.
+    @MainActor
+    func hover(over element: XCUIElement, timeout: TimeInterval = 8, until reveal: () -> Bool) -> Bool {
+        var nudge = false
+        return waitUntil(timeout) {
+            if element.exists {
+                nudge.toggle()
+                element.coordinate(withNormalizedOffset: CGVector(dx: nudge ? 0.4 : 0.6, dy: 0.5)).hover()
+            }
+            return reveal()
+        }
+    }
+
     /// Types `message` into the composer and presses Send.
     @MainActor
     func send(_ message: String, file: StaticString = #filePath, line: UInt = #line) {
@@ -87,13 +109,14 @@ class TetherUITestCase: XCTestCase {
         app.buttons["composer.send"].click()
     }
 
-    /// One of the inspector's tabs: a tab, or a radio button, however the tab bar reports it; not
-    /// View ▸ Inspector's menu item of the same name.
+    /// One of the toolbar's Chat, Tasks and Diff tabs: a segment of its picker, a radio button or
+    /// a plain button, however it's reported; not View ▸ Tab's menu item of the same name.
     @MainActor
     func paneTab(_ name: String) -> XCUIElement {
-        let types = [XCUIElement.ElementType.tab.rawValue, XCUIElement.ElementType.radioButton.rawValue]
-        return app.windows.firstMatch.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@ AND elementType IN %@", name, types))
+        let types = [XCUIElement.ElementType.radioButton.rawValue, XCUIElement.ElementType.button.rawValue,
+                     XCUIElement.ElementType.tab.rawValue]
+        return app.windows.firstMatch.toolbars.descendants(matching: .any)
+            .matching(NSPredicate(format: "(label == %@ OR title == %@) AND elementType IN %@", name, name, types))
             .element(boundBy: 0)
     }
 

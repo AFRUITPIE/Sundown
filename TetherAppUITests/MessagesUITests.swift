@@ -1,12 +1,12 @@
 import AppKit
 import XCTest
 
-/// What can be done with the messages of the short fixture chat, and the inspector beside it.
+/// What can be done with the messages of the short fixture chat, and the toolbar's tabs.
 final class MessagesUITests: TetherUITestCase {
-    /// Copy; Restore Code to Here…; a side question; the inspector's toggle, tabs and shortcuts; a
+    /// Copy; Restore Code to Here…; a side question; the toolbar's tabs, MCP popover and ⌘3; a
     /// comment on a change; Fork from Here.
     @MainActor
-    func testMessageActionsAndTheInspector() {
+    func testMessageActionsAndTheTabs() {
         launch()
         let prompt = app.staticTexts["Summarize this project"].firstMatch
         XCTAssertTrue(prompt.appears(timeout: 15), "the fixture chat never showed")
@@ -15,10 +15,11 @@ final class MessagesUITests: TetherUITestCase {
         NSPasteboard.general.clearContents()
         let copy = app.buttons["message.copy.fixture-user"]
         let fork = app.buttons["message.fork.fixture-user"]
-        prompt.hover()
-        XCTAssertTrue(copy.isHittable, "the prompt's Copy isn't shown on hover")
+        // Fork stands for the row: Copy's own frame is reported smaller than it's drawn (its
+        // symbol swaps), and XCUITest calls it unhittable.
+        XCTAssertTrue(hover(over: prompt) { copy.exists && fork.isHittable }, "the prompt's actions aren't shown on hover")
         let forkBefore = fork.frame
-        copy.click()
+        copy.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Summarize this project", "Copy on the prompt")
         Thread.sleep(forTimeInterval: 0.4)
         XCTAssertEqual(fork.frame.minX, forkBefore.minX, accuracy: 0.5, "Copy's checkmark moved the icons beside it")
@@ -50,29 +51,25 @@ final class MessagesUITests: TetherUITestCase {
         visibleButton("Done").click()
         XCTAssertFalse(text(containing: "What did we decide?").exists, "the side question went into the chat")
 
-        // The inspector opens from its toolbar button, and its tabs (SwiftUI's own) switch panes.
-        // The fixture's store is fresh, so it starts closed, with no tabs.
-        let mcp = paneTab("MCP")
-        XCTAssertFalse(mcp.exists, "the inspector started open")
-        app.buttons["Inspector"].click()
-        XCTAssertTrue(mcp.appears(timeout: 5), "the Inspector button didn't open it")
-        mcp.click()
+        // The toolbar's segmented tabs switch the window between Chat, Tasks and Diff, and the MCP
+        // button opens its servers in a popover. Chat is selected to begin with.
+        XCTAssertEqual((paneTab("Chat").value as? NSNumber)?.intValue, 1, "Chat isn't the selected tab")
+        paneTab("Tasks").click()
+        XCTAssertTrue(waitUntil(5) { (self.paneTab("Tasks").value as? NSNumber)?.intValue == 1 }, "Tasks didn't become the selected tab")
+        XCTAssertEqual((paneTab("Chat").value as? NSNumber)?.intValue, 0, "Chat is still selected")
+        XCTAssertTrue(input.disappears(timeout: 5), "the Tasks tab still shows the composer")
+        paneTab("Chat").click()
+        XCTAssertTrue(input.appears(timeout: 5), "the Chat tab didn't bring the composer back")
+        app.buttons["MCP Servers"].click()
         let noServers = app.staticTexts["No MCP Servers"]
-        XCTAssertTrue(noServers.appears(timeout: 5), "the MCP tab didn't show its pane")
-        XCTAssertEqual((mcp.value as? NSNumber)?.intValue, 1, "MCP isn't the selected tab")
-        XCTAssertEqual((paneTab("Tasks").value as? NSNumber)?.intValue, 0, "Tasks is still selected")
-        // ⌥⌘I hides it, and shows it again on the same pane.
-        app.typeKey("i", modifierFlags: [.command, .option])
-        XCTAssertTrue(noServers.disappears(timeout: 5), "⌥⌘I didn't hide the inspector")
-        app.typeKey("i", modifierFlags: [.command, .option])
-        XCTAssertTrue(noServers.appears(timeout: 5), "⌥⌘I didn't reopen it on MCP")
-        app.typeKey("i", modifierFlags: [.command, .option])
-        XCTAssertTrue(noServers.disappears(timeout: 5))
+        XCTAssertTrue(noServers.appears(timeout: 5), "the MCP button opened no servers")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(noServers.disappears(timeout: 5), "Esc didn't close the MCP popover")
 
-        // ⌥⌘4 opens it on Changes: what differs from the last commit. Each line is a button, its
+        // ⌘3 shows Diff: what differs from the last commit. Each line is a button, its
         // text the value; a comment is written in a popover beside it and goes to Claude.
-        app.typeKey("4", modifierFlags: [.command, .option])
-        XCTAssertTrue(app.staticTexts["App.swift"].appears(timeout: 10), "⌥⌘4 didn't show Changes")
+        app.typeKey("3", modifierFlags: .command)
+        XCTAssertTrue(app.staticTexts["App.swift"].appears(timeout: 10), "⌘3 didn't show Diff")
         let changed = app.buttons.matching(NSPredicate(format: "value == %@", "let greeting = \"Hello, Tether\"")).firstMatch
         XCTAssertTrue(changed.appears(timeout: 5), "the changed line isn't a button")
         changed.click()
@@ -86,9 +83,9 @@ final class MessagesUITests: TetherUITestCase {
         let sendComment = app.windows.firstMatch.buttons["Send Comment"]
         XCTAssertTrue(sendComment.appears(timeout: 5), "no Send Comment")
         XCTAssertTrue(sendComment.isEnabled)
-        // By its leading edge: on CI's 1024-point screen the window, with the inspector open, is
-        // wider than the screen, and the button's middle is off it.
-        sendComment.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)).click()
+        sendComment.click()
+        // The comment goes to the chat, which is on its own tab.
+        paneTab("Chat").click()
         XCTAssertTrue(text(containing: "Sources/App.swift:2").appears(timeout: 10), "the comment never reached the chat")
 
         // Fork from Here makes a new chat from the conversation so far and opens it.

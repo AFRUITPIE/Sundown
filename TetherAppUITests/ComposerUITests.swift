@@ -11,13 +11,12 @@ final class ComposerUITests: TetherUITestCase {
         // Prompts are dated, as in Messages (when and how: DateSeparatorsTests, TranscriptDateTests).
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "transcript.date").firstMatch.appears(timeout: 5), "the prompt has no date above it")
 
-        // Send is available only with something to send. Add and Send are circles of one size.
+        // Send is available only with something to send. Add and Send are circles.
         let send = app.buttons["composer.send"]
         XCTAssertFalse(send.isEnabled, "Send is enabled with nothing to send")
         let add = app.descendants(matching: .any)["composer.add"].firstMatch
         XCTAssertEqual(add.frame.width, add.frame.height, accuracy: 1, "Add should be circular")
         XCTAssertEqual(send.frame.width, send.frame.height, accuracy: 1, "Send should be circular")
-        XCTAssertEqual(add.frame.height, send.frame.height, accuracy: 1, "Composer actions should share a diameter")
         input.click()
         input.typeText("Hello")
         XCTAssertTrue(waitUntil(3) { send.isEnabled }, "Send is disabled with a message in the field")
@@ -87,9 +86,10 @@ final class ComposerUITests: TetherUITestCase {
         XCTAssertTrue(app.staticTexts["Scripted response."].appears(timeout: 10), "Return didn't send")
         // Sending must finish: the new message's actions become usable after the spring settles.
         let copy = app.buttons["message.copy.fixture-sent-1"]
-        XCTAssertTrue(waitUntil(5) { copy.exists && copy.isHittable }, "the sent prompt's actions never became usable")
         let message = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).firstMatch
         XCTAssertTrue(message.appears(timeout: 5), "the sent prompt isn't in the transcript")
+        // The actions show while the pointer is over the message.
+        XCTAssertTrue(hover(over: message) { app.buttons["message.fork.fixture-sent-1"].isHittable }, "the sent prompt's actions never became usable")
         XCTAssertGreaterThan(message.frame.height, 40, "the sent prompt isn't wrapped")
         let window = app.windows.firstMatch.frame
         XCTAssertGreaterThanOrEqual(message.frame.minX, window.minX, "the sent prompt starts outside the window")

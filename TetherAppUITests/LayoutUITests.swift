@@ -1,7 +1,7 @@
 import XCTest
 
 /// The layouts Settings ▸ Advanced compares, each switched live with the long chat open (switching
-/// is where a layout loop would show), and the toolbar's session menus.
+/// is where a layout loop would show), and the toolbar's session buttons.
 final class LayoutUITests: TetherUITestCase {
     /// Tool Calls: Every Call, Summarized and Worked For, at the chat's end and scrolled into its
     /// middle, never leaving the transcript blank; then the sidebar's Activity layout.
@@ -11,11 +11,11 @@ final class LayoutUITests: TetherUITestCase {
         let end = text(longChatEnd)
         XCTAssertTrue(end.appears(timeout: 20), "the long chat never showed")
 
-        // Model, effort and permissions share one toolbar item.
+        // Model and Permissions are toolbar buttons.
         let toolbar = mainWindow().toolbars.element(boundBy: 0)
-        for menu in ["Model", "Effort", "Permissions"] {
-            let button = toolbar.menuButtons.matching(NSPredicate(format: "label BEGINSWITH %@", menu)).firstMatch
-            XCTAssertTrue(button.appears(timeout: 5), "no \(menu) menu in the toolbar")
+        for name in ["Model", "Permissions"] {
+            let button = toolbar.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+            XCTAssertTrue(button.appears(timeout: 5), "no \(name) button in the toolbar")
         }
 
         // Every Call puts each finished call on a row of its own; Summarized folds runs of them
