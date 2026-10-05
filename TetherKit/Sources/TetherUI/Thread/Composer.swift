@@ -201,8 +201,10 @@ struct Composer: View {
                 // Apple's morph: the field and Send in one glass container, each with its own ID,
                 // Send added and removed in one animated transaction (`sendOut`), so its glass grows
                 // out of the field's and sinks back into it.
-                GlassEffectContainer(spacing: 16) {
-                    HStack(alignment: .bottom, spacing: 10) {
+                // The gap (12) is wider than the distance at which the container blends shapes (8),
+                // so at rest the two stand apart rather than reaching for each other.
+                GlassEffectContainer(spacing: 8) {
+                    HStack(alignment: .bottom, spacing: 12) {
                         textField(dim: dim)
                             .frame(minWidth: 120)
                             .overlay {
