@@ -66,8 +66,10 @@ struct NewChatView: View {
                                          thread: starting?.placeholder,
                                          draftKey: "new-chat:\(window.hostID)",
                                          placeholder: window.draftDirectory == nil ? "Choose a directory, then ask Claude…" : "Ask Claude…",
+                                         focusRequested: window.composerFocusRequested,
                                          onStop: starting.map { _ in { window.stopStarting() } },
                                          submit: { input in await start(connection, input) },
+                                         onFocusChange: { if $0 { window.composerFocusRequested = false } },
                                          // Dropped on the field too, a directory is where the chat starts.
                                          takesDirectory: connection.host.isLocal && starting == nil ? { choose($0) } : nil)
                             }
@@ -104,7 +106,7 @@ struct NewChatView: View {
     }
 
     /// Above the composer: nothing on a draft, and while a chat sent from here starts, its prompt
-    /// and Starting Session, laid out as the chat will be, so moving to it moves nothing.
+    /// and Starting session, laid out as the chat will be, so moving to it moves nothing.
     @ViewBuilder private func content(_ starting: PendingStart?) -> some View {
         if let starting {
             TranscriptView(thread: starting.placeholder)
@@ -268,7 +270,7 @@ private func newChatPreview(worktree: Bool = false, folder: String? = nil,
     newChatPreview(worktree: true, git: .init(isRepository: true, branch: "feature/new-chat-chips"))
 }
 
-/// Sent, before the host has started the session: the prompt, and Starting Session under it.
+/// Sent, before the host has started the session: the prompt, and Starting session under it.
 #Preview("Starting session") {
     let window = WindowModel.sample()
     window.starting = .sample()

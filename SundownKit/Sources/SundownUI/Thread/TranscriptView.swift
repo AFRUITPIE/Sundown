@@ -438,9 +438,9 @@ struct TranscriptTail: View {
     /// What the wait before anything shows is: starting the session (New Chat's stand-in for a chat
     /// the host hasn't answered for yet), compacting, or thinking. One line whose words change in place.
     private var activity: String? {
-        if thread.isStarting { return "Starting Session" }
+        if thread.isStarting { return "Starting session" }
         // Compacting says so where Thinking would, not in a card under the transcript.
-        if thread.activity == "compacting" { return "Compacting Conversation" }
+        if thread.activity == "compacting" { return "Compacting conversation" }
         if thread.isThinking, !runSaysIt { return "Thinking" }
         return nil
     }

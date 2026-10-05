@@ -76,13 +76,16 @@ public final class WindowModel {
     }
     public private(set) var selectedThread: ThreadModel?
     /// A chat New Chat sent and the host hasn't started yet, shown in New Chat's place (its prompt,
-    /// then Starting Session) until the window moves to the chat. Only this window shows it; the
+    /// then Starting session) until the window moves to the chat. Only this window shows it; the
     /// window's scene value stays New Chat meanwhile.
     public internal(set) var starting: PendingStart?
     /// Bumped whenever the window leaves New Chat (a chat, another host, closing): a New Chat
     /// composer from before then is gone, so a start sent from it that fails can't put its prompt
     /// back there.
     @ObservationIgnored private var newChatVisit = 0
+    /// Someone asked for New Chat (File ▸ New Chat, New Chat Here, a link): its message field takes
+    /// focus, even from the sidebar, since they're about to type. Cleared once it has.
+    var composerFocusRequested = false
     /// Where a prompt sent from this window flies from and to, one per window.
     let sendGeometry = MessageSendGeometry()
     /// Whether this is the key window, for deciding whether a chat is in front of you. Unobserved:
@@ -290,8 +293,11 @@ public final class WindowModel {
     }
 
     /// Start composing a new chat on the host the sidebar is showing. A chat still starting from
-    /// here goes on, to the sidebar, and the window stays on the new draft.
-    public func newChat() {
+    /// here goes on, to the sidebar, and the window stays on the new draft. The message field takes
+    /// focus unless New Chat is only where the window lands (`focusingField` false: the chat it
+    /// showed was archived or deleted), which leaves focus where it was.
+    public func newChat(focusingField: Bool = true) {
+        if focusingField { composerFocusRequested = true }
         starting = nil
         threadID = nil
         tab = .chat
@@ -385,7 +391,7 @@ extension WindowModel {
     /// Sends New Chat's message: starts the draft as a chat with `input` as its first message, or,
     /// while a chat this window started is still starting, sends it to that chat once it has.
     ///
-    /// The window shows the start at once (`starting`): the prompt flies up and "Starting Session"
+    /// The window shows the start at once (`starting`): the prompt flies up and "Starting session"
     /// waits under it. Once the host has started the chat, its prompt's echo is in and the prompt
     /// here has landed, the window moves to the chat, unless it has gone elsewhere meanwhile; New
     /// Chat's menus changed meanwhile apply to the chat. A start that fails leaves the window on
@@ -537,7 +543,7 @@ extension WindowModel {
     private func setArchived(_ threads: [ThreadModel], _ archived: Bool, via connection: HostConnection) {
         guard !threads.isEmpty else { return }
         if archived, connection === self.connection, let open = selectedThread, threads.contains(where: { $0 === open }) {
-            newChat()
+            newChat(focusingField: false)
         }
         Task { for thread in threads { await connection.setArchived(thread, archived) } }
         undoManager?.registerUndo(withTarget: self) { $0.setArchived(threads, !archived, via: connection) }

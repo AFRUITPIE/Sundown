@@ -129,7 +129,7 @@ public final class ThreadModel: Identifiable {
     /// come just before the prompt's echo. Until then, the transcript lays out as it did before.
     public private(set) var awaitingPrompt = false
     /// A New Chat window's stand-in for a chat it's starting (`PendingStart.placeholder`), before
-    /// the host has answered: the transcript says Starting Session.
+    /// the host has answered: the transcript says Starting session.
     public private(set) var isStarting = false
 
     public init(id: String, summary: ThreadSummary? = nil) {
