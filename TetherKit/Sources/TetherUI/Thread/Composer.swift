@@ -12,7 +12,7 @@ import UniformTypeIdentifiers
 /// It also reads the connection's state: while the host isn't connected, `ConnectionStatusCard`
 /// takes the field's place.
 struct Composer: View {
-    /// The field's and Send's glass, so Send comes out of the field and goes back into it.
+    /// The field's and Send's glass, one shape while Send is tucked into the field.
     @Namespace private var glassNamespace
     @Environment(\.textScale) private var textScale
     let connection: HostConnection
@@ -196,22 +196,19 @@ struct Composer: View {
             // keeps a usable width. Multiline drafts grow upward from the bottom-aligned circles.
             HStack(alignment: .bottom, spacing: 10) {
                 addButton(dim: dim)
-                textField(dim: dim)
-                    .frame(minWidth: 120)
-                    .overlay {
-                        if dropTargeted {
-                            RoundedRectangle(cornerRadius: Layout.cardCornerRadius).strokeBorder(.tint, lineWidth: 2)
+                // Send is always there: tucked into the field's right end while there's nothing to
+                // send (the spacing pulls it back over the field, and their glass joins), out beside
+                // it once there is.
+                HStack(alignment: .bottom, spacing: sendVisible ? 10 : -circleDiameter) {
+                    textField(dim: dim)
+                        .frame(minWidth: 120)
+                        .overlay {
+                            if dropTargeted {
+                                RoundedRectangle(cornerRadius: Layout.cardCornerRadius).strokeBorder(.tint, lineWidth: 2)
+                            }
                         }
-                    }
-                // Only while it can be pressed: it comes out of the field's glass when there's something
-                // to send (or to stop), and goes back into it when there isn't.
-                if sendVisible {
                     sendOrStop
-                        .glassEffectID("send", in: glassNamespace)
-                        // Only the glass moves: it grows out of the field's and goes back into it,
-                        // with no fade or scale of its own on top.
-                        .glassEffectTransition(.matchedGeometry)
-                        .transition(.identity)
+                        .glassEffectUnion(id: sendVisible ? "send" : "field", namespace: glassNamespace)
                 }
             }
             .controlSize(.large)
@@ -309,7 +306,9 @@ struct Composer: View {
             .lineLimit(1...12)
             .focused($focused)
             .opacity(dim)
-            .padding(.horizontal, 12)
+            .padding(.leading, 12)
+            // Room for Send while it's tucked into the field's end, so text never runs under it.
+            .padding(.trailing, sendVisible ? 12 : circleDiameter + 4)
             .padding(.vertical, 7)
             // A click in the padding around the text goes to the field too, not into a dead zone.
             .background {
@@ -318,7 +317,7 @@ struct Composer: View {
                     .onTapGesture { focused = true }
             }
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
-            .glassEffectID("field", in: glassNamespace)
+            .glassEffectUnion(id: "field", namespace: glassNamespace)
             .onSubmit {
                 if !suggestions.isEmpty { completeSuggestion() }
                 else if appearance.sendShortcut == .returnKey { send() }
@@ -451,8 +450,9 @@ struct Composer: View {
         .animation(reduceMotion ? nil : .snappy, value: symbol)
         // Send in the accent's prominent glass; Stop in the clear glass of the + beside it. A
         // prominent button fills with its tint, so a gray tint had made Stop a dark gray disc.
-        .buttonStyle(SendOrStopStyle(prominent: !showStop))
-        // Shown only when it can be pressed (`sendVisible`), so it's never disabled.
+        .buttonStyle(SendOrStopStyle(prominent: sendVisible && !showStop))
+        // Tucked into the field, and not pressable, while there's nothing to send.
+        .disabled(!sendVisible)
         .help(showStop ? "Stop" : sendHelp)
         .buttonBorderShape(.circle)
         .labelStyle(.iconOnly)
