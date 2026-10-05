@@ -200,7 +200,7 @@ struct Composer: View {
                 addButton(dim: dim)
                 // Apple's morph: the field and Send in one glass container, each with its own ID,
                 // Send added and removed in one animated transaction (`sendOut`), so its glass grows
-                // out of the field's and sinks back into it. While it's in, the field shows its arrow.
+                // out of the field's and sinks back into it.
                 GlassEffectContainer(spacing: 16) {
                     HStack(alignment: .bottom, spacing: 10) {
                         textField(dim: dim)
@@ -315,19 +315,8 @@ struct Composer: View {
             .focused($focused)
             .opacity(dim)
             .padding(.leading, 12)
-            // Room for the tucked arrow while Send is in the field, so text never runs under it.
-            .padding(.trailing, sendOut ? 12 : circleDiameter)
+            .padding(.trailing, 12)
             .padding(.vertical, 7)
-            // Send, tucked in: its arrow, gray, where its glass will come out. In the field's content,
-            // under its glass; drawn over the glass, the container covered it.
-            .overlay(alignment: .trailing) {
-                if !sendOut {
-                    Image(systemName: "arrow.up")
-                        .foregroundStyle(.tertiary)
-                        .frame(width: circleDiameter)
-                        .accessibilityHidden(true)
-                }
-            }
             // A click in the padding around the text goes to the field too, not into a dead zone.
             .background {
                 Color.clear
