@@ -208,10 +208,14 @@ struct NewChatView: View {
         .accessibilityIdentifier("newChat.folder")
     }
 
-    /// The branch checked out in the directory, said (it isn't chosen here).
+    /// The branch checked out in the directory, said in gray (it isn't chosen here): a label, not
+    /// a chip, so it doesn't look as if it opens something.
     private func branchChip(_ branch: String) -> some View {
-        chip(Label(branch, systemImage: "arrow.triangle.branch"))
-            .glassEffect(.regular, in: .capsule)
+        Label(branch, systemImage: "arrow.triangle.branch")
+            .labelIconToTitleSpacing(4)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .foregroundStyle(.secondary)
             .help("Branch")
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Branch \(branch)")
