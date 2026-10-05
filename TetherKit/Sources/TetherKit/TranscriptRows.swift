@@ -8,7 +8,7 @@ public indirect enum TranscriptRow: Sendable, Equatable {
     case item(Item)
     case toolGroup([Item.ToolCall])
     /// Everything a finished turn did before its last message, as one "Worked for" line
-    /// (Settings ▸ Advanced ▸ Tool Calls ▸ Worked For). `durationMs` runs from the prompt to that
+    /// (View ▸ Tool Calls ▸ Worked For). `durationMs` runs from the prompt to that
     /// message, when both are known.
     case turnWork(id: String, rows: [TranscriptRow], durationMs: Double?)
     /// The files a finished turn edited, after its last row.
@@ -29,7 +29,7 @@ public indirect enum TranscriptRow: Sendable, Equatable {
     }
 }
 
-/// How finished tool calls fold, per Settings ▸ Advanced ▸ Tool Calls.
+/// How finished tool calls fold, per View ▸ Tool Calls.
 public enum TranscriptFolding: Sendable, Hashable {
     /// Each run of finished calls on one line.
     case summarized

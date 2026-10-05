@@ -95,52 +95,6 @@ struct ChatStatusDot: View {
     }
 }
 
-/// One chat in the Activity sidebar, as Mail lists a message: the title (pinned or not) with its
-/// folder on the same line, then the latest reply. The reply is `replyPreview`, which changes when
-/// a reply completes, not per streamed token; a chat not opened this launch has none to show.
-struct ActivityRow: View {
-    let thread: ThreadModel
-    var isPinned = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            // The folder on the title's baseline; the dot centred on the title.
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                HStack(spacing: 4) {
-                    ChatStatusDot(state: .init(thread))
-                        .padding(.trailing, ChatStatusDot.spacing - 4)
-                    if isPinned {
-                        Image(systemName: "pin.fill")
-                            .imageScale(.small)
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("Pinned")
-                    }
-                    ReplacingText(thread.title)
-                        .fontWeight(.semibold)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                // Same priority as the title: a short folder name is shown whole, and a long one
-                // shares the line rather than squeezing the title out.
-                if let folder = thread.cwd?.lastPathComponent {
-                    Text(folder)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            if let preview = thread.replyPreview {
-                Text(preview)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .padding(.leading, ChatStatusDot.gutter)
-            }
-        }
-        .badge(thread.pending.count)
-    }
-}
-
 #if DEBUG
 #Preview("Status dots") {
     VStack(alignment: .leading, spacing: 10) {
@@ -152,18 +106,6 @@ struct ActivityRow: View {
         }
     }
     .padding()
-}
-
-#Preview("ActivityRow") {
-    List {
-        ActivityRow(thread: .sampleIdleChat(), isPinned: true)
-        ActivityRow(thread: .sampleRunningTurn())
-        ActivityRow(thread: .samplePendingPermission())
-        ActivityRow(thread: .sampleListed(title: "A chat not opened this launch, so it has no reply to show",
-                                          cwd: "/Users/hayden/Code/tether-server", secondsAgo: 3_600))
-    }
-    .listStyle(.sidebar)
-    .frame(width: 280, height: 320)
 }
 
 #Preview("ChatRow (grouped by date)") {

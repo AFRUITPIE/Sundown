@@ -1,10 +1,10 @@
 import XCTest
 
-/// The layouts Settings ▸ Advanced compares, each switched live with the long chat open (switching
+/// The tool-call displays in the View menu, each switched live with the long chat open (switching
 /// is where a layout loop would show), and the toolbar's session buttons.
 final class LayoutUITests: TetherUITestCase {
     /// Tool Calls: Every Call, Summarized and Worked For, at the chat's end and scrolled into its
-    /// middle, never leaving the transcript blank; then the sidebar's Activity layout.
+    /// middle, never leaving the transcript blank.
     @MainActor
     func testSwitchingLayoutsLive() {
         launch("performance")
@@ -23,18 +23,16 @@ final class LayoutUITests: TetherUITestCase {
         // reply that ends it is on screen, not merely built somewhere above, and so is a fold.
         let groups = mainWindow().disclosureTriangles.matching(identifier: "transcript.toolGroup")
         XCTAssertTrue(groups.firstMatch.appears(timeout: 5), "no folded calls in Summarized")
-        openSettings("Advanced")
-        choose("Every Call", from: "Tool Calls")
+        chooseMenuItem("View", "Every Call")
         XCTAssertTrue(groups.firstMatch.disappears(timeout: 5), "Every Call left calls folded")
         XCTAssertTrue(showsSomething(), "the chat is blank after Every Call")
-        choose("Summarized", from: "Tool Calls")
+        chooseMenuItem("View", "Summarized")
         XCTAssertTrue(end.appears(timeout: 5), "the chat lost its end after Summarized")
         XCTAssertTrue(groups.firstMatch.appears(timeout: 5), "Summarized didn't fold the calls again")
         XCTAssertTrue(waitUntil(5) { self.isOnScreen(end) }, "the chat is blank: its last reply is at \(end.frame), not in \(mainWindow().frame)")
 
         // Worked For folds each finished turn's work behind one line, which opens to show it.
-        choose("Worked For", from: "Tool Calls")
-        closeSettings()
+        chooseMenuItem("View", "Worked For")
         XCTAssertTrue(showsSomething(), "the chat is blank after Worked For")
         let folds = app.disclosureTriangles.matching(identifier: "transcript.turnWork")
         XCTAssertTrue(folds.firstMatch.appears(timeout: 5), "Worked For folded nothing")
@@ -54,20 +52,12 @@ final class LayoutUITests: TetherUITestCase {
         // Scrolled into the middle of the chat, switching doesn't blank it either, and the end is
         // there to go back to.
         mainWindow().coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)).scroll(byDeltaX: 0, deltaY: 4000)
-        openSettings("Advanced")
-        choose("Every Call", from: "Tool Calls")
-        choose("Summarized", from: "Tool Calls")
-        closeSettings()
+        chooseMenuItem("View", "Every Call")
+        chooseMenuItem("View", "Summarized")
         let jump = app.buttons["Jump to Latest"]
         if jump.appears(timeout: 3) { jump.click() }
         XCTAssertTrue(waitUntil(5) { self.isOnScreen(end) }, "the chat is blank after switching in its middle")
-
-        // Advanced ▸ Sidebar ▸ Activity lists the chats by day.
-        openSettings("Advanced")
-        choose("Activity", from: "Layout")
-        closeSettings()
-        XCTAssertTrue(sidebar().staticTexts["Performance chat 2"].appears(timeout: 5), "Activity lists no chats")
-        assertAlive("after switching to Activity")
+        assertAlive("after switching tool calls")
     }
 
     /// Whether a prompt or a heading of the long chat is on screen in the chat window, waiting a

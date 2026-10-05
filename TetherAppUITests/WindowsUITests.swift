@@ -10,7 +10,7 @@ final class WindowsUITests: TetherUITestCase {
     }
 
     /// A new window keeps its own chat; New Chat in a second window; Open in New Window; a
-    /// double-click opening a window; the Connection Log, Scheduled Tasks and Plugins windows; the
+    /// double-click opening a window; the Connection Log window; the
     /// last chat reopening after a relaunch.
     @MainActor
     func testWindows() {
@@ -49,30 +49,6 @@ final class WindowsUITests: TetherUITestCase {
         XCTAssertTrue(waitForWindows(["Performance chat 1", "Connection Log"]), "Show Connection Log: \(windowTitles())")
         app.typeKey("w", modifierFlags: .command)
         XCTAssertTrue(waitForWindows(["Performance chat 1"]), "⌘W on the log: \(windowTitles())")
-
-        // Host ▸ Scheduled Tasks… lists the daemon's tasks; a new one appears, and can be deleted.
-        chooseMenuItem("Host", "Scheduled Tasks…")
-        XCTAssertTrue(waitForWindows(["Performance chat 1", "Scheduled Tasks"]), "Scheduled Tasks…: \(windowTitles())")
-        let tasks = app.windows.matching(NSPredicate(format: "title BEGINSWITH 'Scheduled Tasks'")).element(boundBy: 0)
-        XCTAssertTrue(tasks.staticTexts["No Scheduled Tasks"].appears(timeout: 5), "the fixture has tasks")
-        tasks.toolbars.buttons["New Task"].click()
-        XCTAssertTrue(tasks.outlines.staticTexts["New Task"].appears(timeout: 5), "New Task added nothing")
-        visibleButton("Delete…").click()
-        visibleButton("Delete").click()
-        XCTAssertTrue(tasks.staticTexts["No Scheduled Tasks"].appears(timeout: 5), "the task wasn't deleted")
-        app.typeKey("w", modifierFlags: .command)
-        XCTAssertTrue(waitForWindows(["Performance chat 1"]), "⌘W on Scheduled Tasks: \(windowTitles())")
-
-        // Host ▸ Plugins… lists what's installed and available; installing moves a plugin across.
-        chooseMenuItem("Host", "Plugins…")
-        XCTAssertTrue(waitForWindows(["Performance chat 1", "Plugins"]), "Plugins…: \(windowTitles())")
-        XCTAssertTrue(app.staticTexts["fixture-lint"].appears(timeout: 5), "no plugin available")
-        XCTAssertTrue(app.staticTexts["None"].exists, "something installed already")
-        app.menuButtons["Install"].firstMatch.click()
-        visibleMenuItem("For Me").click()
-        XCTAssertTrue(app.staticTexts["fixture-market · v1.0.0 · For Me"].appears(timeout: 5), "the plugin didn't install")
-        app.typeKey("w", modifierFlags: .command)
-        XCTAssertTrue(waitForWindows(["Performance chat 1"]), "⌘W on Plugins: \(windowTitles())")
 
         // The first window of a launch opens on the last chat.
         row("Performance chat 2").click()

@@ -62,26 +62,6 @@ struct GeneralSettings: View {
             }
         }
     }
-
-}
-
-/// Permissions as a Settings row: a pop-up of the modes, with what the chosen one does under the
-/// row's title. A pop-up's rows can't show a subtitle the way the toolbar menu's items do, so the
-/// line goes where a grouped form puts a row's description. Settings and scheduled tasks share it.
-struct PermissionModeFormPicker: View {
-    let selection: Binding<PermissionMode>
-    let modes: [PermissionMode]
-
-    var body: some View {
-        Picker(selection: selection) {
-            ForEach(modes, id: \.self) { mode in
-                Label(mode.longLabel, systemImage: mode.symbol).tag(mode)
-            }
-        } label: {
-            Text("Permissions")
-            if let summary = selection.wrappedValue.summary { Text(summary) }
-        }
-    }
 }
 
 #if DEBUG

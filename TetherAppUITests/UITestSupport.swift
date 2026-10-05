@@ -204,7 +204,7 @@ class TetherUITestCase: XCTestCase {
     @MainActor
     var settingsWindow: XCUIElement { app.windows["com_apple_SwiftUI_Settings_window"] }
 
-    /// Settings, on `pane` (General, Notifications, Hosts or Advanced).
+    /// Settings, on `pane` (General, Notifications or Hosts).
     @MainActor
     @discardableResult
     func openSettings(_ pane: String) -> XCUIElement {

@@ -498,20 +498,16 @@ extension WindowModel {
         return (connection?.chats ?? []).filter { filter.includes($0) || $0 === selectedThread }
     }
 
-    /// The sidebar's sections for this window's host, in its layout (Settings' unless given), pins
-    /// and grouping. Reads only what doesn't change while a turn streams: title, folder, timestamp,
-    /// tag, and for Activity's Needs You, status and requests. Only Activity reads those, so a chat
-    /// starting or finishing a turn doesn't regroup the Chats layout.
-    func sidebarList(_ threads: [ThreadModel], style: Appearance.SidebarStyle? = nil, search: String = "") -> [SidebarSection] {
+    /// The sidebar's sections for this window's host, in its pins and grouping. Reads only what
+    /// doesn't change while a turn streams: title, folder, timestamp, tag, so a chat starting or
+    /// finishing a turn doesn't regroup the list.
+    func sidebarList(_ threads: [ThreadModel], search: String = "") -> [SidebarSection] {
         let pins = app.pinnedChats[hostID] ?? []
-        let style = style ?? app.appearance.sidebar
-        let activity = style == .activity
         let chats = threads.map {
             SidebarChat(id: $0.id, title: $0.title, cwd: $0.cwd, updatedAt: $0.summary?.updatedAt,
-                        isPinned: pins.contains($0.id), isArchived: $0.isArchived,
-                        needsYou: activity && (!$0.pending.isEmpty || $0.status == .requiresAction))
+                        isPinned: pins.contains($0.id), isArchived: $0.isArchived)
         }
-        return sidebarSections(chats: chats, grouping: app.sidebarGrouping, style: style, search: search)
+        return sidebarSections(chats: chats, grouping: app.sidebarGrouping, search: search)
     }
 
     public func isPinned(_ thread: ThreadModel) -> Bool { app.isPinned(thread.id, on: hostID) }

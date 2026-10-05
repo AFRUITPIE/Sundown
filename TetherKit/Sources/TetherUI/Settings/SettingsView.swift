@@ -19,8 +19,6 @@ public struct SettingsView: View {
                     .tag(SettingsDestination.notifications)
                 Label("Hosts", systemImage: "network")
                     .tag(SettingsDestination.hosts)
-                Label("Advanced", systemImage: "slider.horizontal.3")
-                    .tag(SettingsDestination.advanced)
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 230)
@@ -32,7 +30,6 @@ public struct SettingsView: View {
                 case .general: GeneralSettings(app: app)
                 case .notifications: NotificationSettings(app: app)
                 case .hosts: HostsSettings(app: app)
-                case .advanced: AdvancedSettings(app: app)
                 }
             }
             .navigationTitle(SettingsDestination(storedValue: storedSelection).title)
@@ -54,13 +51,11 @@ enum SettingsDestination: Hashable {
     case general
     case notifications
     case hosts
-    case advanced
 
     init(storedValue: String) {
         switch storedValue {
         case "hosts": self = .hosts
         case "notifications": self = .notifications
-        case "advanced": self = .advanced
         default: self = storedValue.hasPrefix("host:") ? .hosts : .general
         }
     }
@@ -70,7 +65,6 @@ enum SettingsDestination: Hashable {
         case .general: "general"
         case .notifications: "notifications"
         case .hosts: "hosts"
-        case .advanced: "advanced"
         }
     }
 
@@ -79,7 +73,6 @@ enum SettingsDestination: Hashable {
         case .general: "General"
         case .notifications: "Notifications"
         case .hosts: "Hosts"
-        case .advanced: "Advanced"
         }
     }
 }

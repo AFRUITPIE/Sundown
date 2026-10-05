@@ -18,12 +18,10 @@ struct AppearanceTests {
         app.appearance.offerBypass = true
         app.appearance.sendShortcut = .commandReturn
         app.appearance.openFilesWith = .zed
-        app.appearance.sidebar = .activity
 
         let restored = AppModel(defaults: defaults).appearance
 
         #expect(restored.toolCalls == .everyCall)
-        #expect(restored.sidebar == .activity)
         #expect(restored.offerBypass)
         #expect(restored.sendShortcut == .commandReturn)
         #expect(restored.openFilesWith == .zed)
@@ -42,28 +40,6 @@ struct AppearanceTests {
         #expect(appearance.sendShortcut == .commandReturn)
         #expect(appearance.offerBypass)
         #expect(appearance.wrapCode)
-        #expect(appearance.sidebar == .chats)
-    }
-
-    @Test func theSidebarLayoutIsKept() throws {
-        var appearance = Appearance()
-        appearance.sidebar = .activity
-        let decoded = try JSONDecoder().decode(Appearance.self, from: JSONEncoder().encode(appearance))
-        #expect(decoded.sidebar == .activity)
-    }
-
-    /// Restore Defaults in Advanced leaves General's choices alone.
-    @Test func restoringAdvancedKeepsGeneral() {
-        var appearance = Appearance()
-        appearance.toolCalls = .everyCall
-        appearance.sidebar = .activity
-        appearance.worktreeByDefault = true
-        #expect(!appearance.advancedIsDefault)
-        appearance.restoreAdvanced()
-        #expect(appearance.advancedIsDefault)
-        #expect(appearance.toolCalls == .summarized)
-        #expect(appearance.sidebar == .chats)
-        #expect(appearance.worktreeByDefault)
     }
 
     @Test func textSizeStepsReadAsPercentages() {
@@ -170,7 +146,7 @@ private final class RefusingSecrets: SecretStore, @unchecked Sendable {
 }
 
 @Suite
-struct ScheduledTaskTextTests {
+struct FormatTests {
     /// Written in the reader's language: "42s", "3h 5m", "12.3K", "$0.42", "$0.0042".
     @Test func numbersAreFormattedForTheLocale() {
         let separator = Locale.current.decimalSeparator ?? "."
@@ -180,19 +156,5 @@ struct ScheduledTaskTextTests {
         #expect(Format.tokens(12_300) != 12_300.formatted())
         #expect(places(Format.cost(1.5)) == 2)
         #expect(places(Format.cost(0.0042)) == 4)
-    }
-
-    private func task(_ cadence: ScheduleCadence, enabled: Bool = true, weekday: Int? = nil) -> ScheduledTask {
-        ScheduledTask(id: "t", name: "T", prompt: "p", cwd: "/", cadence: cadence, hour: 9, minute: 5, weekday: weekday, enabled: enabled)
-    }
-
-    @Test func aScheduleReadsAsASentence() {
-        let nine = ScheduledTaskText.time(hour: 9, minute: 5)
-        #expect(ScheduledTaskText.summary(task(.manual)) == "Only When Run")
-        #expect(ScheduledTaskText.summary(task(.hourly)) == "Every hour at :05")
-        #expect(ScheduledTaskText.summary(task(.weekdays)) == "Weekdays at \(nine)")
-        let friday = Calendar.current.weekdaySymbols[5]
-        #expect(ScheduledTaskText.summary(task(.weekly, weekday: 6)) == "Every \(friday) at \(nine)")
-        #expect(ScheduledTaskText.summary(task(.daily, enabled: false)) == "Off · Every day at \(nine)")
     }
 }

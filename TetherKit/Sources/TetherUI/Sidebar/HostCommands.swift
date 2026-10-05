@@ -29,8 +29,6 @@ public struct HostCommands: View {
         Divider()
         if let connection = window?.connection ?? app.connection(app.lastHostID) {
             ConnectButton(connection: connection)
-            ShowScheduledTasksButton(hostID: connection.id)
-            ShowPluginsButton(hostID: connection.id)
             ShowConnectionLogButton(hostID: connection.id)
         }
         Button("Manage Hosts…") {

@@ -377,7 +377,7 @@ extension ThreadModel {
     }
 
     /// Two finished turns of real-looking work: messages between runs of reads, searches, edits and
-    /// commands, one of which failed. For comparing Settings ▸ Advanced ▸ Tool Calls.
+    /// commands, one of which failed. For comparing View ▸ Tool Calls.
     public static func sampleWorkChat() -> ThreadModel {
         let root = "/Users/hayden/Code/tether-app/TetherKit/Sources/TetherUI/"
         let build: JSONValue = ["command": "swift build --package-path TetherKit", "description": "Build TetherKit"]

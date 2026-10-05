@@ -1,8 +1,8 @@
 import SwiftUI
 import TetherKit
 
-/// The settings that change how the app behaves or is laid out: a few in Settings ▸ General, and
-/// in Settings ▸ Advanced the layouts still being compared, each switchable in the running app.
+/// The settings that change how the app behaves or is laid out: most in Settings ▸ General, and
+/// the tool-call display in the View menu.
 /// One value in the environment, compared as a whole, so a view redraws only when a setting changes.
 /// Persisted by `AppModel`; a store missing a key (an older build's) takes that key's default, and
 /// keys a newer build dropped are ignored.
@@ -19,26 +19,10 @@ public struct Appearance: Codable, Equatable, Sendable {
     public var offerBypass = false
     public var openFilesWith: FileEditor = .defaultApp
 
-    // Advanced
+    // View menu
     public var toolCalls: ToolCallDisplay = .summarized
-    public var sidebar: SidebarStyle = .chats
 
     public init() {}
-
-    /// What the sidebar lists, and how.
-    public enum SidebarStyle: String, Codable, CaseIterable, Identifiable, Sendable {
-        /// Pinned chats, then the rest grouped by date or folder (View ▸ Group By).
-        case chats
-        /// What needs you, then every chat by day, each with its latest reply, as Mail lists mail.
-        case activity
-        public var id: Self { self }
-        var label: String {
-            switch self {
-            case .chats: "Chats"
-            case .activity: "Activity"
-            }
-        }
-    }
 
     /// How finished tool calls read in the transcript.
     public enum ToolCallDisplay: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -126,7 +110,6 @@ public struct Appearance: Codable, Equatable, Sendable {
         offerBypass = value(.offerBypass, d.offerBypass)
         openFilesWith = value(.openFilesWith, d.openFilesWith)
         toolCalls = value(.toolCalls, d.toolCalls)
-        sidebar = value(.sidebar, d.sidebar)
     }
 }
 

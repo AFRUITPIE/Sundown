@@ -7,7 +7,6 @@ struct SidebarView: View {
     @Bindable var window: WindowModel
     @State private var search: String
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.appearance) private var appearance
 
     /// `search` is a parameter only so a preview can show the no-results state.
     init(window: WindowModel, search: String = "") {
@@ -22,7 +21,7 @@ struct SidebarView: View {
         // every chat.
         let threads = window.sidebarThreads
         let byID = Dictionary(threads.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let sections = resolve(window.sidebarList(threads, style: appearance.sidebar, search: search), byID)
+        let sections = resolve(window.sidebarList(threads, search: search), byID)
         List(selection: $window.threadID) {
             ForEach(sections) { section in
                 Section {
@@ -71,8 +70,6 @@ struct SidebarView: View {
     private struct ResolvedRow: Identifiable {
         let id: String
         let thread: ThreadModel
-        /// Pinned, and not archived: what Pinned lists, and Activity marks.
-        let isPinned: Bool
     }
 
     private struct ResolvedSection: Identifiable {
@@ -88,7 +85,7 @@ struct SidebarView: View {
     private func resolve(_ sections: [SidebarSection], _ byID: [String: ThreadModel]) -> [ResolvedSection] {
         sections.compactMap { section in
             let rows = section.chats.compactMap { chat in
-                byID[chat.id].map { ResolvedRow(id: chat.id, thread: $0, isPinned: chat.isPinned && !chat.isArchived) }
+                byID[chat.id].map { ResolvedRow(id: chat.id, thread: $0) }
             }
             guard !rows.isEmpty else { return nil }
             return ResolvedSection(id: section.id, title: section.title, help: section.help, folder: section.folder, rows: rows)
@@ -104,13 +101,8 @@ struct SidebarView: View {
     }
 
     @ViewBuilder private func chatRow(_ row: ResolvedRow, in section: ResolvedSection) -> some View {
-        switch appearance.sidebar {
-        case .activity:
-            ActivityRow(thread: row.thread, isPinned: row.isPinned)
-        case .chats:
-            // Pinned names no folder, so its rows do, as a date section's rows do.
-            ChatRow(thread: row.thread, grouping: section.id == SidebarSection.pinnedID ? .date : app.sidebarGrouping)
-        }
+        // Pinned names no folder, so its rows do, as a date section's rows do.
+        ChatRow(thread: row.thread, grouping: section.id == SidebarSection.pinnedID ? .date : app.sidebarGrouping)
     }
 
     /// Swiped from the trailing edge, as in Mail.
@@ -173,11 +165,8 @@ struct SidebarView: View {
         if let id = ids.first, let thread = byID[id] {
             ChatActionItems(window: window, thread: thread, hidesUnavailable: true)
         } else {
-            // Activity lists by day whatever the grouping, so it isn't offered there.
-            if appearance.sidebar == .chats {
-                Picker("Group By", selection: Bindable(app).sidebarGrouping) {
-                    ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
-                }
+            Picker("Group By", selection: Bindable(app).sidebarGrouping) {
+                ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             Picker("Show", selection: Bindable(app).sidebarFilter) {
                 ForEach(SidebarFilter.allCases, id: \.self) { Text($0.label).tag($0) }
@@ -242,8 +231,8 @@ struct ChatRenameField: View {
     }
 }
 
-/// A host that isn’t connected, and how to connect it: the sidebar’s empty state, and the Scheduled
-/// Tasks window’s. A chat and New Chat say it with `ConnectionStatusCard` instead.
+/// A host that isn’t connected, and how to connect it: the sidebar’s empty state. A chat and New
+/// Chat say it with `ConnectionStatusCard` instead.
 /// Empty while the host is connected or connecting.
 struct NotConnectedView: View {
     let connection: HostConnection
@@ -314,14 +303,6 @@ private func pinningSample(_ app: AppModel = .sample()) -> AppModel {
 #Preview("Sidebar (pinned, by directory)") {
     let app = pinningSample()
     app.sidebarGrouping = .directory
-    return sidebarPreview(app)
-}
-
-/// Settings ▸ Advanced ▸ Sidebar ▸ Activity, the alternative appearance: Needs You, then by day.
-/// Only chats opened this launch have a reply to preview; `thread/list` carries none.
-#Preview("Sidebar (activity)") {
-    let app = pinningSample()
-    app.appearance.sidebar = .activity
     return sidebarPreview(app)
 }
 

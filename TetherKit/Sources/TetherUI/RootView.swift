@@ -332,11 +332,14 @@ public struct ShellViewCommands: View {
         Picker("Group By", selection: $app.sidebarGrouping) {
             ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
         }
-        // Activity lists by day, whatever the grouping.
-        .disabled(app.appearance.sidebar == .activity)
         Picker("Show", selection: $app.sidebarFilter) {
             ForEach(SidebarFilter.allCases, id: \.self) { Text($0.label).tag($0) }
         }
+        Divider()
+        Picker("Tool Calls", selection: $app.appearance.toolCalls) {
+            ForEach(Appearance.ToolCallDisplay.allCases) { Text($0.label).tag($0) }
+        }
+        .pickerStyle(.inline)
         Divider()
         // Chat, Tasks and Diff, the window's tabs, as ⌘1–3.
         Picker("Tab", selection: Binding(get: { window?.tab }, set: { if let tab = $0 { window?.tab = tab } })) {

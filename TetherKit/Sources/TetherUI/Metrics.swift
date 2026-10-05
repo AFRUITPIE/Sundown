@@ -7,8 +7,8 @@ import os
 
 /// MetricKit, from launch: its daily metric reports and its diagnostics (hangs, crashes, CPU and
 /// disk-write exceptions) kept as JSON in Caches/<bundle id>/MetricKit, the latest 30; the wait for
-/// the first window's chat as an extended launch task; and Settings ▸ Advanced's layouts as reported
-/// state, so the reports' hang and hitch numbers come broken down by them.
+/// the first window's chat as an extended launch task; and the tool-call display as reported
+/// state, so the reports' hang and hitch numbers come broken down by it.
 ///
 /// Debug ▸ MetricKit ▸ Simulate MetricKit Payloads, in a run from Xcode, writes sample reports there.
 @MainActor
@@ -56,18 +56,17 @@ final class Metrics {
         let appearance = withObservationTracking { app.appearance } onChange: { [weak self] in
             Task { @MainActor in self?.reportLayout(app) }
         }
-        let now = LayoutState(toolCalls: appearance.toolCalls.rawValue, sidebar: appearance.sidebar.rawValue)
-        layout.reportTransition(to: "\(now.toolCalls) \(now.sidebar)", stableMetadata: now)
+        let now = LayoutState(toolCalls: appearance.toolCalls.rawValue)
+        layout.reportTransition(to: now.toolCalls, stableMetadata: now)
     }
 }
 
-/// Settings ▸ Advanced's layouts: a handful of combinations, each a state of its own.
+/// View ▸ Tool Calls: each choice a state of its own.
 private struct LayoutState: ReportableMetadata {
     let toolCalls: String
-    let sidebar: String
 
     var metadataDictionary: [String: ReportableMetadataValue] {
-        ["toolCalls": .init(toolCalls), "sidebar": .init(sidebar)]
+        ["toolCalls": .init(toolCalls)]
     }
 }
 

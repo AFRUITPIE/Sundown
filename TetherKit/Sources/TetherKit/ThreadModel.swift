@@ -109,19 +109,12 @@ public final class ThreadModel: Identifiable {
     /// row and the window title.
     public private(set) var title = "New Chat"
 
-    /// The chat's latest reply as one plain paragraph, for the Activity sidebar. Stored, like
-    /// `title`: set when a reply completes or history loads, never per streamed token. Kept when the
-    /// transcript is let go, so a chat opened once this launch keeps it. Nil for a chat not loaded
-    /// here: the host's chat list (`thread/list`) doesn't carry a preview.
-    public private(set) var replyPreview: String?
     /// How the last turn ended, for the sidebar's dot. Stored and kept when the transcript is let
     /// go, so the sidebar never reads `turns`. Nil for a chat not loaded this launch.
     public private(set) var lastTurnStatus: TurnStatus?
     /// A finished reply no window has shown yet: set when a turn completes in a chat nobody is
     /// looking at, cleared when a window shows it. This launch only.
     public private(set) var hasUnseenReply = false
-    /// The item `replyPreview` came from, so an older reply arriving later doesn't replace it.
-    @ObservationIgnored private var replyPreviewItemID: String?
 
     /// The top-level reply being streamed into right now, if any: from its first live text until it
     /// completes, or its turn ends. Only this reply's text fades in as it arrives. Stored, and
@@ -298,8 +291,6 @@ public final class ThreadModel: Identifiable {
         if let id = streamingReplyID, index[id] == nil { setStreamingReply(nil) }
         refreshTaskEntries()
         refreshTitle()
-        // Unloading leaves the preview as it was: the reply hasn't changed, only been let go.
-        if let latest = storage.last(where: { Self.replyText($0) != nil }) { noteReply(latest) }
     }
 
     /// Drops the transcript so the next open reads it afresh.
@@ -556,8 +547,6 @@ public final class ThreadModel: Identifiable {
         if case .toolCall(let call) = item, call.changesFiles, fileChanges[id] == nil { countChanges(of: call) }
         // Only an opening user message can move the title, and only until Claude names the session.
         if isUnnamed, case .userMessage(let m) = item, m.synthetic != true { refreshTitle() }
-        // A reply starts empty and fills by deltas, which don't come here; it completes here.
-        noteReply(item)
     }
 
     /// What an item added or replaced changes: the rows, from its turn on, when it's the chat's own
@@ -584,67 +573,6 @@ public final class ThreadModel: Identifiable {
             self.remember(changes)
         }
     }
-
-    /// The text of a finished top-level reply; nil for anything else, or a reply still empty.
-    private static func replyText(_ item: Item) -> String? {
-        guard case .agentMessage(let m) = item, m.parentToolUseId == nil, !m.text.isEmpty else { return nil }
-        return m.text
-    }
-
-    private func noteReply(_ item: Item) {
-        guard let text = Self.replyText(item), let i = index[item.id] else { return }
-        if let current = replyPreviewItemID, current != item.id, let j = index[current], j > i { return }
-        replyPreviewItemID = item.id
-        let preview = Self.plainPreview(text)
-        if preview != replyPreview { replyPreview = preview }
-    }
-
-    /// Markdown as one short plain paragraph: no headings, list markers, emphasis, link targets or
-    /// fenced code, unless code is all there is.
-    static func plainPreview(_ markdown: String, limit: Int = 300) -> String {
-        var prose: [String] = []
-        var code: [String] = []
-        var inFence = false
-        /// `prose` with its whitespace collapsed. Once it's longer than `limit`, the rest of a long
-        /// reply can't change what's shown, so it isn't read.
-        var shown = ""
-        var shownCount = 0
-        var rest = markdown[...]
-        while !rest.isEmpty, shownCount <= limit {
-            // A line at a time, as `split(whereSeparator: \.isNewline)` has them, blank ones skipped.
-            let end = rest.firstIndex(where: \.isNewline) ?? rest.endIndex
-            let raw = rest[..<end]
-            rest = end < rest.endIndex ? rest[rest.index(after: end)...] : rest[end...]
-            guard !raw.isEmpty else { continue }
-            var line = raw.trimmingCharacters(in: .whitespaces)
-            if line.hasPrefix("```") || line.hasPrefix("~~~") { inFence.toggle(); continue }
-            if inFence { code.append(line); continue }
-            // Rules and a table's divider row.
-            if line.allSatisfy({ "-*_|: ".contains($0) }) { continue }
-            line = line.replacing(Self.blockMarker, with: "")
-            line = line.replacing(Self.link) { String($0.output.1) }
-            for marker in Self.emphasisMarkers { line = line.replacingOccurrences(of: marker, with: "") }
-            line = line.replacingOccurrences(of: "|", with: " ")
-            prose.append(line)
-            let words = line.split(whereSeparator: \.isWhitespace)
-            guard !words.isEmpty else { continue }
-            for word in words {
-                if !shown.isEmpty { shown += " " }
-                shown += word
-            }
-            shownCount = shown.count
-        }
-        let text = (prose.isEmpty ? code : prose).joined(separator: " ")
-            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        return text.count > limit ? String(text.prefix(limit)) : text
-    }
-
-    // Made once, not per line.
-    /// A heading's hashes, a quote's >, or a list item's marker.
-    private static let blockMarker = /^(#{1,6}|>+|[-*+]|\d+[.)])\s+/
-    /// A link or image, keeping its text.
-    private static let link = /!?\[([^\]]*)\]\([^)]*\)/
-    private static let emphasisMarkers = ["**", "__", "~~", "`", "*"]
 
     private func noteStarted(_ id: String) {
         let now = ContinuousClock.now
@@ -771,7 +699,7 @@ public final class ThreadModel: Identifiable {
         return rows
     }
 
-    /// The transcript as it is drawn: the rows folded as Settings ▸ Advanced ▸ Tool Calls says, with
+    /// The transcript as it is drawn: the rows folded as View ▸ Tool Calls says, with
     /// the date above a prompt after a break and the files each finished turn edited after it. The
     /// edits, and Worked For's folding, depend on whether the last turn is still running.
     ///

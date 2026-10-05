@@ -346,7 +346,7 @@ struct ToolCallGroupView: View {
     }
 }
 
-/// A finished turn's work folded behind its last message (Settings ▸ Advanced ▸ Tool Calls ▸
+/// A finished turn's work folded behind its last message (View ▸ Tool Calls ▸
 /// Worked For): "Worked for 3m 12s". Open, the work is shown as
 /// Summarized shows it, at the same leading edge.
 struct TurnWorkView: View {

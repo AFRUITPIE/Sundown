@@ -286,8 +286,8 @@ struct CommandCacheTests {
     }
 
     /// A turn can add a command, and a new connection may be to a new daemon: either lets the
-    /// lists go, as a plugin change does.
-    @Test func aFinishedTurnAReconnectOrAPluginChangeAsksAgain() async throws {
+    /// lists go.
+    @Test func aFinishedTurnOrAReconnectAsksAgain() async throws {
         let daemon = ScriptedDaemon()
         let c = connection(daemon, host: .local)
         await c.connect()
@@ -313,8 +313,6 @@ struct CommandCacheTests {
         _ = await c.commands(cwd: a.cwd, thread: a)
         #expect(await daemon.count("command/list") == 4)
 
-        c.forgetCommands()
-        #expect(c.cachedCommands(cwd: a.cwd, thread: a) == nil)
         await c.disconnect()
     }
 

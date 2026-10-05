@@ -31,7 +31,7 @@ struct ThreadView: View {
     .frame(width: 900, height: 700)
 }
 
-/// Settings ▸ Advanced ▸ Tool Calls ▸ Every Call, and code that doesn't wrap.
+/// View ▸ Tool Calls ▸ Every Call, and code that doesn't wrap.
 #Preview("Idle chat (every call)") {
     var appearance = Appearance()
     appearance.toolCalls = .everyCall
@@ -42,7 +42,7 @@ struct ThreadView: View {
     .frame(width: 900, height: 700)
 }
 
-/// Settings ▸ Advanced ▸ Tool Calls, each way: runs summarized, each finished turn's work behind
+/// View ▸ Tool Calls, each way: runs summarized, each finished turn's work behind
 /// one line, and every call on its own.
 #Preview("Work (summarized)") {
     NavigationStack {

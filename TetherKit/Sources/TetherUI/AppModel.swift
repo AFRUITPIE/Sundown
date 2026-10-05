@@ -126,7 +126,7 @@ public final class AppModel {
     /// The transcript and composer's text size, 1 being the system's (persisted).
     public var textScale: CGFloat = 1 { didSet { save() } }
 
-    /// Settings ▸ General and Advanced (persisted under a key of its own).
+    /// Settings ▸ General and the View menu (persisted under a key of its own).
     public var appearance = Appearance() {
         didSet {
             if appearance.sessionTools != oldValue.sessionTools {

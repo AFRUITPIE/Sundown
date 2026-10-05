@@ -121,8 +121,6 @@ private actor FixtureScript {
     private var forks: [String: String] = [:]
     /// How many times Restore Code has run.
     private var rewound = 0
-    private var schedules: [ScheduledTask] = []
-    private var installedPlugins: [String] = []
 
     init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, failing: Set<String> = []) {
         self.pendingPermission = pendingPermission
@@ -242,42 +240,9 @@ private actor FixtureScript {
             let notifications = turnNotifications(threadID: id, input: params["input"])
             return .init(value: .result(json(TurnStartResult(turnId: "fixture-turn", messageId: "fixture-sent-\(nextMessage)", queued: false))),
                          notifications: notifications)
-        case "plugin/list":
-            let installed: [JSONValue] = installedPlugins.map { ["id": .string($0), "version": "1.0.0", "scope": "user", "enabled": true] }
-            let available: [JSONValue] = [["pluginId": "fixture-lint@fixture-market", "name": "fixture-lint",
-                                           "description": "Lint the fixture's files.", "marketplaceName": "fixture-market", "installCount": 42]]
-            return .init(value: .result(["installed": .array(installed), "available": .array(available)]))
-        case "plugin/install":
-            if let id = params["pluginId"]?.stringValue { installedPlugins.append(id) }
-            return .init(value: .result([:]))
-        case "plugin/uninstall":
-            installedPlugins.removeAll { $0 == params["pluginId"]?.stringValue }
-            return .init(value: .result([:]))
         case "thread/sideQuestion":
             let q = params["question"]?.stringValue ?? ""
             return .init(value: .result(["answer": .string("A side answer to “\(q)”.")]))
-        case "schedule/list":
-            return .init(value: .result(json(ScheduleListResult(tasks: schedules))))
-        case "schedule/save":
-            guard let p = try? JSONDecoder().decode(ScheduleSaveParams.self, from: JSONEncoder().encode(params)) else {
-                return .init(value: .error("bad schedule"))
-            }
-            let task = ScheduledTask(id: p.id ?? "schedule-\(schedules.count + 1)", name: p.name, prompt: p.prompt, cwd: p.cwd,
-                                     model: p.model, permissionMode: p.permissionMode, cadence: p.cadence, hour: p.hour,
-                                     minute: p.minute, weekday: p.weekday, enabled: p.enabled,
-                                     nextRunAt: p.enabled && p.cadence != .manual ? 1_900_000_000_000 : nil)
-            if let i = schedules.firstIndex(where: { $0.id == task.id }) { schedules[i] = task } else { schedules.append(task) }
-            return .init(value: .result(json(ScheduleSaveResult(task: task))))
-        case "schedule/delete":
-            schedules.removeAll { $0.id == params["id"]?.stringValue }
-            return .init(value: .result([:]))
-        case "schedule/run":
-            let id = params["id"]?.stringValue ?? ""
-            if let i = schedules.firstIndex(where: { $0.id == id }) {
-                schedules[i].lastRunAt = 1_800_000_000_000
-                schedules[i].lastThreadId = UITestFixture.threadID
-            }
-            return .init(value: .result(["threadId": .string(UITestFixture.threadID)]))
         case "git/status":
             return .init(value: .result(["isRepo": true, "branch": "main", "files": [["status": "M", "path": "Sources/App.swift"]]]))
         case "git/diff":

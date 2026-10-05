@@ -82,26 +82,6 @@ private struct HostWindows: Scene {
     let app: AppModel
 
     var body: some Scene {
-        // A host's Claude Code plugins.
-        WindowGroup("Plugins", id: PluginsWindow.id, for: UUID.self) { $hostID in
-            PluginsWindow(app: app, hostID: hostID)
-        }
-        .defaultSize(width: 640, height: 520)
-        // Not restored: opened from the Host menu, for a host, and a launch that brought back only
-        // one of these showed no chat window.
-        .restorationBehavior(.disabled)
-        .handlesExternalEvents(matching: [])
-        // Opened for a host from the Host menu, never from File ▸ New.
-        .commandsRemoved()
-        // A host's scheduled tasks, run by its daemon.
-        WindowGroup("Scheduled Tasks", id: ScheduledTasksWindow.id, for: UUID.self) { $hostID in
-            ScheduledTasksWindow(app: app, hostID: hostID)
-        }
-        .defaultSize(width: 820, height: 560)
-        .restorationBehavior(.disabled)
-        .handlesExternalEvents(matching: [])
-        // Opened for a host from the Host menu, never from File ▸ New.
-        .commandsRemoved()
         // One per host, kept open beside a chat to follow a reconnect.
         WindowGroup("Connection Log", id: ConnectionLogWindow.id, for: UUID.self) { $hostID in
             ConnectionLogWindow(app: app, hostID: hostID)
