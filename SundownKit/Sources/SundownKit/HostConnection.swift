@@ -694,7 +694,8 @@ public final class HostConnection: Identifiable {
             additionalDirectories: options.additionalDirectories.isEmpty ? nil : options.additionalDirectories,
             input: input.isEmpty ? nil : input,
             worktree: options.worktree ? true : nil,
-            sessionTools: offersSessionTools ? true : nil))
+            sessionTools: offersSessionTools ? true : nil,
+            generateTitle: host.namesChats ? true : nil))
         let model = thread(r.thread.threadId)
         model.setInfo(r.thread)
         model.loadHistory(items: model.items, turns: model.turns, seq: nil)
@@ -712,7 +713,8 @@ public final class HostConnection: Identifiable {
         // while it wasn't loaded.
         let pending = model.takePendingSettings()
         let r = try await client.call(Methods.ThreadResume.self, .init(
-            threadId: model.id, sessionTools: offersSessionTools ? true : nil, cwd: model.cwd,
+            threadId: model.id, sessionTools: offersSessionTools ? true : nil,
+            generateTitle: host.namesChats ? true : nil, cwd: model.cwd,
             model: pending.model ?? model.info?.model,
             effort: pending.effort ?? model.info?.effort,
             permissionMode: pending.permissionMode ?? model.info?.permissionMode,

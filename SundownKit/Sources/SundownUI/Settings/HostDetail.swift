@@ -77,7 +77,12 @@ struct HostDetail: View {
     }
 
     private var advancedSection: some View {
-        Section("Advanced") {
+        Section {
+            Toggle("Name Chats With Claude", isOn: Binding(get: { host.namesChats }, set: { names in
+                var updated = host
+                updated.namesChats = names
+                update(updated)
+            }))
             // The field is monospaced, the label isn't: a command is code, its name is not.
             LabeledContent("Server Command") {
                 CommittingTextField("Server Command", value: host.serverCommand ?? "",
@@ -102,6 +107,12 @@ struct HostDetail: View {
                     ShowConnectionLogButton(hostID: host.id, title: "Show…")
                 }
             }
+        } header: {
+            Text("Advanced")
+        } footer: {
+            // Why a chat would need asking: Claude Code names its own unless told not to.
+            Text("For a host where Claude Code doesn’t name chats, such as one with non-essential traffic turned off. Each name is one request to a small model.")
+                .foregroundStyle(.secondary)
         }
     }
 

@@ -81,6 +81,35 @@ struct StartChatTests {
         await connection.disconnect()
     }
 
+    /// A host set to name its chats asks for it with each start; any other leaves it to Claude Code.
+    @Test func aHostThatNamesChatsAsksForATitle() async throws {
+        let daemon = FakeDaemon()
+        let connection = await connected(daemon)
+        await daemon.script.queue("thread/start", started("plain-chat"), started("named-chat"))
+        _ = try await connection.start(connection.prepareStart(cwd: "/repo", input: input, options: .init(), defaults: nil))
+        var host = connection.host
+        host.namesChats = true
+        connection.update(host: host)
+        _ = try await connection.start(connection.prepareStart(cwd: "/repo", input: input, options: .init(), defaults: nil))
+
+        let params = await daemon.script.params(of: "thread/start")
+        #expect(params.count == 2)
+        #expect(params.first?["generateTitle"] == nil)
+        #expect(params.last?["generateTitle"] == .bool(true))
+        await connection.disconnect()
+    }
+
+    /// A host saved before the setting existed still loads, not naming its chats.
+    @Test func aHostSavedBeforeNamingLoads() throws {
+        let saved = #"{"id":"00000000-0000-0000-0000-000000000002","name":"Work","kind":{"ssh":{"destination":"work"}},"env":{}}"#
+        let host = try JSONDecoder().decode(HostConfig.self, from: Data(saved.utf8))
+        #expect(host.name == "Work")
+        #expect(host.sshDestination == "work")
+        #expect(!host.namesChats)
+        let again = try JSONDecoder().decode(HostConfig.self, from: JSONEncoder().encode(host))
+        #expect(again == host)
+    }
+
     /// The answer first: not ready until the echo, which isn't taken for a replay of what the
     /// answer's `lastSeq` covers.
     @Test func anEchoAfterTheAnswerIsStillApplied() async throws {
