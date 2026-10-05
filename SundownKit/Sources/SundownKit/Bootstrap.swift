@@ -5,7 +5,7 @@ import Foundation
 /// nothing is installed beside npm's cache.
 public enum ServerRelease {
     /// Moves with the protocol package's pin, which is the server this app was built against.
-    public static let version = "0.5.14"
+    public static let version = "0.5.15"
 
     /// What connecting runs on a host. Not `--prefer-offline`: npm then trusts a cached list of the
     /// package's versions, which a new app's version isn't in yet.
