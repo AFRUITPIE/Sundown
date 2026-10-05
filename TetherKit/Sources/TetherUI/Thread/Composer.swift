@@ -61,6 +61,8 @@ struct Composer: View {
     @State private var dropTargeted = false
     /// Files being read and images prepared, off the main actor: the message waits for them.
     @State private var attaching = 0
+    /// What the connection card says, once the host has been away long enough to say it.
+    @State private var shownStatus: ConnectionStatusCard.Status?
 
     /// Something going with the message besides its text. Made off the main actor, ready to send.
     struct Attachment: Identifiable, Sendable {
@@ -157,7 +159,7 @@ struct Composer: View {
         // so the draft and its attachments are there when the field comes back.
         let status = ConnectionStatusCard.Status(connection.state, host: connection.host.name)
         VStack(alignment: .leading, spacing: 8) {
-            if let status {
+            if let status = shownStatus {
                 ConnectionStatusCard(status: status, connection: connection)
             } else {
                 field
@@ -177,7 +179,18 @@ struct Composer: View {
                     }
             }
         }
-        .animation(reduceMotion ? nil : .snappy, value: status == nil)
+        .animation(reduceMotion ? nil : .snappy, value: shownStatus == nil)
+        // The card takes the field's place only once the host has been away a moment: at launch
+        // it connects within a second, and the card swapping in and out made the bar jump in size.
+        // Once shown, it follows the state at once.
+        .task(id: status) {
+            if status == nil || shownStatus != nil {
+                shownStatus = status
+            } else {
+                try? await Task.sleep(for: .seconds(1.5))
+                if !Task.isCancelled { shownStatus = status }
+            }
+        }
     }
 
     /// A native editor between two circles, sized from the editor's one-line intrinsic height.
@@ -442,7 +455,7 @@ struct Composer: View {
         // prominent button fills with its tint, so a gray tint had made Stop a dark gray disc.
         .buttonStyle(SendOrStopStyle(prominent: !showStop))
         // Not while an attachment is still being read.
-        .disabled(!showStop && (!canSend || awaitingAnswer || attaching > 0))
+        .disabled(!showStop && (!canSend || awaitingAnswer || attaching > 0 || connection.state != .connected))
         .help(showStop ? "Stop" : sendHelp)
         .buttonBorderShape(.circle)
         .labelStyle(.iconOnly)
@@ -569,7 +582,7 @@ struct Composer: View {
     }
 
     private func send() {
-        guard canSend, !awaitingAnswer, attaching == 0 else { return }
+        guard canSend, !awaitingAnswer, attaching == 0, connection.state == .connected else { return }
         sent += 1
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var input: [UserInput] = []
