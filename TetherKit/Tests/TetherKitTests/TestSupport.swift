@@ -54,3 +54,8 @@ extension ServerNotification {
 extension HostConnection.State {
     var failure: String? { if case .failed(let message) = self { message } else { nil } }
 }
+
+/// Observation's `onChange` is `@Sendable`, so the flag it sets needs a reference to live in.
+final class Changed: @unchecked Sendable {
+    var happened = false
+}

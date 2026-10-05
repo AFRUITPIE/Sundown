@@ -94,7 +94,3 @@ struct ChatListTests {
     }
 }
 
-/// Observation's `onChange` is `@Sendable`, so the flag it sets needs a reference to live in.
-private final class Changed: @unchecked Sendable {
-    var happened = false
-}
