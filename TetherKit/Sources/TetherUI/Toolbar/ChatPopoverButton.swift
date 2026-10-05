@@ -35,23 +35,23 @@ extension ChatPopoverButton where Label == Image {
 }
 
 /// How full the chat's context window is, as the Context button's icon: SF Symbols' circle drawn
-/// to how full it is (a variable value), green, then yellow from 70%, red from 90%. A symbol, not a
+/// to how full it is (a variable value), in the primary color, then yellow from 70%, red from 90%. A symbol, not a
 /// drawn gauge, so the button shares a glass capsule with the buttons beside it. Asks the host after
 /// each turn ends, while the chat is loaded there.
 struct ContextGauge: View {
     let window: WindowModel
 
-    /// Green to 70%, yellow to 90%, red beyond; nothing until the fill is known.
+    /// The primary color to 70%, yellow to 90%, red beyond: only a nearly full window is colored.
     static func color(_ fill: Double?) -> Color? {
-        guard let fill else { return nil }
-        return fill < 0.7 ? .green : fill < 0.9 ? .yellow : .red
+        guard let fill, fill >= 0.7 else { return nil }
+        return fill < 0.9 ? .yellow : .red
     }
 
     var body: some View {
         let fill = window.selectedThread?.contextFill
         Image(systemName: "circle", variableValue: fill ?? 0)
-            // A little heavier than the toolbar's other symbols, so the arc reads at a glance.
-            .fontWeight(.bold)
+            // Much heavier than the toolbar's other symbols, so the arc reads at a glance.
+            .fontWeight(.black)
             // Drawn as far round as the value, not dimmed in layers.
             .symbolVariableValueMode(.draw)
             // Shaded as the SF Symbols app's Gradients option shades it.
@@ -81,21 +81,24 @@ extension View {
 
 #if DEBUG
 /// The Context gauge unknown, then filling through green, yellow and red, at toolbar size.
+/// The Context gauge unknown, then at every 10% from empty to full, as the toolbar draws it.
 #Preview("Context gauge") {
-    VStack(spacing: 12) {
-        ForEach([Font.Weight.regular, .semibold, .bold], id: \.self) { weight in
-            HStack(spacing: 16) {
-                ForEach([nil, 0.2, 0.55, 0.75, 0.88, 0.95] as [Double?], id: \.self) { fill in
-                    Image(systemName: "circle", variableValue: fill ?? 0)
-                        .fontWeight(weight)
-                        .symbolVariableValueMode(.draw)
-                        .symbolColorRenderingMode(.gradient)
-                        .foregroundStyle(ContextGauge.color(fill).map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
-                }
+    let fills: [Double?] = [nil] + (0...10).map { Double($0) / 10 }
+    HStack(spacing: 14) {
+        ForEach(Array(fills.enumerated()), id: \.offset) { _, fill in
+            VStack(spacing: 6) {
+                Image(systemName: "circle", variableValue: fill ?? 0)
+                    .fontWeight(.black)
+                    .symbolVariableValueMode(.draw)
+                    .symbolColorRenderingMode(.gradient)
+                    .foregroundStyle(ContextGauge.color(fill).map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
+                    .font(.title2)
+                Text(fill.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? "—")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
-    .font(.title2)
     .padding()
 }
 #endif
