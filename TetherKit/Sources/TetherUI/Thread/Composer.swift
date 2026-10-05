@@ -12,6 +12,8 @@ import UniformTypeIdentifiers
 /// It also reads the connection's state: while the host isn't connected, `ConnectionStatusCard`
 /// takes the field's place.
 struct Composer: View {
+    /// The field's and Send's glass, so Send comes out of the field and goes back into it.
+    @Namespace private var glassNamespace
     @Environment(\.textScale) private var textScale
     let connection: HostConnection
     let cwd: String?
@@ -201,9 +203,15 @@ struct Composer: View {
                             RoundedRectangle(cornerRadius: Layout.cardCornerRadius).strokeBorder(.tint, lineWidth: 2)
                         }
                     }
-                sendOrStop
+                // Only while it can be pressed: it comes out of the field's glass when there's something
+                // to send (or to stop), and goes back into it when there isn't.
+                if sendVisible {
+                    sendOrStop
+                        .glassEffectID("send", in: glassNamespace)
+                }
             }
             .controlSize(.large)
+            .animation(reduceMotion ? nil : .bouncy, value: sendVisible)
         }
         // Files and images, dropped on the field, pasted, or taken with Continuity Camera.
         .dropDestination(for: Incoming.self) { items, _ in take(items) }
@@ -299,7 +307,14 @@ struct Composer: View {
             .opacity(dim)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
+            // A click in the padding around the text goes to the field too, not into a dead zone.
+            .background {
+                Color.clear
+                    .contentShape(.rect)
+                    .onTapGesture { focused = true }
+            }
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
+            .glassEffectID("field", in: glassNamespace)
             .onSubmit {
                 if !suggestions.isEmpty { completeSuggestion() }
                 else if appearance.sendShortcut == .returnKey { send() }
@@ -433,12 +448,15 @@ struct Composer: View {
         // Send in the accent's prominent glass; Stop in the clear glass of the + beside it. A
         // prominent button fills with its tint, so a gray tint had made Stop a dark gray disc.
         .buttonStyle(SendOrStopStyle(prominent: !showStop))
-        // Not while an attachment is still being read.
-        .disabled(!showStop && (!canSend || awaitingAnswer || attaching > 0))
+        // Shown only when it can be pressed (`sendVisible`), so it's never disabled.
         .help(showStop ? "Stop" : sendHelp)
         .buttonBorderShape(.circle)
         .labelStyle(.iconOnly)
     }
+
+    /// Stop while a turn runs and the field is empty; Send once there's something to send, no
+    /// request is waiting for an answer, and no attachment is still being read.
+    private var sendVisible: Bool { showStop || (canSend && !awaitingAnswer && attaching == 0) }
 
     private var sendHelp: String {
         if awaitingAnswer { return "Answer the request above first" }
@@ -507,6 +525,8 @@ struct Composer: View {
                 .foregroundStyle(appearsActive ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                 .opacity(dim)
                 .frame(width: circleDiameter, height: circleDiameter)
+                // The whole circle opens the menu, not only the plus in it.
+                .contentShape(.circle)
         }
         .menuIndicator(.hidden)
         .menuStyle(.button)
