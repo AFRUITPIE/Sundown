@@ -208,6 +208,10 @@ struct Composer: View {
                 if sendVisible {
                     sendOrStop
                         .glassEffectID("send", in: glassNamespace)
+                        // Only the glass moves: it grows out of the field's and goes back into it,
+                        // with no fade or scale of its own on top.
+                        .glassEffectTransition(.matchedGeometry)
+                        .transition(.identity)
                 }
             }
             .controlSize(.large)
