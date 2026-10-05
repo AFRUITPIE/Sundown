@@ -499,7 +499,13 @@ struct Composer: View {
     private static let baseCircleDiameter: CGFloat = 31
     /// Follows View ▸ Bigger / Smaller with the field's line (17 pt of the 41 at 100%), whose
     /// padding doesn't scale, so the circles stay as tall as a one-line field.
-    private var circleDiameter: CGFloat { (Self.baseCircleDiameter - 17) + 17 * textScale }
+    private var circleDiameter: CGFloat { Self.circleDiameter(textScale: textScale) }
+
+    static func circleDiameter(textScale: CGFloat) -> CGFloat { (baseCircleDiameter - 17) + 17 * textScale }
+
+    /// How far the field starts from the composer's leading edge (the Add circle and the gap after
+    /// it), for what lines up with the field above it, as New Chat's chips do.
+    static func fieldInset(textScale: CGFloat) -> CGFloat { circleDiameter(textScale: textScale) + 10 }
 
     private func addButton(dim: Double) -> some View {
         Menu {

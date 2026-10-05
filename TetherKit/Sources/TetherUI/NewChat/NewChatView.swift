@@ -10,6 +10,7 @@ struct NewChatView: View {
     /// What git says about the folder; nil until the host answers, or when it can't.
     @State private var git: FolderGit?
     @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.textScale) private var textScale
     /// False when a preview seeded `git`: the preview host never answers.
     private let readsGit: Bool
 
@@ -147,22 +148,27 @@ struct NewChatView: View {
         git = status.map { FolderGit(isRepository: $0.isRepo, branch: $0.branchName) }
     }
 
-    /// Where the chat works, above the composer where a chat's status strip goes: two chips, the
-    /// directory, and in a repository the branch checked out there, whose menu has the worktree
-    /// toggle. Plain menus under capsule glass: a menu in the glass button style draws a flat gray
-    /// bezel on macOS 27.
+    /// Where the chat works, above the composer where a chat's status strip goes, lined up with
+    /// the field: the directory chip, and in a repository the branch checked out there with a
+    /// New Worktree switch. The directory is a plain menu under capsule glass: a menu in the glass
+    /// button style draws a flat gray bezel on macOS 27.
     private func chips(_ connection: HostConnection) -> some View {
         HStack(spacing: 8) {
             folderMenu(connection)
                 .layoutPriority(-1)
             if let branch = git?.branch {
-                branchMenu(branch)
+                branchChip(branch)
+                Toggle("New Worktree", isOn: $window.draftWorktree)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .help("Work in a new git worktree of this directory’s repository, on a branch of its own")
+                    .accessibilityIdentifier("newChat.workIn")
             }
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
-        .menuIndicator(.visible)
         .controlSize(.small)
+        .padding(.leading, Composer.fieldInset(textScale: textScale))
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -202,26 +208,16 @@ struct NewChatView: View {
         .accessibilityIdentifier("newChat.folder")
     }
 
-    /// The branch checked out in the directory, and whether the chat works there or in a new git
-    /// worktree of the repository on a branch of its own, so parallel chats don't share a
-    /// checkout. Settings ▸ General sets which a new chat starts with.
-    private func branchMenu(_ branch: String) -> some View {
-        let worktree = window.draftWorktree
-        return Menu {
-            Toggle("New Worktree", isOn: $window.draftWorktree)
-        } label: {
-            chip(Label(worktree ? "\(branch), New Worktree" : branch,
-                       systemImage: worktree ? Self.workInSymbol(true) : "arrow.triangle.branch"))
-        }
-        .glassEffect(.regular.interactive(), in: .capsule)
-        .help(worktree ? "Work in a new git worktree of this directory’s repository" : "Work on \(branch) in this directory")
-        .accessibilityLabel("Branch")
-        .accessibilityValue(worktree ? "\(branch), New Worktree" : branch)
-        .accessibilityIdentifier("newChat.branch")
+    /// The branch checked out in the directory, said (it isn't chosen here).
+    private func branchChip(_ branch: String) -> some View {
+        chip(Label(branch, systemImage: "arrow.triangle.branch"))
+            .glassEffect(.regular, in: .capsule)
+            .help("Branch")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Branch \(branch)")
+            .accessibilityIdentifier("newChat.branch")
     }
 
-    private static func workInTitle(_ worktree: Bool) -> String { worktree ? "New Worktree" : "This Directory" }
-    private static func workInSymbol(_ worktree: Bool) -> String { worktree ? "folder.badge.plus" : "folder" }
 
     private func choose(_ directory: String?) {
         window.draftDirectory = directory
