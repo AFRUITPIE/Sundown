@@ -12,7 +12,7 @@ import UniformTypeIdentifiers
 /// It also reads the connection's state: while the host isn't connected, `ConnectionStatusCard`
 /// takes the field's place.
 struct Composer: View {
-    /// The field's and Send's glass, one shape while Send is tucked into the field.
+    /// The field's and Send's glass, so Send's grows out of the field's and sinks back into it.
     @Namespace private var glassNamespace
     @Environment(\.textScale) private var textScale
     let connection: HostConnection
@@ -63,6 +63,8 @@ struct Composer: View {
     @State private var dropTargeted = false
     /// Files being read and images prepared, off the main actor: the message waits for them.
     @State private var attaching = 0
+    /// Whether Send is out beside the field: `sendVisible`, changed in an animated transaction.
+    @State private var sendOut = false
 
     /// Something going with the message besides its text. Made off the main actor, ready to send.
     struct Attachment: Identifiable, Sendable {
@@ -196,23 +198,29 @@ struct Composer: View {
             // keeps a usable width. Multiline drafts grow upward from the bottom-aligned circles.
             HStack(alignment: .bottom, spacing: 10) {
                 addButton(dim: dim)
-                // Send is always there: tucked into the field's right end while there's nothing to
-                // send (the spacing pulls it back over the field, and their glass joins), out beside
-                // it once there is.
-                HStack(alignment: .bottom, spacing: sendVisible ? 10 : -circleDiameter) {
-                    textField(dim: dim)
-                        .frame(minWidth: 120)
-                        .overlay {
-                            if dropTargeted {
-                                RoundedRectangle(cornerRadius: Layout.cardCornerRadius).strokeBorder(.tint, lineWidth: 2)
+                // Apple's morph: the field and Send in one glass container, each with its own ID,
+                // Send added and removed in one animated transaction (`sendOut`), so its glass grows
+                // out of the field's and sinks back into it. While it's in, the field shows its arrow.
+                GlassEffectContainer(spacing: 16) {
+                    HStack(alignment: .bottom, spacing: 10) {
+                        textField(dim: dim)
+                            .frame(minWidth: 120)
+                            .overlay {
+                                if dropTargeted {
+                                    RoundedRectangle(cornerRadius: Layout.cardCornerRadius).strokeBorder(.tint, lineWidth: 2)
+                                }
                             }
+                        if sendOut {
+                            sendOrStop
+                                .glassEffectID("send", in: glassNamespace)
                         }
-                    sendOrStop
-                        .glassEffectUnion(id: sendVisible ? "send" : "field", namespace: glassNamespace)
+                    }
                 }
             }
             .controlSize(.large)
-            .animation(reduceMotion ? nil : .bouncy, value: sendVisible)
+            .onChange(of: sendVisible, initial: true) { _, visible in
+                withAnimation(reduceMotion ? nil : .bouncy) { sendOut = visible }
+            }
         }
         // Files and images, dropped on the field, pasted, or taken with Continuity Camera.
         .dropDestination(for: Incoming.self) { items, _ in take(items) }
@@ -307,9 +315,19 @@ struct Composer: View {
             .focused($focused)
             .opacity(dim)
             .padding(.leading, 12)
-            // Room for Send while it's tucked into the field's end, so text never runs under it.
-            .padding(.trailing, sendVisible ? 12 : circleDiameter + 4)
+            // Room for the tucked arrow while Send is in the field, so text never runs under it.
+            .padding(.trailing, sendOut ? 12 : circleDiameter)
             .padding(.vertical, 7)
+            // Send, tucked in: its arrow, gray, where its glass will come out. In the field's content,
+            // under its glass; drawn over the glass, the container covered it.
+            .overlay(alignment: .trailing) {
+                if !sendOut {
+                    Image(systemName: "arrow.up")
+                        .foregroundStyle(.tertiary)
+                        .frame(width: circleDiameter)
+                        .accessibilityHidden(true)
+                }
+            }
             // A click in the padding around the text goes to the field too, not into a dead zone.
             .background {
                 Color.clear
@@ -317,7 +335,7 @@ struct Composer: View {
                     .onTapGesture { focused = true }
             }
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
-            .glassEffectUnion(id: "field", namespace: glassNamespace)
+            .glassEffectID("field", in: glassNamespace)
             .onSubmit {
                 if !suggestions.isEmpty { completeSuggestion() }
                 else if appearance.sendShortcut == .returnKey { send() }
@@ -450,9 +468,8 @@ struct Composer: View {
         .animation(reduceMotion ? nil : .snappy, value: symbol)
         // Send in the accent's prominent glass; Stop in the clear glass of the + beside it. A
         // prominent button fills with its tint, so a gray tint had made Stop a dark gray disc.
-        .buttonStyle(SendOrStopStyle(prominent: sendVisible && !showStop))
-        // Tucked into the field, and not pressable, while there's nothing to send.
-        .disabled(!sendVisible)
+        .buttonStyle(SendOrStopStyle(prominent: !showStop))
+        // Out only while it can be pressed (`sendOut`).
         .help(showStop ? "Stop" : sendHelp)
         .buttonBorderShape(.circle)
         .labelStyle(.iconOnly)
