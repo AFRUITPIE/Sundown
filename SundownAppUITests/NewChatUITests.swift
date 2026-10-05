@@ -87,7 +87,10 @@ final class NewChatUITests: SundownUITestCase {
             model.click()
             let slider = app.popovers.sliders.firstMatch
             XCTAssertTrue(slider.appears(timeout: 5), "no effort slider in the model popover")
-            XCTAssertTrue(waitUntil(5) { (slider.value as? String)?.contains(level) == true }, "effort isn't \(level): \(String(describing: slider.value))")
+            // The level's name above the slider: a slider's value reaches XCUITest as its position,
+            // the name only as its value description, which XCUITest doesn't read.
+            let name = app.popovers.staticTexts.matching(NSPredicate(format: "value BEGINSWITH %@ OR label BEGINSWITH %@", level, level)).firstMatch
+            XCTAssertTrue(name.appears(timeout: 5), "effort isn't \(level): \(app.popovers.staticTexts.allElementsBoundByIndex.map(\.label))")
             app.typeKey(.escape, modifierFlags: [])
             XCTAssertTrue(app.popovers.firstMatch.disappears(timeout: 5))
         }
