@@ -214,7 +214,7 @@ struct ChatActionAlerts: ViewModifier {
         guard let connection = window.connection else { return }
         window.deleting = nil
         // Every window showing it moves to New Chat first, so none is left on a deleted chat.
-        for other in window.app.openWindows where other.selectedThread === thread { other.newChat() }
+        for other in window.app.openWindows where other.selectedThread === thread { other.newChat(focusingField: false) }
         window.app.setPinned(false, thread.id, on: window.hostID)
         window.app.forgetDraft(for: thread.id)
         Task { await connection.delete(thread) }

@@ -21,6 +21,8 @@ struct Composer: View {
     var placeholder = "Ask Claude…"
     /// A server request is waiting: the draft stays, but it has to be answered before sending.
     var awaitingAnswer = false
+    /// Take focus now, from wherever it is (New Chat asked for by name), not only by default.
+    var focusRequested = false
     var onStop: (() -> Void)?
     /// Whether the message went; when it didn't, the draft comes back to the field.
     let submit: @MainActor ([UserInput]) async -> Bool
@@ -243,6 +245,7 @@ struct Composer: View {
         // The field is where focus goes when the window opens or focus has nowhere else to be, as
         // on a chat switch; not taken from the sidebar or search while someone is using them.
         .defaultFocus($focused, true)
+        .onChange(of: focusRequested, initial: true) { if focusRequested { focused = true } }
         .onChange(of: focused, initial: true) { onFocusChange?(focused) }
         .onAppear {
             if let draftKey {

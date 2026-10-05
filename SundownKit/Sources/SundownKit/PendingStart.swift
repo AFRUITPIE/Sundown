@@ -5,7 +5,7 @@ import TetherProtocol
 /// A chat being started from New Chat (`HostConnection.prepareStart`), from Send until the host has
 /// started it and its first prompt is in. `thread/start` is sent as it always was; only what the
 /// window shows meanwhile is new: `placeholder`, a model of the window's own holding the prompt as
-/// it was sent and saying Starting Session. The placeholder is never one of the host's chats: it
+/// it was sent and saying Starting session. The placeholder is never one of the host's chats: it
 /// isn't in `HostConnection`'s threads, gets no sequence numbers, is never subscribed, and nothing
 /// but the window that sent it shows it. The host's chat is its own model, made as any other is
 /// (often by the notifications that come before the answer), and the window moves to it once its
