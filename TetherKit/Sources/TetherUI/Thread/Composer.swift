@@ -203,7 +203,7 @@ struct Composer: View {
                     }
                 sendOrStop
             }
-            .controlSize(.extraLarge)
+            .controlSize(.large)
         }
         // Files and images, dropped on the field, pasted, or taken with Continuity Camera.
         .dropDestination(for: Incoming.self) { items, _ in take(items) }
@@ -297,8 +297,8 @@ struct Composer: View {
             .lineLimit(1...12)
             .focused($focused)
             .opacity(dim)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
             .onSubmit {
                 if !suggestions.isEmpty { completeSuggestion() }
@@ -421,8 +421,9 @@ struct Composer: View {
             if showStop { onStop?() } else { send() }
         } label: {
             Label(title, systemImage: symbol)
-                // The glass button adds its own padding around the symbol, up to the diameter.
-                .frame(width: circleDiameter - 21, height: circleDiameter - 21)
+                // The glass button adds its own padding around the symbol (7 pt a side at the large
+                // control size), up to the diameter.
+                .frame(width: circleDiameter - 14, height: circleDiameter - 14)
                 // Hops as it sends.
                 .symbolEffect(.bounce.up, options: reduceMotion ? .nonRepeating.speed(0) : .nonRepeating, value: sent)
         }
@@ -474,7 +475,7 @@ struct Composer: View {
     /// The + menu, as the desktop app has it: attach, mention a file, or browse the commands
     /// that typing / offers, for someone who doesn't know them yet.
     /// The Add circle's diameter: the one-line field's height, as the Send circle's extra large control size draws it.
-    private static let baseCircleDiameter: CGFloat = 41
+    private static let baseCircleDiameter: CGFloat = 31
     /// Follows View ▸ Bigger / Smaller with the field's line (17 pt of the 41 at 100%), whose
     /// padding doesn't scale, so the circles stay as tall as a one-line field.
     private var circleDiameter: CGFloat { (Self.baseCircleDiameter - 17) + 17 * textScale }
