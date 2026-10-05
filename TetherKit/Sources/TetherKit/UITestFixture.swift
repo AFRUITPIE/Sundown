@@ -13,22 +13,20 @@ public enum UITestFixture {
     /// Two more knobs, read here: the `prompts` scenario (this Mac's host only) asks for a
     /// permission, another, a question, a form and a very long question in turn, each once the one
     /// before is answered, and puts each answer in the chat as a reply; `TETHER_UI_TEST_FAIL=a,b`
-    /// answers those methods with an error ("Fixture a failed"). The `subagents` scenario (this Mac's
-    /// host only) answers the first Send with the timeline in `SubagentsScenario`.
+    /// answers those methods with an error ("Fixture a failed").
     @MainActor
     public static func connection(host: HostConfig = .local, failedConnects: Int = 0,
                                   pendingPermission: Bool = false, performance: Bool = false) -> HostConnection {
         let attempts = FixtureAttempts()
         let environment = ProcessInfo.processInfo.environment
         let prompts = host.id == HostConfig.local.id && environment["TETHER_UI_TEST_SCENARIO"] == "prompts"
-        let subagents = host.id == HostConfig.local.id && environment["TETHER_UI_TEST_SCENARIO"] == "subagents"
         let failing = Set((environment["TETHER_UI_TEST_FAIL"] ?? "").split(separator: ",").map(String.init))
         return HostConnection(host: host, transportProvider: { _ in
             if await attempts.next() <= failedConnects {
                 throw TransportError.launchFailed("Fixture connection unavailable")
             }
             return FixtureTransport(pendingPermission: pendingPermission || prompts, performance: performance,
-                                    prompts: prompts, failing: failing, subagents: subagents)
+                                    prompts: prompts, failing: failing)
         })
     }
 }
@@ -43,9 +41,8 @@ private final class FixtureTransport: Transport, @unchecked Sendable {
     private let stream: AsyncThrowingStream<Data, any Error>
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
 
-    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, failing: Set<String> = [], subagents: Bool = false) {
-        script = FixtureScript(pendingPermission: pendingPermission, performance: performance, prompts: prompts,
-                               failing: failing, subagents: subagents)
+    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, failing: Set<String> = []) {
+        script = FixtureScript(pendingPermission: pendingPermission, performance: performance, prompts: prompts, failing: failing)
         var captured: AsyncThrowingStream<Data, any Error>.Continuation!
         stream = AsyncThrowingStream { captured = $0 }
         continuation = captured
@@ -79,21 +76,6 @@ private final class FixtureTransport: Transport, @unchecked Sendable {
             let request: JSONValue = ["id": id, "method": .string(method), "params": params]
             continuation.yield(try JSONEncoder().encode(request))
         }
-        if !reply.timeline.isEmpty {
-            // On a clock: each event at its offset from the reply, in the order given.
-            let continuation = continuation
-            Task {
-                var elapsed = 0
-                for (ms, name, params) in reply.timeline {
-                    if ms > elapsed {
-                        try? await Task.sleep(for: .milliseconds(ms - elapsed))
-                        elapsed = ms
-                    }
-                    let notification: JSONValue = ["method": .string(name), "params": params]
-                    if let line = try? JSONEncoder().encode(notification) { continuation.yield(line) }
-                }
-            }
-        }
         if !reply.stream.isEmpty {
             // Paced like a real reply: a few characters per frame, after a moment's thought.
             let continuation = continuation
@@ -119,8 +101,6 @@ private actor FixtureScript {
         var requests: [(JSONValue, String, JSONValue)] = []
         /// Sent one every 16 ms after the reply, for the performance scenario.
         var stream: [(String, JSONValue)] = []
-        /// Sent at each offset in milliseconds after the reply, for the `subagents` scenario.
-        var timeline: [(Int, String, JSONValue)] = []
     }
 
     private let pendingPermission: Bool
@@ -129,9 +109,6 @@ private actor FixtureScript {
     private let prompts: Bool
     /// Methods answered with an error (TETHER_UI_TEST_FAIL).
     private let failing: Set<String>
-    /// The `subagents` scenario, played once, on the first Send.
-    private let subagents: Bool
-    private var playedSubagents = false
     private var sentPermission = false
     private var nextSequence = 1
     private var nextMessage = 0
@@ -145,8 +122,7 @@ private actor FixtureScript {
     /// How many times Restore Code has run.
     private var rewound = 0
 
-    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, failing: Set<String> = [], subagents: Bool = false) {
-        self.subagents = subagents
+    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, failing: Set<String> = []) {
         self.pendingPermission = pendingPermission
         self.performance = performance
         self.prompts = prompts
@@ -256,19 +232,11 @@ private actor FixtureScript {
             let mode = params["permissionMode"]?.stringValue.flatMap(PermissionMode.init(rawValue:)) ?? .auto
             let info = ThreadInfo(threadId: id, status: .idle, cwd: "/tmp/tether-fixture", appliedEffort: .medium,
                                   permissionMode: mode, lastSeq: 0)
-            if subagents, !playedSubagents {
-                return .init(value: .result(json(ThreadStartResult(thread: info))),
-                             timeline: subagentsTimeline(threadID: id, input: params["input"]))
-            }
             return .init(value: .result(json(ThreadStartResult(thread: info))),
                          notifications: turnNotifications(threadID: id, input: params["input"]))
         case "turn/start":
             let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
             if performance { return performanceTurn(threadID: id, input: params["input"]) }
-            if subagents, !playedSubagents {
-                return .init(value: .result(json(TurnStartResult(turnId: "sub-turn-1", messageId: "sub-prompt", queued: false))),
-                             timeline: subagentsTimeline(threadID: id, input: params["input"]))
-            }
             let notifications = turnNotifications(threadID: id, input: params["input"])
             return .init(value: .result(json(TurnStartResult(turnId: "fixture-turn", messageId: "fixture-sent-\(nextMessage)", queued: false))),
                          notifications: notifications)
@@ -388,182 +356,6 @@ private actor FixtureScript {
         return reply
     }
 
-    // MARK: The subagents scenario
-
-    /// Heavy use, shaped after a recorded session: ten background agents and a background command
-    /// launched in one turn, messages queued while it runs, the turn ending in an API error, the
-    /// queued messages answered with a long streamed reply, then each agent's report arriving as a
-    /// short turn of its own (a synthetic "peer" message and a line of reply, as the daemon
-    /// delivers a hand-back; the task notifications themselves are dropped, only their task
-    /// events remain), one of those turns working with a tool call first, and a last long reply.
-    /// Offsets are milliseconds after Send; the order is what the daemon's would be.
-    private func subagentsTimeline(threadID: String, input: JSONValue?) -> [(Int, String, JSONValue)] {
-        playedSubagents = true
-        let base = 1_950_000_000_000.0
-        let prompt = input?.arrayValue?.first?["text"]?.stringValue ?? "Stress test the animations"
-        var events: [(ms: Int, name: String, params: JSONValue)] = []
-        func add(_ ms: Int, _ name: String, _ params: JSONValue) { events.append((ms, name, params)) }
-        func started(_ ms: Int, _ item: Item) { add(ms, "item/started", json(ItemStartedNotification(threadId: threadID, seq: 0, item: item))) }
-        func updated(_ ms: Int, _ item: Item) { add(ms, "item/updated", json(ItemUpdatedNotification(threadId: threadID, seq: 0, item: item))) }
-        func completed(_ ms: Int, _ item: Item) { add(ms, "item/completed", json(ItemCompletedNotification(threadId: threadID, seq: 0, item: item))) }
-        func status(_ ms: Int, _ status: String) { add(ms, "thread/status/changed", ["threadId": .string(threadID), "seq": 0, "status": .string(status)]) }
-        func turn(_ id: String, at ms: Int) -> Turn { Turn(id: id, status: .inProgress, startedAt: base + Double(ms)) }
-        func beginTurn(_ id: String, at ms: Int) {
-            add(ms, "turn/started", json(TurnStartedNotification(threadId: threadID, seq: 0, turn: turn(id, at: ms))))
-            status(ms, "running")
-        }
-        func endTurn(_ id: String, at ms: Int, as result: TurnStatus = .completed) {
-            var done = turn(id, at: ms)
-            done.status = result
-            add(ms, "turn/completed", json(TurnCompletedNotification(threadId: threadID, seq: 0, turn: done)))
-            status(ms + 40, "idle")
-        }
-        /// A reply streamed in 12-character deltas every 30 ms; the offset where it ends.
-        func reply(_ id: String, _ text: String, from ms: Int) -> Int {
-            started(ms, .agentMessage(.init(id: id, createdAt: base + Double(ms), text: "")))
-            var t = ms + 60, rest = Substring(text)
-            while !rest.isEmpty {
-                add(t, "item/agentMessage/delta", json(ItemAgentMessageDeltaNotification(
-                    threadId: threadID, seq: 0, itemId: id, delta: String(rest.prefix(12)))))
-                rest = rest.dropFirst(12)
-                t += 30
-            }
-            completed(t, .agentMessage(.init(id: id, createdAt: base + Double(ms), text: text)))
-            return t
-        }
-        func taskEvent(_ ms: Int, _ event: String, _ id: String, toolUse: String?, _ description: String, _ status: String) {
-            add(ms, "task/event", json(TaskEventNotification(
-                threadId: threadID, seq: 0, event: event, taskId: id, toolUseId: toolUse, description: description,
-                status: status, data: ["task_type": .string(id.hasPrefix("sub-bg") ? "local_bash" : "local_agent")])))
-        }
-        func background(_ ms: Int, _ ids: [String]) {
-            add(ms, "task/backgroundChanged", ["threadId": .string(threadID), "seq": 0,
-                                               "tasks": .array(ids.map { ["task_id": .string($0)] })])
-        }
-        let agents = (0..<10).map { "sub-agent-\($0)" }
-        let allTasks = agents.map { "task-" + $0 } + ["sub-bg-task"]
-        func queued(_ id: String, _ text: String, at ms: Int) -> Item {
-            .userMessage(.init(id: id, createdAt: base + Double(ms), content: [.text(.init(text: text))], queued: true))
-        }
-
-        // Turn 1: the prompt, a pause, ten agents 0.7 s apart, a command, then their launch results.
-        beginTurn("sub-turn-1", at: 0)
-        started(0, .userMessage(.init(id: "sub-prompt", createdAt: base, content: [.text(.init(text: prompt))])))
-        for i in 0..<10 {
-            let at = 5_500 + i * 700
-            let call = Item.toolCall(.init(id: agents[i], createdAt: base + Double(at), name: "Agent", kind: .subagent,
-                                           input: ["description": .string("Wait \(5 * (i + 1))s, say hello"),
-                                                   "prompt": .string("Wait \(5 * (i + 1)) seconds, then say hello.")],
-                                           status: .running))
-            started(at, call)
-            taskEvent(at + 60, "task_started", "task-" + agents[i], toolUse: agents[i], "Wait \(5 * (i + 1))s, say hello", "running")
-        }
-        let command = Item.toolCall(.init(id: "sub-bash", createdAt: base + 12_400, name: "Bash", kind: .bash,
-                                          input: ["command": "sleep 10; ls", "description": "Wait 10 seconds, then list"], status: .running))
-        started(12_400, command)
-        for i in 0..<10 {
-            completed(12_800 + i * 6, .toolCall(.init(id: agents[i], createdAt: base + 12_800, name: "Agent", kind: .subagent,
-                                                      input: ["description": .string("Wait \(5 * (i + 1))s, say hello")], status: .completed,
-                                                      outputText: "Async agent launched successfully")))
-        }
-        if case .toolCall(var done) = command {
-            done.status = .completed
-            done.outputText = "Command running in background with ID: sub-bg-task"
-            completed(13_000, .toolCall(done))
-        }
-        taskEvent(13_050, "task_started", "sub-bg-task", toolUse: "sub-bash", "Wait 10 seconds, then list", "running")
-        background(13_100, allTasks)
-        // Messages queued while the turn runs.
-        let q1 = queued("sub-queued-1", "I'm also going to queue up a message.", at: 14_000)
-        let q2 = queued("sub-queued-2", "And another", at: 21_000)
-        started(14_000, q1)
-        add(14_000, "thread/queuedInput", ["threadId": .string(threadID), "seq": 0, "messageId": "sub-queued-1",
-                                           "content": [["type": "text", "text": "I'm also going to queue up a message."]]])
-        started(21_000, q2)
-        add(21_000, "thread/queuedInput", ["threadId": .string(threadID), "seq": 0, "messageId": "sub-queued-2",
-                                           "content": [["type": "text", "text": "And another"]]])
-        // The turn fails, and the queued messages start the next one.
-        started(26_900, .error(.init(id: "sub-error", createdAt: base + 26_900,
-                                     message: "API Error: Output blocked by content filtering policy")))
-        endTurn("sub-turn-1", at: 27_000, as: .failed)
-
-        // Turn 2: thinking for seven seconds, then a long streamed reply.
-        beginTurn("sub-turn-2", at: 27_100)
-        for (i, item) in [q1, q2].enumerated() {
-            guard case .userMessage(var m) = item else { continue }
-            m.queued = false
-            updated(27_100 + i, .userMessage(m))
-        }
-        var end = reply("sub-long-1", SubagentsLorem.reply(paragraphs: 9), from: 34_000)
-        endTurn("sub-turn-2", at: end + 100)
-
-        /// One agent's report as its own short turn: a peer's message, a moment's thought, a line.
-        func handBack(agent i: Int, at ms: Int, _ text: String) -> Int {
-            beginTurn("sub-report-\(i)", at: ms)
-            started(ms + 10, .userMessage(.init(id: "sub-report-message-\(i)", createdAt: base + Double(ms), content: [.text(.init(
-                text: "[Subagent hand-back] Hello world!"))], synthetic: true, origin: "peer", originName: "general-purpose")))
-            taskEvent(ms + 20, "task_completed", "task-" + agents[i], toolUse: agents[i], "Wait \(5 * (i + 1))s, say hello", "completed")
-            let stop = reply("sub-report-reply-\(i)", text, from: ms + 1_300)
-            endTurn("sub-report-\(i)", at: stop + 100)
-            return stop + 140
-        }
-        end = handBack(agent: 7, at: end + 500, "One subagent (the 40-second one) reported back “Hello world!”; the rest are still running.")
-        // The others settle without a turn (their notifications are dropped by the daemon).
-        for i in 0..<5 {
-            taskEvent(end + 200 + i * 5, "task_completed", "task-" + agents[i], toolUse: agents[i], "Wait \(5 * (i + 1))s, say hello", "completed")
-        }
-        taskEvent(end + 240, "task_completed", "sub-bg-task", toolUse: "sub-bash", "Wait 10 seconds, then list", "completed")
-        background(end + 250, ["task-sub-agent-5", "task-sub-agent-6", "task-sub-agent-8", "task-sub-agent-9"])
-
-        // A turn that works first: a call, a pause, and a medium reply, with a message queued meanwhile.
-        let working = end + 600
-        beginTurn("sub-turn-3", at: working)
-        let read = Item.toolCall(.init(id: "sub-read", createdAt: base + Double(working), name: "Read", kind: .fileRead,
-                                       input: ["file_path": "/tmp/tether-fixture/listing.txt"], status: .running))
-        started(working + 1_500, read)
-        if case .toolCall(var done) = read {
-            done.status = .completed
-            done.outputText = "1\tREADME.md\n2\tSources\n3\tTests"
-            completed(working + 1_540, .toolCall(done))
-        }
-        let q3 = queued("sub-queued-3", "Keep going", at: working + 2_000)
-        started(working + 2_000, q3)
-        add(working + 2_000, "thread/queuedInput", ["threadId": .string(threadID), "seq": 0, "messageId": "sub-queued-3",
-                                                    "content": [["type": "text", "text": "Keep going"]]])
-        end = reply("sub-medium", SubagentsLorem.reply(paragraphs: 2), from: working + 4_300)
-        if case .userMessage(var m) = q3 { m.queued = false; updated(end + 20, .userMessage(m)) }
-        endTurn("sub-turn-3", at: end + 100)
-        end += 400
-
-        for (n, i) in [6, 8, 5, 9].enumerated() {
-            end = handBack(agent: i, at: end + 500 + n * 300, "Agent \(i + 1) has reported “Hello world!”.")
-        }
-        background(end, [])
-
-        // The closing turn: a call, then a long streamed summary.
-        let closing = end + 600
-        beginTurn("sub-turn-4", at: closing)
-        let search = Item.toolCall(.init(id: "sub-grep", createdAt: base + Double(closing), name: "Grep", kind: .grep,
-                                         input: ["pattern": "Hello world"], status: .running))
-        started(closing + 1_800, search)
-        if case .toolCall(var done) = search {
-            done.status = .completed
-            done.outputText = "listing.txt:1: Hello world"
-            completed(closing + 1_900, .toolCall(done))
-        }
-        end = reply("sub-long-2", SubagentsLorem.reply(paragraphs: 8), from: closing + 4_000)
-        endTurn("sub-turn-4", at: end + 100)
-
-        // In time order, ties as written, then numbered the way the daemon numbers them.
-        let ordered = events.enumerated().sorted { ($0.element.ms, $0.offset) < ($1.element.ms, $1.offset) }.map(\.element)
-        return ordered.map { event in
-            nextSequence += 1
-            guard case .object(var object) = event.params else { return (event.ms, event.name, event.params) }
-            object["seq"] = .number(Double(nextSequence))
-            return (event.ms, event.name, .object(object))
-        }
-    }
-
     private func turnNotifications(threadID: String, input: JSONValue?) -> [(String, JSONValue)] {
         nextMessage += 1
         let text = input?.arrayValue?.first?["text"]?.stringValue ?? "Fixture input"
@@ -589,33 +381,6 @@ private actor FixtureScript {
                                                            "title": "Write the release notes", "prompt": "Draft release notes for 0.6."]))
         }
         return notifications
-    }
-}
-
-/// Placeholder prose for the `subagents` scenario's long replies: Markdown with a heading,
-/// paragraphs, a list and a code block, about 500 characters a paragraph.
-enum SubagentsLorem {
-    private static let sentences = [
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore.",
-        "Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo.",
-        "Duis aute irure dolor in reprehenderit in `voluptate` velit esse cillum dolore eu fugiat nulla pariatur.",
-        "Excepteur sint occaecat cupidatat non proident, sunt in **culpa** qui officia deserunt mollit anim.",
-        "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium.",
-        "Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur.",
-    ]
-
-    static func reply(paragraphs: Int) -> String {
-        var blocks: [String] = paragraphs > 3 ? ["## Lorem ipsum summary"] : []
-        for p in 0..<paragraphs {
-            blocks.append((0..<5).map { sentences[(p + $0 * 2) % sentences.count] }.joined(separator: " "))
-            if paragraphs > 3, p == 2 {
-                blocks.append("- Consectetur adipiscing elit\n- Sed do eiusmod tempor\n- Ut labore et dolore magna aliqua")
-            }
-            if paragraphs > 3, p == 5 {
-                blocks.append("```swift\nlet lorem = \"ipsum\"\nprint(lorem.uppercased())\n```")
-            }
-        }
-        return blocks.joined(separator: "\n\n")
     }
 }
 
