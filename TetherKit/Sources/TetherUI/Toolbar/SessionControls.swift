@@ -160,26 +160,145 @@ struct ValueLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View { Text(value) }
 }
 
-/// The popover's contents: the models with Fast Mode under them, then the effort levels.
+/// The popover's contents: the models as rows, each with Claude Code's line about it and a
+/// checkmark on the chosen one, Fast Mode under them, then the effort as a stepped slider.
 struct ModelEffortForm: View {
     let settings: SessionSettings
 
     var body: some View {
         Form {
             Section("Model") {
-                ModelPicker(settings: settings)
-                    .labelsHidden()
+                ModelRows(settings: settings)
+            }
+            Section {
                 FastModeToggle(settings: settings)
             }
             Section("Effort") {
-                EffortPicker(settings: settings)
-                    .labelsHidden()
-                    .disabled(settings.effortUnavailable)
+                EffortSlider(settings: settings)
             }
         }
-        .pickerStyle(.inline)
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+    }
+}
+
+/// The models as a selectable list, as Control Center lists Wi-Fi networks: the name, its
+/// description under it, a checkmark trailing. The whole row is the button.
+struct ModelRows: View {
+    let settings: SessionSettings
+
+    private func row(_ model: ModelInfo, selected: String?) -> some View {
+        ChoiceRow(title: model.displayName, detail: model.description,
+                 isSelected: model.value == selected) {
+            settings.model.wrappedValue = model.value
+        }
+    }
+
+    var body: some View {
+        let selected = settings.models.concreteValue(for: settings.model.wrappedValue)
+        ForEach(settings.models.concrete, id: \.value) { model in
+            row(model, selected: selected)
+        }
+        // A custom or Bedrock id the CLI doesn't list stays selectable.
+        if let id = settings.model.wrappedValue,
+           !settings.models.contains(where: { $0.value == id || $0.resolvedModel == id }) {
+            ChoiceRow(title: id, detail: "", isSelected: true) { settings.model.wrappedValue = id }
+        }
+    }
+}
+
+/// One choice in a popover's list: its name, a line saying what it is, a checkmark when chosen.
+private struct ChoiceRow: View {
+    let title: String
+    var symbol: String? = nil
+    let detail: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            // The checkmark centered on the row; the symbol on the title's line.
+            HStack {
+                HStack(alignment: .firstTextBaseline) {
+                    if let symbol {
+                        Image(systemName: symbol).frame(width: 20)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                        if !detail.isEmpty {
+                            Text(detail).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Spacer(minLength: 8)
+                if isSelected {
+                    Image(systemName: "checkmark").fontWeight(.semibold)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// The effort levels the model offers as stops on a slider. The stop on Claude Code's own level
+/// for the model is "unset": moving onto it clears the effort, any other stop sets it.
+struct EffortSlider: View {
+    let settings: SessionSettings
+    /// The default seen while no effort was chosen: once one is, a live chat no longer reports it.
+    @State private var seenDefault: EffortLevel?
+
+    private var defaultLevel: EffortLevel? { settings.defaultEffort ?? seenDefault }
+
+    private func name(_ level: EffortLevel) -> String {
+        level == defaultLevel ? "\(level.label) (Default)" : level.label
+    }
+
+    var body: some View {
+        let levels = settings.effortLevels
+        let current = settings.effectiveEffort ?? defaultLevel
+        let title: String = current.map { name($0) } ?? "Default"
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+            if levels.count > 1 {
+                EffortStops(levels: levels, index: current.flatMap { levels.firstIndex(of: $0) } ?? 0,
+                            valueName: title) { level in
+                    settings.effort.wrappedValue = level == defaultLevel ? nil : level
+                }
+            }
+        }
+        .disabled(settings.effortUnavailable)
+        .onAppear { seenDefault = settings.defaultEffort ?? seenDefault }
+        .onChange(of: settings.defaultEffort) { _, new in seenDefault = new ?? seenDefault }
+    }
+}
+
+/// The slider itself: one tick per level, the first and last named at its ends.
+private struct EffortStops: View {
+    let levels: [EffortLevel]
+    let index: Int
+    let valueName: String
+    let choose: (EffortLevel) -> Void
+
+    var body: some View {
+        let last = levels.count - 1
+        let position = Binding<Double>(
+            get: { Double(index) },
+            set: { choose(levels[min(max(Int($0.rounded()), 0), last)]) })
+        let stops: [Double] = (0...last).map { Double($0) }
+        Slider(value: position, in: 0...Double(last)) {
+            Text("Effort")
+        } minimumValueLabel: {
+            Text(levels[0].label).font(.caption)
+        } maximumValueLabel: {
+            Text(levels[last].label).font(.caption)
+        } ticks: {
+            SliderTickContentForEach(stops, id: \.self) { SliderTick($0) }
+        }
+        .labelsHidden()
+        .accessibilityValue(valueName)
     }
 }
 
@@ -222,21 +341,13 @@ struct PermissionsForm: View {
     var body: some View {
         Form {
             Section("Permissions") {
-                Picker("Permissions", selection: settings.permissionMode) {
-                    ForEach(settings.offeredModes, id: \.self) { mode in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Label(mode.longLabel, systemImage: mode.symbol)
-                            if let summary = mode.summary {
-                                Text(summary).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .lineLimit(nil)
-                        .tag(mode)
-                        .disabled(mode == .auto && settings.autoModeUnavailable)
+                ForEach(settings.offeredModes, id: \.self) { mode in
+                    ChoiceRow(title: mode.longLabel, symbol: mode.symbol, detail: mode.summary ?? "",
+                              isSelected: mode == settings.permissionMode.wrappedValue) {
+                        settings.permissionMode.wrappedValue = mode
                     }
+                    .disabled(mode == .auto && settings.autoModeUnavailable)
                 }
-                .pickerStyle(.inline)
-                .labelsHidden()
             }
         }
         .formStyle(.grouped)
@@ -459,6 +570,35 @@ private struct SessionControlsPreview: View {
 
 #Preview("Model and Effort popover") {
     ModelEffortForm(settings: previewSettings(thread: .sample(model: "sonnet", effort: .medium, fastModeState: .on)))
+        .popoverSize(width: 300)
+}
+
+/// Fable offers four levels and an explicit choice: no stop is the default's.
+#Preview("Model and Effort popover (old model selected)") {
+    ModelEffortForm(settings: previewSettings(thread: .sample(model: "claude-opus-4-8", effort: .medium)))
+        .popoverSize(width: 300)
+}
+
+#Preview("Model and Effort popover (effort chosen)") {
+    ModelEffortForm(settings: previewSettings(thread: .sample(model: "claude-fable-5-1[1m]", effort: .max)))
+        .popoverSize(width: 300)
+}
+
+/// No effort chosen: the slider rests on Claude Code's own level, marked as the default.
+#Preview("Model and Effort popover (effort default)") {
+    ModelEffortForm(settings: previewSettings(thread: .sample(model: "opus", effort: nil)))
+        .popoverSize(width: 300)
+}
+
+/// A model Claude Code lists without effort levels: the slider is disabled.
+#Preview("Model and Effort popover (effort unavailable)") {
+    ModelEffortForm(settings: previewSettings(thread: .sample(model: "haiku", effort: nil)))
+        .popoverSize(width: 300)
+}
+
+/// An id the CLI doesn't list gets a row of its own, with no description.
+#Preview("Model and Effort popover (custom model)") {
+    ModelEffortForm(settings: previewSettings(thread: .sample(model: "us.anthropic.claude-custom-v1", effort: .medium)))
         .popoverSize(width: 300)
 }
 
