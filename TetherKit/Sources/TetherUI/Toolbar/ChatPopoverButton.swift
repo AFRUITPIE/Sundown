@@ -34,7 +34,7 @@ extension ChatPopoverButton where Label == Image {
     }
 }
 
-/// How full the chat's context window is, as the Context button's icon: SF Symbols' open gauge drawn
+/// How full the chat's context window is, as the Context button's icon: SF Symbols' circle drawn
 /// to how full it is (a variable value), green, then yellow from 70%, red from 90%. A symbol, not a
 /// drawn gauge, so the button shares a glass capsule with the buttons beside it. Asks the host after
 /// each turn ends, while the chat is loaded there.
@@ -49,7 +49,9 @@ struct ContextGauge: View {
 
     var body: some View {
         let fill = window.selectedThread?.contextFill
-        Image(systemName: "gauge.open", variableValue: fill ?? 0)
+        Image(systemName: "circle", variableValue: fill ?? 0)
+            // A little heavier than the toolbar's other symbols, so the arc reads at a glance.
+            .fontWeight(.semibold)
             // Drawn as far round as the value, not dimmed in layers.
             .symbolVariableValueMode(.draw)
             // Shaded as the SF Symbols app's Gradients option shades it.
@@ -80,12 +82,17 @@ extension View {
 #if DEBUG
 /// The Context gauge unknown, then filling through green, yellow and red, at toolbar size.
 #Preview("Context gauge") {
-    HStack(spacing: 16) {
-        ForEach([nil, 0.2, 0.55, 0.75, 0.88, 0.95] as [Double?], id: \.self) { fill in
-            Image(systemName: "gauge.open", variableValue: fill ?? 0)
-                .symbolVariableValueMode(.draw)
-                .symbolColorRenderingMode(.gradient)
-                .foregroundStyle(ContextGauge.color(fill).map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
+    VStack(spacing: 12) {
+        ForEach([Font.Weight.regular, .semibold, .bold], id: \.self) { weight in
+            HStack(spacing: 16) {
+                ForEach([nil, 0.2, 0.55, 0.75, 0.88, 0.95] as [Double?], id: \.self) { fill in
+                    Image(systemName: "circle", variableValue: fill ?? 0)
+                        .fontWeight(weight)
+                        .symbolVariableValueMode(.draw)
+                        .symbolColorRenderingMode(.gradient)
+                        .foregroundStyle(ContextGauge.color(fill).map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
+                }
+            }
         }
     }
     .font(.title2)
