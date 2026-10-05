@@ -15,6 +15,9 @@ public struct HostConfig: Codable, Identifiable, Hashable, Sendable {
     public var env: [String: String]
     /// Developer override: a shell command that speaks Sundown JSONL on stdio (skips install).
     public var serverCommand: String?
+    /// Have Claude Code name each chat on this host, where it doesn't on its own: it names none
+    /// while `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set. One small-model call per chat.
+    public var namesChats = false
 
     public init(id: UUID = UUID(), name: String, kind: Kind, env: [String: String] = [:], serverCommand: String? = nil) {
         self.id = id
@@ -26,6 +29,19 @@ public struct HostConfig: Codable, Identifiable, Hashable, Sendable {
 
     public static let local = HostConfig(
         id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, name: "This Mac", kind: .local)
+
+    private enum CodingKeys: String, CodingKey { case id, name, kind, env, serverCommand, namesChats }
+
+    // Each key on its own, so a host saved before one existed keeps the rest.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        kind = try c.decode(Kind.self, forKey: .kind)
+        env = try c.decodeIfPresent([String: String].self, forKey: .env) ?? [:]
+        serverCommand = try c.decodeIfPresent(String.self, forKey: .serverCommand)
+        namesChats = try c.decodeIfPresent(Bool.self, forKey: .namesChats) ?? false
+    }
 
     public var isLocal: Bool { if case .local = kind { return true }; return false }
     public var sshDestination: String? { if case .ssh(let d) = kind { return d }; return nil }
