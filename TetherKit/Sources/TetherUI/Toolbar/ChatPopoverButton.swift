@@ -52,6 +52,8 @@ struct ContextGauge: View {
         Image(systemName: "circle", variableValue: fill ?? 0)
             // Drawn as far round as the value, not dimmed in layers.
             .symbolVariableValueMode(.draw)
+            // Shaded as the SF Symbols app's Gradients option shades it.
+            .symbolColorRenderingMode(.gradient)
             .foregroundStyle(Self.color(fill).map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
             .accessibilityValue(fill.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? "Unknown")
             .task(id: Key(thread: window.selectedThread?.id, turn: window.selectedThread?.lastFinishedTurn)) {
@@ -82,6 +84,7 @@ extension View {
         ForEach([nil, 0.2, 0.55, 0.75, 0.88, 0.95] as [Double?], id: \.self) { fill in
             Image(systemName: "circle", variableValue: fill ?? 0)
                 .symbolVariableValueMode(.draw)
+                .symbolColorRenderingMode(.gradient)
                 .foregroundStyle(ContextGauge.color(fill).map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
         }
     }
