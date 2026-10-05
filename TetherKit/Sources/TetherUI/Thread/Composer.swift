@@ -327,6 +327,19 @@ struct Composer: View {
             }
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
             .glassEffectID("field", in: glassNamespace)
+            // Where Send's glass waits while it's in: a speck at the field's right end with Send's
+            // ID, so its glass grows out from there, and shrinks back into it, rather than appearing
+            // where it lands.
+            .overlay(alignment: .trailing) {
+                if !sendOut {
+                    Color.clear
+                        .frame(width: 2, height: 2)
+                        .glassEffect(.regular, in: .circle)
+                        .glassEffectID("send", in: glassNamespace)
+                        .padding(.trailing, circleDiameter / 2)
+                        .accessibilityHidden(true)
+                }
+            }
             .onSubmit {
                 if !suggestions.isEmpty { completeSuggestion() }
                 else if appearance.sendShortcut == .returnKey { send() }
