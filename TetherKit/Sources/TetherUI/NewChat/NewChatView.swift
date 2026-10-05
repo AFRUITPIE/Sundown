@@ -147,53 +147,37 @@ struct NewChatView: View {
         git = status.map { FolderGit(isRepository: $0.isRepo, branch: $0.branchName) }
     }
 
-    /// Where the chat works, above the composer where a chat's status strip goes: the folder, the
-    /// branch checked out there, and whether to work in it or in a new worktree. Plain borderless
-    /// menus, since the composer beneath them is the glass. Work In is last because its label
-    /// changes width with the choice (a menu button's label can't reserve it), and nothing
-    /// should move when it does.
+    /// Where the chat works, above the composer where a chat's status strip goes: two chips, the
+    /// directory, and in a repository the branch checked out there, whose menu has the worktree
+    /// toggle. Plain menus under capsule glass: a menu in the glass button style draws a flat gray
+    /// bezel on macOS 27.
     private func chips(_ connection: HostConnection) -> some View {
-        // The full row while it fits, else the same controls as icons, so the window may be narrow.
-        ViewThatFits(in: .horizontal) {
-            chipRow(connection, compact: false)
-            chipRow(connection, compact: true)
+        HStack(spacing: 8) {
+            folderMenu(connection)
+                .layoutPriority(-1)
+            if let branch = git?.branch {
+                branchMenu(branch)
+            }
         }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.visible)
+        .controlSize(.small)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder private func chipRow(_ connection: HostConnection, compact: Bool) -> some View {
-        if compact {
-            chipControls(connection, compact: true).labelStyle(.iconOnly)
-        } else {
-            chipControls(connection, compact: false).labelStyle(.titleAndIcon)
-        }
+    /// A chip: its label padded inside capsule glass.
+    private func chip(_ label: some View) -> some View {
+        label
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .contentShape(.capsule)
     }
 
-    private func chipControls(_ connection: HostConnection, compact: Bool) -> some View {
-        HStack(spacing: 16) {
-            folderMenu(connection, compact: compact)
-            if let branch = git?.branch {
-                Label(branch, systemImage: "arrow.triangle.branch")
-                    // Spaced like the menus' labels beside it.
-                    .labelIconToTitleSpacing(4)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(.secondary)
-                    .help("Branch")
-                    // One element, "Branch main": the icon and the name as separate ones read nothing.
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Branch \(branch)")
-                    .accessibilityIdentifier("newChat.branch")
-            }
-            workInMenu
-        }
-        .menuStyle(.button)
-        .buttonStyle(.borderless)
-        .controlSize(.small)
-    }
-
-    /// Recent folders, then Choose Folder… for any other.
-    private func folderMenu(_ connection: HostConnection, compact: Bool) -> some View {
+    /// Recent directories, then Choose Directory… for any other.
+    private func folderMenu(_ connection: HostConnection) -> some View {
         let folder = window.draftDirectory
         return Menu {
             Picker("Directory", selection: Binding(get: { window.draftDirectory }, set: { choose($0) })) {
@@ -209,44 +193,31 @@ struct NewChatView: View {
             Divider()
             Button("Choose Directory…", action: chooseFolder)
         } label: {
-            // The whole path, since the window's subtitle already names the folder. No symbol:
-            // Work In's folder beside it would read as a second one.
-            if compact {
-                Label(folder?.abbreviatingHome ?? "Choose Directory", systemImage: "folder")
-            } else {
-                Text(folder?.abbreviatingHome ?? "Choose Directory")
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            chip(Label(folder.map { ($0 as NSString).lastPathComponent } ?? "Choose Directory", systemImage: "folder"))
         }
-        // Gives way before the others: a long path truncates in its middle instead.
-        .layoutPriority(-1)
+        .glassEffect(.regular.interactive(), in: .capsule)
         .help(folder ?? "Choose the directory Claude works in")
         .accessibilityLabel("Directory")
         .accessibilityValue(folder ?? "None")
         .accessibilityIdentifier("newChat.folder")
     }
 
-    /// The folder itself, or a new git worktree of its repository on a branch of its own, so
-    /// parallel chats in one repository don't share a checkout. Settings ▸ General sets which
-    /// a new chat starts with.
-    private var workInMenu: some View {
+    /// The branch checked out in the directory, and whether the chat works there or in a new git
+    /// worktree of the repository on a branch of its own, so parallel chats don't share a
+    /// checkout. Settings ▸ General sets which a new chat starts with.
+    private func branchMenu(_ branch: String) -> some View {
         let worktree = window.draftWorktree
         return Menu {
-            Picker("Work In", selection: $window.draftWorktree) {
-                Label(Self.workInTitle(false), systemImage: Self.workInSymbol(false)).tag(false)
-                Label(Self.workInTitle(true), systemImage: Self.workInSymbol(true)).tag(true)
-                    // A folder outside a repository has nothing to make a worktree of.
-                    .selectionDisabled(git?.isRepository == false)
-            }
-            .pickerStyle(.inline)
+            Toggle("New Worktree", isOn: $window.draftWorktree)
         } label: {
-            Label(Self.workInTitle(worktree), systemImage: Self.workInSymbol(worktree))
+            chip(Label(worktree ? "\(branch), New Worktree" : branch,
+                       systemImage: worktree ? Self.workInSymbol(true) : "arrow.triangle.branch"))
         }
-        .help(worktree ? "Work in a new git worktree of this directory’s repository" : "Work in this directory")
-        .accessibilityLabel("Work In")
-        .accessibilityValue(Self.workInTitle(worktree))
-        .accessibilityIdentifier("newChat.workIn")
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .help(worktree ? "Work in a new git worktree of this directory’s repository" : "Work on \(branch) in this directory")
+        .accessibilityLabel("Branch")
+        .accessibilityValue(worktree ? "\(branch), New Worktree" : branch)
+        .accessibilityIdentifier("newChat.branch")
     }
 
     private static func workInTitle(_ worktree: Bool) -> String { worktree ? "New Worktree" : "This Directory" }
