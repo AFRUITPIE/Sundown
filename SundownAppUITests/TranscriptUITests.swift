@@ -122,8 +122,10 @@ final class TranscriptUITests: SundownUITestCase {
             var scrollViews: [CGRect] = []
             var prompts: [(top: CGFloat, number: Int)] = []
             func walk(_ element: any XCUIElementSnapshot) {
-                if element.elementType == .scrollView { scrollViews.append(element.frame) }
-                if element.elementType == .staticText, let words = element.value as? String, words.hasPrefix("Step "),
+                if element.elementType == .scrollView, element.identifier != "composer.scroll" { scrollViews.append(element.frame) }
+                // A prompt is a text view holding its text; the message field isn't one.
+                if element.elementType == .staticText || element.elementType == .textView && element.identifier != "composer.input",
+                   let words = element.value as? String, words.hasPrefix("Step "),
                    let number = Int(words.dropFirst(5).prefix { $0.isNumber }) {
                     prompts.append((element.frame.minY, number))
                 }

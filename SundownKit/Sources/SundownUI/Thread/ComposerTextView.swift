@@ -44,6 +44,8 @@ struct ComposerTextView: NSViewRepresentable {
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
         scroll.scrollerStyle = .overlay
+        // Its own name, so finding the field by its identifier finds the text view inside.
+        scroll.setAccessibilityIdentifier("composer.scroll")
         // As wide as the clip view it starts in, which resizes it by the difference.
         let view = ComposerNSTextView(frame: .zero)
         view.minSize = .zero
@@ -184,6 +186,8 @@ struct ComposerTextView: NSViewRepresentable {
             case #selector(NSResponder.moveUp(_:)): return parent.onKey(.up)
             case #selector(NSResponder.moveDown(_:)): return parent.onKey(.down)
             case #selector(NSResponder.cancelOperation(_:)):
+                // Never the text view's own, which offers word completions: what the composer
+                // doesn't take goes on up, where Esc closes a popover.
                 // Never the text view's own, which offers word completions.
                 _ = parent.onKey(.escape)
                 return true
@@ -258,6 +262,17 @@ final class ComposerNSTextView: NSTextView {
             return
         }
         super.insertText(string, replacementRange: replacementRange)
+    }
+
+    /// Esc the composer doesn't use (no completions, nothing running) goes on to SwiftUI, which
+    /// closes a popover with it; the text view's own would offer word completions instead.
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53, !hasMarkedText(), event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+           let coordinator {
+            if !coordinator.parent.onKey(.escape) { nextResponder?.keyDown(with: event) }
+            return
+        }
+        super.keyDown(with: event)
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
