@@ -317,10 +317,18 @@ final class TranscriptUITests: SundownUITestCase {
         // Done once Stop gives way to Send. What's checked is that text drawn that way is still
         // ordinary text once it has arrived, which can be selected and copied.
         XCTAssertTrue(app.buttons["Stop"].disappears(timeout: 60), "the turn never finished")
-        // The reply ends with its quote: the last line of the last message that holds it.
-        let reply = app.textViews.matching(NSPredicate(format: "value CONTAINS 'Streaming should cost'"))
-            .allElementsBoundByIndex.last { $0.isHittable }
-        let last = try XCTUnwrap(reply, "the reply isn't on screen")
+        // The reply ends with its quote, its text view's last line. Found by its heading: what
+        // XCUITest reads of a text view's value stops after its first few hundred characters.
+        let replies = app.textViews.matching(NSPredicate(format: "value CONTAINS 'Section 100: tightening the renderer'"))
+        var reply: XCUIElement?
+        // Looked for until found: as the turn ends its row is settled, and an element listed a
+        // moment before may no longer resolve. On screen rather than hittable: a message is one
+        // text view, whose middle can be a code box's.
+        waitUntil(5) {
+            reply = replies.allElementsBoundByIndex.last { self.isOnScreen($0) }
+            return reply != nil
+        }
+        let last = try XCTUnwrap(reply, "the reply isn't on screen: \(replies.allElementsBoundByIndex.map(\.frame)) in \(mainWindow().frame)")
         // Where the turn's end leaves it, not where it was as the last row went in.
         last.settle()
         NSPasteboard.general.clearContents()

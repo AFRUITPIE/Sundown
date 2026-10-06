@@ -23,7 +23,8 @@ struct MarkdownView: View {
     }
 
     var body: some View {
-        MarkdownTextView(blocks: cache.blocks(for: text, streaming: streams), style: style, streams: streams, source: text)
+        MarkdownTextView(blocks: cache.blocks(for: text, streaming: streams, lineBreaks: style == .prompt),
+                         style: style, streams: streams, source: text)
     }
 
     /// One parsed block and its inline text, parsed once. `id` changes only when the block is parsed
@@ -84,12 +85,14 @@ struct MarkdownView: View {
     }
 
     /// Pure, so a page of history can be parsed off the main actor (`MarkdownCache.prewarm`).
-    nonisolated static func parse(_ text: String) -> [Block] {
+    /// `lineBreaks`: every newline in a paragraph is a line break, as a prompt is shown: the
+    /// person's own Shift-Return, as GitHub's comments and Claude's apps keep it, not a space.
+    nonisolated static func parse(_ text: String, lineBreaks: Bool = false) -> [Block] {
         var blocks: [Block] = []
         var para: [String] = []
         var lines = text.components(separatedBy: "\n")[...]
         func flush() {
-            if !para.isEmpty { blocks.append(.paragraph(joinSoftBreaks(para))) }
+            if !para.isEmpty { blocks.append(.paragraph(joinSoftBreaks(para, keepingAll: lineBreaks))) }
             para.removeAll()
         }
         while let line = lines.popFirst() {
@@ -137,12 +140,14 @@ struct MarkdownView: View {
     }
 
     /// A single newline inside a paragraph is a space, as in CommonMark; a line ending in two
-    /// spaces or a backslash keeps its break.
-    private nonisolated static func joinSoftBreaks(_ lines: [String]) -> String {
+    /// spaces or a backslash keeps its break, and with `keepingAll` every line does.
+    private nonisolated static func joinSoftBreaks(_ lines: [String], keepingAll: Bool = false) -> String {
         var out = ""
         for (i, line) in lines.enumerated() {
             guard i < lines.count - 1 else { out += line; break }
-            if line.hasSuffix("  ") || line.hasSuffix("\\") {
+            if keepingAll {
+                out += line.trimmingCharacters(in: .whitespaces) + "\n"
+            } else if line.hasSuffix("  ") || line.hasSuffix("\\") {
                 out += line.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\\")) + "\n"
             } else {
                 out += line.trimmingCharacters(in: .whitespaces) + " "
@@ -167,6 +172,8 @@ struct MarkdownView: View {
 final class MarkdownCache {
     private var text = ""
     private var blocks: [MarkdownView.Rendered] = []
+    /// Whether these are a prompt's blocks (`blocks(for:streaming:lineBreaks:)`).
+    private var lineBreaks = false
     /// Whether this view has put its message in `recent`, which it does once, when it isn't streaming.
     private var remembered = false
     /// UTF-8 length of the settled prefix, and its blocks.
@@ -189,12 +196,21 @@ final class MarkdownCache {
 
     /// `streaming`: the message is still arriving, so this text isn't remembered in `recent`: each
     /// length of it was a key never looked up again.
-    func blocks(for newText: String, streaming: Bool = false) -> [MarkdownView.Rendered] {
+    /// `lineBreaks`: a prompt's, whose every newline in a paragraph is a break (`parse`). Its
+    /// parses aren't shared in `recent`, which holds replies': a prompt is short, and parsed once.
+    func blocks(for newText: String, streaming: Bool = false, lineBreaks: Bool = false) -> [MarkdownView.Rendered] {
+        if lineBreaks != self.lineBreaks {
+            self.lineBreaks = lineBreaks
+            text = ""
+            blocks = []
+            remembered = false
+            reset()
+        }
         if newText.utf8.count == text.utf8.count, newText == text {
             rememberOnce(streaming: streaming)
             return blocks
         }
-        if text.isEmpty, let known = Self.recent.blocks(for: newText) {
+        if text.isEmpty, !lineBreaks, let known = Self.recent.blocks(for: newText) {
             // A fresh view of a message parsed before; streaming, if any, continues from here.
             text = newText
             blocks = known
@@ -212,7 +228,7 @@ final class MarkdownCache {
         advanceSettledPrefix()
         let tail = String(decoding: text.utf8.dropFirst(settledLength), as: UTF8.self)
         let previous = tailBlocks
-        tailBlocks = MarkdownView.parse(tail).enumerated().map { i, block in
+        tailBlocks = MarkdownView.parse(tail, lineBreaks: lineBreaks).enumerated().map { i, block in
             i < previous.count && previous[i].block == block ? previous[i] : Self.render(block)
         }
         blocks = settledBlocks + tailBlocks
@@ -223,7 +239,7 @@ final class MarkdownCache {
     /// The message as it is once it has stopped arriving: the first text a settled reply's view
     /// sees, or a streamed reply's last.
     private func rememberOnce(streaming: Bool) {
-        guard !streaming, !remembered else { return }
+        guard !streaming, !remembered, !lineBreaks else { return }
         remembered = true
         Self.recent.remember(text, blocks)
     }
@@ -278,7 +294,7 @@ final class MarkdownCache {
         guard let boundary, boundary > settledLength else { return }
         let newlySettled = String(decoding: utf8.dropFirst(settledLength).prefix(boundary - settledLength), as: UTF8.self)
         // Blocks that were the tail's until now keep their render as they settle.
-        let parsed = MarkdownView.parse(newlySettled)
+        let parsed = MarkdownView.parse(newlySettled, lineBreaks: lineBreaks)
         settledBlocks += parsed.enumerated().map { i, block in
             i < tailBlocks.count && tailBlocks[i].block == block ? tailBlocks[i] : Self.render(block)
         }
