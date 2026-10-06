@@ -219,3 +219,401 @@ struct InspectorTaskDetail: View {
     .frame(width: 300, height: 260)
 }
 #endif
+
+#if DEBUG
+
+// A design preview of the Tasks tab as a view of its own: a sidebar of tasks, and a detail that
+// suits each kind (an agent's activity, a command's output, a workflow's phases and agents). Mock
+// data only; nothing in the app uses this yet.
+
+private enum MockKind: String { case agent, shell, workflow
+    var symbol: String {
+        switch self {
+        case .agent: "sparkles"
+        case .shell: "terminal"
+        case .workflow: "point.3.connected.trianglepath.dotted"
+        }
+    }
+    var tint: Color {
+        switch self {
+        case .agent: .purple
+        case .shell: .gray
+        case .workflow: .indigo
+        }
+    }
+}
+
+private enum MockStatus { case running, done, failed, stopped
+    var state: ChatState {
+        switch self {
+        case .running: .working
+        case .done: .idle
+        case .failed: .failed
+        case .stopped: .stopped
+        }
+    }
+}
+
+private struct MockTask: Identifiable, Hashable {
+    let id: String
+    let kind: MockKind
+    let name: String
+    let detail: String
+    let status: MockStatus
+    let elapsed: String
+    var background = false
+}
+
+private let mockTasks: [MockTask] = [
+    .init(id: "w1", kind: .workflow, name: "Review the diff for correctness", detail: "Workflow · 5 of 9 agents done",
+          status: .running, elapsed: "3m 02s", background: true),
+    .init(id: "a1", kind: .agent, name: "Find every SwiftUI view in SundownUI", detail: "Explore · 18 tools",
+          status: .running, elapsed: "1m 40s", background: true),
+    .init(id: "s1", kind: .shell, name: "swift test --package-path SundownKit", detail: "Command · in background",
+          status: .running, elapsed: "52s", background: true),
+    .init(id: "a2", kind: .agent, name: "Research macOS text selection", detail: "General · 4 tools",
+          status: .done, elapsed: "6m 11s"),
+    .init(id: "s2", kind: .shell, name: "xcodebuild -scheme Sundown build", detail: "Command · exit 65",
+          status: .failed, elapsed: "2m 03s"),
+    .init(id: "a3", kind: .agent, name: "Audit AGENTS.md against the code", detail: "Explore · stopped",
+          status: .stopped, elapsed: "40s"),
+]
+
+// MARK: Sidebar
+
+private struct TaskSidebar: View {
+    @Binding var selection: String?
+
+    var body: some View {
+        // Plain stacks in the mock: a sidebar List crashed the preview agent.
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                header("Running")
+                ForEach(mockTasks.filter { $0.status == .running }) { row($0) }
+                header("Finished").padding(.top, 10)
+                ForEach(mockTasks.filter { $0.status != .running }) { row($0) }
+            }
+            .padding(10)
+        }
+        .background(.background.secondary)
+        .safeAreaInset(edge: .bottom) {
+            // What's at work, at a glance: the sidebar's own footer.
+            HStack(spacing: 6) {
+                ChatStatusDot(state: .working)
+                Text("3 running · 2 in the background").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+        }
+    }
+
+    private func row(_ task: MockTask) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: task.kind.symbol)
+                .font(.callout)
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 24)
+                .background(task.kind.tint.gradient, in: .rect(cornerRadius: 6))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(task.name).lineLimit(1)
+                Text("\(task.detail) · \(task.elapsed)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            ChatStatusDot(state: task.status.state)
+        }
+        .padding(.vertical, 4).padding(.horizontal, 8)
+        .background(selection == task.id ? AnyShapeStyle(.tint.opacity(0.25)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 8))
+        .contentShape(.rect)
+        .onTapGesture { selection = task.id }
+    }
+
+    private func header(_ title: String) -> some View {
+        Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.bottom, 2)
+    }
+}
+
+// MARK: Detail header
+
+private struct DetailHeader: View {
+    let task: MockTask
+    var progress: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: task.kind.symbol)
+                    .font(.title2)
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(task.kind.tint.gradient, in: .rect(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(task.name).font(.title3.weight(.semibold))
+                    HStack(spacing: 6) {
+                        ChatStatusDot(state: task.status.state)
+                        Text(task.status == .running ? "Running" : task.status == .done ? "Done" : task.status == .failed ? "Failed" : "Stopped")
+                        Text("·").foregroundStyle(.tertiary)
+                        Text(task.elapsed).monospacedDigit()
+                        if task.background {
+                            Text("·").foregroundStyle(.tertiary)
+                            Label("In the Background", systemImage: "moon.zzz").labelStyle(.titleAndIcon)
+                        }
+                    }
+                    .font(.callout).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if task.status == .running {
+                    ControlGroup {
+                        Button("Open in Chat", systemImage: "text.bubble") {}
+                        Button("Stop", systemImage: "stop.fill") {}
+                    }
+                    .fixedSize()
+                }
+            }
+            if let progress {
+                ProgressView(value: progress).progressViewStyle(.linear).tint(task.kind.tint)
+            }
+        }
+        .padding(20)
+    }
+}
+
+// MARK: Workflow detail
+
+private struct MockAgent: Identifiable {
+    let id = UUID()
+    let name: String
+    let doing: String
+    let status: MockStatus
+    let tokens: String
+}
+
+private struct MockPhase: Identifiable {
+    let id = UUID()
+    let title: String
+    let detail: String
+    let agents: [MockAgent]
+}
+
+private let mockPhases: [MockPhase] = [
+    .init(title: "Review", detail: "Each dimension reads the diff", agents: [
+        .init(name: "review: bugs", doing: "3 findings", status: .done, tokens: "41K"),
+        .init(name: "review: performance", doing: "2 findings", status: .done, tokens: "38K"),
+        .init(name: "review: accessibility", doing: "Reading MarkdownText.swift", status: .running, tokens: "22K"),
+    ]),
+    .init(title: "Verify", detail: "Each finding checked on its own", agents: [
+        .init(name: "verify: stale marker widths", doing: "Confirmed", status: .done, tokens: "12K"),
+        .init(name: "verify: empty table cells", doing: "Confirmed", status: .done, tokens: "9K"),
+        .init(name: "verify: undo after send", doing: "Running a test", status: .running, tokens: "15K"),
+        .init(name: "verify: Esc in popovers", doing: "Not a bug", status: .done, tokens: "7K"),
+    ]),
+    .init(title: "Report", detail: "Ranked and written up", agents: [
+        .init(name: "report", doing: "Waiting for Verify", status: .stopped, tokens: "—"),
+    ]),
+]
+
+private struct WorkflowDetail: View {
+    let task: MockTask
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                DetailHeader(task: task, progress: 5.0 / 9)
+                Divider()
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(Array(mockPhases.enumerated()), id: \.element.id) { index, phase in
+                        PhaseView(number: index + 1, phase: phase, isLast: index == mockPhases.count - 1)
+                    }
+                }
+                .padding(20)
+            }
+        }
+    }
+}
+
+/// A phase: a step on a timeline, its agents as rows beside it.
+private struct PhaseView: View {
+    let number: Int
+    let phase: MockPhase
+    let isLast: Bool
+
+    private var done: Int { phase.agents.filter { $0.status == .done }.count }
+    private var running: Bool { phase.agents.contains { $0.status == .running } }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            // The timeline: a numbered node, a line on to the next phase.
+            VStack(spacing: 4) {
+                ZStack {
+                    Circle().fill(done == phase.agents.count ? AnyShapeStyle(.green) : running ? AnyShapeStyle(.blue) : AnyShapeStyle(.quaternary))
+                    if done == phase.agents.count {
+                        Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(.white)
+                    } else {
+                        Text("\(number)").font(.caption.bold()).foregroundStyle(running ? .white : .secondary)
+                    }
+                }
+                .frame(width: 24, height: 24)
+                if !isLast { Rectangle().fill(.quaternary).frame(width: 2).frame(maxHeight: .infinity) }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(phase.title).font(.headline)
+                    Text(phase.detail).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(done) of \(phase.agents.count)").font(.callout).foregroundStyle(.secondary).monospacedDigit()
+                }
+                VStack(spacing: 0) {
+                    ForEach(Array(phase.agents.enumerated()), id: \.element.id) { i, agent in
+                        if i > 0 { Divider().padding(.leading, 34) }
+                        AgentRow(agent: agent)
+                    }
+                }
+                .background(.fill.quinary, in: .rect(cornerRadius: 10))
+            }
+            .padding(.bottom, isLast ? 0 : 4)
+        }
+    }
+}
+
+private struct AgentRow: View {
+    let agent: MockAgent
+
+    var body: some View {
+        HStack(spacing: 10) {
+            // Done is a check; waiting is an empty ring; running pulses as the sidebar's dot does.
+            Group {
+                switch agent.status {
+                case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                case .stopped: Image(systemName: "circle.dashed").foregroundStyle(.tertiary)
+                case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+                case .running: ChatStatusDot(state: .working)
+                }
+            }
+            .frame(width: 14)
+            Text(agent.name)
+            Text(agent.doing)
+                .foregroundStyle(agent.status == .running ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .italic(agent.status == .running)
+                .lineLimit(1)
+            Spacer()
+            Text(agent.tokens).font(.callout).foregroundStyle(.tertiary).monospacedDigit()
+            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .contentShape(.rect)
+    }
+}
+
+// MARK: Agent and command details
+
+private struct AgentDetail: View {
+    let task: MockTask
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                DetailHeader(task: task)
+                Divider()
+                VStack(alignment: .leading, spacing: 14) {
+                    // The facts in a row of small figures, as Activity Monitor's inspector does.
+                    HStack(spacing: 28) {
+                        figure("Tool Calls", "18")
+                        figure("Tokens", "64K")
+                        figure("Model", "Sonnet")
+                        figure("Started", "2:14 PM")
+                    }
+                    DisclosureGroup("Prompt") {
+                        Text("Find every SwiftUI view in SundownUI and list which read `thread.items`.")
+                            .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Text("Activity").font(.headline).padding(.top, 4)
+                    VStack(alignment: .leading, spacing: 10) {
+                        activity("Searched code", "rg -n 'thread.items' SundownUI")
+                        activity("Read 6 files", "TranscriptView.swift, ItemViews.swift, …")
+                        Text("Most views read `rows`, not `items`. Two exceptions so far:")
+                        activity("Reading", "ToolCallView.swift", running: true)
+                    }
+                }
+                .padding(20)
+            }
+        }
+    }
+
+    private func figure(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.title3.weight(.medium)).monospacedDigit()
+        }
+    }
+
+    private func activity(_ verb: String, _ what: String, running: Bool = false) -> some View {
+        HStack(spacing: 6) {
+            Text(verb).foregroundStyle(.secondary)
+            Text(what).foregroundStyle(.secondary).lineLimit(1)
+            if running { ProgressView().controlSize(.mini) }
+        }
+        .font(.callout)
+    }
+}
+
+private struct CommandDetail: View {
+    let task: MockTask
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            DetailHeader(task: task)
+            Divider()
+            ScrollView {
+                Text("""
+                Building for debugging...
+                [42/88] Compiling SundownUI MarkdownText.swift
+                [43/88] Compiling SundownUI Composer.swift
+                Test Suite 'MarkdownTextTests' started
+                ✔ Test everyCharacterHasAStyle() passed
+                ✔ Test copyIsPlainText() passed
+                """)
+                .font(.callout.monospaced())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+            }
+            .background(.fill.quinary)
+            // Follows the output's end, as a terminal does.
+            .defaultScrollAnchor(.bottom)
+        }
+    }
+}
+
+// MARK: The view
+
+private struct TasksViewDesign: View {
+    @State var selection: String? = "w1"
+
+    var body: some View {
+        HStack(spacing: 0) {
+            TaskSidebar(selection: $selection)
+                .frame(width: 280)
+            Divider()
+            Group {
+                switch mockTasks.first(where: { $0.id == selection }) {
+                case let task? where task.kind == .workflow: WorkflowDetail(task: task)
+                case let task? where task.kind == .shell: CommandDetail(task: task)
+                case let task?: AgentDetail(task: task)
+                case nil: ContentUnavailableView("No Task Selected", systemImage: "square.stack.3d.up")
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+#Preview("Tasks · workflow", traits: .fixedLayout(width: 1100, height: 720)) {
+    TasksViewDesign(selection: "w1")
+}
+
+#Preview("Tasks · agent", traits: .fixedLayout(width: 1100, height: 720)) {
+    TasksViewDesign(selection: "a1")
+}
+
+#Preview("Tasks · command", traits: .fixedLayout(width: 1100, height: 720)) {
+    TasksViewDesign(selection: "s1")
+}
+#endif
