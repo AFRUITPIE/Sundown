@@ -319,9 +319,15 @@ final class TranscriptUITests: SundownUITestCase {
         XCTAssertTrue(app.buttons["Stop"].disappears(timeout: 60), "the turn never finished")
         // The reply ends with its quote: the last line of the last message that holds it. On screen
         // rather than hittable: a message is one text view, whose middle can be a code box's.
-        let reply = app.textViews.matching(NSPredicate(format: "value CONTAINS 'Streaming should cost'"))
-            .allElementsBoundByIndex.last { isOnScreen($0) }
-        let last = try XCTUnwrap(reply, "the reply isn't on screen")
+        // Looked for until found: as the turn ends its row is settled, and an element listed a
+        // moment before may no longer resolve.
+        let replies = app.textViews.matching(NSPredicate(format: "value CONTAINS 'Streaming should cost'"))
+        var reply: XCUIElement?
+        waitUntil(5) {
+            reply = replies.allElementsBoundByIndex.last { self.isOnScreen($0) }
+            return reply != nil
+        }
+        let last = try XCTUnwrap(reply, "the reply isn't on screen: \(replies.allElementsBoundByIndex.map(\.frame)) in \(mainWindow().frame)")
         // Where the turn's end leaves it, not where it was as the last row went in.
         last.settle()
         NSPasteboard.general.clearContents()
