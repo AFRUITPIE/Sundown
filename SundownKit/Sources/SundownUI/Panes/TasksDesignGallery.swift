@@ -1430,10 +1430,13 @@ private struct QuietSidebarDetail: View {
 
     var body: some View {
         HSplitView {
+            // A source list, as Xcode's navigators: no bands under its headers, no rules between rows.
             List(selection: $selection) {
                 Section("Running") { ForEach(designTasks.filter { $0.status == .running }) { row($0) } }
                 Section("Finished") { ForEach(designTasks.filter { $0.status != .running }) { row($0) } }
             }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
             .frame(minWidth: 220, idealWidth: 280, maxWidth: 380)
             Group {
                 if let task = designTasks.first(where: { $0.id == selection }) {
@@ -1472,17 +1475,23 @@ private struct QuietSidebarDetail: View {
     }
 }
 
-/// A detail's title, the one sentence that says how it's going, and its actions.
+/// One spacing scale: within a pair, between lines, between sections.
+private enum QuietSpacing {
+    static let pair: CGFloat = 4
+    static let line: CGFloat = 8
+    static let section: CGFloat = 20
+}
+
+/// Every detail starts the same: the title, the one sentence that says how it's going, its actions.
 private struct QuietHeader<Actions: View>: View {
     let title: String
     let status: String
-    var monospaced = false
     @ViewBuilder var actions: Actions
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(monospaced ? .title3.monospaced() : .title3).fontWeight(.semibold)
+            VStack(alignment: .leading, spacing: QuietSpacing.pair) {
+                Text(title).font(.title3).fontWeight(.semibold)
                 Text(status).foregroundStyle(.secondary)
             }
             Spacer(minLength: 12)
@@ -1491,63 +1500,87 @@ private struct QuietHeader<Actions: View>: View {
     }
 }
 
+/// A detail's body: one scroll, the window's standard margins, a readable width.
+private struct QuietPage<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: QuietSpacing.section) { content }
+                .frame(maxWidth: 640, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .scenePadding()
+        }
+    }
+}
+
 private struct QuietWorkflow: View {
     @State private var open: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                QuietHeader(title: "Review the diff for correctness", status: "Verifying findings · 3m 02s") {
-                    Button("Show in Chat") {}
-                    Button("Stop") {}
-                }
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(designPhases) { phase in
-                        phaseRow(phase)
-                        if phase.id != designPhases.last?.id { Divider() }
-                    }
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Log").font(.headline)
-                    ForEach(Array(designLog.suffix(4).enumerated()), id: \.offset) { _, line in
-                        Text(line.text)
-                    }
+        QuietPage {
+            QuietHeader(title: "Review the diff for correctness", status: "Verifying findings · 3m 02s") {
+                Button("Show in Chat") {}
+                Button("Stop") {}
+            }
+            // One grid, so every phase's bar starts and ends at the same place and every count ends
+            // on the same right edge as the buttons above.
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: QuietSpacing.line) {
+                ForEach(designPhases) { phase in
+                    if phase.id != designPhases.first?.id { Divider() }
+                    phaseRow(phase)
+                    if open == phase.id { agents(phase) }
                 }
             }
-            .padding(24)
-            .frame(maxWidth: 640, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: QuietSpacing.line) {
+                Text("Log").font(.headline)
+                ForEach(Array(designLog.suffix(4).enumerated()), id: \.offset) { _, line in
+                    Text(line.text)
+                }
+            }
         }
     }
 
-    /// A phase: its name, one bar, one count. Its agents only once it's opened, failed first.
     private func phaseRow(_ phase: DesignPhase) -> some View {
-        let failed = phase.agents.filter { $0.status == .failed }
-        let isOpen = Binding { open == phase.id } set: { open = $0 ? phase.id : nil }
-        return DisclosureGroup(isExpanded: isOpen) {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(phase.agents.filter { $0.status == .failed } + phase.agents.filter { $0.status == .running }) { agent in
-                    HStack {
-                        Text(agent.label)
-                        Spacer()
-                        Text(agent.status == .failed ? "Failed: \(agent.doing)" : agent.doing).foregroundStyle(.secondary)
-                    }
+        let failed = phase.agents.filter { $0.status == .failed }.count
+        let started = phase.done > 0 || phase.agents.contains { $0.status == .running }
+        let isOpen = open == phase.id
+        return GridRow {
+            Button {
+                open = isOpen ? nil : phase.id
+            } label: {
+                Label(phase.title, systemImage: isOpen ? "chevron.down" : "chevron.right")
+                    .labelStyle(PhaseLabelStyle())
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+            // A phase that hasn't started has no bar to show.
+            Group {
+                if started {
+                    ProgressView(value: Double(phase.done), total: Double(phase.agents.count))
+                } else {
+                    Color.clear.frame(height: 1)
                 }
             }
-            .font(.callout)
-            .padding(.top, 6)
-            .padding(.leading, 14)
-        } label: {
-            HStack(spacing: 16) {
-                Text(phase.title).frame(width: 64, alignment: .leading)
-                ProgressView(value: Double(phase.done), total: Double(phase.agents.count))
-                Text(phaseCount(phase, failed: failed.count))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .frame(width: 150, alignment: .trailing)
-            }
+            .gridColumnAlignment(.leading)
+            Text(phaseCount(phase, failed: failed))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .gridColumnAlignment(.trailing)
         }
-        .padding(.vertical, 10)
+    }
+
+    /// An opened phase: what needs a look, failed then running, under its name.
+    private func agents(_ phase: DesignPhase) -> some View {
+        GridRow {
+            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+            VStack(alignment: .leading, spacing: QuietSpacing.line) {
+                ForEach(phase.agents.filter { $0.status == .failed } + phase.agents.filter { $0.status == .running }) { agent in
+                    Text("\(agent.label)  \(Text(agent.status == .failed ? "Failed: \(agent.doing)" : agent.doing).foregroundStyle(.secondary))")
+                }
+            }
+            .gridCellColumns(2)
+        }
     }
 
     private func phaseCount(_ phase: DesignPhase, failed: Int) -> String {
@@ -1557,27 +1590,32 @@ private struct QuietWorkflow: View {
     }
 }
 
+/// The disclosure chevron before the phase's name, small and gray, as a disclosure's own.
+private struct PhaseLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 6) {
+            configuration.icon.font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 10)
+            configuration.title
+        }
+    }
+}
+
 private struct QuietAgent: View {
     let task: DesignTask
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                QuietHeader(title: task.name, status: task.status == .running ? "Running in the background · \(duration(task.elapsed))" : "Done · \(duration(task.elapsed))") {
-                    Button("Show in Chat") {}
-                    if task.status == .running { Button("Stop") {} }
-                }
+        QuietPage {
+            QuietHeader(title: task.name,
+                        status: task.status == .running ? "Running in the background · \(duration(task.elapsed)) · Reading ToolCallView.swift" : "Done · \(duration(task.elapsed))") {
+                Button("Show in Chat") {}
+                if task.status == .running { Button("Stop") {} }
+            }
+            VStack(alignment: .leading, spacing: QuietSpacing.line) {
                 Text("Find every SwiftUI view in SundownUI and list which read `thread.items`.")
                     .foregroundStyle(.secondary)
                 Text("Most views read `rows`, not `items`. Two exceptions so far: `TranscriptFind` builds its search text from items, and `ThreadView` reads the last item for the Thinking line.")
                     .textSelection(.enabled)
-                if task.status == .running {
-                    Text("Reading ToolCallView.swift").foregroundStyle(.secondary)
-                }
             }
-            .padding(24)
-            .frame(maxWidth: 640, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -1586,35 +1624,30 @@ private struct QuietCommand: View {
     let task: DesignTask
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        QuietPage {
             QuietHeader(title: task.name,
-                        status: task.status == .failed ? "Failed after \(duration(task.elapsed))" : "Running · \(duration(task.elapsed))",
-                        monospaced: true) {
+                        status: task.status == .failed ? "Failed after \(duration(task.elapsed))" : "Running · \(duration(task.elapsed))") {
                 Button("Copy Output") {}
                 if task.status == .running { Button("Stop") {} }
             }
-            ScrollView {
-                Text(task.status == .failed ? """
-                Resolve Package Graph
-                Building for debugging...
-                MarkdownText.swift:58:9: error: cannot find 'setText' in scope
-                ** BUILD FAILED **
-                """ : """
-                Building for debugging...
-                [42/88] Compiling SundownUI MarkdownText.swift
-                Test Suite 'MarkdownTextTests' started
-                ✔ Test copyIsPlainText() passed (0.036 seconds)
-                """)
-                .font(.callout.monospaced())
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(14)
-            }
-            .defaultScrollAnchor(.bottom)
-            .defaultScrollAnchor(.top, for: .alignment)
-            .background(.fill.tertiary, in: .rect(cornerRadius: 10))
+            // As tall as its output: a few lines aren't a pane.
+            Text(task.status == .failed ? """
+            Resolve Package Graph
+            Building for debugging...
+            MarkdownText.swift:58:9: error: cannot find 'setText' in scope
+            ** BUILD FAILED **
+            """ : """
+            Building for debugging...
+            [42/88] Compiling SundownUI MarkdownText.swift
+            Test Suite 'MarkdownTextTests' started
+            ✔ Test copyIsPlainText() passed (0.036 seconds)
+            """)
+            .font(.callout.monospaced())
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(.fill.tertiary, in: .rect(cornerRadius: Layout.cardCornerRadius))
         }
-        .padding(24)
     }
 }
 #endif
