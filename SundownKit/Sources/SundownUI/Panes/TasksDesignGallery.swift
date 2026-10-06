@@ -925,7 +925,7 @@ public struct TasksDesignGallery: View {
     }
 
     private let designs: [Design] = [
-        .init(id: 1, title: "Sidebar and Detail", group: "Where Tasks Live", note: "Revised after the HIG reviews: the workflow's phases and agents in the list, failed first; native details."),
+        .init(id: 1, title: "Sidebar and Detail", group: "Where Tasks Live", note: "Quiet: each thing said once, in words."),
         .init(id: 2, title: "Activity Monitor Table", group: "Where Tasks Live", note: "Sortable columns, the chosen task's detail in a split below."),
         .init(id: 3, title: "Card Feed", group: "Where Tasks Live", note: "Running tasks as live cards; finished ones as single lines."),
         .init(id: 4, title: "Grouped by Turn", group: "Where Tasks Live", note: "Each task under the prompt that started it."),
@@ -978,7 +978,7 @@ public struct TasksDesignGallery: View {
 
     @ViewBuilder private func view(for id: Int) -> some View {
         switch id {
-        case 1: RevisedSidebarDetail()
+        case 1: QuietSidebarDetail()
         case 2: TableDesign()
         case 3: CardFeedDesign()
         case 4: ByTurnDesign()
@@ -1418,6 +1418,203 @@ private struct CommandSummary: View {
                 if task.status == .running { Button("Stop", role: .destructive) {} }
             }
         }
+    }
+}
+#endif
+
+#if DEBUG
+// MARK: - 1, quiet: each thing said once, in words
+
+private struct QuietSidebarDetail: View {
+    @State private var selection: String? = "w"
+
+    var body: some View {
+        HSplitView {
+            List(selection: $selection) {
+                Section("Running") { ForEach(designTasks.filter { $0.status == .running }) { row($0) } }
+                Section("Finished") { ForEach(designTasks.filter { $0.status != .running }) { row($0) } }
+            }
+            .frame(minWidth: 220, idealWidth: 280, maxWidth: 380)
+            Group {
+                if let task = designTasks.first(where: { $0.id == selection }) {
+                    switch task.kind {
+                    case .workflow: QuietWorkflow()
+                    case .agent: QuietAgent(task: task)
+                    case .command: QuietCommand(task: task)
+                    }
+                } else {
+                    ContentUnavailableView("No Task Selected", systemImage: "square.stack.3d.up")
+                }
+            }
+            .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// The name, and one word for where it stands.
+    private func row(_ task: DesignTask) -> some View {
+        HStack {
+            Text(task.name).lineLimit(1)
+            Spacer(minLength: 12)
+            Text(word(task)).foregroundStyle(.secondary)
+        }
+        .help(task.name)
+        .tag(task.id)
+    }
+
+    private func word(_ task: DesignTask) -> String {
+        if task.kind == .workflow, task.status == .running { return "Verify" }
+        switch task.status {
+        case .running: return duration(task.elapsed)
+        case .failed: return "Failed"
+        case .skipped: return "Stopped"
+        default: return "Done"
+        }
+    }
+}
+
+/// A detail's title, the one sentence that says how it's going, and its actions.
+private struct QuietHeader<Actions: View>: View {
+    let title: String
+    let status: String
+    var monospaced = false
+    @ViewBuilder var actions: Actions
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(monospaced ? .title3.monospaced() : .title3).fontWeight(.semibold)
+                Text(status).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 12)
+            HStack { actions }.fixedSize()
+        }
+    }
+}
+
+private struct QuietWorkflow: View {
+    @State private var open: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                QuietHeader(title: "Review the diff for correctness", status: "Verifying findings · 3m 02s") {
+                    Button("Show in Chat") {}
+                    Button("Stop") {}
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(designPhases) { phase in
+                        phaseRow(phase)
+                        if phase.id != designPhases.last?.id { Divider() }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Log").font(.headline)
+                    ForEach(Array(designLog.suffix(4).enumerated()), id: \.offset) { _, line in
+                        Text(line.text)
+                    }
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 640, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// A phase: its name, one bar, one count. Its agents only once it's opened, failed first.
+    private func phaseRow(_ phase: DesignPhase) -> some View {
+        let failed = phase.agents.filter { $0.status == .failed }
+        let isOpen = Binding { open == phase.id } set: { open = $0 ? phase.id : nil }
+        return DisclosureGroup(isExpanded: isOpen) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(phase.agents.filter { $0.status == .failed } + phase.agents.filter { $0.status == .running }) { agent in
+                    HStack {
+                        Text(agent.label)
+                        Spacer()
+                        Text(agent.status == .failed ? "Failed: \(agent.doing)" : agent.doing).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .font(.callout)
+            .padding(.top, 6)
+            .padding(.leading, 14)
+        } label: {
+            HStack(spacing: 16) {
+                Text(phase.title).frame(width: 64, alignment: .leading)
+                ProgressView(value: Double(phase.done), total: Double(phase.agents.count))
+                Text(phaseCount(phase, failed: failed.count))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .frame(width: 150, alignment: .trailing)
+            }
+        }
+        .padding(.vertical, 10)
+    }
+
+    private func phaseCount(_ phase: DesignPhase, failed: Int) -> String {
+        if phase.done == phase.agents.count { return "Done" }
+        if phase.done == 0, !phase.agents.contains(where: { $0.status == .running }) { return "Waiting" }
+        return "\(phase.done) of \(phase.agents.count)" + (failed > 0 ? ", \(failed) failed" : "")
+    }
+}
+
+private struct QuietAgent: View {
+    let task: DesignTask
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                QuietHeader(title: task.name, status: task.status == .running ? "Running in the background · \(duration(task.elapsed))" : "Done · \(duration(task.elapsed))") {
+                    Button("Show in Chat") {}
+                    if task.status == .running { Button("Stop") {} }
+                }
+                Text("Find every SwiftUI view in SundownUI and list which read `thread.items`.")
+                    .foregroundStyle(.secondary)
+                Text("Most views read `rows`, not `items`. Two exceptions so far: `TranscriptFind` builds its search text from items, and `ThreadView` reads the last item for the Thinking line.")
+                    .textSelection(.enabled)
+                if task.status == .running {
+                    Text("Reading ToolCallView.swift").foregroundStyle(.secondary)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 640, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct QuietCommand: View {
+    let task: DesignTask
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            QuietHeader(title: task.name,
+                        status: task.status == .failed ? "Failed after \(duration(task.elapsed))" : "Running · \(duration(task.elapsed))",
+                        monospaced: true) {
+                Button("Copy Output") {}
+                if task.status == .running { Button("Stop") {} }
+            }
+            ScrollView {
+                Text(task.status == .failed ? """
+                Resolve Package Graph
+                Building for debugging...
+                MarkdownText.swift:58:9: error: cannot find 'setText' in scope
+                ** BUILD FAILED **
+                """ : """
+                Building for debugging...
+                [42/88] Compiling SundownUI MarkdownText.swift
+                Test Suite 'MarkdownTextTests' started
+                ✔ Test copyIsPlainText() passed (0.036 seconds)
+                """)
+                .font(.callout.monospaced())
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+            }
+            .defaultScrollAnchor(.bottom)
+            .defaultScrollAnchor(.top, for: .alignment)
+            .background(.fill.tertiary, in: .rect(cornerRadius: 10))
+        }
+        .padding(24)
     }
 }
 #endif
