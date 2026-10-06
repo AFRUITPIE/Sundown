@@ -338,7 +338,7 @@ private struct FadesIn: ViewModifier {
                 if push {
                     withAnimation(TranscriptMotion.spring) { shown = true }
                 } else {
-                    withAnimation(.easeOut(duration: FadeInRenderer.duration)) { shown = true }
+                    withAnimation(.easeOut(duration: MarkdownTheme.fadeDuration)) { shown = true }
                 }
             }
     }
@@ -365,11 +365,13 @@ private struct FindHighlight: ViewModifier {
             .background {
                 if isMatch {
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(nsColor: .findHighlightColor).opacity(isCurrent ? 0.4 : 0.15))
+                        .fill(Color(nsColor: .findHighlightColor).opacity(isCurrent ? 0.2 : 0.08))
                         .padding(-6)
                 }
             }
             .accessibilityAddTraits(isCurrent ? .isSelected : [])
+            // The words themselves too, in a matched message's text.
+            .environment(\.findQuery, isMatch ? find?.query : nil)
     }
 }
 

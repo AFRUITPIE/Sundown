@@ -22,7 +22,7 @@ final class TranscriptUITests: SundownUITestCase {
         // The chat opens with its latest 50 items, about three turns; scrolling to the top loads the
         // page before them once the reader stops there. Section 22 is in that page, whatever the
         // turns' sizes. (Page after page to the start: OlderHistoryFixtureTests.)
-        let olderPage = app.staticTexts.matching(NSPredicate(format: "value IN %@", (0...22).map { "Section \($0): tightening the renderer" })).firstMatch
+        let olderPage = app.text(containingAnyOf: (0...22).map { "Section \($0): tightening the renderer" })
         // A point in the transcript: a heading leaves the lazy stack once it scrolls away.
         let transcript = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
         for _ in 0..<20 where !olderPage.exists {
@@ -299,7 +299,7 @@ final class TranscriptUITests: SundownUITestCase {
 
         // Sending from the end of a full transcript makes room and leaves the new prompt usable.
         let copy = app.buttons["message.copy.perf-sent-1"]
-        let sent = app.staticTexts["Keep going"].firstMatch
+        let sent = text("Keep going")
         XCTAssertTrue(hover(over: sent) { app.buttons["message.fork.perf-sent-1"].isHittable }, "the sent prompt's actions never became usable")
         XCTAssertLessThan(previous.frame.minY, before - 20, "the transcript didn't lift for the prompt")
         XCTAssertLessThan(copy.frame.maxY, input.frame.minY, "the prompt landed under the field")
@@ -307,7 +307,7 @@ final class TranscriptUITests: SundownUITestCase {
 
         // The reply's words fade in as they stream. The screenshots taken on the way are attached to
         // the report, to look at.
-        XCTAssertTrue(app.staticTexts["Section 100: tightening the renderer"].firstMatch.appears(timeout: 20), "the reply never streamed in")
+        XCTAssertTrue(text(containing: "Section 100: tightening the renderer").appears(timeout: 20), "the reply never streamed in")
         for i in 1...3 {
             let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
             shot.name = "Streaming \(i)"
@@ -317,13 +317,15 @@ final class TranscriptUITests: SundownUITestCase {
         // Done once Stop gives way to Send. What's checked is that text drawn that way is still
         // ordinary text once it has arrived, which can be selected and copied.
         XCTAssertTrue(app.buttons["Stop"].disappears(timeout: 60), "the turn never finished")
-        let quote = app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH 'Streaming should cost'"))
+        // The reply ends with its quote: the last line of the last message that holds it.
+        let reply = app.textViews.matching(NSPredicate(format: "value CONTAINS 'Streaming should cost'"))
             .allElementsBoundByIndex.last { $0.isHittable }
-        let last = try XCTUnwrap(quote, "the reply's last block isn't on screen")
+        let last = try XCTUnwrap(reply, "the reply isn't on screen")
         // Where the turn's end leaves it, not where it was as the last row went in.
         last.settle()
         NSPasteboard.general.clearContents()
-        last.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).doubleClick()
+        // Its first word, past the quote's bar and indent.
+        last.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 1)).withOffset(CGVector(dx: 40, dy: -8)).doubleClick()
         app.typeKey("c", modifierFlags: .command)
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Streaming", "the streamed text isn't selectable")
     }

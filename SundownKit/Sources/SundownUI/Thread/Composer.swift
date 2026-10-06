@@ -4,8 +4,8 @@ import SundownKit
 import TetherProtocol
 import UniformTypeIdentifiers
 
-/// Prompt field: native multi-line TextField (Return or ⌘Return sends, per Settings) with native
-/// completions above the field for `/` commands and `@` file mentions, image attachments, and send-while-running.
+/// Prompt field: a multiline field that styles its Markdown as it's typed (`ComposerTextView`;
+/// Return or ⌘Return sends, per Settings), with completions above the field for `/` commands and `@` file mentions, image attachments, and send-while-running.
 ///
 /// The only thread properties it reads are `promptSuggestion` and `isRunning`, both of which change
 /// at turn boundaries rather than per streamed delta, so a running turn doesn't re-render the field.
@@ -41,6 +41,10 @@ struct Composer: View {
     @Environment(\.composerPreviewCommands) private var previewCommands
     #endif
     @State private var text = ""
+    /// Bumped to put the keyboard in the field (`ComposerTextView`).
+    @State private var focusRequests = 0
+    /// The field's text's height, as its text view measures it: one line to twelve.
+    @State private var fieldHeight: CGFloat = 0
     /// How many messages this field has sent, for Send's hop.
     @State private var sent = 0
     @State private var images: [Attachment] = []
@@ -58,7 +62,8 @@ struct Composer: View {
     @State private var appliedDelivery: UUID?
     /// The text Esc closed the suggestion list on: it stays closed until the text changes.
     @State private var suggestionsClosedFor: String?
-    @FocusState private var focused: Bool
+    /// Whether the field has the keyboard, as its text view reports it.
+    @State private var focused = false
     /// Something is being dragged over the field.
     @State private var dropTargeted = false
     /// Files being read and images prepared, off the main actor: the message waits for them.
@@ -244,8 +249,7 @@ struct Composer: View {
         }
         // The field is where focus goes when the window opens or focus has nowhere else to be, as
         // on a chat switch; not taken from the sidebar or search while someone is using them.
-        .defaultFocus($focused, true)
-        .onChange(of: focusRequested, initial: true) { if focusRequested { focused = true } }
+        .onChange(of: focusRequested, initial: true) { if focusRequested { focus() } }
         .onChange(of: focused, initial: true) { onFocusChange?(focused) }
         .onAppear {
             if let draftKey {
@@ -256,7 +260,7 @@ struct Composer: View {
             #if DEBUG
             // Previews only: the field's text is otherwise private state.
             if text.isEmpty, !composerDraft.isEmpty { text = composerDraft }
-            if !previewCommands.isEmpty { focused = true }
+            if !previewCommands.isEmpty { focus() }
             #endif
         }
         .onChange(of: text) {
@@ -304,14 +308,25 @@ struct Composer: View {
     }
 
     private func textField(dim: Double) -> some View {
-        // Claude's suggested next prompt is the empty field's placeholder, as in the CLI: an offer,
-        // not text you've written, and Tab takes it.
-        TextField(suggestion ?? (thread?.isRunning == true ? "Queue a message…" : placeholder), text: $text, axis: .vertical)
-            .accessibilityIdentifier("composer.input")
+        // Plain text whose Markdown is styled as it's typed (`ComposerTextView`), so what's sent is
+        // exactly what's in the field.
+        ComposerTextView(text: $text, height: $fieldHeight, scale: textScale, onKey: key, onFocus: { focused = $0 },
+                         onPasteOther: pasteAttachments, focusRequest: focusRequests,
+                         placeholder: suggestion ?? (thread?.isRunning == true ? "Queue a message…" : placeholder))
+            .frame(height: max(fieldHeight, ComposerMarkdown.lineHeight(scale: textScale)))
+            // Claude's suggested next prompt is the empty field's placeholder, as in the CLI: an
+            // offer, not text you've written, and Tab takes it.
+            .overlay(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text(suggestion ?? (thread?.isRunning == true ? "Queue a message…" : placeholder))
+                        .scaledFont(.body)
+                        .foregroundStyle(.placeholder)
+                        .lineLimit(1)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
             .accessibilityHint(suggestion == nil ? "" : "Press Tab to use the suggestion.")
-            .textFieldStyle(.plain)
-            .lineLimit(1...12)
-            .focused($focused)
             .opacity(dim)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
@@ -321,41 +336,60 @@ struct Composer: View {
                     .contentShape(.rect)
                     // The text cursor there too, as over the text itself.
                     .pointerStyle(.horizontalText)
-                    .onTapGesture { focused = true }
+                    .onTapGesture { focus() }
             }
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: Layout.cardCornerRadius))
-            .onSubmit {
-                if !suggestions.isEmpty { completeSuggestion() }
-                else if appearance.sendShortcut == .returnKey { send() }
+    }
+
+    /// Puts the keyboard in the field.
+    private func focus() { focusRequests += 1 }
+
+    /// The field's keys: Return as Settings ▸ General ▸ Send With has it, Tab to take a completion
+    /// or the suggested prompt, the arrows through completions, and Esc to close them or stop
+    /// Claude, as in the CLI. False leaves a key to the field.
+    private func key(_ key: ComposerKey) -> Bool {
+        switch key {
+        case .submit(let modifiers):
+            let sends = switch appearance.sendShortcut {
+            case .returnKey: modifiers.isDisjoint(with: [.shift, .option, .command, .control])
+            case .commandReturn: modifiers.contains(.command)
             }
-            .onKeyPress(.return, phases: .down, action: returnPressed)
-            .onKeyPress(.tab, phases: .down) { press in
-                guard press.modifiers.isEmpty else { return .ignored }
-                if !suggestions.isEmpty {
-                    completeSuggestion()
-                } else if let suggestion {
-                    text = suggestion
-                } else {
-                    return .ignored
-                }
-                return .handled
+            guard sends else { return false }
+            if !suggestions.isEmpty { completeSuggestion() } else { send() }
+            return true
+        case .tab:
+            if !suggestions.isEmpty { completeSuggestion() }
+            else if let suggestion { text = suggestion }
+            else { return false }
+            return true
+        case .up: return moveSuggestion(by: -1) == .handled
+        case .down: return moveSuggestion(by: 1) == .handled
+        case .escape:
+            switch Self.escapeAction(suggestionsShowing: !suggestions.isEmpty,
+                                     canStop: thread?.isRunning == true && onStop != nil) {
+            case .closeSuggestions:
+                suggestionsClosedFor = text
+                suggestions = []
+                return true
+            case .stop:
+                onStop?()
+                return true
+            case .ignore:
+                return false
             }
-            // Esc closes the suggestion list if it's open, and otherwise stops Claude, as in the
-            // CLI; with nothing running it's the field's own.
-            .onKeyPress(.escape) {
-                switch Self.escapeAction(suggestionsShowing: !suggestions.isEmpty,
-                                         canStop: thread?.isRunning == true && onStop != nil) {
-                case .closeSuggestions:
-                    suggestionsClosedFor = text
-                    suggestions = []
-                    return .handled
-                case .stop:
-                    onStop?()
-                    return .handled
-                case .ignore:
-                    return .ignored
-                }
-            }
+        }
+    }
+
+    /// Files and images pasted into the field, attached as if dropped.
+    private func pasteAttachments(_ board: NSPasteboard) {
+        var items: [Incoming] = []
+        if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] {
+            items += urls.map(Incoming.file)
+        }
+        if items.isEmpty, let data = board.data(forType: .png) ?? board.data(forType: .tiff) {
+            items.append(.image(data))
+        }
+        take(items)
     }
 
     /// Completion choices, as a menu reads: a glass panel floating just above the field, over the
@@ -432,7 +466,7 @@ struct Composer: View {
     private func completeSuggestion(at index: Int? = nil) {
         guard !suggestions.isEmpty else { return }
         text = suggestions[index ?? selectedSuggestion].completion
-        focused = true
+        focus()
     }
 
     /// One native circular action whose symbol turns into the next: Send's arrow, Add to Turn's
@@ -563,31 +597,7 @@ struct Composer: View {
         } else {
             text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + token
         }
-        focused = true
-    }
-
-    /// Return and its modifiers, as Settings ▸ General ▸ Send With has them: Return sends and
-    /// Shift- or Option-Return starts a line, or Command-Return sends and Return starts a line.
-    private func returnPressed(_ press: KeyPress) -> KeyPress.Result {
-        // The field's own new line, so it's an edit the field can undo and an input method's
-        // marked text is committed first; setting the text around it did neither.
-        let newLine = { _ = NSApp.sendAction(#selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)), to: nil, from: nil) }
-        switch appearance.sendShortcut {
-        case .returnKey:
-            // Plain Return reaches `onSubmit`; Option-Return is the field's own new line.
-            guard press.modifiers.contains(.shift) else { return .ignored }
-            newLine()
-            return .handled
-        case .commandReturn:
-            if press.modifiers.contains(.command) {
-                if !suggestions.isEmpty { completeSuggestion() } else { send() }
-            } else if !press.modifiers.contains(.option) {
-                newLine()
-            } else {
-                return .ignored
-            }
-            return .handled
-        }
+        focus()
     }
 
     private func send() {

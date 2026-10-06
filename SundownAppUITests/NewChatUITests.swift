@@ -112,7 +112,7 @@ final class NewChatUITests: SundownUITestCase {
 
         // The chat starts, and its reply streams in.
         send("UI test prompt")
-        XCTAssertTrue(app.staticTexts["Scripted response."].appears(timeout: 10), "the new chat got no reply")
+        XCTAssertTrue(text("Scripted response.").appears(timeout: 10), "the new chat got no reply")
 
         // The host is switched from the menu bar only; switching opens New Chat on it, and the
         // subtitle names it.

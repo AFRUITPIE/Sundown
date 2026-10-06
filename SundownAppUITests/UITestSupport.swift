@@ -61,18 +61,15 @@ class SundownUITestCase: XCTestCase {
 
     // MARK: Elements
 
-    /// The static text that says `words`. Not `firstMatch`: once a `TabView` switches tabs, its
-    /// shortcut through the tree misses elements a whole query finds.
+    /// The static text that says `words`, or the message whose text holds them. Not `firstMatch`:
+    /// once a `TabView` switches tabs, its shortcut through the tree misses elements a whole query
+    /// finds.
     @MainActor
-    func text(_ words: String) -> XCUIElement {
-        app.staticTexts.matching(NSPredicate(format: "value == %@ OR label == %@", words, words)).element(boundBy: 0)
-    }
+    func text(_ words: String) -> XCUIElement { app.text(words) }
 
-    /// A static text whose words contain `part`.
+    /// A static text whose words contain `part`, or a message whose text does.
     @MainActor
-    func text(containing part: String) -> XCUIElement {
-        app.staticTexts.matching(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", part, part)).element(boundBy: 0)
-    }
+    func text(containing part: String) -> XCUIElement { app.text(containing: part) }
 
     @MainActor
     var input: XCUIElement { app.descendants(matching: .any)["composer.input"] }
@@ -336,5 +333,45 @@ extension XCUIElement {
             form.scroll(byDeltaX: 0, deltaY: frame.midY > form.frame.midY ? -200 : 200)
             tries += 1
         }
+    }
+}
+
+extension XCUIApplication {
+    /// A message is one text view holding all of its text (`MarkdownTextView`); other words are
+    /// static texts. The message field is a text view too, and never matches.
+    private static func texts(_ words: NSPredicate) -> NSPredicate {
+        NSCompoundPredicate(orPredicateWithSubpredicates: [
+            NSCompoundPredicate(andPredicateWithSubpredicates: [
+                NSPredicate(format: "elementType == %lu", XCUIElement.ElementType.staticText.rawValue), words,
+            ]),
+            NSCompoundPredicate(andPredicateWithSubpredicates: [
+                NSPredicate(format: "elementType == %lu AND identifier != 'composer.input'", XCUIElement.ElementType.textView.rawValue),
+                words,
+            ]),
+        ])
+    }
+
+    /// A static text that says `words`, or a message whose text holds them.
+    @MainActor
+    func text(_ words: String) -> XCUIElement {
+        descendants(matching: .any).matching(NSCompoundPredicate(orPredicateWithSubpredicates: [
+            Self.texts(NSPredicate(format: "value == %@ OR label == %@", words, words)),
+            NSPredicate(format: "elementType == %lu AND identifier != 'composer.input' AND value CONTAINS %@",
+                        XCUIElement.ElementType.textView.rawValue, words),
+        ])).element(boundBy: 0)
+    }
+
+    /// A static text or a message whose words contain `part`.
+    @MainActor
+    func text(containing part: String) -> XCUIElement {
+        descendants(matching: .any).matching(Self.texts(NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", part, part)))
+            .element(boundBy: 0)
+    }
+
+    /// A static text or a message holding any of `parts`.
+    @MainActor
+    func text(containingAnyOf parts: [String]) -> XCUIElement {
+        let any = NSCompoundPredicate(orPredicateWithSubpredicates: parts.map { NSPredicate(format: "value CONTAINS %@", $0) })
+        return descendants(matching: .any).matching(Self.texts(any)).element(boundBy: 0)
     }
 }

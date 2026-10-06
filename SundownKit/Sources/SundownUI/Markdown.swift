@@ -1,12 +1,14 @@
 import SwiftUI
 
 /// Block-level Markdown (fenced code, headings, lists, quotes, rules, tables, paragraphs) with
-/// inline syntax via AttributedString.
+/// inline syntax via AttributedString, drawn as one selectable text (`MarkdownTextView`).
 struct MarkdownView: View {
     let text: String
-    /// Whether this is the reply being streamed into: only then does its last block fade new text
-    /// in (`ArrivingText`). Every settled reply, and every other use, draws plain text.
+    /// Whether this is the reply being streamed into: only then does new text fade in. Every
+    /// settled reply, and every other use, draws its text at once.
     var streams = false
+    /// A reply's colors, or a prompt's in its bubble.
+    var style: MarkdownStyle = .reply
     /// Parses once per text change rather than once per layout pass.
     @State private var cache = MarkdownCache()
 
@@ -21,23 +23,7 @@ struct MarkdownView: View {
     }
 
     var body: some View {
-        // A block that appears after the first draw arrived while the reply streamed.
-        let arriving = cache.hasDrawn
-        let blocks = cache.blocks(for: text, streaming: streams)
-        let _ = cache.hasDrawn = true
-        let markers = Self.widestMarkers(blocks)
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(blocks.indices, id: \.self) { i in
-                MarkdownBlockView(rendered: blocks[i],
-                                  topPadding: i == 0 ? 0 : Self.spacing(after: blocks[i - 1].block, before: blocks[i].block),
-                                  isEnd: streams && i == blocks.count - 1, arrives: streams && arriving,
-                                  widestMarker: markers[i])
-                    .equatable()
-            }
-        }
-        .lineSpacing(3)
-        .textSelection(.enabled)
-        .scaledFont(.body)
+        MarkdownTextView(blocks: cache.blocks(for: text, streaming: streams), style: style, streams: streams, source: text)
     }
 
     /// One parsed block and its inline text, parsed once. `id` changes only when the block is parsed
@@ -68,12 +54,6 @@ struct MarkdownView: View {
             i = end
         }
         return result
-    }
-
-    /// List items sit closer together than paragraphs.
-    private static func spacing(after previous: Block, before block: Block) -> CGFloat {
-        if case .bullet = previous, case .bullet = block { return 6 }
-        return 12
     }
 
     /// The text without Markdown's syntax, as Copy puts it on the pasteboard: emphasis, links and
@@ -178,112 +158,6 @@ struct MarkdownView: View {
     }
 }
 
-/// One Markdown block. Equal to its last value while the block wasn't parsed again, so a
-/// streaming message redraws only its growing tail, not every block before it.
-struct MarkdownBlockView: View, Equatable {
-    let rendered: MarkdownView.Rendered
-    let topPadding: CGFloat
-    /// The last block of the reply being streamed, the only one text is added to: its new text
-    /// fades in. False for every block of a settled reply.
-    var isEnd = false
-    /// Whether the block appeared while its reply streamed, so its first text fades in too.
-    var arrives = false
-    /// A list item's widest sibling marker, whose width its own marker takes.
-    var widestMarker: String?
-    @Environment(\.textScale) private var textScale
-
-    nonisolated static func == (a: Self, b: Self) -> Bool {
-        a.rendered.id == b.rendered.id && a.topPadding == b.topPadding && a.isEnd == b.isEnd && a.arrives == b.arrives
-            && a.widestMarker == b.widestMarker
-    }
-
-    var body: some View {
-        // A stack, so every block is one view SwiftUI can count without building it.
-        VStack(alignment: .leading, spacing: 0) { content }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, topPadding)
-    }
-
-    private func inline(_ i: Int) -> Text {
-        i < rendered.inline.count ? Text(rendered.inline[i]) : Text(verbatim: "")
-    }
-
-    /// A block's text, fading in as it arrives when it's the block being streamed into. A code
-    /// block doesn't fade: it's monospaced output, read once it's there.
-    @ViewBuilder private var line: some View {
-        if isEnd, let text = rendered.inline.first {
-            ArrivingText(text: text, arrives: arrives)
-        } else {
-            inline(0)
-        }
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch rendered.block {
-        case .code(let lang, let body):
-            CodeBlock(code: body, language: lang)
-        case .heading(let level, _):
-            line.scaledFont(level == 1 ? .title2 : level == 2 ? .title3 : .headline, weight: .bold)
-                .padding(.top, 6)
-                // So VoiceOver's headings rotor steps through a long reply.
-                .accessibilityAddTraits(.isHeader)
-                // A level under the dates, which head the chat's parts.
-                .accessibilityHeading(level <= 1 ? .h2 : level == 2 ? .h3 : level == 3 ? .h4 : level == 4 ? .h5 : .h6)
-        case .paragraph:
-            line
-        case .bullet(let indent, let marker, _):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                // As wide as the list's widest marker, so "9." and "10." end at one edge.
-                ZStack(alignment: .trailing) {
-                    Text(widestMarker ?? marker).hidden()
-                    Text(marker)
-                }
-                .frame(minWidth: 12, alignment: .trailing)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                line
-            }
-            // Deeper levels step in by the text's size.
-            .padding(.leading, (6 + CGFloat(indent) * 18) * textScale)
-        case .quote:
-            // The bar as tall as the quote's text, beside it.
-            line.foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 11)
-                .overlay(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 1).fill(.tertiary).frame(width: 3)
-                }
-        case .rule:
-            Divider()
-        case .table(let rows):
-            let columns = rows.first?.count ?? 0
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-                if let header = rows.first {
-                    GridRow {
-                        ForEach(0..<header.count, id: \.self) { c in
-                            inline(c).scaledFont(.body, weight: .bold)
-                                .accessibilityAddTraits(.isHeader)
-                        }
-                    }
-                    // Only as wide as the columns, so a narrow table hugs its content.
-                    Divider().gridCellUnsizedAxes(.horizontal)
-                }
-                // One row per element, which lets SwiftUI count them without building each.
-                ForEach(rows.indices.dropFirst(), id: \.self) { r in
-                    GridRow {
-                        ForEach(0..<rows[r].count, id: \.self) { c in
-                            inline(r * columns + c).scaledFont(.body)
-                        }
-                    }
-                }
-            }
-            .padding(8)
-            .background(.fill.quinary, in: .rect(cornerRadius: 6))
-        }
-    }
-}
-
 /// Remembers the last parse for one message, and reuses the finished blocks of a message that is
 /// still streaming: new text only ever arrives at the end, so everything before the last blank
 /// line outside a code fence is settled and isn't parsed again. Per token the work is the size of
@@ -291,8 +165,6 @@ struct MarkdownBlockView: View, Equatable {
 /// Characters, and the settled boundary is found by scanning only what arrived since the last call.
 @MainActor
 final class MarkdownCache {
-    /// Whether the view has drawn once: blocks that appear after that arrived as the reply streamed.
-    var hasDrawn = false
     private var text = ""
     private var blocks: [MarkdownView.Rendered] = []
     /// Whether this view has put its message in `recent`, which it does once, when it isn't streaming.
@@ -439,15 +311,14 @@ final class MarkdownCache {
         return out
     }
 
-    /// Inline Markdown as an attributed string, styled for the transcript.
+    /// Inline Markdown as an attributed string, for `MarkdownBuilder` to give fonts and colors.
     nonisolated static func inline(_ text: String) -> AttributedString {
         // Most blocks have no inline syntax at all, and the parser costs several times a plain string.
         guard mayHaveInlineSyntax(text) else { return AttributedString(text) }
-        guard var value = try? AttributedString(
+        guard let value = try? AttributedString(
             markdown: text,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) else { return AttributedString(text) }
-        style(&value)
         return value
     }
 
@@ -474,19 +345,6 @@ final class MarkdownCache {
         return false
     }
 
-    /// Inline code on a faint fill, in the text's own color: red already means a failure or a risky
-    /// permission elsewhere. Text draws the code and strong runs monospaced and bold itself, so they
-    /// take the surrounding size, whatever View ▸ Bigger or Smaller has made it.
-    private nonisolated static func style(_ value: inout AttributedString) {
-        let ranges = value.runs.compactMap { run -> (Range<AttributedString.Index>, InlinePresentationIntent)? in
-            run.inlinePresentationIntent.map { (run.range, $0) }
-        }
-        for (range, intent) in ranges {
-            if intent.contains(.code) {
-                value[range].backgroundColor = Color.primary.opacity(0.08)
-            }
-        }
-    }
 }
 
 /// Parses of whole messages, for views made again and messages prewarmed. Bounded by count and by
@@ -656,7 +514,7 @@ struct CodeBlock: View {
         MarkdownView(text: sampleMarkdownPreviewText)
             .padding(20)
     }
-    .frame(width: 480, height: 420)
+    .frame(width: 480, height: 900)
 }
 
 #Preview("Code block") {
@@ -695,7 +553,22 @@ Run the tests with:
 swift test --filter ThreadModelTests
 ```
 
-> Transcript content stays on standard fills — glass is reserved for the controls layer.
+> Transcript content stays on standard fills — glass is reserved for the controls layer, and a long quote wraps under itself.
+
+- [x] Parse blocks off the main actor
+- [ ] Select across every block
+  - Nested items hang under their own text when they wrap onto a second line
+9. Ninth
+10. Tenth, whose marker is wider
+
+| Option | Effect | Default |
+|---|---|---|
+| `wrapCode` | Wraps long lines | On |
+| Reading width | Narrow, Medium or Wide | Narrow |
+
+---
+
+See [Apple's documentation](https://developer.apple.com/documentation/swiftui) for more.
 """
 
 #endif

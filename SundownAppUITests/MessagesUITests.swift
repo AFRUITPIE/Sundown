@@ -8,7 +8,7 @@ final class MessagesUITests: SundownUITestCase {
     @MainActor
     func testMessageActionsAndTheTabs() {
         launch()
-        let prompt = app.staticTexts["Summarize this project"].firstMatch
+        let prompt = text("Summarize this project")
         XCTAssertTrue(prompt.appears(timeout: 15), "the fixture chat never showed")
 
         // A message's actions are icons below it, shown while the pointer is over it.

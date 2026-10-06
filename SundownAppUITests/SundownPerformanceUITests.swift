@@ -43,7 +43,7 @@ final class SundownPerformanceUITests: XCTestCase {
         }
         self.app = app
         // The last answer of the long chat, so the transcript has loaded and laid out.
-        XCTAssertTrue(app.staticTexts["Section 29: tightening the renderer"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.text(containing: "Section 29: tightening the renderer").waitForExistence(timeout: 20))
         if ProcessInfo.processInfo.environment["SUNDOWN_PERF_ATTACH"] == nil {
             if !app.outlines["Sidebar"].exists { app.menuBars.menuItems["toggleSidebar:"].click() }
             XCTAssertTrue(app.outlines["Sidebar"].waitForExistence(timeout: 5))
@@ -152,7 +152,7 @@ final class SundownPerformanceUITests: XCTestCase {
     func testResizingLongTurn() {
         let app = launch(longTurn: true)
         let transcript = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
-        let prompt = app.staticTexts["Step 29: look at the next part of the renderer and tighten it up."]
+        let prompt = app.text("Step 29: look at the next part of the renderer and tighten it up.")
         for _ in 0..<12 where !prompt.exists {
             transcript.scroll(byDeltaX: 0, deltaY: 1800)
             settle()
@@ -172,7 +172,7 @@ final class SundownPerformanceUITests: XCTestCase {
         let input = app.descendants(matching: .any)["composer.input"]
         input.click()
         input.typeText("Keep going\r")
-        XCTAssertTrue(app.staticTexts["Section 107: tightening the renderer"].waitForExistence(timeout: 90))
+        XCTAssertTrue(app.text(containing: "Section 107: tightening the renderer").waitForExistence(timeout: 90))
         XCTAssertTrue(app.buttons["Stop"].exists)
         measureResize(app)
         XCTAssertTrue(app.buttons["Stop"].exists, "The measured turn must still be streaming")
@@ -214,7 +214,7 @@ final class SundownPerformanceUITests: XCTestCase {
         }
         // The last answer can be taller than the viewport, so its heading needn't be hittable.
         if app.buttons["Jump to Latest"].exists { app.buttons["Jump to Latest"].click() }
-        XCTAssertTrue(app.staticTexts["Section 29: tightening the renderer"].exists)
+        XCTAssertTrue(app.text(containing: "Section 29: tightening the renderer").exists)
     }
 
     /// A prompt, then a working reply: tool calls starting and finishing between sections of

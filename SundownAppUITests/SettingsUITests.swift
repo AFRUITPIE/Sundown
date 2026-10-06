@@ -52,9 +52,9 @@ final class SettingsUITests: SundownUITestCase {
         input.typeKey(.return, modifierFlags: [])
         input.typeText("second line")
         XCTAssertTrue(inputText().contains("First line\nsecond line"), "Return didn't start a new line: \(inputText())")
-        XCTAssertFalse(app.staticTexts["Scripted response."].exists, "Return sent")
+        XCTAssertFalse(text("Scripted response.").exists, "Return sent")
         input.typeKey(.return, modifierFlags: .command)
-        XCTAssertTrue(app.staticTexts["Scripted response."].appears(timeout: 10), "Command-Return didn't send")
+        XCTAssertTrue(text("Scripted response.").appears(timeout: 10), "Command-Return didn't send")
     }
 
     /// Waits for the pop-up labelled `label` to show `value`, found afresh each time: the form lays
