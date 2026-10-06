@@ -1,6 +1,8 @@
 #if DEBUG
 import Charts
 import SwiftUI
+import SundownKit
+import TetherProtocol
 
 // Debug ▸ Tasks Designs…: every idea for showing tasks (subagents, background commands and large
 // dynamic workflows) mocked with fake data, side by side, to choose from. Nothing here is real.
@@ -1515,8 +1517,17 @@ private struct QuietPage<Content: View>: View {
 
 private struct QuietWorkflow: View {
     @State private var open: String?
+    @State private var agent: DesignAgent?
 
     var body: some View {
+        if let agent {
+            QuietAgent(agent: agent, workflow: "Review the diff for correctness") { self.agent = nil }
+        } else {
+            page
+        }
+    }
+
+    private var page: some View {
         QuietPage {
             QuietHeader(title: "Review the diff for correctness", status: "Verifying findings · 3m 02s") {
                 Button("Show in Chat") {}
@@ -1578,7 +1589,8 @@ private struct QuietWorkflow: View {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: QuietSpacing.line) {
                 ForEach(phase.agents.filter { $0.status == .failed } + phase.agents.filter { $0.status == .running }) { agent in
                     GridRow {
-                        Text(agent.label.drop { $0 != " " }.dropFirst())
+                        Button(String(agent.label.drop { $0 != " " }.dropFirst())) { self.agent = agent }
+                            .buttonStyle(.link)
                         Text(agent.status == .failed ? "Failed: \(agent.doing)" : agent.doing).foregroundStyle(.secondary)
                     }
                 }
@@ -1605,31 +1617,86 @@ private struct PhaseLabelStyle: LabelStyle {
     }
 }
 
+/// An agent's run is a transcript: its prompt, its calls, its replies. So its detail is the chat's own
+/// transcript view, read-only, under a header that says what it is and how it's going.
 private struct QuietAgent: View {
-    let task: DesignTask
+    let title: String
+    let status: String
+    let running: Bool
+    let thread: ThreadModel
+    /// Back to the workflow the agent belongs to, when it's one of its agents.
+    var back: (label: String, action: () -> Void)?
+
+    init(task: DesignTask) {
+        title = task.name
+        running = task.status == .running
+        status = running ? "Running in the background · \(duration(task.elapsed))" : "Done · \(duration(task.elapsed))"
+        thread = AgentRuns.run(id: task.id, prompt: "Find every SwiftUI view in SundownUI and list which read `thread.items`.", running: running)
+    }
+
+    init(agent: DesignAgent, workflow: String, back: @escaping () -> Void) {
+        title = String(agent.label.drop { $0 != " " }.dropFirst()).capitalized
+        running = agent.status == .running
+        status = switch agent.status {
+        case .running: "Running · \(duration(Int(agent.end - agent.start)))"
+        case .failed: "Failed: \(agent.doing)"
+        default: "Done · \(agent.doing)"
+        }
+        thread = AgentRuns.run(id: agent.id, prompt: "Check the finding for \(agent.label) and try to refute it. Say whether it's real, with the line that proves it.",
+                               running: running, failed: agent.status == .failed)
+        self.back = (workflow, back)
+    }
 
     var body: some View {
-        QuietPage {
-            QuietHeader(title: task.name,
-                        status: task.status == .running ? "Running in the background · \(duration(task.elapsed))" : "Done · \(duration(task.elapsed))") {
-                Button("Show in Chat") {}
-                if task.status == .running { Button("Stop") {} }
-            }
-            VStack(alignment: .leading, spacing: QuietSpacing.line) {
-                Text(task.status == .running ? "Result So Far" : "Result").font(.subheadline).foregroundStyle(.secondary)
-                Text("Most views read `rows`, not `items`. Two exceptions so far: `TranscriptFind` builds its search text from items, and `ThreadView` reads the last item for the Thinking line.")
-                    .textSelection(.enabled)
-                if task.status == .running {
-                    Text("Reading ToolCallView.swift…").foregroundStyle(.secondary)
+        TranscriptView(thread: thread, connection: nil)
+            .safeAreaBar(edge: .top) {
+                VStack(alignment: .leading, spacing: QuietSpacing.line) {
+                    if let back {
+                        Button(back.label, systemImage: "chevron.left", action: back.action)
+                            .buttonStyle(.link)
+                    }
+                    QuietHeader(title: title, status: status) {
+                        Button("Show in Chat") {}
+                        if running { Button("Stop") {} }
+                    }
                 }
+                .scenePadding(.horizontal)
+                .padding(.vertical, QuietSpacing.line)
             }
-            DisclosureGroup("Task") {
-                Text("Find every SwiftUI view in SundownUI and list which read `thread.items`.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, QuietSpacing.pair)
-            }
+    }
+}
+
+/// Sample runs for the agents, made once each: a model is never made in a body.
+@MainActor
+private enum AgentRuns {
+    private static var made: [String: ThreadModel] = [:]
+
+    static func run(id: String, prompt: String, running: Bool, failed: Bool = false) -> ThreadModel {
+        if let thread = made[id] { return thread }
+        let root = "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownUI/"
+        var items: [Item] = [
+            .sampleUserMessage(prompt, secondsAgo: 100),
+            .sampleToolCall(name: "Grep", kind: .grep, input: ["pattern": "thread\\.items", "path": .string(root)],
+                            outputText: "Thread/TranscriptFind.swift:88\nThread/ThreadView.swift:41", secondsAgo: 95),
+            .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptFind.swift")], secondsAgo: 90),
+            .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/ThreadView.swift")], secondsAgo: 85),
+            .sampleAgentMessage("Most views read `rows`, not `items`. Two exceptions so far:\n\n- `TranscriptFind` builds its search text from items.\n- `ThreadView` reads the last item for the Thinking line.", secondsAgo: 80),
+        ]
+        if failed {
+            items.append(.sampleToolCall(name: "Bash", kind: .bash, input: ["command": "swift build --package-path SundownKit", "description": "Build SundownKit"],
+                                         status: .failed, outputText: "Timed out after 120 s", secondsAgo: 40))
+            items.append(.sampleNotice("Timed out", level: .warning, secondsAgo: 38))
+        } else if running {
+            items.append(.sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "ToolCallView.swift")],
+                                         status: .running, secondsAgo: 5))
+        } else {
+            items.append(.sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "ToolCallView.swift")], secondsAgo: 60))
+            items.append(.sampleAgentMessage("That's all of them: every other view reads `rows`.", secondsAgo: 50))
         }
+        let thread = ThreadModel.sample(id: "agent-\(id)", status: running ? .running : .idle, items: items,
+                                        turns: [.sample(status: running ? .inProgress : .completed, secondsAgo: 100)])
+        made[id] = thread
+        return thread
     }
 }
 
