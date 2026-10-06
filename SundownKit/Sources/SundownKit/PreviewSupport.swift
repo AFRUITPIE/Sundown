@@ -313,8 +313,7 @@ extension ThreadModel {
             status: .running,
             items: [
                 .sampleUserMessage("Review the Markdown changes before I merge, and find which views read thread.items.", secondsAgo: 400),
-                .sampleToolCall(id: "workflow-call", name: "Workflow", kind: .other,
-                                input: ["description": "Review the diff for correctness"], status: .running, secondsAgo: 380),
+                WorkflowSample.items(now: preview(secondsAgo: 80), running: true)[1],
                 .sampleToolCall(id: "agent-1", name: "Task", kind: .subagent, input: [
                     "subagent_type": "Explore", "description": "Find every SwiftUI view in SundownUI",
                     "prompt": "Find every SwiftUI view in SundownUI and list which read `thread.items`.",
@@ -337,8 +336,6 @@ extension ThreadModel {
             ],
             turns: [.sample(status: .inProgress, secondsAgo: 400)],
             tasks: [
-                started(1, "wf-1", "local_workflow", "Review the diff for correctness", toolUseId: "workflow-call",
-                        extra: ["workflow_name": "review"]),
                 started(2, "agent-task-1", "local_agent", "Find every SwiftUI view in SundownUI", toolUseId: "agent-1"),
                 started(3, "bg-tests", "local_bash", "swift test --package-path SundownKit", toolUseId: "bg-call"),
                 started(4, "agent-task-2", "local_agent", "Check how TranscriptFind reads items", toolUseId: "agent-2"),
@@ -346,7 +343,25 @@ extension ThreadModel {
                 .init(threadId: "preview-thread", seq: 6, event: "notification", taskId: "mcp-1",
                       description: "Run all tests in Xcode", status: "completed", summary: "412 tests passed, 3 skipped.",
                       data: ["task_type": "mcp_task", "usage": ["duration_ms": 243_000, "total_tokens": 0, "tool_uses": 1]]),
-            ])
+            ] + WorkflowSample.events(threadID: "preview-thread", firstSeq: 10, now: preview(secondsAgo: 0), running: true))
+    }
+
+    /// A dynamic workflow as Claude Code runs one: its call back at once with the launch receipt,
+    /// its task's progress now and then, and, finished, its result as a message and Claude's reply.
+    /// One agent's transcript is already read, as `workflow/agentItems` would give it.
+    public static func sampleWorkflow(running: Bool) -> ThreadModel {
+        let now = preview(secondsAgo: 0)
+        let thread = sample(
+            title: "Review the diff",
+            items: WorkflowSample.items(now: now, running: running),
+            turns: running ? [.sample(secondsAgo: 288)] : [.sample(secondsAgo: 288), .sample(secondsAgo: 50)],
+            tasks: WorkflowSample.events(threadID: "preview-thread", firstSeq: 1, now: now, running: running))
+        for agent in ["a1f09c3e2b7d", "a4b7c2d9e8f0"] {
+            thread.rememberWorkflowAgentTranscript(WorkflowSample.agentItems(agentId: agent, now: now),
+                                                   runId: WorkflowSample.runID, agentId: agent)
+        }
+        thread.settleArrivals()
+        return thread
     }
 
     /// A finished conversation: a question, some visible thinking, and a Markdown reply that

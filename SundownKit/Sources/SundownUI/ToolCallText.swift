@@ -1,4 +1,5 @@
 import Foundation
+import SundownKit
 import TetherProtocol
 
 /// The words a tool call's line reads as: a verb in the tense its status calls for ("Reading",
@@ -6,8 +7,14 @@ import TetherProtocol
 /// acted on. And for a run of finished calls, one line that says what they did together:
 /// "Read 3 files, searched code, and ran 2 commands". Pure, so it's tested without a view.
 enum ToolCallText {
-    /// The verb, before what the call acted on.
-    static func verb(_ call: Item.ToolCall) -> String {
+    /// The verb, before what the call acted on. A workflow's tense is its run's: its call comes
+    /// back as soon as the run has started.
+    static func verb(_ call: Item.ToolCall, workflow: WorkflowRun? = nil) -> String {
+        if call.isWorkflow {
+            let run = workflow ?? WorkflowRun(call: call, task: nil)
+            if call.status == .denied { return "Run workflow" }
+            return run.isRunning ? "Running workflow" : "Ran workflow"
+        }
         let running = call.status == .running || call.status == .pending
         switch call.kind {
         // Just that it ran: the command is in the help tag and the opened row, not on the line.
@@ -30,8 +37,9 @@ enum ToolCallText {
     /// What the call acted on: a file's name (its path is in the help tag and the detail), a
     /// search pattern, a URL's host and path. Nothing for a command: a shell line is more than a
     /// reader wants on every row.
-    static func object(_ call: Item.ToolCall) -> String {
+    static func object(_ call: Item.ToolCall, workflow: WorkflowRun? = nil) -> String {
         if call.kind == .bash { return "" }
+        if call.isWorkflow { return (workflow ?? WorkflowRun(call: call, task: nil)).name ?? "" }
         if let summary = call.summary { return summary }
         let input = call.input
         switch call.kind {
@@ -99,7 +107,7 @@ enum ToolCallText {
         case .fileEdit, .notebookEdit: return "edit"
         case .grep, .glob: return "search"
         case .mcp: return "mcp:" + (call.mcpServer ?? mcpServerName(call) ?? "")
-        default: return call.kind.rawValue
+        default: return call.isWorkflow ? "workflow" : call.kind.rawValue
         }
     }
 
@@ -108,6 +116,7 @@ enum ToolCallText {
         let n = calls.count
         let first = calls[0]
         let files = Set(calls.map { object($0) }).count
+        if first.isWorkflow { return n == 1 ? "ran a workflow" : "ran \(n) workflows" }
         switch first.kind {
         case .bash: return n == 1 ? "ran a command" : "ran \(n) commands"
         case .fileRead: return files == 1 ? "read \(object(first))" : "read \(files) files"

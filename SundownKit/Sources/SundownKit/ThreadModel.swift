@@ -93,8 +93,17 @@ public final class ThreadModel: Identifiable {
     @ObservationIgnored private(set) var changesCountedOnMainActor = 0
     /// Each subagent's items, as their indexes in `storage`.
     @ObservationIgnored private var childIndexes: [String: [Int]] = [:]
-    /// The subagent calls, the chat's own and its subagents', in transcript order, for the Tasks list.
-    @ObservationIgnored private var subagentCallIDs: [String] = []
+    /// The subagent and workflow calls, the chat's own and its subagents', in transcript order, for
+    /// the Tasks list.
+    @ObservationIgnored private var taskCallIDs: [String] = []
+    /// Snapshots of workflow runs read with `workflow/read`, by the Workflow call's id: what a run
+    /// with no live task (a reload, a followed chat) is shown from.
+    @ObservationIgnored private var loadedWorkflows: [String: JSONValue] = [:]
+    /// Each Workflow call's script `meta`, read once.
+    @ObservationIgnored private var workflowMetas: [String: WorkflowScript.Meta] = [:]
+    /// A finished workflow agent's transcript, by run and agent id, as `workflow/agentItems` read it.
+    /// Let go when the chat is.
+    @ObservationIgnored private var workflowAgentItems: [String: [Item]] = [:]
     /// The task each tool call started, by tool-use id: the one with the latest event.
     @ObservationIgnored private var taskIDsByToolUse: [String: String] = [:]
     /// When items started live, as opposed to arriving with history, for the rows that fade in.
@@ -289,11 +298,12 @@ public final class ThreadModel: Identifiable {
         }
         boxes = next
         childIndexes = [:]
-        subagentCallIDs = []
+        taskCallIDs = []
         for (i, item) in storage.enumerated() {
             if let parent = item.parentToolUseId { childIndexes[parent, default: []].append(i) }
-            if item.isSubagentCall { subagentCallIDs.append(item.id) }
+            if item.isTaskCall { taskCallIDs.append(item.id) }
         }
+        refreshWorkflowRuns()
         // Every index may have moved: all the rows fold again.
         refoldFrom = 0
         itemsVersion &+= 1
@@ -313,6 +323,9 @@ public final class ThreadModel: Identifiable {
         tasks = [:]
         taskIDsByToolUse = [:]
         backgroundTaskIDs = []
+        loadedWorkflows = [:]
+        workflowMetas = [:]
+        workflowAgentItems = [:]
         reindex()
         dropDerived()
         lastSeq = 0
@@ -338,6 +351,8 @@ public final class ThreadModel: Identifiable {
             task.toolUseId.map(held.contains) ?? true || InspectorTaskEntry.isRunning(task)
         }
         indexTasks()
+        loadedWorkflows = loadedWorkflows.filter { held.contains($0.key) }
+        workflowMetas = workflowMetas.filter { held.contains($0.key) }
         reindex()
         fileChanges = fileChanges.filter { held.contains($0.key) }
         if !hasMoreHistory { hasMoreHistory = true }
@@ -423,6 +438,7 @@ public final class ThreadModel: Identifiable {
                 // The latest event is this one, so its task is the call's newest.
                 taskIDsByToolUse[toolUseId] = task.taskId
             }
+            if let toolUseId = task.toolUseId { refreshWorkflowRun(toolUseId) }
             refreshTaskEntries()
         case .taskBackgroundChanged(let e):
             let ids = Set((e.tasks.arrayValue ?? []).compactMap { $0["task_id"]?.stringValue })
@@ -493,11 +509,25 @@ public final class ThreadModel: Identifiable {
         if event.description == nil { event.description = previous.description }
         if event.summary == nil { event.summary = previous.summary }
         if event.status == nil { event.status = previous.status }
-        // Only `started` says what kind of task it is.
-        if case .object(var data) = event.data, data["task_type"] == nil, let type = previous.data["task_type"] {
-            data["task_type"] = type
-            event.data = .object(data)
+        guard case .object(var data) = event.data else { return event }
+        // Only `started` says what kind of task it is, and a workflow's name.
+        for key in ["task_type", "workflow_name"] where data[key] == nil {
+            if let value = previous.data[key] { data[key] = value }
         }
+        if data["task_type"]?.stringValue == "local_workflow" {
+            // A workflow's progress is sent only now and then (at least every 10 s); between, the
+            // last one still holds: the daemon's snapshot, or an older daemon's raw array.
+            for key in ["workflow", "workflow_progress", "workflow_activity"] where data[key] == nil {
+                if let value = previous.data[key] { data[key] = value }
+            }
+            // An older daemon names each progress event after the workflow's latest agent
+            // ("Verify: ls-1"): that's what it's doing, not what it's called.
+            if event.event == "progress", let started = previous.description, let latest = event.description, latest != started {
+                data["workflow_activity"] = .string(latest)
+                event.description = started
+            }
+        }
+        event.data = .object(data)
         return event
     }
 
@@ -509,6 +539,7 @@ public final class ThreadModel: Identifiable {
             stopped.status = "stopped"
             tasks[id] = stopped
         }
+        refreshWorkflowRuns()
         refreshTaskEntries()
     }
 
@@ -558,12 +589,13 @@ public final class ThreadModel: Identifiable {
             storage.append(item)
         }
         if let box = boxes[id] { box.item = item } else { boxes[id] = ItemBox(item) }
-        if let previous, previous.parentToolUseId != item.parentToolUseId || previous.isSubagentCall != item.isSubagentCall {
+        if let previous, previous.parentToolUseId != item.parentToolUseId || previous.isTaskCall != item.isTaskCall {
             reindex() // an item moved between cards, which never happens in practice
         } else {
             noteChange(of: item, at: i, isNew: previous == nil, was: previous)
         }
-        if item.isSubagentCall { refreshTaskEntries() }
+        if item.isWorkflowCall { refreshWorkflowRun(id) }
+        if item.isTaskCall { refreshTaskEntries() }
         if case .toolCall(let call) = item, call.changesFiles, fileChanges[id] == nil { countChanges(of: call) }
         // Only an opening user message can move the title, and only until Claude names the session.
         if isUnnamed, case .userMessage(let m) = item, m.synthetic != true { refreshTitle() }
@@ -577,7 +609,7 @@ public final class ThreadModel: Identifiable {
             if isNew { childIndexes[parent, default: []].append(i) }
             childrenVersion &+= 1
         }
-        if isNew, item.isSubagentCall { subagentCallIDs.append(item.id) }
+        if isNew, item.isTaskCall { taskCallIDs.append(item.id) }
         if item.parentToolUseId == nil || item.isEditCall || previous?.isEditCall == true {
             refoldFrom = min(refoldFrom, i)
             itemsVersion &+= 1
@@ -619,7 +651,7 @@ public final class ThreadModel: Identifiable {
         f(&storage[i])
         boxes[id]?.item = storage[i]
         if wasEmpty != storage[i].isEmptyMessage { itemsVersion &+= 1 }
-        if storage[i].isSubagentCall { refreshTaskEntries() }
+        if storage[i].isTaskCall { refreshTaskEntries() }
     }
 
     /// A reply's streamed text, appended where it is. The transcript and the item's box each keep
@@ -680,6 +712,72 @@ public final class ThreadModel: Identifiable {
     /// The newest lifecycle event for a subagent tool call (task IDs aren't tool-use IDs).
     public func taskEvent(forToolUseId toolUseId: String) -> TaskEventNotification? {
         taskIDsByToolUse[toolUseId].flatMap { tasks[$0] }
+    }
+
+    // MARK: workflows
+
+    /// Each held Workflow call's run, by the call's id: what the chat's row and the Tasks tab show
+    /// of a workflow. Stored, and assigned only when a run changes, so the transcript's rows read
+    /// this rather than `tasks`, which every task event changes.
+    public private(set) var workflowRuns: [String: WorkflowRun] = [:]
+
+    /// The run of each held Workflow call, made again; a run whose call went is let go.
+    private func refreshWorkflowRuns() {
+        var next: [String: WorkflowRun] = [:]
+        for id in taskCallIDs {
+            guard let i = index[id], case .toolCall(let call) = storage[i], call.isWorkflow else { continue }
+            next[id] = workflowRun(of: call)
+        }
+        if next != workflowRuns { workflowRuns = next }
+    }
+
+    private func refreshWorkflowRun(_ toolUseId: String) {
+        guard let call = call(toolUseId), call.isWorkflow else { return }
+        let run = workflowRun(of: call)
+        if workflowRuns[toolUseId] != run { workflowRuns[toolUseId] = run }
+    }
+
+    private func workflowRun(of call: Item.ToolCall) -> WorkflowRun {
+        let meta: WorkflowScript.Meta?
+        if let known = workflowMetas[call.id] {
+            meta = known
+        } else {
+            meta = call.input["script"]?.stringValue.flatMap(WorkflowScript.meta)
+            if let meta { workflowMetas[call.id] = meta }
+        }
+        return WorkflowRun(call: call, task: taskEvent(forToolUseId: call.id), loaded: loadedWorkflows[call.id], meta: meta)
+    }
+
+    /// A run read with `workflow/read`, for the Workflow call `toolUseId`. A live task's events
+    /// still come first.
+    func setLoadedWorkflow(_ snapshot: JSONValue?, for toolUseId: String) {
+        guard let snapshot, snapshot.objectValue != nil else { return }
+        loadedWorkflows[toolUseId] = snapshot
+        refreshWorkflowRun(toolUseId)
+        refreshTaskEntries()
+    }
+
+    /// The Workflow calls whose run should be read with `workflow/read`: those with a run id and no
+    /// task this client has heard from, unless a finished run has been read already.
+    public var workflowsToRead: [(toolUseId: String, runId: String)] {
+        workflowRuns.values.compactMap { run in
+            guard let runId = run.runId, taskEvent(forToolUseId: run.toolUseId) == nil else { return nil }
+            if let loaded = loadedWorkflows[run.toolUseId], run.status != .running, loaded["status"] != nil { return nil }
+            return (run.toolUseId, runId)
+        }
+        .sorted { $0.toolUseId < $1.toolUseId }
+    }
+
+    /// Whether the run of `toolUseId` is followed live, by its task's events.
+    public func hasLiveWorkflowTask(_ toolUseId: String) -> Bool { taskEvent(forToolUseId: toolUseId) != nil }
+
+    /// A finished workflow agent's transcript, if it has been read.
+    public func workflowAgentTranscript(runId: String, agentId: String) -> [Item]? {
+        workflowAgentItems["\(runId)/\(agentId)"]
+    }
+
+    func rememberWorkflowAgentTranscript(_ items: [Item], runId: String, agentId: String) {
+        workflowAgentItems["\(runId)/\(agentId)"] = items
     }
 
     /// Background state arrives either as a task event patch or as the SDK's full list.
@@ -798,7 +896,7 @@ public final class ThreadModel: Identifiable {
     /// its boxes, and what's worked out from it.
     var itemsHeld: Int {
         storage.count + boxes.count + (cachedTopLevel?.items.count ?? 0) + (cachedRows?.rows.count ?? 0)
-            + (folded?.rows.count ?? 0) + childIndexes.values.reduce(0) { $0 + $1.count } + subagentCallIDs.count
+            + (folded?.rows.count ?? 0) + childIndexes.values.reduce(0) { $0 + $1.count } + taskCallIDs.count
             + fileChanges.count + started.count
     }
 
@@ -824,12 +922,13 @@ public final class ThreadModel: Identifiable {
         // Includes agents launched by other agents, which have no top-level row.
         var matchedTaskIDs = Set<String>()
         var entries: [InspectorTaskEntry] = []
-        entries.reserveCapacity(subagentCallIDs.count)
-        for id in subagentCallIDs {
+        entries.reserveCapacity(taskCallIDs.count)
+        for id in taskCallIDs {
             guard let i = index[id], case .toolCall(let call) = storage[i] else { continue }
             let task = taskEvent(forToolUseId: id)
             if let task { matchedTaskIDs.insert(task.taskId) }
-            entries.append(InspectorTaskEntry(id: id, call: call, task: task, isBackgrounded: task.map(isBackgrounded) ?? false))
+            entries.append(InspectorTaskEntry(id: id, call: call, task: task, isBackgrounded: task.map(isBackgrounded) ?? false,
+                                              workflow: workflowRuns[id]))
         }
         entries += tasks.values
             .filter { !matchedTaskIDs.contains($0.taskId) }
@@ -839,7 +938,12 @@ public final class ThreadModel: Identifiable {
                     id: "task:\($0.taskId)",
                     call: nil,
                     task: $0,
-                    isBackgrounded: backgroundTaskIDs.contains($0.taskId)
+                    isBackgrounded: backgroundTaskIDs.contains($0.taskId),
+                    // A workflow whose call went with older items is still shown from its task.
+                    workflow: $0.data["task_type"]?.stringValue == "local_workflow"
+                        ? WorkflowRun(call: .init(id: $0.toolUseId ?? $0.taskId, createdAt: 0, name: "Workflow", kind: .other,
+                                                  input: [:], status: .completed), task: $0)
+                        : nil
                 )
             }
         if entries != taskEntries { taskEntries = entries }
@@ -854,6 +958,14 @@ private extension Item {
         if case .toolCall(let call) = self { return call.kind == .subagent }
         return false
     }
+
+    var isWorkflowCall: Bool {
+        if case .toolCall(let call) = self { return call.isWorkflow }
+        return false
+    }
+
+    /// A call the Tasks tab lists: a subagent's or a workflow's.
+    var isTaskCall: Bool { isSubagentCall || isWorkflowCall }
 
     /// A call that edits files, finished or not: its changes count in its turn's edits.
     var isEditCall: Bool {
@@ -891,6 +1003,8 @@ public struct InspectorTaskEntry: Identifiable, Equatable {
     public let call: Item.ToolCall?
     public let task: TaskEventNotification?
     public let isBackgrounded: Bool
+    /// A workflow's run, its agents and how it stands, for a Workflow call or a workflow task.
+    public var workflow: WorkflowRun? = nil
 
     /// The CLI still has a task for it: it can be stopped or, while it blocks the turn, backgrounded.
     public var isTaskRunning: Bool { task.map(Self.isRunning) ?? false }

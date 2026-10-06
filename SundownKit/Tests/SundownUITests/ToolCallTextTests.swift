@@ -35,6 +35,23 @@ struct ToolCallTextTests {
         #expect(ToolCallText.reason(call(.bash, ["command": "make"])) == nil)
     }
 
+    /// A workflow is called by its script's name, in its run's tense: its call comes back at once.
+    @Test func aWorkflowReadsAsItsRun() {
+        let script = "export const meta = { name: 'review-diff', description: 'Review', phases: [] }"
+        let workflow = call(.other, ["script": .string(script)], name: "Workflow")
+        #expect(ToolCallText.verb(workflow) == "Ran workflow")
+        #expect(ToolCallText.object(workflow) == "review-diff")
+        let running = WorkflowRun(call: workflow, task: .init(threadId: "t", seq: 1, event: "progress", taskId: "w",
+                                                             toolUseId: "c", status: "running", data: ["task_type": "local_workflow"]))
+        #expect(ToolCallText.verb(workflow, workflow: running) == "Running workflow")
+        #expect(ToolCallText.verb(call(.other, [:], status: .denied, name: "Workflow")) == "Run workflow")
+        // By name or path when the script isn't sent.
+        #expect(ToolCallText.object(call(.other, ["scriptPath": "/a/b/spec.js"], name: "Workflow")) == "spec")
+        #expect(ToolCallText.object(call(.other, ["name": "deep-research"], name: "Workflow")) == "deep-research")
+        #expect(ToolCallText.summary([workflow]) == "Ran a workflow")
+        #expect(ToolCallText.summary([workflow, workflow]) == "Ran 2 workflows")
+    }
+
     @Test func aRunSaysWhatItsCallsDidTogether() {
         let calls = [
             call(.fileRead, ["file_path": "/a/One.swift"]),

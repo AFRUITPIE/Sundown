@@ -57,6 +57,10 @@ struct TasksPane: View {
                 guard let id = selectedTaskID, path.last != id else { return }
                 if let found = TaskNode.path(to: id, in: tree) { path = found }
             }
+            // A workflow with no live task (after a reload, or run by another client) is read.
+            .task {
+                for run in thread.workflowsToRead { await connection.loadWorkflow(thread, toolUseId: run.toolUseId) }
+            }
         }
     }
 
@@ -95,10 +99,19 @@ struct TasksPane: View {
                 path = Array(path.prefix(index))
                 if let id { path.append(id) }
             })
+        let sections = TaskNode.phaseSections(nodes)
         return List(selection: selection) {
-            // No section headers: each row's dot says how it stands, and the order keeps what's
-            // still going first.
-            ForEach(nodes) { TaskNodeRow(node: $0).tag($0.id) }
+            // No section headers but a workflow's phases: each row's dot says how it stands, and
+            // the order keeps what's still going first.
+            if sections.count > 1 {
+                ForEach(sections, id: \.id) { section in
+                    Section(section.title ?? "") {
+                        ForEach(section.nodes) { TaskNodeRow(node: $0).tag($0.id) }
+                    }
+                }
+            } else {
+                ForEach(nodes) { TaskNodeRow(node: $0).tag($0.id) }
+            }
         }
         .listStyle(.sidebar)
         .scrollContentBackground(.hidden)
@@ -114,8 +127,8 @@ struct TasksPane: View {
                         .accessibilityAddTraits(.isHeader)
                     TaskStatusBar(states: nodes.map(\.state))
                 }
-                if let parent, parent.entry.isTaskRunning, let task = parent.entry.task {
-                    TaskStopButton { Task { await connection.stopTask(thread, taskId: task.taskId) } }
+                if let parent, let taskId = parent.stoppableTaskID {
+                    TaskStopButton { Task { await connection.stopTask(thread, taskId: taskId) } }
                         .controlSize(.large)
                 }
             }
@@ -314,15 +327,15 @@ struct TaskDetail: View {
                     Spacer(minLength: 12)
                     // Controls, so glass, at the composer's size.
                     HStack {
-                        if node.entry.canMoveToBackground, let toolUseId = node.entry.task?.toolUseId,
+                        if node.agent == nil, node.entry.canMoveToBackground, let toolUseId = node.entry.task?.toolUseId,
                            thread.isTopLevelCall(toolUseId) {
                             Button("Move to Background") {
                                 Task { await connection.moveToBackground(thread, toolUseId: toolUseId) }
                             }
                         }
                         // A task with tasks of its own is stopped from above its column.
-                        if node.children.isEmpty, node.entry.isTaskRunning, let task = node.entry.task {
-                            TaskStopButton { Task { await connection.stopTask(thread, taskId: task.taskId) } }
+                        if node.children.isEmpty, let taskId = node.stoppableTaskID {
+                            TaskStopButton { Task { await connection.stopTask(thread, taskId: taskId) } }
                         }
                     }
                     .buttonStyle(.glass)
@@ -335,7 +348,11 @@ struct TaskDetail: View {
     }
 
     @ViewBuilder private var content: some View {
-        if node.kind == .agent, let call = node.call {
+        if let agent = node.agent, let run = node.workflow {
+            WorkflowAgentTranscript(thread: thread, connection: connection, run: run, agent: agent)
+        } else if node.kind == .workflow, let run = node.workflow {
+            WorkflowReport(run: run, thread: thread, connection: connection)
+        } else if node.kind == .agent, let call = node.call {
             SubagentTranscript(thread: thread, call: call, running: node.state == .running)
         } else {
             TaskReport(node: node)
@@ -442,6 +459,22 @@ private struct TaskReport: View {
     @Previewable @State var selection: String? = "tool-subagent-explore"
     panePreview {
         TasksPane(thread: .sampleToolCalls(), connection: .sample(), selectedTaskID: $selection).paneStyle()
+    }
+}
+
+/// A workflow's agents, by phase, and one agent's transcript beside them.
+#Preview("Tasks (workflow)") {
+    @Previewable @State var selection: String? = "workflow-call/agent/4"
+    panePreview {
+        TasksPane(thread: .sampleWorkflow(running: true), connection: .sample(), selectedTaskID: $selection).paneStyle()
+    }
+}
+
+/// A finished workflow: its phases, what it used and what it returned.
+#Preview("Tasks (workflow finished)") {
+    @Previewable @State var selection: String? = "workflow-call"
+    panePreview {
+        TasksPane(thread: .sampleWorkflow(running: false), connection: .sample(), selectedTaskID: $selection).paneStyle()
     }
 }
 

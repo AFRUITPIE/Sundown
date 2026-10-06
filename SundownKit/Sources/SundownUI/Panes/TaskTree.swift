@@ -39,6 +39,22 @@ struct TaskNode: Identifiable, Equatable {
     /// How long it took, once it's finished, when the SDK said.
     var seconds: Double?
     var children: [TaskNode] = []
+    /// A workflow's run, for a workflow and for each of its agents.
+    var workflow: WorkflowRun?
+    /// One of a workflow's agents: no task of its own, so nothing to stop or background on its own.
+    var agent: WorkflowRun.Agent?
+    /// The phase a workflow's agent ran in, for its column's sections.
+    var phase: String?
+    var phaseIndex: Int?
+
+    /// The task Stop stops: a running task's own, or a running workflow's (found after a reload in
+    /// its launch receipt). Never a workflow agent's: the CLI can't stop one alone.
+    var stoppableTaskID: String? {
+        guard agent == nil else { return nil }
+        if entry.isTaskRunning, let task = entry.task { return task.taskId }
+        if let workflow, workflow.isRunning { return workflow.taskId }
+        return nil
+    }
 
     /// A task started by another: its call's parent, or for a task with no call of its own, the
     /// parent of the call that started it (a command an agent ran in the background).
@@ -64,7 +80,7 @@ struct TaskNode: Identifiable, Equatable {
         // list leaves its children at the top.
         func attach(_ id: String) -> TaskNode {
             var node = nodes[id]!
-            node.children = sorted(order.filter { parents[$0] == id }.map(attach))
+            node.children = sorted(order.filter { parents[$0] == id }.map(attach)) + agents(of: node)
             return node
         }
         return sorted(order.filter { parents[$0] == nil || nodes[parents[$0]!] == nil }.map(attach))
@@ -79,6 +95,42 @@ struct TaskNode: Identifiable, Equatable {
         return nil
     }
 
+    /// A workflow's agents, by phase in the phases' order, and within each, what's still going
+    /// first, each in the order it started.
+    static func agents(of node: TaskNode) -> [TaskNode] {
+        guard node.kind == .workflow, node.agent == nil, let run = node.workflow else { return [] }
+        let order = Dictionary(run.phases.enumerated().map { ($1.index, $0) }, uniquingKeysWith: { a, _ in a })
+        let children = run.agents.map { agent in
+            var child = TaskNode(id: "\(node.id)/agent/\(agent.index)", title: agent.label, kind: .agent,
+                                 state: State(agent.state), entry: node.entry)
+            child.workflow = run
+            child.agent = agent
+            child.phaseIndex = agent.phaseIndex
+            child.phase = agent.phaseTitle
+            child.started = agent.startedAt.map { Date(timeIntervalSince1970: $0 / 1000) }
+            if child.state != .running, let ms = agent.durationMs { child.seconds = ms / 1000 }
+            return child
+        }
+        let phases = Dictionary(grouping: children) { $0.phaseIndex.flatMap { order[$0] } ?? Int.max }
+        return phases.keys.sorted().flatMap { sorted(phases[$0]!) }
+    }
+
+    /// A column's tasks in sections by the phase they ran in, when they're a workflow's agents in
+    /// more than one phase; else one section with no title.
+    static func phaseSections(_ nodes: [TaskNode]) -> [(id: Int, title: String?, nodes: [TaskNode])] {
+        var sections: [(id: Int, title: String?, nodes: [TaskNode])] = []
+        for node in nodes {
+            let id = node.agent == nil ? -1 : node.phaseIndex ?? -1
+            if let last = sections.indices.last, sections[last].id == id {
+                sections[last].nodes.append(node)
+            } else {
+                sections.append((id, node.phase, [node]))
+            }
+        }
+        guard sections.count > 1 else { return [(-1, nil, nodes)] }
+        return sections
+    }
+
     /// What's still going first, then what's finished, each in the order it started.
     private static func sorted(_ nodes: [TaskNode]) -> [TaskNode] {
         nodes.filter { $0.state == .running || $0.state == .waiting } + nodes.filter { $0.state != .running && $0.state != .waiting }
@@ -87,12 +139,16 @@ struct TaskNode: Identifiable, Equatable {
     private static func node(_ entry: InspectorTaskEntry, startedBy call: Item.ToolCall?) -> TaskNode {
         let task = entry.task
         let data = task?.data ?? .null
-        let title = task?.description ?? entry.call?.input.string("description") ?? entry.call?.summary
+        // A workflow by its name, never the latest agent's words.
+        let title = entry.workflow?.name ?? task?.description ?? entry.call?.input.string("description") ?? entry.call?.summary
             ?? data["workflow_name"]?.stringValue ?? task?.taskId ?? "Task"
         var node = TaskNode(id: entry.id, title: title, kind: kind(entry, call: call), state: state(entry), entry: entry)
         node.call = call
-        node.started = call.map { Date(timeIntervalSince1970: $0.createdAt / 1000) }
-        if let ms = data["usage"]?["duration_ms"]?.doubleValue, node.state != .running {
+        node.workflow = entry.workflow
+        node.started = call.flatMap { $0.createdAt > 0 ? Date(timeIntervalSince1970: $0.createdAt / 1000) : nil }
+        if let run = entry.workflow, node.state != .running, let ms = run.durationMs {
+            node.seconds = ms / 1000
+        } else if let ms = data["usage"]?["duration_ms"]?.doubleValue, node.state != .running {
             node.seconds = ms / 1000
         } else if let seconds = entry.call?.elapsedSeconds, node.state != .running {
             node.seconds = seconds
@@ -101,6 +157,7 @@ struct TaskNode: Identifiable, Equatable {
     }
 
     private static func kind(_ entry: InspectorTaskEntry, call: Item.ToolCall?) -> Kind {
+        if entry.workflow != nil || entry.call?.isWorkflow == true { return .workflow }
         switch entry.task?.data["task_type"]?.stringValue {
         case "local_workflow": return .workflow
         case "local_agent", "remote_agent": return .agent
@@ -119,6 +176,14 @@ struct TaskNode: Identifiable, Equatable {
     }
 
     private static func state(_ entry: InspectorTaskEntry) -> State {
+        if let run = entry.workflow, entry.task == nil || run.status != .running {
+            switch run.status {
+            case .running: return .running
+            case .failed: return .failed
+            case .stopped: return .stopped
+            case .completed, .unknown: return .done
+            }
+        }
         if entry.isGoing {
             return entry.task?.status == "pending" ? .waiting : .running
         }
@@ -126,6 +191,18 @@ struct TaskNode: Identifiable, Equatable {
         if ended.contains("fail") || ended.contains("error") { return .failed }
         if ended.contains("stop") || ended.contains("interrupt") || ended.contains("kill") { return .stopped }
         return .done
+    }
+}
+
+extension TaskNode.State {
+    init(_ state: WorkflowRun.Agent.State) {
+        switch state {
+        case .running: self = .running
+        case .waiting: self = .waiting
+        case .done: self = .done
+        case .failed: self = .failed
+        case .stopped: self = .stopped
+        }
     }
 }
 

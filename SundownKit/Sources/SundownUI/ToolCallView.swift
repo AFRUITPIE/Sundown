@@ -44,7 +44,11 @@ struct ToolCallView: View {
     }
 
     var body: some View {
-        if call.kind == .subagent {
+        if call.isWorkflow {
+            // A workflow's agents and result are in the Tasks tab; its script and launch receipt
+            // are nothing to read.
+            WorkflowCallView(call: call, run: thread.workflowRuns[call.id])
+        } else if call.kind == .subagent {
             // A subagent opens in the Tasks tab instead of here, behind the same chevron as a row that
             // opens in place.
             VStack(alignment: .leading, spacing: 2) {
@@ -203,8 +207,19 @@ struct InspectSubagentAction: Equatable {
     static func == (a: Self, b: Self) -> Bool { a.window === b.window }
 }
 
+/// Stops one of the shown chat's background tasks (a workflow, from its row). Holds the window, as
+/// `InspectSubagentAction` does.
+struct StopTaskAction: Equatable {
+    weak var window: WindowModel?
+
+    @MainActor func callAsFunction(_ taskId: String) { window?.stopTask(taskId) }
+
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
+}
+
 extension EnvironmentValues {
     @Entry var inspectSubagent = InspectSubagentAction()
+    @Entry var stopTask = StopTaskAction()
 
     /// The row id of the turn's work a row is shown inside, for Find in Chat.
     @Entry var findFold: String?

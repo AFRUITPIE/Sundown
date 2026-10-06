@@ -45,6 +45,8 @@ public enum TranscriptFolding: Sendable, Hashable {
 /// its own line — while it's still doing something worth watching, or when it's more than a line:
 ///   - still running (`.pending`/`.running`)
 ///   - `.todoWrite`, whose checklist is always shown inline and shouldn't be folded away
+///   - a Workflow call, whose run goes on for minutes after its call has come back, and whose row
+///     says how far it has got
 /// A finished subagent folds like any call ("Ran 3 agents"); its row in the opened run still opens
 /// it in the inspector.
 /// A single ungroupable-adjacent completed call is left as a plain `.item`, not a one-call group.
@@ -118,15 +120,19 @@ public func foldTranscriptRows(_ items: [Item], folding: TranscriptFolding, last
             rows += foldTranscriptRows(Array(turn), live: isRunning)
             continue
         }
-        let work = turn[turn.index(after: turn.startIndex)..<last]
+        // A workflow is never hidden behind Worked For: its row comes after the turn's work.
+        let between = turn[turn.index(after: turn.startIndex)..<last]
+        let work = between.filter { !$0.isWorkflowCall }
+        let workflows = between.filter(\.isWorkflowCall)
         guard work.contains(where: { if case .toolCall = $0 { true } else { false } }) else {
             rows += foldTranscriptRows(Array(turn))
             continue
         }
         rows.append(.item(.userMessage(prompt)))
         let end = turn[last].createdAt
-        rows.append(.turnWork(id: "work-\(prompt.id)", rows: foldTranscriptRows(Array(work)),
+        rows.append(.turnWork(id: "work-\(prompt.id)", rows: foldTranscriptRows(work),
                               durationMs: end > 0 && prompt.createdAt > 0 ? end - prompt.createdAt : nil))
+        rows += workflows.map(TranscriptRow.item)
         rows += foldTranscriptRows(Array(turn[last...]))
     }
     return rows
@@ -136,9 +142,16 @@ private func isGroupable(_ call: Item.ToolCall) -> Bool {
     call.status != .running && call.status != .pending && isFoldable(call)
 }
 
-/// A call that can be a line in a run at all: not a checklist, which is shown whole.
+/// A call that can be a line in a run at all: not a checklist, which is shown whole, nor a
+/// workflow, which runs on long after its call has come back.
 private func isFoldable(_ call: Item.ToolCall) -> Bool {
-    call.kind != .todoWrite
+    call.kind != .todoWrite && !call.isWorkflow
+}
+
+private extension Item {
+    var isWorkflowCall: Bool {
+        if case .toolCall(let call) = self { call.isWorkflow } else { false }
+    }
 }
 
 /// Folded rows with what goes between turns: a date above each prompt in `dates` (by prompt id,
@@ -334,6 +347,9 @@ extension Item {
         case .userMessage(let m):
             return m.content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n")
         case .agentMessage(let m): return m.text
+        // A workflow's row shows its name, not its script or launch receipt.
+        case .toolCall(let t) where t.isWorkflow:
+            return [t.name, WorkflowRun(call: t, task: nil).name ?? ""].joined(separator: "\n")
         case .toolCall(let t): return ([t.name] + t.input.strings + [t.outputText ?? ""]).joined(separator: "\n")
         case .error(let e): return e.message
         case .notice(let n): return n.text

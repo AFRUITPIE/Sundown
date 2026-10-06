@@ -282,6 +282,12 @@ private actor FixtureScript {
                 ["name": "status", "description": "Show session status"]
             ]]))
         case "fs/search": return .init(value: .result(["paths": []]))
+        case "workflow/read":
+            guard params["runId"]?.stringValue == WorkflowSample.runID else { return .init(value: .result(["workflow": .null])) }
+            return .init(value: .result(["workflow": WorkflowSample.snapshot(now: TaskTranscript.workflowNow, running: false)]))
+        case "workflow/agentItems":
+            let agent = params["agentId"]?.stringValue ?? ""
+            return .init(value: .result(["items": json(WorkflowSample.agentItems(agentId: agent, now: TaskTranscript.workflowNow))]))
         default: return .init(value: .error("Unexpected fixture method: \(method)"))
         }
     }
@@ -530,9 +536,13 @@ enum PerformanceTranscript {
     }
 }
 
-/// The `tasks` scenario's chat: a workflow, an agent that started an agent and a background
-/// command, a monitor and an MCP tool, as the SDK reports them, running and finished.
+/// The `tasks` scenario's chat: a workflow that has finished (`WorkflowSample`, its result a
+/// message of its own before the next prompt), then an agent that started an agent and a
+/// background command, a monitor and an MCP tool, as the SDK reports them, running and finished.
 private enum TaskTranscript {
+    /// When the workflow ran: before the rest of the chat.
+    static var workflowNow: Double { Date().timeIntervalSince1970 * 1000 - 500_000 }
+
     static func items() -> [Item] {
         let now = Date().timeIntervalSince1970 * 1000
         func ago(_ seconds: Double) -> Double { now - seconds * 1000 }
@@ -542,10 +552,9 @@ private enum TaskTranscript {
                             status: status, outputText: output))
         }
         let root = "/tmp/sundown-fixture/Sources/"
-        return [
+        return WorkflowSample.items(now: workflowNow, running: false) + [
             .userMessage(.init(id: "tasks-user", createdAt: ago(400),
                                content: [.text(.init(text: "Review the changes, and find which views read thread.items."))])),
-            call("workflow-call", "Workflow", .other, ["description": "Review the diff for correctness"], status: .running, at: 380),
             call("agent-1", "Task", .subagent, [
                 "subagent_type": "Explore", "description": "Find every SwiftUI view",
                 "prompt": "Find every SwiftUI view and list which read `thread.items`.",
@@ -579,11 +588,10 @@ private enum TaskTranscript {
                                                              description: description, status: status, summary: summary,
                                                              data: .object(data))))
         }
-        return [
-            event("started", "wf-1", "local_workflow", "Review the diff for correctness", toolUseId: "workflow-call",
-                  status: "running", extra: ["workflow_name": "review"]),
-            event("progress", "wf-1", "local_workflow", "Review the diff for correctness", toolUseId: "workflow-call",
-                  status: "running", summary: "Verifying 18 findings, three skeptics each"),
+        let workflow = WorkflowSample.events(threadID: threadID, firstSeq: seq, now: workflowNow, running: false)
+            .map { ("task/event", json($0)) }
+        seq += workflow.count
+        return workflow + [
             event("started", "agent-task-1", "local_agent", "Find every SwiftUI view", toolUseId: "agent-1", status: "running"),
             event("started", "bg-tests", "local_bash", "swift test", toolUseId: "bg-call", status: "running"),
             event("started", "agent-task-2", "local_agent", "Check how TranscriptFind reads items", toolUseId: "agent-2",
