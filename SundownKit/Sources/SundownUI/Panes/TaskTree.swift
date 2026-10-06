@@ -183,7 +183,10 @@ struct TaskNode: Identifiable, Equatable {
             case .running: return .running
             case .failed: return .failed
             case .stopped: return .stopped
-            case .completed, .unknown: return .done
+            case .completed: return .done
+            // Neither running nor known to have ended (a run only its journal tells of): gray, not
+            // a green "done" it may not be.
+            case .unknown: return .waiting
             }
         }
         if entry.isGoing {
