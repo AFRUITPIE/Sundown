@@ -66,6 +66,9 @@ struct SundownApp: App {
             SidebarCommands()
             // View ▸ Customize Toolbar…, for Plan Usage.
             ToolbarCommands()
+            #if DEBUG
+            DebugCommands()
+            #endif
         }
         HostWindows(app: app)
             .appEnvironment(app)
@@ -91,5 +94,11 @@ private struct HostWindows: Scene {
         .handlesExternalEvents(matching: [])
         // Opened for a host from the Host menu, never from File ▸ New.
         .commandsRemoved()
+        #if DEBUG
+        // Debug ▸ Tasks Designs…: mocked ideas for the Tasks tab.
+        Window("Tasks Designs", id: TasksDesignGallery.id) { TasksDesignGallery() }
+            .defaultSize(width: 1180, height: 780)
+            .restorationBehavior(.disabled)
+        #endif
     }
 }
