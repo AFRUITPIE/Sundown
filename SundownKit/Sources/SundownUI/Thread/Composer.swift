@@ -493,7 +493,7 @@ struct Composer: View {
         .buttonStyle(SendOrStopStyle(prominent: !showStop))
         // Not while an attachment is still being read.
         .disabled(!showStop && (!canSend || awaitingAnswer || attaching > 0 || connection.state != .connected))
-        .help(showStop ? "Stop" : sendHelp)
+        .glassHelp(showStop ? "Stop" : sendHelp)
         .buttonBorderShape(.circle)
         .labelStyle(.iconOnly)
     }
@@ -583,7 +583,7 @@ struct Composer: View {
         .glassEffect(.regular.interactive(), in: .circle)
         // About to open the menu, whose Commands are asked for only now.
         .onHover { if $0 { requestCommands() } }
-        .help("Add")
+        .glassHelp("Add")
         .accessibilityIdentifier("composer.add")
     }
 
