@@ -44,7 +44,8 @@ struct ComposerTextView: NSViewRepresentable {
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
         scroll.scrollerStyle = .overlay
-        // Its own name, so finding the field by its identifier finds the text view inside.
+        // Not an element of its own: the field is its text view, which is what's found and clicked.
+        scroll.setAccessibilityElement(false)
         scroll.setAccessibilityIdentifier("composer.scroll")
         // As wide as the clip view it starts in, which resizes it by the difference.
         let view = ComposerNSTextView(frame: .zero)
