@@ -1465,7 +1465,6 @@ private struct QuietSidebarDetail: View {
     }
 
     private func word(_ task: DesignTask) -> String {
-        if task.kind == .workflow, task.status == .running { return "Verify" }
         switch task.status {
         case .running: return duration(task.elapsed)
         case .failed: return "Failed"
@@ -1489,13 +1488,13 @@ private struct QuietHeader<Actions: View>: View {
     @ViewBuilder var actions: Actions
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: QuietSpacing.pair) {
+        VStack(alignment: .leading, spacing: QuietSpacing.pair) {
+            HStack(alignment: .firstTextBaseline) {
                 Text(title).font(.title3).fontWeight(.semibold)
-                Text(status).foregroundStyle(.secondary)
+                Spacer(minLength: 12)
+                HStack { actions }.fixedSize()
             }
-            Spacer(minLength: 12)
-            HStack { actions }.fixedSize()
+            Text(status).foregroundStyle(.secondary)
         }
     }
 }
@@ -1508,7 +1507,8 @@ private struct QuietPage<Content: View>: View {
             VStack(alignment: .leading, spacing: QuietSpacing.section) { content }
                 .frame(maxWidth: 640, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .scenePadding()
+                .scenePadding([.horizontal, .bottom])
+                .padding(.top, QuietSpacing.line)
         }
     }
 }
@@ -1532,7 +1532,7 @@ private struct QuietWorkflow: View {
                 }
             }
             VStack(alignment: .leading, spacing: QuietSpacing.line) {
-                Text("Log").font(.headline)
+                Text("Log").font(.subheadline).foregroundStyle(.secondary)
                 ForEach(Array(designLog.suffix(4).enumerated()), id: \.offset) { _, line in
                     Text(line.text)
                 }
@@ -1542,7 +1542,7 @@ private struct QuietWorkflow: View {
 
     private func phaseRow(_ phase: DesignPhase) -> some View {
         let failed = phase.agents.filter { $0.status == .failed }.count
-        let started = phase.done > 0 || phase.agents.contains { $0.status == .running }
+        let running = phase.done < phase.agents.count && (phase.done > 0 || phase.agents.contains { $0.status == .running })
         let isOpen = open == phase.id
         return GridRow {
             Button {
@@ -1554,18 +1554,20 @@ private struct QuietWorkflow: View {
             }
             .buttonStyle(.plain)
             .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
-            // A phase that hasn't started has no bar to show.
+            // Only the phase under way has a bar: a finished one says Done, one to come Waiting.
             Group {
-                if started {
+                if running {
                     ProgressView(value: Double(phase.done), total: Double(phase.agents.count))
                 } else {
                     Color.clear.frame(height: 1)
                 }
             }
+            .frame(maxWidth: .infinity)
             .gridColumnAlignment(.leading)
             Text(phaseCount(phase, failed: failed))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
+                .fixedSize()
                 .gridColumnAlignment(.trailing)
         }
     }
@@ -1573,18 +1575,21 @@ private struct QuietWorkflow: View {
     /// An opened phase: what needs a look, failed then running, under its name.
     private func agents(_ phase: DesignPhase) -> some View {
         GridRow {
-            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-            VStack(alignment: .leading, spacing: QuietSpacing.line) {
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: QuietSpacing.line) {
                 ForEach(phase.agents.filter { $0.status == .failed } + phase.agents.filter { $0.status == .running }) { agent in
-                    Text("\(agent.label)  \(Text(agent.status == .failed ? "Failed: \(agent.doing)" : agent.doing).foregroundStyle(.secondary))")
+                    GridRow {
+                        Text(agent.label.drop { $0 != " " }.dropFirst())
+                        Text(agent.status == .failed ? "Failed: \(agent.doing)" : agent.doing).foregroundStyle(.secondary)
+                    }
                 }
             }
-            .gridCellColumns(2)
+            .padding(.leading, 16) // past the chevron, under the phase's name
+            .gridCellColumns(3)
         }
     }
 
     private func phaseCount(_ phase: DesignPhase, failed: Int) -> String {
-        if phase.done == phase.agents.count { return "Done" }
+        if phase.done == phase.agents.count { return failed > 0 ? "Done, \(failed) failed" : "Done" }
         if phase.done == 0, !phase.agents.contains(where: { $0.status == .running }) { return "Waiting" }
         return "\(phase.done) of \(phase.agents.count)" + (failed > 0 ? ", \(failed) failed" : "")
     }
@@ -1606,15 +1611,23 @@ private struct QuietAgent: View {
     var body: some View {
         QuietPage {
             QuietHeader(title: task.name,
-                        status: task.status == .running ? "Running in the background · \(duration(task.elapsed)) · Reading ToolCallView.swift" : "Done · \(duration(task.elapsed))") {
+                        status: task.status == .running ? "Running in the background · \(duration(task.elapsed))" : "Done · \(duration(task.elapsed))") {
                 Button("Show in Chat") {}
                 if task.status == .running { Button("Stop") {} }
             }
             VStack(alignment: .leading, spacing: QuietSpacing.line) {
-                Text("Find every SwiftUI view in SundownUI and list which read `thread.items`.")
-                    .foregroundStyle(.secondary)
+                Text(task.status == .running ? "Result So Far" : "Result").font(.subheadline).foregroundStyle(.secondary)
                 Text("Most views read `rows`, not `items`. Two exceptions so far: `TranscriptFind` builds its search text from items, and `ThreadView` reads the last item for the Thinking line.")
                     .textSelection(.enabled)
+                if task.status == .running {
+                    Text("Reading ToolCallView.swift…").foregroundStyle(.secondary)
+                }
+            }
+            DisclosureGroup("Task") {
+                Text("Find every SwiftUI view in SundownUI and list which read `thread.items`.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, QuietSpacing.pair)
             }
         }
     }
@@ -1630,8 +1643,8 @@ private struct QuietCommand: View {
                 Button("Copy Output") {}
                 if task.status == .running { Button("Stop") {} }
             }
-            // As tall as its output: a few lines aren't a pane.
-            Text(task.status == .failed ? """
+            // The output as text, on the page: a few lines aren't a pane, and lines don't wrap.
+            ScrollView(.horizontal) { Text(task.status == .failed ? """
             Resolve Package Graph
             Building for debugging...
             MarkdownText.swift:58:9: error: cannot find 'setText' in scope
@@ -1644,9 +1657,10 @@ private struct QuietCommand: View {
             """)
             .font(.callout.monospaced())
             .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding()
-            .background(.fill.tertiary, in: .rect(cornerRadius: Layout.cardCornerRadius))
+            .fixedSize()
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollIndicators(.automatic)
         }
     }
 }
