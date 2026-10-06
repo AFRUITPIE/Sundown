@@ -189,8 +189,7 @@ struct ComposerTextView: NSViewRepresentable {
             case #selector(NSResponder.cancelOperation(_:)):
                 // Never the text view's own, which offers word completions: what the composer
                 // doesn't take goes on up, where Esc closes a popover.
-                // Never the text view's own, which offers word completions.
-                _ = parent.onKey(.escape)
+                if !parent.onKey(.escape) { (textView as? ComposerNSTextView)?.cancelUp() }
                 return true
             default: return false
             }
@@ -270,10 +269,16 @@ final class ComposerNSTextView: NSTextView {
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53, !hasMarkedText(), event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
            let coordinator {
-            if !coordinator.parent.onKey(.escape) { nextResponder?.keyDown(with: event) }
+            if !coordinator.parent.onKey(.escape) { cancelUp() }
             return
         }
         super.keyDown(with: event)
+    }
+
+    /// Esc as the command it is (`cancelOperation:`), sent on up the responder chain past this
+    /// view: a key event passed up instead reached no one who acts on it.
+    func cancelUp() {
+        _ = nextResponder?.tryToPerform(#selector(NSResponder.cancelOperation(_:)), with: self)
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {

@@ -317,9 +317,10 @@ final class TranscriptUITests: SundownUITestCase {
         // Done once Stop gives way to Send. What's checked is that text drawn that way is still
         // ordinary text once it has arrived, which can be selected and copied.
         XCTAssertTrue(app.buttons["Stop"].disappears(timeout: 60), "the turn never finished")
-        // The reply ends with its quote: the last line of the last message that holds it.
+        // The reply ends with its quote: the last line of the last message that holds it. On screen
+        // rather than hittable: a message is one text view, whose middle can be a code box's.
         let reply = app.textViews.matching(NSPredicate(format: "value CONTAINS 'Streaming should cost'"))
-            .allElementsBoundByIndex.last { $0.isHittable }
+            .allElementsBoundByIndex.last { isOnScreen($0) }
         let last = try XCTUnwrap(reply, "the reply isn't on screen")
         // Where the turn's end leaves it, not where it was as the last row went in.
         last.settle()

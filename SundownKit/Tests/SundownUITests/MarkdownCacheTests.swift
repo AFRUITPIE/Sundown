@@ -139,6 +139,15 @@ struct MarkdownCacheTests {
         ])
     }
 
+    /// A prompt keeps the lines the person broke with Shift-Return; a reply's single newline is a space.
+    @Test func promptsKeepTheirLineBreaks() {
+        let text = "First line\nsecond line\n\n- item"
+        #expect(MarkdownView.parse(text) == [.paragraph("First line second line"), .bullet(indent: 0, marker: "•", text: "item")])
+        #expect(MarkdownView.parse(text, lineBreaks: true) == [.paragraph("First line\nsecond line"), .bullet(indent: 0, marker: "•", text: "item")])
+        let cache = MarkdownCache()
+        #expect(cache.blocks(for: text, lineBreaks: true).map(\.block) == MarkdownView.parse(text, lineBreaks: true))
+    }
+
     @Test func replacedTextIsParsedAfresh() {
         let cache = MarkdownCache()
         let long = (0..<4).map { PerformanceTranscript.markdown(section: $0) }.joined(separator: "\n\n")
