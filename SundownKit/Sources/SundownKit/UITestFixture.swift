@@ -20,13 +20,14 @@ public enum UITestFixture {
         let attempts = FixtureAttempts()
         let environment = ProcessInfo.processInfo.environment
         let prompts = host.id == HostConfig.local.id && environment["SUNDOWN_UI_TEST_SCENARIO"] == "prompts"
+        let tasks = environment["SUNDOWN_UI_TEST_SCENARIO"] == "tasks"
         let failing = Set((environment["SUNDOWN_UI_TEST_FAIL"] ?? "").split(separator: ",").map(String.init))
         return HostConnection(host: host, transportProvider: { _ in
             if await attempts.next() <= failedConnects {
                 throw TransportError.launchFailed("Fixture connection unavailable")
             }
             return FixtureTransport(pendingPermission: pendingPermission || prompts, performance: performance,
-                                    prompts: prompts, failing: failing)
+                                    prompts: prompts, tasks: tasks, failing: failing)
         })
     }
 }
@@ -41,8 +42,9 @@ private final class FixtureTransport: Transport, @unchecked Sendable {
     private let stream: AsyncThrowingStream<Data, any Error>
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
 
-    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, failing: Set<String> = []) {
-        script = FixtureScript(pendingPermission: pendingPermission, performance: performance, prompts: prompts, failing: failing)
+    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, tasks: Bool = false, failing: Set<String> = []) {
+        script = FixtureScript(pendingPermission: pendingPermission, performance: performance, prompts: prompts,
+                               tasks: tasks, failing: failing)
         var captured: AsyncThrowingStream<Data, any Error>.Continuation!
         stream = AsyncThrowingStream { captured = $0 }
         continuation = captured
@@ -107,6 +109,8 @@ private actor FixtureScript {
     private let performance: Bool
     /// The `prompts` scenario: each answered request brings the next (`answered`).
     private let prompts: Bool
+    /// The `tasks` scenario: the chat has started one of each kind of task (`TaskTranscript`).
+    private let tasks: Bool
     /// Methods answered with an error (SUNDOWN_UI_TEST_FAIL).
     private let failing: Set<String>
     private var sentPermission = false
@@ -122,10 +126,11 @@ private actor FixtureScript {
     /// How many times Restore Code has run.
     private var rewound = 0
 
-    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, failing: Set<String> = []) {
+    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, tasks: Bool = false, failing: Set<String> = []) {
         self.pendingPermission = pendingPermission
         self.performance = performance
         self.prompts = prompts
+        self.tasks = tasks
         self.failing = failing
     }
 
@@ -188,7 +193,8 @@ private actor FixtureScript {
             let id = forks[requested] ?? requested
             var summary = (additionalThreads + PerformanceTranscript.otherChats).first { $0.threadId == requested } ?? originalSummary
             if let title = titles[requested] { summary.customTitle = title }
-            let items: [Item] = performance && (id == UITestFixture.threadID || id.hasPrefix("perf-chat-")) ? PerformanceTranscript.history : id == UITestFixture.threadID ? [
+            let items: [Item] = tasks && id == UITestFixture.threadID ? TaskTranscript.items()
+                : performance && (id == UITestFixture.threadID || id.hasPrefix("perf-chat-")) ? PerformanceTranscript.history : id == UITestFixture.threadID ? [
                 .userMessage(.init(id: "fixture-user", createdAt: 1_700_000_000_000,
                                    content: [.text(.init(text: "Summarize this project"))])),
                 .agentMessage(.init(id: "fixture-answer", createdAt: 1_700_000_000_001,
@@ -214,6 +220,10 @@ private actor FixtureScript {
                 thread: .init(threadId: id, status: status, cwd: "/tmp/sundown-fixture", lastSeq: nextSequence),
                 replayed: 0, gap: false
             ))))
+            if id == UITestFixture.threadID, tasks {
+                reply.notifications = TaskTranscript.events(threadID: id, firstSeq: nextSequence + 1)
+                nextSequence += reply.notifications.count
+            }
             if id == UITestFixture.threadID, pendingPermission, !sentPermission {
                 sentPermission = true
                 let prompt = PermissionRequestParams(
@@ -517,6 +527,73 @@ enum PerformanceTranscript {
 
         > Streaming should cost what the new characters cost, not what the whole message costs.
         """
+    }
+}
+
+/// The `tasks` scenario's chat: a workflow, an agent that started an agent and a background
+/// command, a monitor and an MCP tool, as the SDK reports them, running and finished.
+private enum TaskTranscript {
+    static func items() -> [Item] {
+        let now = Date().timeIntervalSince1970 * 1000
+        func ago(_ seconds: Double) -> Double { now - seconds * 1000 }
+        func call(_ id: String, _ name: String, _ kind: ToolKind, _ input: JSONValue, status: ToolStatus = .completed,
+                  output: String? = nil, parent: String? = nil, at seconds: Double) -> Item {
+            .toolCall(.init(id: id, parentToolUseId: parent, createdAt: ago(seconds), name: name, kind: kind, input: input,
+                            status: status, outputText: output))
+        }
+        let root = "/tmp/sundown-fixture/Sources/"
+        return [
+            .userMessage(.init(id: "tasks-user", createdAt: ago(400),
+                               content: [.text(.init(text: "Review the changes, and find which views read thread.items."))])),
+            call("workflow-call", "Workflow", .other, ["description": "Review the diff for correctness"], status: .running, at: 380),
+            call("agent-1", "Task", .subagent, [
+                "subagent_type": "Explore", "description": "Find every SwiftUI view",
+                "prompt": "Find every SwiftUI view and list which read `thread.items`.",
+            ], status: .running, at: 100),
+            call("agent-1-grep", "Grep", .grep, ["pattern": "thread\\.items", "path": .string(root)],
+                 output: "TranscriptFind.swift:88\nThreadView.swift:41", parent: "agent-1", at: 95),
+            .agentMessage(.init(id: "agent-1-reply", parentToolUseId: "agent-1", createdAt: ago(80),
+                                text: "Most views read `rows`, not `items`. Two exceptions so far:\n\n- `TranscriptFind` builds its search text from items.\n- `ThreadView` reads the last item.")),
+            call("bg-call", "Bash", .bash, [
+                "command": "swift test", "description": "Run the tests", "run_in_background": true,
+            ], output: "Command running in background", parent: "agent-1", at: 70),
+            call("agent-2", "Task", .subagent, [
+                "description": "Check how TranscriptFind reads items",
+                "prompt": "Read TranscriptFind.swift and say how it builds its search text.",
+            ], status: .running, parent: "agent-1", at: 34),
+            call("agent-2-read", "Read", .fileRead, ["file_path": .string(root + "TranscriptFind.swift")],
+                 status: .running, parent: "agent-2", at: 5),
+            call("failed-call", "Bash", .bash, ["command": "xcodebuild -scheme Sundown build", "run_in_background": true],
+                 output: "** BUILD FAILED **", at: 300),
+        ]
+    }
+
+    static func events(threadID: String, firstSeq: Int) -> [(String, JSONValue)] {
+        var seq = firstSeq
+        func event(_ name: String, _ id: String, _ type: String, _ description: String, toolUseId: String? = nil,
+                   status: String, summary: String? = nil, extra: [String: JSONValue] = [:]) -> (String, JSONValue) {
+            var data: [String: JSONValue] = ["task_type": .string(type)]
+            for (k, v) in extra { data[k] = v }
+            defer { seq += 1 }
+            return ("task/event", json(TaskEventNotification(threadId: threadID, seq: seq, event: name, taskId: id, toolUseId: toolUseId,
+                                                             description: description, status: status, summary: summary,
+                                                             data: .object(data))))
+        }
+        return [
+            event("started", "wf-1", "local_workflow", "Review the diff for correctness", toolUseId: "workflow-call",
+                  status: "running", extra: ["workflow_name": "review"]),
+            event("progress", "wf-1", "local_workflow", "Review the diff for correctness", toolUseId: "workflow-call",
+                  status: "running", summary: "Verifying 18 findings, three skeptics each"),
+            event("started", "agent-task-1", "local_agent", "Find every SwiftUI view", toolUseId: "agent-1", status: "running"),
+            event("started", "bg-tests", "local_bash", "swift test", toolUseId: "bg-call", status: "running"),
+            event("started", "agent-task-2", "local_agent", "Check how TranscriptFind reads items", toolUseId: "agent-2",
+                  status: "running"),
+            event("started", "monitor-1", "monitor", "Watch CI on the pull request", status: "running"),
+            event("notification", "mcp-1", "mcp_task", "Run all tests in Xcode", status: "completed",
+                  summary: "412 tests passed, 3 skipped.", extra: ["usage": ["duration_ms": 243_000, "total_tokens": 0, "tool_uses": 1]]),
+            event("notification", "build-1", "local_bash", "xcodebuild -scheme Sundown build", toolUseId: "failed-call",
+                  status: "failed", summary: "Build failed", extra: ["usage": ["duration_ms": 123_000, "total_tokens": 0, "tool_uses": 0]]),
+        ]
     }
 }
 

@@ -35,7 +35,8 @@ struct ChatRow: View {
     }
 }
 
-/// Where a chat stands, as the sidebar's dot says it, Mail-style: Claude working (blue, pulsing),
+/// Where a chat stands, as the sidebar's dot says it, Mail-style: Claude working, in a turn or in
+/// the background (blue, pulsing),
 /// waiting on you (orange), a reply you haven't seen (green), a turn that failed (red) or that was
 /// stopped (a ring); nothing once you've seen how it ended.
 enum ChatState: Hashable {
@@ -43,7 +44,8 @@ enum ChatState: Hashable {
 
     @MainActor init(_ thread: ThreadModel) {
         if thread.status == .requiresAction { self = .needsYou }
-        else if thread.isRunning || thread.status == .starting { self = .working }
+        // Working too while its background agents and commands run, the turn that started them over.
+        else if thread.isRunning || thread.status == .starting || thread.hasBackgroundWork { self = .working }
         else if thread.hasUnseenReply { self = .newReply }
         else if thread.lastTurnStatus == .failed || thread.status == .error { self = .failed }
         else if thread.lastTurnStatus == .interrupted { self = .stopped }

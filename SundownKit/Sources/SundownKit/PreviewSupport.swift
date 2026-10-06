@@ -297,6 +297,58 @@ extension ThreadModel {
             ])
     }
 
+    /// One of each kind of task, as the SDK reports them: a workflow, an agent that started an agent
+    /// and a background command of its own, a monitor and an MCP tool, running and finished.
+    public static func sampleWithTaskKinds() -> ThreadModel {
+        let root = "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownUI/"
+        func started(_ seq: Int, _ id: String, _ type: String, _ description: String, toolUseId: String? = nil,
+                     extra: [String: JSONValue] = [:]) -> TaskEventNotification {
+            var data: [String: JSONValue] = ["task_type": .string(type)]
+            for (k, v) in extra { data[k] = v }
+            return .init(threadId: "preview-thread", seq: seq, event: "started", taskId: id, toolUseId: toolUseId,
+                         description: description, status: "running", data: .object(data))
+        }
+        return sample(
+            title: "Review the Markdown changes",
+            status: .running,
+            items: [
+                .sampleUserMessage("Review the Markdown changes before I merge, and find which views read thread.items.", secondsAgo: 400),
+                .sampleToolCall(id: "workflow-call", name: "Workflow", kind: .other,
+                                input: ["description": "Review the diff for correctness"], status: .running, secondsAgo: 380),
+                .sampleToolCall(id: "agent-1", name: "Task", kind: .subagent, input: [
+                    "subagent_type": "Explore", "description": "Find every SwiftUI view in SundownUI",
+                    "prompt": "Find every SwiftUI view in SundownUI and list which read `thread.items`.",
+                ], status: .running, secondsAgo: 100),
+                .sampleToolCall(name: "Grep", kind: .grep, input: ["pattern": "thread\\.items", "path": .string(root)],
+                                outputText: "Thread/TranscriptFind.swift:88\nThread/ThreadView.swift:41", parentToolUseId: "agent-1", secondsAgo: 95),
+                .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptFind.swift")],
+                                parentToolUseId: "agent-1", secondsAgo: 90),
+                .sampleAgentMessage("Most views read `rows`, not `items`. Two exceptions so far:\n\n- `TranscriptFind` builds its search text from items.\n- `ThreadView` reads the last item for the Thinking line.",
+                                    secondsAgo: 80, parentToolUseId: "agent-1"),
+                .sampleToolCall(id: "bg-call", name: "Bash", kind: .bash, input: [
+                    "command": "swift test --package-path SundownKit", "description": "Run the package tests", "run_in_background": true,
+                ], status: .completed, outputText: "Command running in background", parentToolUseId: "agent-1", secondsAgo: 70),
+                .sampleToolCall(id: "agent-2", name: "Task", kind: .subagent, input: [
+                    "description": "Check how TranscriptFind reads items",
+                    "prompt": "Read TranscriptFind.swift and say exactly how it builds its search text.",
+                ], status: .running, parentToolUseId: "agent-1", secondsAgo: 34),
+                .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptFind.swift")],
+                                status: .running, parentToolUseId: "agent-2", secondsAgo: 5),
+            ],
+            turns: [.sample(status: .inProgress, secondsAgo: 400)],
+            tasks: [
+                started(1, "wf-1", "local_workflow", "Review the diff for correctness", toolUseId: "workflow-call",
+                        extra: ["workflow_name": "review"]),
+                started(2, "agent-task-1", "local_agent", "Find every SwiftUI view in SundownUI", toolUseId: "agent-1"),
+                started(3, "bg-tests", "local_bash", "swift test --package-path SundownKit", toolUseId: "bg-call"),
+                started(4, "agent-task-2", "local_agent", "Check how TranscriptFind reads items", toolUseId: "agent-2"),
+                started(5, "monitor-1", "monitor", "Watch CI on the pull request"),
+                .init(threadId: "preview-thread", seq: 6, event: "notification", taskId: "mcp-1",
+                      description: "Run all tests in Xcode", status: "completed", summary: "412 tests passed, 3 skipped.",
+                      data: ["task_type": "mcp_task", "usage": ["duration_ms": 243_000, "total_tokens": 0, "tool_uses": 1]]),
+            ])
+    }
+
     /// A finished conversation: a question, some visible thinking, and a Markdown reply that
     /// exercises headings, a bullet list, inline code and a fenced code block.
     /// A finished chat in which Claude suggested a task to start separately.

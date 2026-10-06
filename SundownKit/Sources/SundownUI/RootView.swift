@@ -47,6 +47,10 @@ public struct WindowRoot: View {
 
 public struct RootView: View {
     let window: WindowModel
+    /// Every window opens with its sidebar shown, not as the split view's autosave last left it: one
+    /// opened with the sidebar collapsed puts the system's sidebar toggle in the toolbar's » until
+    /// the sidebar is toggled, however wide the window (macOS 27; a bare split view does it too).
+    @State private var columns: NavigationSplitViewVisibility = .all
 
     public init(window: WindowModel) {
         self.window = window
@@ -103,7 +107,7 @@ public struct RootView: View {
 
     private var splitView: some View {
         @Bindable var window = window
-        return NavigationSplitView {
+        return NavigationSplitView(columnVisibility: $columns) {
             SidebarView(window: window)
         } detail: {
             DetailView(window: window)

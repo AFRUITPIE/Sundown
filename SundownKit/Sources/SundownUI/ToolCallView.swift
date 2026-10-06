@@ -45,15 +45,18 @@ struct ToolCallView: View {
 
     var body: some View {
         if call.kind == .subagent {
-            // A subagent opens in the inspector instead of here.
+            // A subagent opens in the Tasks tab instead of here, behind the same chevron as a row that
+            // opens in place.
             VStack(alignment: .leading, spacing: 2) {
                 Button { inspectSubagent(call.id) } label: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         header
-                        Image(systemName: "sidebar.trailing").scaledFont(.caption2).foregroundStyle(.tertiary)
+                        DisclosureIndicator(expanded: false)
                     }
+                    .padding(.vertical, 4)
                     .contentShape(Rectangle())
                 }
+                .help("Show in Tasks")
                 .buttonStyle(.plain)
                 .accessibilityValue(statusDescription)
                 .accessibilityIdentifier("transcript.toolCall")
@@ -91,9 +94,17 @@ struct ToolCallView: View {
     /// glyph. Its menu and full command or path are on the words.
     private var header: some View {
         HStack(spacing: 6) {
-            Text(title).foregroundStyle(.secondary).fontWeight(.medium)
-            if !subtitle.isEmpty {
-                Text(subtitle).foregroundStyle(.primary).lineLimit(1).truncationMode(.middle)
+            if isRunning {
+                // Running, it shimmers as the turn's work row does, rather than spinning: while
+                // something is still doing it (its turn, or the background task it became).
+                ActivityLabel(text: subtitle.isEmpty ? title : "\(title) \(subtitle)",
+                              live: thread.isRunning || thread.isTaskBackgrounded(toolUseId: call.id))
+                    .fontWeight(.medium)
+            } else {
+                Text(title).foregroundStyle(.secondary).fontWeight(.medium)
+                if !subtitle.isEmpty {
+                    Text(subtitle).foregroundStyle(.primary).lineLimit(1).truncationMode(.middle)
+                }
             }
             if let s = call.elapsedSeconds, call.status == .running {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
@@ -106,13 +117,12 @@ struct ToolCallView: View {
         .draggableFile(hostIsLocal ? filePath : nil)
     }
 
-    /// A spinner while it runs, a glyph when it went wrong, and nothing once it's done.
+    private var isRunning: Bool { call.status == .pending || call.status == .running }
+
+    /// A glyph when it went wrong, and nothing otherwise: running, its words shimmer, and its
+    /// value says "Running" for VoiceOver.
     @ViewBuilder private var status: some View {
         switch call.status {
-        case .pending, .running:
-            // Hidden, or the whole row reads as a progress indicator rather than a button; its
-            // value says it's running instead.
-            ProgressView().controlSize(.small).accessibilityHidden(true)
         case .failed: Image(systemName: "exclamationmark.circle").foregroundStyle(.tertiary).scaledFont(.caption)
         case .denied: Image(systemName: "hand.raised").foregroundStyle(.tertiary).scaledFont(.caption)
         case .interrupted: Image(systemName: "stop.circle").foregroundStyle(.tertiary).scaledFont(.caption)
