@@ -956,7 +956,9 @@ public final class HostConnection: Identifiable {
             let r = try await client.call(WorkflowMethods.Read.self, .init(threadId: model.id, runId: run.runId))
             guard let snapshot = r.workflow else { return }
             model.setLoadedWorkflow(snapshot, for: toolUseId)
-            if let status = snapshot["status"]?.stringValue, status != "running" { finishedWorkflows[key] = snapshot }
+            // Kept only once it's over: an unknown run (history with nothing to say) may be going
+            // on still, and a paused one goes on, so both are read again.
+            if let status = snapshot["status"]?.stringValue, WorkflowRun.status(status).isSettled { finishedWorkflows[key] = snapshot }
         } catch let e as RPCError where e.code == -32601 {
             workflowMethodsMissing = true
         } catch {

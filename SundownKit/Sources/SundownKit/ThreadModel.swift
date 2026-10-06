@@ -767,11 +767,12 @@ public final class ThreadModel: Identifiable {
     }
 
     /// The Workflow calls whose run should be read with `workflow/read`: those with a run id and no
-    /// task this client has heard from, unless a finished run has been read already.
+    /// task this client has heard from, unless a finished run has been read already. One read as
+    /// unknown or paused is read again: it may be going on.
     public var workflowsToRead: [(toolUseId: String, runId: String)] {
         workflowRuns.values.compactMap { run in
             guard let runId = run.runId, taskEvent(forToolUseId: run.toolUseId) == nil else { return nil }
-            if let loaded = loadedWorkflows[run.toolUseId], run.status != .running, loaded["status"] != nil { return nil }
+            if loadedWorkflows[run.toolUseId]?["status"] != nil, run.status.isSettled { return nil }
             return (run.toolUseId, runId)
         }
         .sorted { $0.toolUseId < $1.toolUseId }

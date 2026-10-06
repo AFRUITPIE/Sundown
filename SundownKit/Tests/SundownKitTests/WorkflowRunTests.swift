@@ -102,10 +102,14 @@ struct WorkflowRunTests {
                 ["index": 6, "label": "f", "state": "error", "skipped": true, "error": "skipped"],
                 ["index": 7, "label": "g", "state": "error", "error": "stalled"],
                 ["index": 8, "label": "h", "state": "something new"],
+                // The classifier stopped it: not a failure of its own.
+                ["index": 9, "label": "i", "state": "error", "blocked": true, "error": "Blocked by the classifier"],
+                // An earlier run's result, reused.
+                ["index": 10, "label": "j", "state": "start", "cached": true],
             ],
         ]
         let run = WorkflowRun(call: call(), task: nil, loaded: snapshot)
-        #expect(run.agents.map(\.state) == [.waiting, .running, .running, .done, .stopped, .stopped, .failed, .running])
+        #expect(run.agents.map(\.state) == [.waiting, .running, .running, .done, .stopped, .stopped, .failed, .running, .stopped, .done])
         #expect(run.error == "boom")
     }
 
@@ -130,17 +134,32 @@ struct WorkflowRunTests {
         #expect(stopped.status == .stopped)
         #expect(!stopped.agents.contains { $0.state == .running || $0.state == .waiting })
         #expect(stopped.agents.contains { $0.state == .stopped })
-        // A completed run's agents still going when it was last heard of finished with it.
+        // A completed run's agents still going when it was last heard of finished with it; one
+        // still waiting for a slot never ran.
+        let going = WorkflowRun(call: call(), task: nil, loaded: WorkflowSample.snapshot(now: 1_000_000, running: true))
+        #expect(going.agents.contains { $0.state == .waiting } && going.agents.contains { $0.state == .running })
         let completed = WorkflowRun(call: call(), task: task("notification", seq: 2, status: "completed"),
                                     loaded: WorkflowSample.snapshot(now: 1_000_000, running: true))
         #expect(completed.status == .completed)
-        #expect(completed.agents.allSatisfy { $0.state == .done })
-        // A run the daemon can't say how it ended (cut off) stopped them.
+        for (before, after) in zip(going.agents, completed.agents) {
+            switch before.state {
+            case .running: #expect(after.state == .done)
+            case .waiting: #expect(after.state == .stopped)
+            default: #expect(after.state == before.state)
+            }
+        }
+        // A run the daemon can't say how it ended may be going on still: its agents are as they
+        // were last heard of.
         var cutOff = WorkflowSample.snapshot(now: 1_000_000, running: true)
         if case .object(var o) = cutOff { o["status"] = "unknown"; cutOff = .object(o) }
         let unknown = WorkflowRun(call: call(), task: nil, loaded: cutOff)
-        #expect(unknown.status == .unknown)
-        #expect(!unknown.agents.contains { $0.state == .running || $0.state == .waiting })
+        #expect(unknown.status == .unknown && !unknown.status.isSettled)
+        #expect(unknown.agents.map(\.state) == going.agents.map(\.state))
+        // Paused goes on.
+        if case .object(var o) = cutOff { o["status"] = "paused"; cutOff = .object(o) }
+        let paused = WorkflowRun(call: call(), task: nil, loaded: cutOff)
+        #expect(paused.status == .running)
+        #expect(paused.agents.map(\.state) == going.agents.map(\.state))
         #expect(WorkflowRun(call: call(), task: task("started", seq: 1)).progressText == "Starting")
     }
 
@@ -187,6 +206,13 @@ struct WorkflowRunTests {
         #expect(thread.taskEntries.map(\.id) == [WorkflowSample.callID])
         #expect(thread.workflowRuns[WorkflowSample.callID]?.status == .unknown)
         #expect(thread.workflowsToRead.map(\.runId) == [WorkflowSample.runID])
+        // Read as unknown or paused, it may be going on: it's read again.
+        for status: JSONValue in ["unknown", "paused", "running"] {
+            var snapshot = WorkflowSample.snapshot(now: 1_000_000, running: true)
+            if case .object(var o) = snapshot { o["status"] = status; snapshot = .object(o) }
+            thread.setLoadedWorkflow(snapshot, for: WorkflowSample.callID)
+            #expect(thread.workflowsToRead.map(\.runId) == [WorkflowSample.runID], "\(status)")
+        }
         thread.setLoadedWorkflow(WorkflowSample.snapshot(now: 1_000_000, running: false), for: WorkflowSample.callID)
         let run = try #require(thread.workflowRuns[WorkflowSample.callID])
         #expect(run.status == .completed)

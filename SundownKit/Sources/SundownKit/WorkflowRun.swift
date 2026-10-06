@@ -92,7 +92,10 @@ public enum WorkflowScript {
 /// as it is.
 public enum WorkflowAgentPrompt {
     private static let userRequest = #"^\[Workflow harness\s*[—–-]+\s*user request\]"#
-    private static let computedTask = #"\[Workflow harness\s*[—–-]+\s*computed task\]"#
+    /// A frame line is at column zero: the harness indents everything it relays, so a frame-like
+    /// line anywhere else is the relayed text's, not the harness's.
+    private static let computedTask = #"^\[Workflow harness\s*[—–-]+\s*computed task\]"#
+    private static let marker = "The computed task text follows:"
 
     /// The agent's items with its framed prompt unframed: the relayed request dropped, the task
     /// de-indented. Items that aren't framed are as they came.
@@ -114,14 +117,19 @@ public enum WorkflowAgentPrompt {
 
     /// One text's task, de-indented; empty for the relayed request alone; nil when it isn't framed.
     static func unframed(_ text: String) -> String? {
-        if let task = text.range(of: computedTask, options: .regularExpression) {
-            // The task follows the frame's last line ("… follows:"), each of its lines indented.
-            let rest = text[task.upperBound...]
-            guard let start = rest.range(of: "follows:")?.upperBound ?? rest.firstIndex(of: "\n") else { return "" }
-            return deindented(rest[start...])
-        }
-        if text.range(of: userRequest, options: .regularExpression) != nil { return "" }
-        return nil
+        if text.range(of: computedTask, options: .regularExpression) != nil { return task(text[...]) }
+        guard text.range(of: userRequest, options: .regularExpression) != nil else { return nil }
+        // The relayed request alone, or followed by the task's frame on a line of its own (as a
+        // client that joins the two messages has it).
+        guard let frame = text.range(of: #"(?m)^\[Workflow harness\s*[—–-]+\s*computed task\]"#,
+                                     options: .regularExpression) else { return "" }
+        return task(text[frame.lowerBound...]) ?? ""
+    }
+
+    /// The task after a computed-task frame, which ends with the marker; nil without the marker.
+    private static func task(_ framed: Substring) -> String? {
+        guard let start = framed.range(of: marker)?.upperBound else { return nil }
+        return deindented(framed[start...])
     }
 
     /// The harness indents every line of the task by two spaces.
@@ -275,6 +283,10 @@ public struct WorkflowRun: Equatable, Sendable {
         case running, completed, failed, stopped
         /// Read from history with nothing to say how it went.
         case unknown
+
+        /// Over, and won't change: what can be kept once read, and what settles its agents. A
+        /// run that's unknown may yet say more, and a paused one goes on.
+        public var isSettled: Bool { self == .completed || self == .failed || self == .stopped }
     }
 
     public struct Phase: Equatable, Sendable {
@@ -416,10 +428,12 @@ public struct WorkflowRun: Equatable, Sendable {
             } else if let index, let title = agents[i].phaseTitle, let better = Self.metaTitle(index, title, meta) {
                 agents[i].phaseTitle = better
             }
-            // An agent still going in a workflow that has ended ended with it: done if the
-            // workflow completed (its last progress can come after, or not at all), else stopped.
-            if status != .running, agents[i].state == .running || agents[i].state == .waiting {
-                agents[i].state = status == .completed ? .done : .stopped
+            // An agent still going in a workflow that has ended ended with it: done if it had
+            // started and the workflow completed (its last progress can come after, or not at
+            // all); one still waiting for a slot never ran; and in a failed or stopped run,
+            // stopped. Only once the run has settled: an unknown one may yet say more.
+            if status.isSettled, agents[i].state == .running || agents[i].state == .waiting {
+                agents[i].state = status == .completed && agents[i].state == .running ? .done : .stopped
             }
         }
         self.phases = phases.filter { phase in !phase.title.isEmpty || agents.contains { $0.phaseIndex == phase.index } }
@@ -433,10 +447,13 @@ public struct WorkflowRun: Equatable, Sendable {
                   task: nil, loaded: snapshot)
     }
 
-    private static func status(_ raw: String) -> Status {
+    /// A status as the daemon or the CLI says it. Paused goes on (it's resumed), so it reads as
+    /// running; `unknown` is history with nothing to say.
+    static func status(_ raw: String) -> Status {
         let s = raw.lowercased()
         if s.contains("fail") || s.contains("error") { return .failed }
-        if s.contains("stop") || s.contains("kill") || s.contains("interrupt") || s.contains("cancel") || s.contains("pause") { return .stopped }
+        if s.contains("pause") { return .running }
+        if s.contains("stop") || s.contains("kill") || s.contains("interrupt") || s.contains("cancel") { return .stopped }
         if s.contains("complete") || s.contains("done") || s.contains("finish") || s == "notification" { return .completed }
         if s.contains("run") || s.contains("start") || s.contains("progress") || s.contains("pending") { return .running }
         return .unknown
@@ -460,10 +477,13 @@ public struct WorkflowRun: Equatable, Sendable {
         let queuedAt = v["queuedAt"]?.doubleValue
         let startedAt = v["startedAt"]?.doubleValue
         // The CLI's own words (start, progress, done, error, skipped, queued…), as a daemon passes
-        // them through, or as an older one named them; `skipped` marks one the person skipped.
+        // them through, or as an older one named them; `skipped` marks one the person skipped,
+        // `blocked` one the classifier stopped (neither a failure of its own), and `cached` one
+        // whose result an earlier run already had.
         let state: Agent.State
         switch raw {
-        case _ where v["skipped"]?.boolValue == true: state = .stopped
+        case _ where v["skipped"]?.boolValue == true || v["blocked"]?.boolValue == true: state = .stopped
+        case _ where v["cached"]?.boolValue == true: state = .done
         case "done", "completed", "cached": state = .done
         case "skipped", "stopped", "killed", "cancelled", "canceled": state = .stopped
         case "error", "failed": state = error == "skipped by user" ? .stopped : .failed
@@ -481,7 +501,7 @@ public struct WorkflowRun: Equatable, Sendable {
             lastProgressAt: v["lastProgressAt"]?.doubleValue,
             lastToolName: v["lastToolName"]?.stringValue, lastToolSummary: v["lastToolSummary"]?.stringValue,
             promptPreview: v["promptPreview"]?.stringValue, resultPreview: v["resultPreview"]?.stringValue,
-            error: state == .stopped && error == "skipped by user" ? nil : error)
+            error: state == .stopped && (error == "skipped by user" || v["skipped"]?.boolValue == true) ? nil : error)
     }
 
     /// The run's id in the launch receipt the call returns ("Run ID: …"), which history keeps too.

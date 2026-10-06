@@ -16,7 +16,10 @@ enum ToolCallText {
             return (workflow?.isRunning ?? running) ? "Running workflow" : "Ran workflow"
         }
         // A workflow agent's hand-back of its result: what it returned is in the opened row.
-        if call.isStructuredOutput { return running ? "Returning its result" : "Returned its result" }
+        if call.isStructuredOutput {
+            if call.isFailedResult { return "Couldn’t return its result" }
+            return running ? "Returning its result" : "Returned its result"
+        }
         switch call.kind {
         // Just that it ran: the command is in the help tag and the opened row, not on the line.
         case .bash: return running ? "Running a command" : call.status == .denied ? "Run a command" : "Ran a command"
@@ -110,7 +113,7 @@ enum ToolCallText {
         case .fileEdit, .notebookEdit: return "edit"
         case .grep, .glob: return "search"
         case .mcp: return "mcp:" + (call.mcpServer ?? mcpServerName(call) ?? "")
-        default: return call.isWorkflow ? "workflow" : call.isStructuredOutput ? "result" : call.kind.rawValue
+        default: return call.isWorkflow ? "workflow" : call.isStructuredOutput ? (call.isFailedResult ? "result-failed" : "result") : call.kind.rawValue
         }
     }
 
@@ -120,7 +123,11 @@ enum ToolCallText {
         let first = calls[0]
         let files = Set(calls.map { object($0) }).count
         if first.isWorkflow { return n == 1 ? "ran a workflow" : "ran \(n) workflows" }
-        if first.isStructuredOutput { return "returned its result" }
+        if first.isStructuredOutput {
+            // An agent tries again when its result doesn't fit the script's schema.
+            guard first.isFailedResult else { return "returned its result" }
+            return n == 1 ? "couldn’t return its result" : "couldn’t return its result \(n) times"
+        }
         switch first.kind {
         case .bash: return n == 1 ? "ran a command" : "ran \(n) commands"
         case .fileRead: return files == 1 ? "read \(object(first))" : "read \(files) files"
@@ -146,4 +153,9 @@ enum ToolCallText {
         let parts = call.name.split(separator: "_", omittingEmptySubsequences: true)
         return parts.count >= 3 ? String(parts[1]) : nil
     }
+}
+
+extension Item.ToolCall {
+    /// A workflow agent's hand-back that didn't go through: refused by the script's schema, or denied.
+    fileprivate var isFailedResult: Bool { isStructuredOutput && (status == .failed || status == .denied) }
 }

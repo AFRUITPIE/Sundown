@@ -126,8 +126,14 @@ struct WorkflowCaptureTests {
 
     // MARK: an agent's transcript
 
+    /// The agent's transcript as the daemon's `readAgentItems` serves it, its prompt unframed.
     private func agentItems() throws -> [Item] {
         try JSONDecoder().decode([Item].self, from: try Self.fixture("workflow-typo-check-agent-items", "json"))
+    }
+
+    /// The same transcript as an older daemon served it, with the harness's framing.
+    private func framedAgentItems() throws -> [Item] {
+        try JSONDecoder().decode([Item].self, from: try Self.fixture("workflow-typo-check-agent-items-framed", "json"))
     }
 
     private static let task = "Read /private/tmp/wf-scratch/math.swift (do not edit). Find typos and code bugs. Return findings with line numbers; empty list if none."
@@ -142,12 +148,16 @@ struct WorkflowCaptureTests {
     /// The agent's prompt is the script's task alone: the harness's framing and the person's
     /// relayed request go.
     @Test func anAgentsPromptIsItsTaskAlone() throws {
-        let raw = try agentItems()
+        // The daemon serves it unframed, and it's kept as it is.
+        let served = try agentItems()
+        #expect(prompts(served) == [Self.task])
+        #expect(WorkflowAgentPrompt.unframed(served) == served)
+        // An older daemon's, framed, reads the same.
+        let raw = try framedAgentItems()
         #expect(prompts(raw).count == 2)
         let items = WorkflowAgentPrompt.unframed(raw)
         #expect(prompts(items) == [Self.task])
         #expect(items.count == raw.count - 1)
-        // Already unframed (as a daemon that does it sends it), it's kept as it is.
         #expect(WorkflowAgentPrompt.unframed(items) == items)
         // Both frames in one message, as a client that joins them would have it.
         let joined = prompts(raw).joined(separator: "\n\n")
@@ -159,6 +169,15 @@ struct WorkflowCaptureTests {
         let framed = "[Workflow harness — computed task] The computed task text follows:\n  Check these:\n    - one\n\n  - two"
         #expect(WorkflowAgentPrompt.unframed(framed) == "Check these:\n  - one\n\n- two")
         #expect(WorkflowAgentPrompt.unframed("Just a prompt") == nil)
+        // A frame is the text's start, with its whole marker: one quoted inside a prompt, or one
+        // without the marker, is the prompt's own words.
+        let quoted = "Explain this:\n[Workflow harness — computed task] The computed task text follows:\n  x"
+        #expect(WorkflowAgentPrompt.unframed(quoted) == nil)
+        #expect(WorkflowAgentPrompt.unframed("[Workflow harness — computed task] it follows:\n  x") == nil)
+        // Inside a relayed request every line is indented, so an indented frame there is the
+        // request's, not the harness's.
+        let relayed = "[Workflow harness — user request] Relayed:\n  [Workflow harness — computed task] The computed task text follows:\n  x"
+        #expect(WorkflowAgentPrompt.unframed(relayed) == "")
     }
 
     /// Its last call hands its result back to the script.

@@ -63,6 +63,14 @@ struct ToolCallTextTests {
         #expect(ToolCallText.object(result) == "")
         #expect(ToolCallText.verb(call(.other, [:], status: .running, name: "StructuredOutput")) == "Returning its result")
         #expect(ToolCallText.summary([call(.fileRead, ["file_path": "/a/math.swift"]), result]) == "Read math.swift and returned its result")
+
+        // Refused (its schema didn't fit) or denied, it didn't hand anything back.
+        let refused = call(.other, ["findings": "none"], status: .failed, name: "StructuredOutput")
+        #expect(ToolCallText.verb(refused) == "Couldn’t return its result")
+        #expect(ToolCallText.verb(call(.other, [:], status: .denied, name: "StructuredOutput")) == "Couldn’t return its result")
+        #expect(ToolCallText.summary([refused]) == "Couldn’t return its result")
+        #expect(ToolCallText.summary([refused, result]) == "Couldn’t return its result and returned its result")
+        #expect(ToolCallText.summary([refused, refused, result]) == "Couldn’t return its result 2 times and returned its result")
     }
 
     @Test func aRunSaysWhatItsCallsDidTogether() {
