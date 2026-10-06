@@ -71,7 +71,9 @@ final class LayoutUITests: SundownUITestCase {
                 var found = false
                 func walk(_ element: any XCUIElementSnapshot) {
                     if found { return }
-                    if element.elementType == .staticText, let words = element.value as? String,
+                    // A message is a text view holding all its text; the message field isn't one.
+                    if element.elementType == .staticText || element.elementType == .textView && element.identifier != "composer.input",
+                       let words = element.value as? String,
                        words.hasPrefix("Section ") || words.hasPrefix("Step "),
                        element.frame.width > 0, window.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) {
                         found = true

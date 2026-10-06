@@ -11,6 +11,9 @@ struct TranscriptView: View {
     @State private var position = ScrollPosition(edge: .bottom)
     /// More than a screen from the end: Jump to Latest is offered only then.
     @State private var farFromEnd = false
+    /// The last row is on screen. With it, the end is in view, whatever the lazy stack's estimate of
+    /// the rows not built yet says about the content's height.
+    @State private var lastRowOnScreen = true
     /// The rows on screen, for Chat ▸ Previous and Next Prompt. Not observed: it changes as rows
     /// scroll in and out, and nothing is drawn from it.
     @State private var onScreen = OnScreenRows()
@@ -52,7 +55,12 @@ struct TranscriptView: View {
         }
         // Chat ▸ Previous and Next Prompt, from where the reader is.
         .onChange(of: promptNavigator?.step) { goToPrompt() }
-        .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { onScreen.ids = Set($0) }
+        .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { ids in
+            onScreen.ids = Set(ids)
+            let last = thread.rows(appearance.toolCalls.folding).last?.id
+            let showing = last.map(onScreen.ids.contains) ?? true
+            if showing != lastRowOnScreen { lastRowOnScreen = showing }
+        }
         // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
         // Previous or Next last went to.
         .onScrollPhaseChange { _, new in
@@ -65,7 +73,7 @@ struct TranscriptView: View {
         }
         .overlay(alignment: .bottom) {
             ZStack {
-                if farFromEnd {
+                if farFromEnd, !lastRowOnScreen {
                     Button("Jump to Latest", systemImage: "arrow.down") {
                         onScreen.lastPrompt = nil
                         withAnimation(reduceMotion ? nil : .default) { position.scrollTo(edge: .bottom) }
@@ -80,7 +88,7 @@ struct TranscriptView: View {
                 }
             }
             // Scoped to the button so the transcript's own layout changes don't animate.
-            .animation(.snappy, value: farFromEnd)
+            .animation(.snappy, value: farFromEnd && !lastRowOnScreen)
         }
     }
 }
@@ -338,7 +346,7 @@ private struct FadesIn: ViewModifier {
                 if push {
                     withAnimation(TranscriptMotion.spring) { shown = true }
                 } else {
-                    withAnimation(.easeOut(duration: FadeInRenderer.duration)) { shown = true }
+                    withAnimation(.easeOut(duration: MarkdownTheme.fadeDuration)) { shown = true }
                 }
             }
     }
@@ -365,11 +373,13 @@ private struct FindHighlight: ViewModifier {
             .background {
                 if isMatch {
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(nsColor: .findHighlightColor).opacity(isCurrent ? 0.4 : 0.15))
+                        .fill(Color(nsColor: .findHighlightColor).opacity(isCurrent ? 0.2 : 0.08))
                         .padding(-6)
                 }
             }
             .accessibilityAddTraits(isCurrent ? .isSelected : [])
+            // The words themselves too, in a matched message's text.
+            .environment(\.findQuery, isMatch ? find?.query : nil)
     }
 }
 

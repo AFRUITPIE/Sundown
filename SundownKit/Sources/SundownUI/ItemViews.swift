@@ -326,10 +326,13 @@ struct UserMessageView: View {
                 // One view a part, even one that shows nothing, so SwiftUI can count them.
                 VStack(alignment: .trailing, spacing: 0) {
                     switch part {
-                    case .text(let t):
+                    case .text(let t) where message.synthetic == true:
                         Text(t.text)
                             .textSelection(.enabled)
-                            .lineLimit(message.synthetic == true ? 6 : nil)
+                            .lineLimit(6)
+                    case .text(let t):
+                        // Markdown, as it was written for Claude to read, in the bubble's colors.
+                        MarkdownView(text: t.text, style: .prompt)
                     case .image(let img):
                         MessageImage(key: "\(message.id)#\(index)", base64: img.data)
                     case .fileRef(let f):
@@ -564,6 +567,20 @@ struct NoticeView: View {
              thread: .sampleIdleChat())
         .padding(28).frame(width: 640)
         .preferredColorScheme(.light)
+}
+
+#Preview("Prompt with Markdown") {
+    ItemView(item: .sampleUserMessage("""
+        Two things in `Composer.swift`:
+
+        1. Keep **undo** working after a restyle
+        2. Check [the HIG](https://developer.apple.com/design) on placeholders
+
+        ```swift
+        TextEditor(text: $text, selection: $selection)
+        ```
+        """, secondsAgo: 30), thread: .sampleIdleChat())
+        .padding(28).frame(width: 640)
 }
 
 #Preview("Message controls") {

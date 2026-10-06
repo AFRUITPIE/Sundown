@@ -50,7 +50,7 @@ final class ComposerUITests: SundownUITestCase {
         input.typeKey(.tab, modifierFlags: [])
         XCTAssertEqual(input.value as? String, "/context ", "↓ then Tab")
         XCTAssertTrue(compact.disappears(timeout: 3), "the completions stayed open after Tab")
-        XCTAssertFalse(app.staticTexts["/context"].exists, "Tab sent the command")
+        XCTAssertFalse(app.text("/context").exists, "Tab sent the command")
         // Esc closes them, leaving the text.
         input.typeKey("a", modifierFlags: .command)
         input.typeText("/")
@@ -85,7 +85,7 @@ final class ComposerUITests: SundownUITestCase {
         let prompt = first + "\nsecond line"
         XCTAssertTrue(inputText().contains(prompt), "Shift-Return didn't start a new line: \(inputText())")
         input.typeKey(.return, modifierFlags: [])
-        XCTAssertTrue(app.staticTexts["Scripted response."].appears(timeout: 10), "Return didn't send")
+        XCTAssertTrue(text("Scripted response.").appears(timeout: 10), "Return didn't send")
         // Sending must finish: the new message's actions become usable after the spring settles.
         let copy = app.buttons["message.copy.fixture-sent-1"]
         let message = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).firstMatch

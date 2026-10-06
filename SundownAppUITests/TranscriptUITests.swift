@@ -22,7 +22,7 @@ final class TranscriptUITests: SundownUITestCase {
         // The chat opens with its latest 50 items, about three turns; scrolling to the top loads the
         // page before them once the reader stops there. Section 22 is in that page, whatever the
         // turns' sizes. (Page after page to the start: OlderHistoryFixtureTests.)
-        let olderPage = app.staticTexts.matching(NSPredicate(format: "value IN %@", (0...22).map { "Section \($0): tightening the renderer" })).firstMatch
+        let olderPage = app.text(containingAnyOf: (0...22).map { "Section \($0): tightening the renderer" })
         // A point in the transcript: a heading leaves the lazy stack once it scrolls away.
         let transcript = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
         for _ in 0..<20 where !olderPage.exists {
@@ -122,8 +122,10 @@ final class TranscriptUITests: SundownUITestCase {
             var scrollViews: [CGRect] = []
             var prompts: [(top: CGFloat, number: Int)] = []
             func walk(_ element: any XCUIElementSnapshot) {
-                if element.elementType == .scrollView { scrollViews.append(element.frame) }
-                if element.elementType == .staticText, let words = element.value as? String, words.hasPrefix("Step "),
+                if element.elementType == .scrollView, element.identifier != "composer.scroll" { scrollViews.append(element.frame) }
+                // A prompt is a text view holding its text; the message field isn't one.
+                if element.elementType == .staticText || element.elementType == .textView && element.identifier != "composer.input",
+                   let words = element.value as? String, words.hasPrefix("Step "),
                    let number = Int(words.dropFirst(5).prefix { $0.isNumber }) {
                     prompts.append((element.frame.minY, number))
                 }
@@ -199,10 +201,8 @@ final class TranscriptUITests: SundownUITestCase {
         app.typeKey("1", modifierFlags: .command)
         XCTAssertTrue(input.appears(timeout: 5), "⌘1 didn't come back to the chat")
         XCTAssertTrue(waitUntil(5) { footer.isHittable }, "the chat isn't at its end after switching to Tasks and back")
-        // A known fault, in the app: the chat comes back at its end, but offers Jump to Latest.
-        XCTExpectFailure("Jump to Latest is offered on returning to Chat from another tab") {
-            XCTAssertFalse(app.buttons["Jump to Latest"].exists, "Jump to Latest is offered after switching to Tasks and back")
-        }
+        // At its end, it doesn't offer to jump there.
+        XCTAssertFalse(app.buttons["Jump to Latest"].exists, "Jump to Latest is offered after switching to Tasks and back")
         // Back where it started, 1000 points wide, moved by the title bar's empty stretch between
         // the window buttons and the sidebar toggle.
         resize(to: 1000)
@@ -299,7 +299,7 @@ final class TranscriptUITests: SundownUITestCase {
 
         // Sending from the end of a full transcript makes room and leaves the new prompt usable.
         let copy = app.buttons["message.copy.perf-sent-1"]
-        let sent = app.staticTexts["Keep going"].firstMatch
+        let sent = text("Keep going")
         XCTAssertTrue(hover(over: sent) { app.buttons["message.fork.perf-sent-1"].isHittable }, "the sent prompt's actions never became usable")
         XCTAssertLessThan(previous.frame.minY, before - 20, "the transcript didn't lift for the prompt")
         XCTAssertLessThan(copy.frame.maxY, input.frame.minY, "the prompt landed under the field")
@@ -307,7 +307,7 @@ final class TranscriptUITests: SundownUITestCase {
 
         // The reply's words fade in as they stream. The screenshots taken on the way are attached to
         // the report, to look at.
-        XCTAssertTrue(app.staticTexts["Section 100: tightening the renderer"].firstMatch.appears(timeout: 20), "the reply never streamed in")
+        XCTAssertTrue(text(containing: "Section 100: tightening the renderer").appears(timeout: 20), "the reply never streamed in")
         for i in 1...3 {
             let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
             shot.name = "Streaming \(i)"
@@ -317,13 +317,23 @@ final class TranscriptUITests: SundownUITestCase {
         // Done once Stop gives way to Send. What's checked is that text drawn that way is still
         // ordinary text once it has arrived, which can be selected and copied.
         XCTAssertTrue(app.buttons["Stop"].disappears(timeout: 60), "the turn never finished")
-        let quote = app.staticTexts.matching(NSPredicate(format: "value BEGINSWITH 'Streaming should cost'"))
-            .allElementsBoundByIndex.last { $0.isHittable }
-        let last = try XCTUnwrap(quote, "the reply's last block isn't on screen")
+        // The reply ends with its quote, its text view's last line. Found by its heading: what
+        // XCUITest reads of a text view's value stops after its first few hundred characters.
+        let replies = app.textViews.matching(NSPredicate(format: "value CONTAINS 'Section 100: tightening the renderer'"))
+        var reply: XCUIElement?
+        // Looked for until found: as the turn ends its row is settled, and an element listed a
+        // moment before may no longer resolve. On screen rather than hittable: a message is one
+        // text view, whose middle can be a code box's.
+        waitUntil(5) {
+            reply = replies.allElementsBoundByIndex.last { self.isOnScreen($0) }
+            return reply != nil
+        }
+        let last = try XCTUnwrap(reply, "the reply isn't on screen: \(replies.allElementsBoundByIndex.map(\.frame)) in \(mainWindow().frame)")
         // Where the turn's end leaves it, not where it was as the last row went in.
         last.settle()
         NSPasteboard.general.clearContents()
-        last.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).doubleClick()
+        // Its first word, past the quote's bar and indent.
+        last.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 1)).withOffset(CGVector(dx: 40, dy: -8)).doubleClick()
         app.typeKey("c", modifierFlags: .command)
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Streaming", "the streamed text isn't selectable")
     }

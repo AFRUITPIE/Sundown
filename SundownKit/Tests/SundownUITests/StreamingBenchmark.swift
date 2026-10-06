@@ -61,7 +61,7 @@ struct StreamingFrameTests {
         let ms = frames.map(milliseconds).sorted()
         let total = ms.reduce(0, +)
         let p50 = ms[ms.count / 2], p95 = ms[ms.count * 95 / 100], worst = ms.last ?? 0
-        print(String(format: "StreamingBenchmark: %d frames, total %.1f ms (fade %.1f ms), p50 %.3f ms, p95 %.3f ms, worst %.3f ms",
+        print(String(format: "StreamingBenchmark: %d frames, total %.1f ms (building text %.1f ms), p50 %.3f ms, p95 %.3f ms, worst %.3f ms",
                      ms.count, total, milliseconds(replay.fading), p50, p95, worst))
         #expect(p95 < 2)
     }
@@ -72,10 +72,8 @@ struct StreamingFrameTests {
 private final class Replay {
     let thread = ThreadModel(id: "perf")
     let markdown = MarkdownCache()
-    /// The streaming block's fade, made again for each new block as `ArrivingText` is.
-    var arrivals = Arrivals()
-    var arrivalsBlock = ""
-    var now = Date.timeIntervalSinceReferenceDate
+    /// Building the streaming block's text, as `MarkdownTextView` does for its changed tail.
+    let theme = MarkdownTheme(style: .reply, scale: 1, increasedContrast: false)
     var fading = Duration.zero
 
     init() {
@@ -87,15 +85,12 @@ private final class Replay {
         _ = thread.rows
         if case .agentMessage(let m) = thread.box(for: thread.items.last!).item {
             let blocks = markdown.blocks(for: m.text)
-            if let text = blocks.last?.inline.first {
+            if let last = blocks.last {
                 let clock = ContinuousClock(), fadeStart = clock.now
-                let block = "\(m.id)-\(blocks.count)"
-                if block != arrivalsBlock { arrivals = Arrivals(); arrivalsBlock = block }
-                _ = arrivals.text(for: text, at: now, arrives: true)
+                _ = MarkdownBuilder.build(last, leading: blocks.count > 1, spacing: 12, widestMarker: nil, theme: theme)
                 fading += clock.now - fadeStart
             }
         }
-        now += 1.0 / 60
     }
 }
 
