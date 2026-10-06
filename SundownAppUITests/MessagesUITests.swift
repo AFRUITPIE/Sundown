@@ -23,8 +23,13 @@ final class MessagesUITests: SundownUITestCase {
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Summarize this project", "Copy on the prompt")
         Thread.sleep(forTimeInterval: 0.4)
         XCTAssertEqual(fork.frame.minX, forkBefore.minX, accuracy: 0.5, "Copy's checkmark moved the icons beside it")
+        // One capsule at a time: the answer's shows once the pointer is over the answer rather
+        // than the prompt.
         NSPasteboard.general.clearContents()
-        app.buttons["message.copy.fixture-answer"].click()
+        let answerCopy = app.buttons["message.copy.fixture-answer"]
+        XCTAssertTrue(hover(over: text(fixtureAnswer)) { answerCopy.exists && app.buttons["message.fork.fixture-answer"].isHittable },
+                      "the answer's actions aren't shown on hover")
+        answerCopy.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
         XCTAssertEqual(NSPasteboard.general.string(forType: .string), fixtureAnswer, "Copy on the answer")
 
         // Restore Code to Here… says which files go back before doing it, and then can't again.
