@@ -157,6 +157,13 @@ public final class ThreadModel: Identifiable {
     public static let archivedTag = "archived"
     public var isArchived: Bool { summary?.tag == Self.archivedTag }
     public var isRunning: Bool { status == .running || status == .requiresAction }
+
+    /// Background commands and agents still running, though the turn that started them may have
+    /// ended, as the daemon counts them (`thread/status/changed`, `thread/list`). Stored, so the
+    /// sidebar reads it without reading the transcript; 0 from a server too old to say.
+    public private(set) var backgroundTaskCount = 0
+    /// Claude is still at work in the background: a chat sitting idle while its agents run.
+    public var hasBackgroundWork: Bool { backgroundTaskCount > 0 }
     public var currentTurn: Turn? { turns.last.flatMap { $0.status == .inProgress ? $0 : nil } }
 
     /// The latest turn that has ended, as its id and outcome. Changes when a turn ends (or history
@@ -191,6 +198,9 @@ public final class ThreadModel: Identifiable {
     func setSummary(_ s: ThreadSummary) {
         if summary != s { summary = s }
         if info == nil, status != s.status { status = s.status }
+        // A chat the daemon hasn't loaded runs nothing; a server too old to count says nothing.
+        let count = s.backgroundTasks ?? (s.status == .notLoaded ? 0 : backgroundTaskCount)
+        if count != backgroundTaskCount { backgroundTaskCount = count }
         refreshTitle()
     }
 
@@ -362,9 +372,12 @@ public final class ThreadModel: Identifiable {
                 status = e.status
             }
             if activity != e.activity?.rawValue { activity = e.activity?.rawValue }
+            if let count = e.backgroundTasks, count != backgroundTaskCount { backgroundTaskCount = count }
             if e.status == .idle, apiRetry != nil { apiRetry = nil }
         case .threadClosed:
             status = .closed
+            // Its background tasks ended with its process.
+            if backgroundTaskCount != 0 { backgroundTaskCount = 0 }
             settleTasks()
             setStreamingReply(nil)
         case .turnStarted(let e):

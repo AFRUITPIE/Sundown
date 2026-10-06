@@ -44,6 +44,10 @@ public final class HostConnection: Identifiable {
     /// Threads a view has asked to open, whether or not we were connected at the time.
     private var openRequested = Set<String>()
     private var chatsRefreshTask: Task<Void, Never>?
+    /// While a chat this client doesn't follow has background work, the list is asked for again
+    /// now and then: nothing else would say when that work ends.
+    private var backgroundRefreshTask: Task<Void, Never>?
+    static let backgroundRefreshInterval: Duration = .seconds(30)
     @ObservationIgnored private let transportProvider: TransportProvider?
 
     /// Reported to the daemon on connect.
@@ -252,6 +256,8 @@ public final class HostConnection: Identifiable {
         subscribed.removeAll()
         chatsRefreshTask?.cancel()
         chatsRefreshTask = nil
+        backgroundRefreshTask?.cancel()
+        backgroundRefreshTask = nil
         notificationTask?.cancel()
         for t in threads.values { t.clearPending() }
     }
@@ -504,8 +510,22 @@ public final class HostConnection: Identifiable {
             if recentOnly { next += chats.filter { $0.summary != nil && !ids.contains($0.id) } }
             // The sidebar regroups whenever this is set.
             if !next.elementsEqual(chats, by: ===) { chats = next }
+            scheduleBackgroundRefresh()
         } catch {
             appendLog("thread/list failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Asks for the list again in a while if a chat whose status nothing streams here has
+    /// background work; a subscribed chat hears when its count changes.
+    private func scheduleBackgroundRefresh() {
+        guard backgroundRefreshTask == nil,
+              chats.contains(where: { $0.hasBackgroundWork && !subscribed.contains($0.id) }) else { return }
+        backgroundRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.backgroundRefreshInterval)
+            guard let self, !Task.isCancelled else { return }
+            self.backgroundRefreshTask = nil
+            await self.loadChats()
         }
     }
 
