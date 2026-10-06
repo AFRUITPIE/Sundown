@@ -616,7 +616,8 @@ private extension NSFont {
 /// which code blocks, quotes and rules use. Copy puts plain text on the pasteboard.
 final class MarkdownNSTextView: NSTextView {
     var theme = MarkdownTheme(style: .reply, scale: 1, increasedContrast: false)
-    private var measured: (width: CGFloat, size: CGSize)?
+    /// Sizes measured, by width: SwiftUI asks about a few, the same ones again and again.
+    private var measured: [CGFloat: CGSize] = [:]
     /// Each code block's Copy button, by where its block starts.
     private var copyButtons: [NSHostingView<CodeCopyButton>] = []
     private var copyButtonSize: CGSize?
@@ -650,8 +651,15 @@ final class MarkdownNSTextView: NSTextView {
 
     /// The text's size laid out at `width`: its height, and, for a bubble, its widest line.
     func measure(width: CGFloat, natural: Bool = false) -> CGSize {
-        if !natural, let measured, measured.width == width { return measured.size }
+        let key = natural ? -1 : width
+        if let size = measured[key] { return size }
         guard let layout = layoutManager, let container = textContainer, let storage = textStorage else { return .zero }
+        // A width too narrow to hold a word (a stack asking how far it can shrink) isn't laid out:
+        // a line a letter wide is the most expensive layout there is, and it's never shown.
+        if width < theme.body.pointSize * 2 {
+            return CGSize(width: width, height: theme.body.pointSize * 10)
+        }
+        let drawn = container.size.width
         container.size = NSSize(width: width, height: .greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
@@ -669,28 +677,35 @@ final class MarkdownNSTextView: NSTextView {
             height += 6 * theme.scale
         }
         height = ceil(max(height, theme.body.pointSize))
-        // A reply takes the column. A bubble hugs its widest line, unless a box (code, a table)
-        // spans it; the glyphs' own bounds, since in a window the used rect can span the container.
-        guard theme.style == .prompt || natural else {
-            let size = CGSize(width: width, height: height)
-            measured = (width, size)
-            return size
+        var size = CGSize(width: width, height: height)
+        // A bubble hugs its widest line, unless a box (code, a table) spans it; the glyphs' own
+        // bounds, since in a window the used rect can span the container, and a point to spare.
+        if theme.style == .prompt || natural {
+            let glyphs = layout.glyphRange(for: container)
+            let textWidth = ceil(glyphs.length > 0 ? min(layout.boundingRect(forGlyphRange: glyphs, in: container).maxX + 2, used.width) : 0)
+            let box = Self.hasBox(storage)
+            size.width = natural ? textWidth + (box ? 2 * theme.codeInset : 0) : box ? width : textWidth
         }
-        let glyphs = layout.glyphRange(for: container)
-        let textWidth = ceil(glyphs.length > 0 ? min(layout.boundingRect(forGlyphRange: glyphs, in: container).maxX, used.width) : 0)
-        let box = Self.hasBox(storage)
-        if natural { return CGSize(width: textWidth + (box ? 2 * theme.codeInset : 0), height: height) }
-        let size = CGSize(width: box ? width : textWidth, height: height)
-        measured = (width, size)
+        // The unwrapped size is a question, not the width it will be drawn at: the drawn layout is
+        // put back. (Any other width is usually the next frame's, so it stays laid out.)
+        if natural, drawn > 0 { container.size = NSSize(width: drawn, height: .greatestFiniteMagnitude) }
+        if measured.count > 8 { measured = [:] }
+        measured[key] = size
         return size
     }
 
     /// SwiftUI may ask about other widths than the one the view ends up at; it's laid out again at
     /// its own width before it's drawn, not after each question.
     override func viewWillDraw() {
-        if let container = textContainer, bounds.width > 0, abs(container.size.width - bounds.width) >= 1 {
+        // A bubble hugs its text, narrower than it was measured at: laid out again at that width,
+        // a line could wrap differently from the one measured.
+        let hugs = theme.style == .prompt && bounds.width <= (textContainer?.size.width ?? 0)
+        if let container = textContainer, bounds.width > 0, !hugs, abs(container.size.width - bounds.width) >= 1 {
             container.size = NSSize(width: bounds.width, height: .greatestFiniteMagnitude)
         }
+        // Copy buttons follow their code boxes, placed as the text is drawn rather than by asking
+        // for a layout pass of their own.
+        placeCopyButtons()
         super.viewWillDraw()
     }
 
@@ -699,9 +714,9 @@ final class MarkdownNSTextView: NSTextView {
         // makes room for the box's header with an inset instead.
         let top = startsWithCode ? theme.codeHeader : 0
         if textContainerInset.height != top { textContainerInset = NSSize(width: 0, height: top) }
-        measured = nil
-        invalidateIntrinsicContentSize()
-        needsLayout = true
+        measured = [:]
+        // No layout asked for: the text is set while SwiftUI sizes the view, and a new value is
+        // sized again anyway. Asking from inside its layout kept rows being laid out and rebuilt.
         needsDisplay = true
     }
 
@@ -732,16 +747,6 @@ final class MarkdownNSTextView: NSTextView {
         let area = rect.offsetBy(dx: -origin.x, dy: -origin.y).insetBy(dx: 0, dy: -theme.codeHeader - theme.codeBottom)
         let glyphs = layout.glyphRange(forBoundingRect: area, in: container)
         layout.drawDecorations(forGlyphRange: glyphs, at: origin)
-    }
-
-    override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
-        needsLayout = true
-    }
-
-    override func layout() {
-        super.layout()
-        placeCopyButtons()
     }
 
     // The transcript scrolls itself. A text view scrolls its selection into view after laying

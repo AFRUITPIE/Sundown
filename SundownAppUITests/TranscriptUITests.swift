@@ -201,10 +201,8 @@ final class TranscriptUITests: SundownUITestCase {
         app.typeKey("1", modifierFlags: .command)
         XCTAssertTrue(input.appears(timeout: 5), "⌘1 didn't come back to the chat")
         XCTAssertTrue(waitUntil(5) { footer.isHittable }, "the chat isn't at its end after switching to Tasks and back")
-        // A known fault, in the app: the chat comes back at its end, but offers Jump to Latest.
-        XCTExpectFailure("Jump to Latest is offered on returning to Chat from another tab") {
-            XCTAssertFalse(app.buttons["Jump to Latest"].exists, "Jump to Latest is offered after switching to Tasks and back")
-        }
+        // At its end, it doesn't offer to jump there.
+        XCTAssertFalse(app.buttons["Jump to Latest"].exists, "Jump to Latest is offered after switching to Tasks and back")
         // Back where it started, 1000 points wide, moved by the title bar's empty stretch between
         // the window buttons and the sidebar toggle.
         resize(to: 1000)
