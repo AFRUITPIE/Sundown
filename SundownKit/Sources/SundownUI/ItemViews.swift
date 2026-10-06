@@ -83,7 +83,9 @@ private struct MessageMenu: ViewModifier {
     private var trailing: Bool { !isMarkdown }
 
     func body(content: Content) -> some View {
-        VStack(alignment: trailing ? .trailing : .leading, spacing: 8) {
+        // A prompt's capsule hangs off its bubble's bottom edge; a reply has no edge, so its
+        // capsule sits under the text.
+        VStack(alignment: trailing ? .trailing : .leading, spacing: trailing ? -Self.overlap : 6) {
             content
                 // The blank beside a short line is the message too, so right-clicking there works.
                 .contentShape(.rect)
@@ -93,11 +95,15 @@ private struct MessageMenu: ViewModifier {
             // has none: the turn's actions go once, after its last reply.
             if hasBar {
                 bar
-                    .opacity(showsActions ? 1 : 0)
-                    .animation(.easeOut(duration: 0.12), value: showsActions)
+                    .padding(.trailing, trailing ? 10 : 0)
+                    .animation(.easeOut(duration: 0.15), value: showsActions)
             }
         }
-            .onHover { hovering = $0 }
+            .onHover { inside in
+                hovering = inside
+                // A prompt pointed at keeps its turn's capsule from showing too.
+                if !isMarkdown { turnHover?.pointer(inside, prompt: id) }
+            }
             // A reply is one element, as a prompt's bubble is, so its actions are the reply's and not
             // each paragraph's; and says when it was sent, as the inline footer does visually.
             .modifier(ReplyElement(isReply: isMarkdown))
@@ -128,28 +134,43 @@ private struct MessageMenu: ViewModifier {
     /// A prompt has its own; a reply in the transcript only at the end of its finished turn.
     private var hasBar: Bool { !isMarkdown || place == nil || place?.isEnd == true }
 
+    /// One capsule at a time: a prompt's while it's pointed at; otherwise the one at the end of
+    /// the turn under the pointer.
     private var showsActions: Bool {
         if hovering { return true }
-        guard isMarkdown, let place else { return false }
-        return turnHover?.turn == place.turn
+        guard isMarkdown, let place, let turnHover else { return false }
+        return turnHover.turn == place.turn && turnHover.prompt == nil
     }
 
-    /// When it was sent, then the actions as icons, named in their help tags.
+    /// How far a prompt's capsule reaches up over its bubble.
+    private static let overlap: CGFloat = 9
+
+    /// When it was sent, then the actions as icons, named in their help tags, one size, in a glass
+    /// capsule. Hidden, its contents fade under the glass and the glass goes, so it stays in place
+    /// for the keyboard and VoiceOver.
     private var bar: some View {
         HStack(spacing: 12) {
             Text(Format.messageTime(msSinceEpoch: sentAt))
-                .scaledFont(.caption)
-                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .glassHelp(Date(timeIntervalSince1970: sentAt / 1000).formatted(.dateTime.weekday(.wide).month().day().year().hour().minute()))
                 .accessibilityIdentifier("message.time")
             CopyButton(action: copyText)
+                .glassHelp("Copy")
                 .accessibilityIdentifier("message.copy.\(id)")
             if offersChatActions {
-                Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
-                    .help("Fork from Here")
+                Button { forkChat(id) } label: {
+                    Label {
+                        Text("Fork from Here")
+                    } icon: {
+                        // Turned on its side, the conversation splitting as it goes.
+                        Image(systemName: "arrow.triangle.branch").rotationEffect(.degrees(90))
+                    }
+                }
+                    .glassHelp("Fork from Here")
                     .accessibilityIdentifier("message.fork.\(id)")
                 if !isMarkdown {
                     Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
-                        .help("Restore Code to Here")
+                        .glassHelp("Restore Code to Here")
                         .accessibilityIdentifier("message.restore.\(id)")
                 }
             }
@@ -158,6 +179,14 @@ private struct MessageMenu: ViewModifier {
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
         .scaledFont(.callout)
+        .opacity(showsActions ? 1 : 0)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 5)
+        // Glass behind the buttons rather than around them: buttons inside a glass effect showed
+        // no help tags.
+        .background {
+            Capsule().fill(.clear).glassEffect(showsActions ? .regular : .identity, in: .capsule)
+        }
     }
 
     // Converted when chosen, not per update: a streaming reply's body runs every frame. At the end
@@ -178,15 +207,24 @@ struct CopyButton: View {
     var body: some View {
         Button {
             action()
-            copied = true
+            withAnimation(.snappy(duration: 0.12)) { copied = true }
         } label: {
-            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                .contentTransition(.symbolEffect(.replace))
+            Label {
+                Text(copied ? "Copied" : "Copy")
+            } icon: {
+                // Sized by the copy symbol whichever is showing, so the checkmark doesn't resize
+                // the button or move what's beside it.
+                ZStack {
+                    Image(systemName: "doc.on.doc").hidden()
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .contentTransition(.symbolEffect(.replace, options: .speed(3)))
+                }
+            }
         }
         .task(id: copied) {
             guard copied else { return }
             try? await Task.sleep(for: .seconds(1.2))
-            copied = false
+            withAnimation(.snappy(duration: 0.12)) { copied = false }
         }
         .help("Copy")
     }

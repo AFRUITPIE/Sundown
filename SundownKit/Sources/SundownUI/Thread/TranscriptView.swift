@@ -549,6 +549,13 @@ struct TurnPlace: Equatable {
 @MainActor @Observable
 final class TurnHover {
     private(set) var turn: String?
+    /// The prompt under the pointer, whose own capsule shows instead of its turn's.
+    private(set) var prompt: String?
+
+    func pointer(_ inside: Bool, prompt id: String) {
+        if inside { if prompt != id { prompt = id } } else if prompt == id { prompt = nil }
+    }
+
     @ObservationIgnored private var leaving: Task<Void, Never>?
 
     func pointer(_ inside: Bool, turn key: String) {
