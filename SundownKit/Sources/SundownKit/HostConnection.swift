@@ -407,7 +407,8 @@ public final class HostConnection: Identifiable {
         do {
             let r = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: model.lastSeq))
             if r.gap || r.thread.lastSeq < model.lastSeq {
-                // Server restarted or buffer overflowed: reload the transcript.
+                // Server restarted or buffer overflowed: reload the transcript, and its runs.
+                forgetWorkflows(of: model.id)
                 try await loadHistory(model, force: true)
             } else {
                 model.setInfo(r.thread)
@@ -863,6 +864,7 @@ public final class HostConnection: Identifiable {
         threads.removeValue(forKey: model.id)
         openRequested.remove(model.id)
         subscribed.remove(model.id)
+        forgetWorkflows(of: model.id)
     }
 
     /// What asking for an older page came to, so a caller asking again knows whether to.
@@ -915,6 +917,14 @@ public final class HostConnection: Identifiable {
     /// The daemon doesn't know `workflow/read` or `workflow/agentItems` (one older than them):
     /// not asked again on this connection.
     @ObservationIgnored private var workflowMethodsMissing = false
+
+    /// Lets go of the finished runs read for a chat that's deleted, or reloaded after a gap. A chat
+    /// merely let go of (`leave`) keeps them: they're what it shows when it's reopened, without
+    /// asking again (`RPCBudgetTests`).
+    private func forgetWorkflows(of threadID: String) {
+        let prefix = "\(threadID)/"
+        finishedWorkflows = finishedWorkflows.filter { !$0.key.hasPrefix(prefix) }
+    }
 
     /// Reads the run of each Workflow call with no live task, in the background.
     private func readWorkflows(of model: ThreadModel) {

@@ -85,8 +85,28 @@ struct WorkflowRunTests {
         #expect(run.agents.map(\.state) == [.done, .running, .waiting, .stopped, .failed])
         #expect(run.agents.map(\.phaseTitle) == ["Review", "Verify", "Verify", "Verify", "Verify"])
         #expect(run.progressText == "Verify: 1 of 5 agents done")
-        #expect(run.phaseSummary(run.phases[0]) == "Review: 1 agent, done")
-        #expect(run.phaseSummary(run.phases[1]) == "Verify: running")
+    }
+
+    /// A daemon that passes the CLI's agent states through as they are (with `skipped` for one the
+    /// person skipped), and an older one's names for them, read the same.
+    @Test func agentStatesAreReadAsTheCLINamesThem() {
+        let snapshot: JSONValue = [
+            "runId": "r", "status": "running", "error": "boom",
+            "phases": [],
+            "agents": [
+                ["index": 1, "label": "a", "state": "queued"],
+                ["index": 2, "label": "b", "state": "start", "queuedAt": 1, "startedAt": 2],
+                ["index": 3, "label": "c", "state": "progress"],
+                ["index": 4, "label": "d", "state": "cached"],
+                ["index": 5, "label": "e", "state": "skipped"],
+                ["index": 6, "label": "f", "state": "error", "skipped": true, "error": "skipped"],
+                ["index": 7, "label": "g", "state": "error", "error": "stalled"],
+                ["index": 8, "label": "h", "state": "something new"],
+            ],
+        ]
+        let run = WorkflowRun(call: call(), task: nil, loaded: snapshot)
+        #expect(run.agents.map(\.state) == [.waiting, .running, .running, .done, .stopped, .stopped, .failed, .running])
+        #expect(run.error == "boom")
     }
 
     @Test func aRunReadsItsWordsFromTheSnapshot() {
@@ -109,6 +129,18 @@ struct WorkflowRunTests {
                                   loaded: WorkflowSample.snapshot(now: 1_000_000, running: true))
         #expect(stopped.status == .stopped)
         #expect(!stopped.agents.contains { $0.state == .running || $0.state == .waiting })
+        #expect(stopped.agents.contains { $0.state == .stopped })
+        // A completed run's agents still going when it was last heard of finished with it.
+        let completed = WorkflowRun(call: call(), task: task("notification", seq: 2, status: "completed"),
+                                    loaded: WorkflowSample.snapshot(now: 1_000_000, running: true))
+        #expect(completed.status == .completed)
+        #expect(completed.agents.allSatisfy { $0.state == .done })
+        // A run the daemon can't say how it ended (cut off) stopped them.
+        var cutOff = WorkflowSample.snapshot(now: 1_000_000, running: true)
+        if case .object(var o) = cutOff { o["status"] = "unknown"; cutOff = .object(o) }
+        let unknown = WorkflowRun(call: call(), task: nil, loaded: cutOff)
+        #expect(unknown.status == .unknown)
+        #expect(!unknown.agents.contains { $0.state == .running || $0.state == .waiting })
         #expect(WorkflowRun(call: call(), task: task("started", seq: 1)).progressText == "Starting")
     }
 
@@ -166,6 +198,20 @@ struct WorkflowRunTests {
         #expect(thread.workflowRuns[WorkflowSample.callID]?.status == .completed)
         thread.unload()
         #expect(thread.workflowRuns.isEmpty)
+    }
+
+    /// A finished agent's transcript is kept with the chat only while its workflow's call is.
+    @Test func trimmingLetsGoOfAgentTranscriptsWithTheirCall() {
+        let thread = loaded()
+        let item = Item.agentMessage(.init(id: "a1", createdAt: 1, text: "hi"))
+        thread.rememberWorkflowAgentTranscript([item], runId: WorkflowSample.runID, agentId: "x")
+        thread.rememberWorkflowAgentTranscript([item], runId: "gone", agentId: "y")
+        thread.trim(toLast: 3)
+        #expect(thread.workflowAgentTranscript(runId: WorkflowSample.runID, agentId: "x") != nil)
+        #expect(thread.workflowAgentTranscript(runId: "gone", agentId: "y") == nil)
+        thread.trim(toLast: 1)
+        #expect(thread.workflowRuns.isEmpty)
+        #expect(thread.workflowAgentTranscript(runId: WorkflowSample.runID, agentId: "x") == nil)
     }
 
     /// An event that changes nothing about a run leaves the runs alone, so the rows reading them
@@ -237,5 +283,16 @@ struct WorkflowRunTests {
         }
         #expect(e.data["workflow"]?["runId"]?.stringValue == "r1")
         #expect(e.data["task_type"]?.stringValue == "local_workflow")
+    }
+
+    /// An event whose data isn't an object still carries its snapshot.
+    @Test func theSnapshotIsKeptWhenDataIsNotAnObject() throws {
+        let params = Data(#"{"threadId":"wf","seq":1,"event":"notification","taskId":"t","data":null,"workflow":{"runId":"r1","status":"completed","phases":[],"agents":[]}}"#.utf8)
+        let decoder = JSONDecoder()
+        let n = try ServerNotification(method: "task/event", params: params, decoder: decoder)
+        guard case .taskEvent(let e) = RPCClient.carryingWorkflow(n, params: params, decoder: decoder) else {
+            Issue.record("not a task event"); return
+        }
+        #expect(e.data["workflow"]?["status"]?.stringValue == "completed")
     }
 }

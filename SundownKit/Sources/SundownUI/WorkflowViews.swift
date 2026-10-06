@@ -9,32 +9,34 @@ import TetherProtocol
 /// chat when it finishes.
 struct WorkflowCallView: View {
     let call: Item.ToolCall
-    /// The thread's run for the call (`ThreadModel.workflowRuns`); nil before the thread has made one.
+    /// The thread's run for the call (`ThreadModel.workflowRuns`). Nil only for a call the thread
+    /// doesn't hold, which reads as its call says, never building a run (or reading its script) here.
     let run: WorkflowRun?
     @Environment(\.inspectSubagent) private var inspectSubagent
     @Environment(\.stopTask) private var stopTask
 
+    private var isRunning: Bool { run?.isRunning ?? (call.status == .running || call.status == .pending) }
+
     var body: some View {
-        let run = self.run ?? WorkflowRun(call: call, task: nil)
         VStack(alignment: .leading, spacing: 2) {
             Button { inspectSubagent(call.id) } label: {
                 HStack(spacing: 6) {
-                    header(run)
+                    header
                     DisclosureIndicator(expanded: false)
                 }
                 .padding(.vertical, 4)
                 .contentShape(Rectangle())
             }
-            .help(run.description ?? "Show in Tasks")
+            .help(run?.description ?? "Show in Tasks")
             .buttonStyle(.plain)
             .accessibilityLabel { label in
                 label
-                Text(statusWords(run))
+                Text(statusWords)
             }
             .accessibilityHint("Shows the workflow in Tasks")
             .accessibilityIdentifier("transcript.toolCall")
-            .contextMenu { menu(run) }
-            if let caption = caption(run) {
+            .contextMenu { menu }
+            if let caption {
                 Text(caption)
                     .scaledFont(.caption)
                     .foregroundStyle(.tertiary)
@@ -45,25 +47,27 @@ struct WorkflowCallView: View {
         }
     }
 
-    private func header(_ run: WorkflowRun) -> some View {
+    private var header: some View {
         let verb = ToolCallText.verb(call, workflow: run)
         let object = ToolCallText.object(call, workflow: run)
         return HStack(spacing: 6) {
-            if run.isRunning {
+            if isRunning {
                 // Live while the run goes on, whatever the turn is doing.
                 ActivityLabel(text: object.isEmpty ? verb : "\(verb) \(object)", live: true)
                     .fontWeight(.medium)
-                Text(run.progressText)
-                    .scaledFont(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .lineLimit(1)
+                if let run {
+                    Text(run.progressText)
+                        .scaledFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
             } else {
                 Text(verb).foregroundStyle(.secondary).fontWeight(.medium)
                 if !object.isEmpty {
                     Text(object).foregroundStyle(.primary).lineLimit(1).truncationMode(.middle)
                 }
-                switch run.status {
+                switch run?.status {
                 case .failed: Image(systemName: "exclamationmark.circle").foregroundStyle(.tertiary).scaledFont(.caption)
                 case .stopped: Image(systemName: "stop.circle").foregroundStyle(.tertiary).scaledFont(.caption)
                 default: EmptyView()
@@ -74,8 +78,9 @@ struct WorkflowCallView: View {
     }
 
     /// Under the row: what a finished run did, or why it didn't finish, in gray.
-    private func caption(_ run: WorkflowRun) -> String? {
+    private var caption: String? {
         if call.status == .denied { return "Denied" }
+        guard let run else { return nil }
         switch run.status {
         case .failed:
             let reason = (run.error ?? ToolCallText.reason(call) ?? "")
@@ -89,22 +94,24 @@ struct WorkflowCallView: View {
         }
     }
 
-    private func statusWords(_ run: WorkflowRun) -> String {
-        switch run.status {
-        case .running: "Running, \(run.progressText)"
+    private var statusWords: String {
+        switch run?.status {
+        case .running: "Running, \(run?.progressText ?? "")"
         case .failed: "Failed"
         case .stopped: "Stopped"
         case .completed: "Finished"
-        case .unknown: ""
+        case .unknown, nil: isRunning ? "Running" : ""
         }
     }
 
-    @ViewBuilder private func menu(_ run: WorkflowRun) -> some View {
+    /// Also the workflow's detail's controls in Tasks (Copy Script, Stop): a menu is never the only
+    /// way to a command.
+    @ViewBuilder private var menu: some View {
         Button("Show in Tasks") { inspectSubagent(call.id) }
-        if let script = call.input["script"]?.stringValue, !script.isEmpty {
+        if let script = call.workflowScript {
             Button("Copy Script") { Clipboard.copy(script) }
         }
-        if run.isRunning, let taskId = run.taskId {
+        if let run, run.isRunning, let taskId = run.taskId {
             Divider()
             Button("Stop Workflow") { stopTask(taskId) }
         }
@@ -135,12 +142,12 @@ struct WorkflowResultView: View {
     }
 }
 
-/// A workflow on its own in the Tasks tab: what it's for, how each phase stands, what it used, and
-/// once it has finished, what it returned. Never its script or launch receipt.
+/// A workflow on its own in the Tasks tab: what it's for, what it used, and once it has finished,
+/// what it returned. Never its script or launch receipt, nor how each phase stands: the column of
+/// its agents beside it says that, in a section per phase. `TasksPane` reads the run again while
+/// it goes on.
 struct WorkflowReport: View {
     let run: WorkflowRun
-    let thread: ThreadModel
-    let connection: HostConnection
 
     var body: some View {
         ScrollView {
@@ -150,16 +157,6 @@ struct WorkflowReport: View {
                 }
                 if run.isRunning {
                     ActivityLabel(text: run.activity ?? run.progressText, live: true)
-                }
-                if !run.phases.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(run.phases, id: \.index) { phase in
-                            Text(run.phaseSummary(phase))
-                                .help(phase.detail ?? "")
-                        }
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Phases")
                 }
                 let usage = run.usageText
                 if !usage.isEmpty {
@@ -179,22 +176,14 @@ struct WorkflowReport: View {
             .scenePadding([.horizontal, .bottom])
             .padding(.top, 8)
         }
-        // A run this client isn't told about (a reload, another client's) is read now and then
-        // while it goes on.
-        .task(id: run.toolUseId) {
-            while !Task.isCancelled {
-                if !thread.hasLiveWorkflowTask(run.toolUseId) {
-                    await connection.loadWorkflow(thread, toolUseId: run.toolUseId)
-                }
-                guard thread.workflowRuns[run.toolUseId]?.isRunning == true else { return }
-                try? await Task.sleep(for: .seconds(5))
-            }
-        }
     }
 }
 
 /// One workflow agent's run, as the chat draws a subagent's: its prompt, its calls folded and its
-/// replies, read from the agent's own transcript (`workflow/agentItems`), again as it goes on.
+/// replies, read from the agent's own transcript (`workflow/agentItems`), again as it goes on. Its
+/// prompt is the script's task alone, without the harness's framing or the person's relayed
+/// request (`WorkflowAgentPrompt`); its rows are folded when its items or the folding change, not
+/// per body.
 /// Before the agent has an id, or from a host that can't read it, what the run's snapshot says:
 /// the start of its prompt, its latest tool, the start of its result.
 struct WorkflowAgentTranscript: View {
@@ -203,6 +192,7 @@ struct WorkflowAgentTranscript: View {
     let run: WorkflowRun
     let agent: WorkflowRun.Agent
     @State private var items: [Item]?
+    @State private var rows: [TranscriptRow] = []
     @State private var failure: String?
     @State private var attempt = 0
     @State private var lastFetch: ContinuousClock.Instant?
@@ -215,20 +205,27 @@ struct WorkflowAgentTranscript: View {
         "\(agent.agentId ?? "")|\(agent.toolCalls ?? -1)|\(agent.lastProgressAt ?? 0)|\(agent.state)|\(attempt)"
     }
 
+    private var grouping: Bool { appearance.toolCalls.folding != .everyCall }
+
     var body: some View {
         Group {
             if let items, !items.isEmpty {
-                transcript(items)
+                transcript
             } else {
                 summary
             }
         }
         .task(id: fetchKey) { await fetch() }
+        .onChange(of: grouping) { refold() }
+        .onChange(of: running) { refold() }
     }
 
-    private func transcript(_ items: [Item]) -> some View {
-        let rows = foldTranscriptRows(items, grouping: appearance.toolCalls.folding != .everyCall, live: running)
-        return ScrollView {
+    private func refold() {
+        rows = items.map { foldTranscriptRows($0, grouping: grouping, live: running) } ?? []
+    }
+
+    private var transcript: some View {
+        ScrollView {
             LazyVStack(alignment: .leading, spacing: 14) {
                 ForEach(rows, id: \.id) { row in
                     // Its own values each read: these items aren't the thread's, so their rows
@@ -257,6 +254,7 @@ struct WorkflowAgentTranscript: View {
 
     private var activity: String? {
         guard let tool = agent.lastToolName else { return nil }
+        if tool == "StructuredOutput" { return "Returning its result" }
         guard let summary = agent.lastToolSummary, !summary.isEmpty else { return tool }
         return "\(tool) \(summary)"
     }
@@ -312,7 +310,11 @@ struct WorkflowAgentTranscript: View {
         do {
             let read = try await connection.workflowAgentItems(thread, runId: runId, agentId: agentId, finished: !running)
             guard !Task.isCancelled else { return }
-            items = read
+            let unframed = WorkflowAgentPrompt.unframed(read)
+            if unframed != items {
+                items = unframed
+                refold()
+            }
             failure = read.isEmpty && !running ? "This agent’s transcript is empty." : nil
         } catch {
             guard !Task.isCancelled else { return }

@@ -99,8 +99,8 @@ public final class ThreadModel: Identifiable {
     /// Snapshots of workflow runs read with `workflow/read`, by the Workflow call's id: what a run
     /// with no live task (a reload, a followed chat) is shown from.
     @ObservationIgnored private var loadedWorkflows: [String: JSONValue] = [:]
-    /// Each Workflow call's script `meta`, read once.
-    @ObservationIgnored private var workflowMetas: [String: WorkflowScript.Meta] = [:]
+    /// Each Workflow call's script `meta`, read once, a script without one included (nil).
+    @ObservationIgnored private var workflowMetas: [String: WorkflowScript.Meta?] = [:]
     /// A finished workflow agent's transcript, by run and agent id, as `workflow/agentItems` read it.
     /// Let go when the chat is.
     @ObservationIgnored private var workflowAgentItems: [String: [Item]] = [:]
@@ -354,6 +354,11 @@ public final class ThreadModel: Identifiable {
         loadedWorkflows = loadedWorkflows.filter { held.contains($0.key) }
         workflowMetas = workflowMetas.filter { held.contains($0.key) }
         reindex()
+        // An agent's transcript is kept only while its workflow's call is.
+        let runs = Set(workflowRuns.values.compactMap(\.runId))
+        workflowAgentItems = workflowAgentItems.filter { key, _ in
+            key.split(separator: "/", maxSplits: 1).first.map { runs.contains(String($0)) } ?? false
+        }
         fileChanges = fileChanges.filter { held.contains($0.key) }
         if !hasMoreHistory { hasMoreHistory = true }
     }
@@ -742,10 +747,14 @@ public final class ThreadModel: Identifiable {
         if let known = workflowMetas[call.id] {
             meta = known
         } else {
+            // Read once, whatever it holds: a script without a meta isn't read again per event.
             meta = call.input["script"]?.stringValue.flatMap(WorkflowScript.meta)
-            if let meta { workflowMetas[call.id] = meta }
+            workflowMetas[call.id] = .some(meta)
+            if let name = meta?.name { WorkflowScript.remember(name: name, forCall: call.id) }
         }
-        return WorkflowRun(call: call, task: taskEvent(forToolUseId: call.id), loaded: loadedWorkflows[call.id], meta: meta)
+        // `meta` is given, so the run never reads the script itself.
+        return WorkflowRun(call: call, task: taskEvent(forToolUseId: call.id), loaded: loadedWorkflows[call.id],
+                           meta: meta ?? .empty)
     }
 
     /// A run read with `workflow/read`, for the Workflow call `toolUseId`. A live task's events

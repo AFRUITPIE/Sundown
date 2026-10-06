@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import TetherProtocol
 
 // A Claude Code dynamic workflow ("ultracode"): a `Workflow` tool call whose script runs many
@@ -10,6 +11,16 @@ import TetherProtocol
 extension Item.ToolCall {
     /// A dynamic workflow's launch: recognized by the tool's name, so older daemons' calls are too.
     public var isWorkflow: Bool { name == "Workflow" }
+
+    /// A Workflow call's script, when it was sent inline (not run from a saved file).
+    public var workflowScript: String? {
+        guard isWorkflow, let script = input["script"]?.stringValue, !script.isEmpty else { return nil }
+        return script
+    }
+
+    /// A workflow agent's last call, which hands its result back to the script (its input is the
+    /// result, as JSON): what the agent returned, not something it did.
+    public var isStructuredOutput: Bool { name == "StructuredOutput" }
 }
 
 /// What a workflow script says of itself: `export const meta = { name, description, phases }`, a
@@ -24,6 +35,9 @@ public enum WorkflowScript {
             public var title: String
             public var detail: String?
         }
+
+        /// A script that says nothing of itself.
+        public static let empty = Meta(name: nil, description: nil, phases: [])
     }
 
     /// The script's `meta`, read tolerantly: single, double or backtick quotes, keys quoted or not,
@@ -39,6 +53,88 @@ public enum WorkflowScript {
             return phase.stringValue.map { Meta.Phase(title: $0, detail: nil) }
         }
         return Meta(name: object["name"]?.stringValue, description: object["description"]?.stringValue, phases: phases)
+    }
+
+    /// A Workflow call's name from what it says without its script being read: a named workflow,
+    /// else the saved script's file (`<name>-<runId>.js`).
+    public static func callName(_ call: Item.ToolCall) -> String? {
+        if let name = call.input["name"]?.stringValue, !name.isEmpty { return name }
+        guard let path = call.input["scriptPath"]?.stringValue, !path.isEmpty else { return nil }
+        let file = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+        return file.replacingOccurrences(of: #"-wf_[A-Za-z0-9_-]+$"#, with: "", options: .regularExpression)
+    }
+
+    /// Script names already read, by Workflow call id, for Find: a row's search text is made off the
+    /// main actor, and never reads a script itself. Filled where the script is read
+    /// (`ThreadModel`); at most a few hundred kept.
+    private static let names = Mutex<[String: String]>([:])
+
+    static func remember(name: String, forCall id: String) {
+        names.withLock { names in
+            if names.count >= 512 { names.removeAll(keepingCapacity: true) }
+            names[id] = name
+        }
+    }
+
+    /// What Find searches a Workflow call for: its name as the call says it, or as its script's
+    /// meta was read.
+    public static func searchName(_ call: Item.ToolCall) -> String? {
+        if let name = call.input["name"]?.stringValue, !name.isEmpty { return name }
+        return names.withLock { $0[call.id] } ?? callName(call)
+    }
+}
+
+/// What a workflow agent was asked. The CLI frames its prompt for the agent in two messages: the
+/// person's request that started the run, relayed ("[Workflow harness — user request] …"), and the
+/// script's task for this agent ("[Workflow harness — computed task] … follows:" and the task,
+/// every line indented). Only the task is the agent's prompt; the relayed request is the person's
+/// own words, already in the chat. A daemon that unframes it sends the task alone, which is kept
+/// as it is.
+public enum WorkflowAgentPrompt {
+    private static let userRequest = #"^\[Workflow harness\s*[—–-]+\s*user request\]"#
+    private static let computedTask = #"\[Workflow harness\s*[—–-]+\s*computed task\]"#
+
+    /// The agent's items with its framed prompt unframed: the relayed request dropped, the task
+    /// de-indented. Items that aren't framed are as they came.
+    public static func unframed(_ items: [Item]) -> [Item] {
+        items.compactMap { item in
+            guard case .userMessage(var m) = item else { return item }
+            var changed = false
+            m.content = m.content.compactMap { part in
+                guard case .text(var t) = part, let text = unframed(t.text) else { return part }
+                changed = true
+                if text.isEmpty { return nil }
+                t.text = text
+                return .text(t)
+            }
+            guard changed else { return item }
+            return m.content.isEmpty ? nil : .userMessage(m)
+        }
+    }
+
+    /// One text's task, de-indented; empty for the relayed request alone; nil when it isn't framed.
+    static func unframed(_ text: String) -> String? {
+        if let task = text.range(of: computedTask, options: .regularExpression) {
+            // The task follows the frame's last line ("… follows:"), each of its lines indented.
+            let rest = text[task.upperBound...]
+            guard let start = rest.range(of: "follows:")?.upperBound ?? rest.firstIndex(of: "\n") else { return "" }
+            return deindented(rest[start...])
+        }
+        if text.range(of: userRequest, options: .regularExpression) != nil { return "" }
+        return nil
+    }
+
+    /// The harness indents every line of the task by two spaces.
+    private static func deindented(_ text: Substring) -> String {
+        var body = text
+        // The frame's line ends at "follows:"; the task starts on the next.
+        if let newline = body.firstIndex(of: "\n"), body[..<newline].allSatisfy(\.isWhitespace) {
+            body = body[body.index(after: newline)...]
+        }
+        return body.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.hasPrefix("  ") ? String($0.dropFirst(2)) : String($0) }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -248,8 +344,7 @@ public struct WorkflowRun: Equatable, Sendable {
         runId = snapshot?["runId"]?.stringValue ?? call.output?["runId"]?.stringValue
             ?? Self.runID(fromLaunchText: call.outputText)
         name = snapshot?["name"]?.stringValue ?? data["workflow_name"]?.stringValue ?? call.output?["workflowName"]?.stringValue
-            ?? meta?.name ?? call.input["name"]?.stringValue
-            ?? call.input["scriptPath"]?.stringValue.map { (($0 as NSString).lastPathComponent as NSString).deletingPathExtension }
+            ?? meta?.name ?? WorkflowScript.callName(call)
         description = snapshot?["description"]?.stringValue ?? task?.description ?? meta?.description
         activity = snapshot?["activity"]?.stringValue ?? data["workflow_activity"]?.stringValue
         totalTokens = snapshot?["totalTokens"]?.doubleValue ?? data["usage"]?["total_tokens"]?.doubleValue
@@ -313,7 +408,6 @@ public struct WorkflowRun: Equatable, Sendable {
             }
         }
         phases.sort { $0.index < $1.index }
-        let settled = status != .running
         for i in agents.indices {
             let index = agents[i].phaseIndex
             if let index, let phase = phases.first(where: { $0.index == index }), !phase.title.isEmpty,
@@ -322,8 +416,11 @@ public struct WorkflowRun: Equatable, Sendable {
             } else if let index, let title = agents[i].phaseTitle, let better = Self.metaTitle(index, title, meta) {
                 agents[i].phaseTitle = better
             }
-            // An agent still going in a workflow that has ended was stopped with it.
-            if settled, agents[i].state == .running || agents[i].state == .waiting { agents[i].state = .stopped }
+            // An agent still going in a workflow that has ended ended with it: done if the
+            // workflow completed (its last progress can come after, or not at all), else stopped.
+            if status != .running, agents[i].state == .running || agents[i].state == .waiting {
+                agents[i].state = status == .completed ? .done : .stopped
+            }
         }
         self.phases = phases.filter { phase in !phase.title.isEmpty || agents.contains { $0.phaseIndex == phase.index } }
         self.agents = agents
@@ -362,12 +459,14 @@ public struct WorkflowRun: Equatable, Sendable {
         let error = v["error"]?.stringValue
         let queuedAt = v["queuedAt"]?.doubleValue
         let startedAt = v["startedAt"]?.doubleValue
+        // The CLI's own words (start, progress, done, error, skipped, queued…), as a daemon passes
+        // them through, or as an older one named them; `skipped` marks one the person skipped.
         let state: Agent.State
         switch raw {
-        case "done", "completed": state = .done
-        case "skipped", "stopped", "killed": state = .stopped
-        case "error", "failed":
-            state = v["skipped"]?.boolValue == true || error == "skipped by user" ? .stopped : .failed
+        case _ where v["skipped"]?.boolValue == true: state = .stopped
+        case "done", "completed", "cached": state = .done
+        case "skipped", "stopped", "killed", "cancelled", "canceled": state = .stopped
+        case "error", "failed": state = error == "skipped by user" ? .stopped : .failed
         case "queued", "waiting", "pending": state = .waiting
         default:
             // "start" before it has a slot is waiting, as the CLI counts it.
@@ -420,26 +519,6 @@ public struct WorkflowRun: Equatable, Sendable {
         let count = Self.inflected("\(doneCount) of ^[\(agents.count) agent](inflect: true) done")
         guard phases.count > 1, let phase = currentPhase, !phase.title.isEmpty else { return count }
         return "\(phase.title): \(count)"
-    }
-
-    /// How a phase stands, in words: "List: 3 agents, done", "Verify: running".
-    public func phaseSummary(_ phase: Phase) -> String {
-        let agents = self.agents.filter { $0.phaseIndex == phase.index }
-        let title = phase.title.isEmpty ? "Phase \(phase.index)" : phase.title
-        let state: String
-        if agents.contains(where: { $0.state == .running }) {
-            state = "running"
-        } else if agents.contains(where: { $0.state == .waiting }) || agents.isEmpty {
-            state = status == .running ? "waiting" : "not run"
-        } else if agents.contains(where: { $0.state == .failed }) {
-            state = "failed"
-        } else if agents.contains(where: { $0.state == .stopped }) {
-            state = "stopped"
-        } else {
-            state = "done"
-        }
-        guard !agents.isEmpty, state != "running" else { return "\(title): \(state)" }
-        return "\(title): " + Self.inflected("^[\(agents.count) agent](inflect: true), \(state)")
     }
 
     /// What it used, in words: "4 agents · 98,951 tokens · 23 tool uses · 43s".

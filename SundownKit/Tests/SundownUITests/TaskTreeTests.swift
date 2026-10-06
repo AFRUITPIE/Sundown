@@ -1,7 +1,8 @@
 #if DEBUG
 import Foundation
 import Testing
-import SundownKit
+@testable import SundownKit
+import TetherProtocol
 @testable import SundownUI
 
 /// The Tasks tab's columns: each task under the one that started it, with what it is and how it stands.
@@ -71,6 +72,25 @@ struct TaskTreeTests {
         // One phase, or tasks that aren't a workflow's agents, have no sections.
         #expect(TaskNode.phaseSections(Array(agents.prefix(3))).count == 1)
         #expect(TaskNode.phaseSections(tree()).count == 1)
+    }
+
+    /// Agents in no phase come first, in a section with no header, never under an empty one.
+    @Test func agentsInNoPhaseHaveNoHeader() throws {
+        let snapshot: JSONValue = [
+            "runId": "r", "status": "running",
+            "phases": [["index": 1, "title": "Scan"], ["index": 2, "title": "Review"]],
+            "agents": [
+                ["index": 1, "label": "scan", "phaseIndex": 1, "state": "done"],
+                ["index": 2, "label": "loose", "state": "progress"],
+                ["index": 3, "label": "review", "phaseIndex": 2, "state": "progress"],
+            ],
+        ]
+        let run = try #require(WorkflowRun(toolUseId: "wf", snapshot: snapshot))
+        let entry = InspectorTaskEntry(id: "wf", call: nil, task: nil, isBackgrounded: false, workflow: run)
+        let workflow = try #require(TaskNode.tree([entry], call: { _ in nil }).first)
+        #expect(workflow.children.map(\.title) == ["loose", "scan", "review"])
+        let sections = TaskNode.phaseSections(workflow.children)
+        #expect(sections.map(\.title) == [nil, "Scan", "Review"])
     }
 
     @Test func aFinishedWorkflowKeepsItsTime() throws {

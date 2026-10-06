@@ -7,15 +7,16 @@ import TetherProtocol
 /// acted on. And for a run of finished calls, one line that says what they did together:
 /// "Read 3 files, searched code, and ran 2 commands". Pure, so it's tested without a view.
 enum ToolCallText {
-    /// The verb, before what the call acted on. A workflow's tense is its run's: its call comes
-    /// back as soon as the run has started.
+    /// The verb, before what the call acted on. A workflow's tense is its run's (the thread's
+    /// `workflowRuns`): its call comes back as soon as the run has started. Without one, its call's.
     static func verb(_ call: Item.ToolCall, workflow: WorkflowRun? = nil) -> String {
-        if call.isWorkflow {
-            let run = workflow ?? WorkflowRun(call: call, task: nil)
-            if call.status == .denied { return "Run workflow" }
-            return run.isRunning ? "Running workflow" : "Ran workflow"
-        }
         let running = call.status == .running || call.status == .pending
+        if call.isWorkflow {
+            if call.status == .denied { return "Run workflow" }
+            return (workflow?.isRunning ?? running) ? "Running workflow" : "Ran workflow"
+        }
+        // A workflow agent's hand-back of its result: what it returned is in the opened row.
+        if call.isStructuredOutput { return running ? "Returning its result" : "Returned its result" }
         switch call.kind {
         // Just that it ran: the command is in the help tag and the opened row, not on the line.
         case .bash: return running ? "Running a command" : call.status == .denied ? "Run a command" : "Ran a command"
@@ -39,7 +40,9 @@ enum ToolCallText {
     /// reader wants on every row.
     static func object(_ call: Item.ToolCall, workflow: WorkflowRun? = nil) -> String {
         if call.kind == .bash { return "" }
-        if call.isWorkflow { return (workflow ?? WorkflowRun(call: call, task: nil)).name ?? "" }
+        // Never the script read here: the run's name, else what the call names.
+        if call.isWorkflow { return workflow?.name ?? WorkflowScript.callName(call) ?? "" }
+        if call.isStructuredOutput { return "" }
         if let summary = call.summary { return summary }
         let input = call.input
         switch call.kind {
@@ -107,7 +110,7 @@ enum ToolCallText {
         case .fileEdit, .notebookEdit: return "edit"
         case .grep, .glob: return "search"
         case .mcp: return "mcp:" + (call.mcpServer ?? mcpServerName(call) ?? "")
-        default: return call.isWorkflow ? "workflow" : call.kind.rawValue
+        default: return call.isWorkflow ? "workflow" : call.isStructuredOutput ? "result" : call.kind.rawValue
         }
     }
 
@@ -117,6 +120,7 @@ enum ToolCallText {
         let first = calls[0]
         let files = Set(calls.map { object($0) }).count
         if first.isWorkflow { return n == 1 ? "ran a workflow" : "ran \(n) workflows" }
+        if first.isStructuredOutput { return "returned its result" }
         switch first.kind {
         case .bash: return n == 1 ? "ran a command" : "ran \(n) commands"
         case .fileRead: return files == 1 ? "read \(object(first))" : "read \(files) files"

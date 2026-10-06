@@ -347,9 +347,13 @@ extension Item {
         case .userMessage(let m):
             return m.content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n")
         case .agentMessage(let m): return m.text
-        // A workflow's row shows its name, not its script or launch receipt.
+        // A workflow's row shows its name, not its script or launch receipt: the name the call
+        // gives, or its script's as already read, never reading the script here.
         case .toolCall(let t) where t.isWorkflow:
-            return [t.name, WorkflowRun(call: t, task: nil).name ?? ""].joined(separator: "\n")
+            return [t.name, WorkflowScript.searchName(t) ?? ""].joined(separator: "\n")
+        // An agent's result row says only that it returned one; the result is in its detail.
+        case .toolCall(let t) where t.isStructuredOutput:
+            return "Returned its result\n" + t.input.strings.joined(separator: "\n")
         case .toolCall(let t): return ([t.name] + t.input.strings + [t.outputText ?? ""]).joined(separator: "\n")
         case .error(let e): return e.message
         case .notice(let n): return n.text

@@ -61,7 +61,24 @@ struct TasksPane: View {
             .task {
                 for run in thread.workflowsToRead { await connection.loadWorkflow(thread, toolUseId: run.toolUseId) }
             }
+            // The workflow shown, or whose agent is, is read again now and then while it goes on and
+            // this client isn't told about it, so its report and its agents' details stay current.
+            .task(id: selectedWorkflow(in: tree)) {
+                guard let id = selectedWorkflow(in: tree) else { return }
+                while !Task.isCancelled {
+                    if !thread.hasLiveWorkflowTask(id) { await connection.loadWorkflow(thread, toolUseId: id) }
+                    guard thread.workflowRuns[id]?.isRunning == true else { return }
+                    try? await Task.sleep(for: .seconds(5))
+                }
+            }
         }
+    }
+
+    /// The Workflow call of the workflow selected in some column, whether it or one of its agents
+    /// is what's shown.
+    private func selectedWorkflow(in tree: [TaskNode]) -> String? {
+        path.indices.lazy.compactMap { node(at: $0, in: tree) }
+            .first { $0.kind == .workflow && $0.agent == nil }?.workflow?.toolUseId
     }
 
     private func width(_ index: Int) -> CGFloat { widths[index] ?? (index == 0 ? Self.firstWidth : Self.width) }
@@ -102,9 +119,10 @@ struct TasksPane: View {
         let sections = TaskNode.phaseSections(nodes)
         return List(selection: selection) {
             // No section headers but a workflow's phases: each row's dot says how it stands, and
-            // the order keeps what's still going first.
+            // the order keeps what's still going first. Agents in no phase come first, unheaded.
             if sections.count > 1 {
-                ForEach(sections, id: \.id) { section in
+                ForEach(sections.first { $0.title == nil }?.nodes ?? []) { TaskNodeRow(node: $0).tag($0.id) }
+                ForEach(sections.filter { $0.title != nil }, id: \.id) { section in
                     Section(section.title ?? "") {
                         ForEach(section.nodes) { TaskNodeRow(node: $0).tag($0.id) }
                     }
@@ -333,6 +351,10 @@ struct TaskDetail: View {
                                 Task { await connection.moveToBackground(thread, toolUseId: toolUseId) }
                             }
                         }
+                        // A workflow's script, as its row's menu in the chat has it.
+                        if node.agent == nil, let script = node.call?.workflowScript {
+                            Button("Copy Script") { Clipboard.copy(script) }
+                        }
                         // A task with tasks of its own is stopped from above its column.
                         if node.children.isEmpty, let taskId = node.stoppableTaskID {
                             TaskStopButton { Task { await connection.stopTask(thread, taskId: taskId) } }
@@ -351,7 +373,7 @@ struct TaskDetail: View {
         if let agent = node.agent, let run = node.workflow {
             WorkflowAgentTranscript(thread: thread, connection: connection, run: run, agent: agent)
         } else if node.kind == .workflow, let run = node.workflow {
-            WorkflowReport(run: run, thread: thread, connection: connection)
+            WorkflowReport(run: run)
         } else if node.kind == .agent, let call = node.call {
             SubagentTranscript(thread: thread, call: call, running: node.state == .running)
         } else {

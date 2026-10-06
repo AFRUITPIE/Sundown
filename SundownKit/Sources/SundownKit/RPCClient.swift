@@ -159,7 +159,9 @@ public actor RPCClient {
     static func carryingWorkflow(_ n: ServerNotification, params: Data?, decoder: JSONDecoder) -> ServerNotification {
         guard case .taskEvent(var e) = n, let params, params.range(of: Data(#""workflow":"#.utf8)) != nil,
               let extra = try? decoder.decode(WorkflowMember.self, from: params), let workflow = extra.workflow,
-              workflow.objectValue != nil, case .object(var data) = e.data else { return n }
+              workflow.objectValue != nil else { return n }
+        // Data that isn't an object (none, from an event with nothing more to say) still carries it.
+        var data = e.data.objectValue ?? [:]
         data["workflow"] = workflow
         e.data = .object(data)
         return .taskEvent(e)

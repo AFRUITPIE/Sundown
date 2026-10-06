@@ -25,7 +25,7 @@ let package = Package(
     targets: [
         .target(name: "SundownKit", dependencies: [.product(name: "TetherProtocol", package: "tether-server")]),
         .target(name: "SundownUI", dependencies: ["SundownKit"]),
-        .testTarget(name: "SundownKitTests", dependencies: ["SundownKit"]),
+        .testTarget(name: "SundownKitTests", dependencies: ["SundownKit"], resources: [.copy("Fixtures")]),
         .testTarget(name: "SundownUITests", dependencies: [
             "SundownUI", "SundownKit", .product(name: "TetherProtocol", package: "tether-server"),
         ]),

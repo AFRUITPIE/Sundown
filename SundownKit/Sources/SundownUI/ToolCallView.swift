@@ -38,7 +38,9 @@ struct ToolCallView: View {
         if call.kind == .bash, let command = input.string("command") {
             Button("Copy Command") { Clipboard.copy(command) }
         }
-        if let output = call.outputText, !output.isEmpty {
+        if call.isStructuredOutput {
+            Button("Copy Result") { Clipboard.copy(PrettyInput.text(for: call.id, input)) }
+        } else if let output = call.outputText, !output.isEmpty {
             Button("Copy Output") { Clipboard.copy(output) }
         }
     }
@@ -156,6 +158,15 @@ struct ToolCallView: View {
     private var subtitle: String { ToolCallText.object(call) }
 
     @ViewBuilder private var detail: some View {
+        if call.isStructuredOutput {
+            // What the agent returned, as JSON; its output only says the CLI took it.
+            CodeBlock(code: PrettyInput.text(for: call.id, input), language: "JSON", lineLimit: 16)
+        } else {
+            kindDetail
+        }
+    }
+
+    @ViewBuilder private var kindDetail: some View {
         switch call.kind {
         case .bash:
             VStack(alignment: .leading, spacing: 6) {
@@ -614,6 +625,17 @@ enum PrettyInput {
     ToolCallView(call: .sample(name: "Bash", kind: .bash,
                                 input: ["command": "swift test --filter ThreadModelTests", "description": "Run ThreadModel tests"],
                                 status: .completed, outputText: "Test Suite 'ThreadModelTests' passed.\nExecuted 6 tests, with 0 failures.", secondsAgo: 30),
+                 thread: .sampleIdleChat(), expandDetails: true)
+        .padding(20)
+        .frame(width: 560)
+}
+
+/// A workflow agent's last call: what it returned, as JSON, behind "Returned its result".
+#Preview("Agent result") {
+    ToolCallView(call: .sample(name: "StructuredOutput", kind: .other, input: [
+        "findings": [["file": "/private/tmp/wf-scratch/math.swift", "line": 2, "kind": "code bug",
+                      "description": "add() subtracts: should be return a + b"]],
+    ], status: .completed, outputText: "Structured output provided successfully", secondsAgo: 30),
                  thread: .sampleIdleChat(), expandDetails: true)
         .padding(20)
         .frame(width: 560)

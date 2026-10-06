@@ -95,8 +95,8 @@ struct TaskNode: Identifiable, Equatable {
         return nil
     }
 
-    /// A workflow's agents, by phase in the phases' order, and within each, what's still going
-    /// first, each in the order it started.
+    /// A workflow's agents, by phase in the phases' order (any in no phase first), and within each,
+    /// what's still going first, each in the order it started.
     static func agents(of node: TaskNode) -> [TaskNode] {
         guard node.kind == .workflow, node.agent == nil, let run = node.workflow else { return [] }
         let order = Dictionary(run.phases.enumerated().map { ($1.index, $0) }, uniquingKeysWith: { a, _ in a })
@@ -111,12 +111,13 @@ struct TaskNode: Identifiable, Equatable {
             if child.state != .running, let ms = agent.durationMs { child.seconds = ms / 1000 }
             return child
         }
-        let phases = Dictionary(grouping: children) { $0.phaseIndex.flatMap { order[$0] } ?? Int.max }
+        let phases = Dictionary(grouping: children) { $0.phaseIndex.map { order[$0] ?? Int.max } ?? -1 }
         return phases.keys.sorted().flatMap { sorted(phases[$0]!) }
     }
 
     /// A column's tasks in sections by the phase they ran in, when they're a workflow's agents in
-    /// more than one phase; else one section with no title.
+    /// more than one phase; else one section with no title. Agents in no phase (which `agents(of:)`
+    /// puts first) are a section with no title, never an empty header.
     static func phaseSections(_ nodes: [TaskNode]) -> [(id: Int, title: String?, nodes: [TaskNode])] {
         var sections: [(id: Int, title: String?, nodes: [TaskNode])] = []
         for node in nodes {
@@ -124,7 +125,8 @@ struct TaskNode: Identifiable, Equatable {
             if let last = sections.indices.last, sections[last].id == id {
                 sections[last].nodes.append(node)
             } else {
-                sections.append((id, node.phase, [node]))
+                let title = id == -1 ? nil : node.phase.flatMap { $0.isEmpty ? nil : $0 } ?? "Phase \(id)"
+                sections.append((id, title, [node]))
             }
         }
         guard sections.count > 1 else { return [(-1, nil, nodes)] }
