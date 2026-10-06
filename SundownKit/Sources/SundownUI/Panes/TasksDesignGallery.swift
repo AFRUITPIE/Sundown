@@ -925,7 +925,7 @@ public struct TasksDesignGallery: View {
     }
 
     private let designs: [Design] = [
-        .init(id: 1, title: "Sidebar and Detail", group: "Where Tasks Live", note: "A list of tasks beside the chosen one's detail."),
+        .init(id: 1, title: "Sidebar and Detail", group: "Where Tasks Live", note: "Revised after the HIG reviews: the workflow's phases and agents in the list, failed first; native details."),
         .init(id: 2, title: "Activity Monitor Table", group: "Where Tasks Live", note: "Sortable columns, the chosen task's detail in a split below."),
         .init(id: 3, title: "Card Feed", group: "Where Tasks Live", note: "Running tasks as live cards; finished ones as single lines."),
         .init(id: 4, title: "Grouped by Turn", group: "Where Tasks Live", note: "Each task under the prompt that started it."),
@@ -978,7 +978,7 @@ public struct TasksDesignGallery: View {
 
     @ViewBuilder private func view(for id: Int) -> some View {
         switch id {
-        case 1: SidebarDetailDesign()
+        case 1: RevisedSidebarDetail()
         case 2: TableDesign()
         case 3: CardFeedDesign()
         case 4: ByTurnDesign()
@@ -1015,6 +1015,408 @@ public struct DebugCommands: Commands {
     public var body: some Commands {
         CommandMenu("Debug") {
             Button("Tasks Designs…") { openWindow(id: TasksDesignGallery.id) }
+        }
+    }
+}
+#endif
+
+#if DEBUG
+// MARK: - 1, revised: native list and details
+
+/// Counts in words: what's done, running, failed and waiting, never a made-up percentage.
+private func counts(_ agents: [DesignAgent]) -> String {
+    let n = { (s: DesignStatus) in agents.filter { $0.status == s }.count }
+    return [("done", n(.done)), ("running", n(.running)), ("failed", n(.failed)), ("waiting", n(.queued))]
+        .filter { $0.1 > 0 }.map { "\($0.1) \($0.0)" }.joined(separator: ", ")
+}
+
+/// What the list can select: a task, a workflow's phase, or one of its agents.
+private enum TaskSelection: Hashable {
+    case task(String)
+    case phase(String)
+    case agent(String)
+}
+
+private enum TaskFilter: String, CaseIterable { case all = "All", running = "Running", failed = "Failed" }
+
+/// The sidebar's own dot, in words for VoiceOver; nothing for what's simply done.
+private func chatState(_ s: DesignStatus) -> ChatState {
+    switch s {
+    case .running: .working
+    case .failed: .failed
+    case .skipped: .stopped
+    case .queued, .done: .idle
+    }
+}
+
+private struct RevisedSidebarDetail: View {
+    @State private var selection: TaskSelection? = .task("w")
+    @State private var expanded: Set<String> = ["w", "review", "verify"]
+    /// Phases showing their done agents too.
+    @State private var showingDone: Set<String> = []
+    @State private var filterText = ""
+    @State private var filter = TaskFilter.all
+
+    var body: some View {
+        HSplitView {
+            list
+                .frame(minWidth: 220, idealWidth: 290, maxWidth: 400)
+            detail
+                .frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    // MARK: The list
+
+    private var list: some View {
+        VStack(spacing: 0) {
+            taskList
+            Divider()
+            // Xcode's navigators filter at the bottom: the window's toolbar stays the same for
+            // every tab.
+            VStack(spacing: 6) {
+                Picker("Show", selection: $filter) {
+                    ForEach(TaskFilter.allCases, id: \.self) { Text($0.rawValue) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                TextField("Filter", text: $filterText, prompt: Text("Filter"))
+                    .textFieldStyle(.roundedBorder)
+            }
+            .padding(10)
+        }
+    }
+
+    private var taskList: some View {
+        List(selection: $selection) {
+            Section("Running") {
+                ForEach(designTasks.filter { $0.status == .running }) { taskRow($0) }
+            }
+            Section("Finished") {
+                ForEach(designTasks.filter { $0.status != .running }) { taskRow($0) }
+            }
+        }
+        .listStyle(.sidebar)
+    }
+
+    @ViewBuilder private func taskRow(_ task: DesignTask) -> some View {
+        if task.kind == .workflow {
+            DisclosureGroup(isExpanded: binding(task.id)) {
+                ForEach(designPhases) { phaseRow($0) }
+            } label: {
+                TaskLabel(title: task.name, subtitle: "Workflow · \(counts(designAllAgents))",
+                          state: chatState(task.status))
+            }
+            .tag(TaskSelection.task(task.id))
+            .contextMenu { taskMenu(task) }
+        } else {
+            TaskLabel(title: task.name, subtitle: subtitle(task), state: chatState(task.status))
+                .tag(TaskSelection.task(task.id))
+                .contextMenu { taskMenu(task) }
+        }
+    }
+
+    private func phaseRow(_ phase: DesignPhase) -> some View {
+        // What needs a look first: failed, then running, then waiting; done agents on request.
+        let agents = phase.agents.filter(matches).sorted { rank($0.status) < rank($1.status) }
+        let hidden = agents.filter { $0.status == .done }
+        let shown = showingDone.contains(phase.id) ? agents : agents.filter { $0.status != .done }
+        return DisclosureGroup(isExpanded: binding(phase.id)) {
+            ForEach(shown) { agent in
+                TaskLabel(title: agent.label, subtitle: agent.doing, state: chatState(agent.status), compact: true)
+                    .tag(TaskSelection.agent(agent.id))
+            }
+            if !hidden.isEmpty, !showingDone.contains(phase.id) {
+                Button("Show \(hidden.count) Done") { showingDone.insert(phase.id) }
+                    .buttonStyle(.link)
+                    .font(.callout)
+            }
+        } label: {
+            TaskLabel(title: phase.title, subtitle: counts(phase.agents),
+                      state: phase.agents.contains { $0.status == .running } ? .working : .idle)
+                .accessibilityAddTraits(.isHeader)
+        }
+        .tag(TaskSelection.phase(phase.id))
+    }
+
+    private func matches(_ agent: DesignAgent) -> Bool {
+        (filterText.isEmpty || agent.label.localizedCaseInsensitiveContains(filterText))
+            && (filter == .all || (filter == .running ? agent.status == .running : agent.status == .failed))
+    }
+
+    private func rank(_ s: DesignStatus) -> Int {
+        switch s {
+        case .failed: 0
+        case .running: 1
+        case .queued: 2
+        case .skipped: 3
+        case .done: 4
+        }
+    }
+
+    private func subtitle(_ task: DesignTask) -> String {
+        switch task.kind {
+        case .agent: "Agent · \(task.status.label) · \(duration(task.elapsed))"
+        case .command: task.status == .failed ? "Command · Failed, exit code 65" : "Command · \(task.status.label) · \(duration(task.elapsed))"
+        case .workflow: "Workflow"
+        }
+    }
+
+    private func binding(_ id: String) -> Binding<Bool> {
+        Binding { expanded.contains(id) } set: { if $0 { expanded.insert(id) } else { expanded.remove(id) } }
+    }
+
+    @ViewBuilder private func taskMenu(_ task: DesignTask) -> some View {
+        Button("Show in Chat") {}
+        if task.kind == .command { Button("Copy Output") {} }
+        if task.status == .running {
+            if task.kind != .workflow { Button("Move to Background") {} }
+            Divider()
+            Button("Stop", role: .destructive) {}
+        }
+    }
+
+    // MARK: The detail
+
+    @ViewBuilder private var detail: some View {
+        switch selection {
+        case .task(let id)?:
+            if let task = designTasks.first(where: { $0.id == id }) {
+                switch task.kind {
+                case .workflow: WorkflowSummary(select: { selection = .agent($0) })
+                case .agent: AgentSummary(title: task.name, kind: "Explore", status: task.status, elapsed: task.elapsed)
+                case .command: CommandSummary(task: task)
+                }
+            }
+        case .phase(let id)?:
+            if let phase = designPhases.first(where: { $0.id == id }) { PhaseSummary(phase: phase) }
+        case .agent(let id)?:
+            if let agent = designAllAgents.first(where: { $0.id == id }) {
+                AgentSummary(title: agent.label, kind: "Review the diff for correctness", status: agent.status, elapsed: Int(agent.end - agent.start))
+            }
+        case nil:
+            ContentUnavailableView("No Task Selected", systemImage: "square.stack.3d.up")
+        }
+    }
+}
+
+/// A row: the sidebar's dot on the title's line, a gray line under it, as the chat list has them.
+private struct TaskLabel: View {
+    let title: String
+    let subtitle: String
+    let state: ChatState
+    var compact = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: ChatStatusDot.spacing) {
+                // An agent's dot keeps still: a phase of running agents would be a wall of pulses.
+                if compact, state == .working {
+                    Circle().fill(.blue).frame(width: ChatStatusDot.size, height: ChatStatusDot.size)
+                        .accessibilityLabel("Working")
+                } else {
+                    ChatStatusDot(state: state)
+                }
+                Text(title).lineLimit(compact ? 1 : 2)
+            }
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.leading, ChatStatusDot.gutter)
+        }
+        .help(title)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A detail's title and its actions, over the content, which scrolls under it.
+private struct DetailBar<Actions: View>: View {
+    let title: String
+    let subtitle: String
+    var monospaced = false
+    @ViewBuilder var actions: Actions
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(monospaced ? .headline.monospaced() : .headline)
+                    .lineLimit(2)
+                    .accessibilityAddTraits(.isHeader)
+                Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            HStack { actions }.buttonStyle(.bordered).fixedSize()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+    }
+}
+
+private struct WorkflowSummary: View {
+    let select: (String) -> Void
+
+    var body: some View {
+        Form {
+            Section {
+                // Agents done of those started so far: the script may start more.
+                LabeledContent("Agents", value: counts(designAllAgents))
+                LabeledContent("Phase", value: "Verify, 3 of 4")
+                LabeledContent("Elapsed", value: "3m 02s")
+                LabeledContent("Tokens", value: "412K")
+            }
+            Section("Phases") {
+                ForEach(designPhases) { phase in
+                    LabeledContent(phase.title, value: counts(phase.agents))
+                }
+            }
+            Section("Needs Attention") {
+                ForEach(designAllAgents.filter { $0.status == .failed }) { agent in
+                    Button { select(agent.id) } label: {
+                        LabeledContent(agent.label, value: agent.doing)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Section("Log") {
+                ForEach(Array(designLog.suffix(3).enumerated()), id: \.offset) { _, line in
+                    LabeledContent(line.time) { Text(line.text).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading) }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .safeAreaBar(edge: .top) {
+            DetailBar(title: "Review the diff for correctness", subtitle: "Workflow, running in the background") {
+                Button("Show in Chat") {}
+                Button("Stop Workflow", role: .destructive) {}
+            }
+        }
+    }
+}
+
+private struct PhaseSummary: View {
+    let phase: DesignPhase
+
+    var body: some View {
+        let running = phase.agents.filter { $0.status == .running }.count
+        Form {
+            Section {
+                // A phase's agents are known once it starts: its progress is real.
+                ProgressView(value: Double(phase.done), total: Double(phase.agents.count)) {
+                    Text("Agents")
+                } currentValueLabel: {
+                    Text(counts(phase.agents))
+                }
+                LabeledContent("Step", value: phase.detail)
+                LabeledContent("Tokens", value: "\(phase.agents.reduce(0) { $0 + $1.tokens } / 1000)K")
+            }
+        }
+        .formStyle(.grouped)
+        .safeAreaBar(edge: .top) {
+            DetailBar(title: phase.title, subtitle: "Phase of Review the diff for correctness") {
+                Button("Stop Phase", role: .destructive) {}.disabled(running == 0)
+            }
+        }
+    }
+}
+
+private struct AgentSummary: View {
+    let title: String
+    let kind: String
+    let status: DesignStatus
+    let elapsed: Int
+    @State private var promptOpen = false
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Status", value: status == .running ? "Running in the background" : status.label)
+                LabeledContent("Elapsed", value: duration(elapsed))
+                LabeledContent("Model", value: "Sonnet")
+                LabeledContent("Tool Calls", value: "18")
+                LabeledContent("Tokens", value: "64K")
+            }
+            Section {
+                DisclosureGroup("Prompt", isExpanded: $promptOpen) {
+                    Text("Find every SwiftUI view in SundownUI and list which read `thread.items`.")
+                        .textSelection(.enabled)
+                }
+            }
+            Section("Activity") {
+                DisclosureGroup("Searched code and read 6 files") {
+                    Text("rg -n 'thread.items' SundownUI").font(.callout.monospaced()).foregroundStyle(.secondary)
+                }
+                .foregroundStyle(.secondary)
+                Text("Most views read `rows`, not `items`. Two exceptions so far: `TranscriptFind` builds its search text from items, and `ThreadView` reads the last item for the Thinking line.")
+                    .textSelection(.enabled)
+                if status == .running {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Reading ToolCallView.swift").foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .safeAreaBar(edge: .top) {
+            DetailBar(title: title, subtitle: kind) {
+                Button("Show in Chat") {}
+                if status == .running {
+                    Button("Stop Task", role: .destructive) {}
+                }
+            }
+        }
+    }
+}
+
+private struct CommandSummary: View {
+    let task: DesignTask
+
+    private var output: String {
+        task.status == .failed ? """
+        $ xcodebuild -scheme Sundown build
+        Resolve Package Graph
+        Building for debugging...
+        MarkdownText.swift:58:9: error: cannot find 'setText' in scope
+        ** BUILD FAILED **
+        """ : """
+        $ swift test --package-path SundownKit
+        Building for debugging...
+        [42/88] Compiling SundownUI MarkdownText.swift
+        Test Suite 'MarkdownTextTests' started
+        ✔ Test copyIsPlainText() passed (0.036 seconds)
+        """
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                LabeledContent("Status", value: task.status == .failed ? "Failed, exit code 65" : "Running in the background")
+                LabeledContent("Elapsed", value: duration(task.elapsed))
+                LabeledContent("Directory", value: "~/Code/tether-app")
+            }
+            .formStyle(.grouped)
+            .scrollDisabled(true)
+            .fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                Text(output)
+                    .font(.callout.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .accessibilityTextContentType(.console)
+            }
+            .defaultScrollAnchor(.bottom)
+            .defaultScrollAnchor(.top, for: .alignment)
+            .background(.fill.quinary, in: .rect(cornerRadius: 10))
+            .padding([.horizontal, .bottom], 20)
+        }
+        .safeAreaBar(edge: .top) {
+            DetailBar(title: task.name, subtitle: "Command", monospaced: true) {
+                Button("Copy Output") {}
+                if task.status == .running { Button("Stop", role: .destructive) {} }
+            }
         }
     }
 }
