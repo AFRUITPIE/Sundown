@@ -499,6 +499,13 @@ public final class ThreadModel: Identifiable {
         refreshTaskEntries()
     }
 
+    /// The tool call with this id, as it is now. Not observed: what the Tasks tab reads from it (who
+    /// started it, when) doesn't change after it's added.
+    public func call(_ toolUseId: String) -> Item.ToolCall? {
+        guard let i = index[toolUseId], case .toolCall(let call) = storage[i] else { return nil }
+        return call
+    }
+
     /// Whether a tool call is the chat's own rather than a subagent's.
     public func isTopLevelCall(_ toolUseId: String) -> Bool {
         guard let i = index[toolUseId] else { return false }

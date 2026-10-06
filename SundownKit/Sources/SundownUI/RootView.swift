@@ -47,6 +47,13 @@ public struct WindowRoot: View {
 
 public struct RootView: View {
     let window: WindowModel
+    /// Whether the sidebar was last collapsed, in any window, as the split view's own autosave
+    /// remembered it: a new window opens as the last one was left.
+    @AppStorage("sidebarHidden") private var sidebarHidden = false
+    /// Every window opens with its sidebar shown and collapses it once it's up: one opened already
+    /// collapsed puts the system's sidebar toggle in the toolbar's » until the sidebar is toggled,
+    /// however wide the window (macOS 27; a bare split view does it too).
+    @State private var columns: NavigationSplitViewVisibility = .all
 
     public init(window: WindowModel) {
         self.window = window
@@ -56,6 +63,14 @@ public struct RootView: View {
 
     public var body: some View {
         splitView
+        .task {
+            guard sidebarHidden else { return }
+            // Once the window is on screen, so the toggle has taken its place beside the window's
+            // buttons before the sidebar goes.
+            try? await Task.sleep(for: .milliseconds(250))
+            withAnimation { columns = .detailOnly }
+        }
+        .onChange(of: columns) { sidebarHidden = columns == .detailOnly }
         .environment(\.inspectSubagent, InspectSubagentAction(window: window))
         .environment(\.restoreCode, RestoreCodeAction(window: window))
         .environment(\.startSuggestedTask, StartSuggestedTaskAction(window: window))
@@ -103,7 +118,7 @@ public struct RootView: View {
 
     private var splitView: some View {
         @Bindable var window = window
-        return NavigationSplitView {
+        return NavigationSplitView(columnVisibility: $columns) {
             SidebarView(window: window)
         } detail: {
             DetailView(window: window)

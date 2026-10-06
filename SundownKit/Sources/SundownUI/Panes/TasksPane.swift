@@ -1,178 +1,424 @@
+import Charts
 import SwiftUI
 import SundownKit
+import TetherProtocol
 
-/// The subagents and workflows this chat has started. Reads `thread.taskEntries`, which is stored
-/// and rebuilt only on task events, so streamed message deltas never touch this pane. A task's
-/// detail replaces the list, with its own back button: not a `NavigationStack`, whose Back button
-/// went to the window's toolbar, over the chat, rather than over the pane.
+/// The chat's tasks (subagents, commands, workflows, monitors, MCP tools), browsed in columns as
+/// Finder browses: each column the tasks started by the one selected to its left, and the last the
+/// selected task itself. Reads `thread.taskEntries`, which is stored and rebuilt only on task
+/// events, so streamed message deltas don't reach the columns; an agent's detail is its own
+/// transcript, which follows its items as they stream.
 struct TasksPane: View {
     let thread: ThreadModel
     let connection: HostConnection
+    /// The task shown, kept by the window so a subagent row in the chat can open it here.
     @Binding var selectedTaskID: String?
+    /// What's selected in each column, left to right.
+    @State private var path: [String] = []
+    /// Each column's width, as its divider was dragged to.
+    @State private var widths: [Int: CGFloat] = [:]
+    @State private var position = ScrollPosition(edge: .trailing)
+
+    private static let firstWidth: CGFloat = 250
+    private static let width: CGFloat = 210
+    private static let detailMinimum: CGFloat = 360
 
     var body: some View {
-        let entries = thread.taskEntries
-        if let selectedTaskID, let entry = entries.first(where: { $0.id == selectedTaskID }) {
-            InspectorTaskDetail(entry: entry, thread: thread, connection: connection) { self.selectedTaskID = nil }
-        } else if entries.isEmpty {
+        let tree = TaskNode.tree(thread.taskEntries, call: thread.call)
+        if tree.isEmpty {
             PaneEmptyState("No Tasks", symbol: WindowTab.tasks.symbol)
         } else {
-            // What's still going on top; what's finished in a group of its own below.
-            let finished = entries.filter { !$0.isGoing }
-            Form {
-                let going = entries.filter(\.isGoing)
-                if !going.isEmpty {
-                    Section { rows(going) }
+            let columns = columns(tree)
+            let columnsWidth = columns.indices.map(width).reduce(0, +)
+            // As Finder's browser: the columns and the detail scroll sideways once they don't fit,
+            // the detail at least its minimum and otherwise the rest of the width.
+            ScrollView(.horizontal) {
+                HStack(spacing: 0) {
+                    ForEach(Array(columns.enumerated()), id: \.offset) { index, nodes in
+                        column(nodes, index: index, of: index == 0 ? nil : node(at: index - 1, in: tree))
+                            .frame(width: width(index))
+                        ColumnDivider(width: Binding(get: { width(index) }, set: { widths[index] = $0 }))
+                    }
+                    detail(selected(in: tree))
+                        .containerRelativeFrame(.horizontal) { width, _ in
+                            max(Self.detailMinimum, width - columnsWidth - CGFloat(columns.count))
+                        }
                 }
-                if !finished.isEmpty {
-                    Section("Finished") { rows(finished) }
-                }
+            }
+            .scrollPosition($position)
+            .defaultScrollAnchor(.trailing)
+            // A new column scrolls into view, as Finder's does.
+            .onChange(of: path) {
+                withAnimation(.snappy) { position.scrollTo(edge: .trailing) }
+                if path.last != selectedTaskID { selectedTaskID = path.last }
+            }
+            // A task asked for from the chat opens with the tasks that lead to it.
+            .onChange(of: selectedTaskID, initial: true) {
+                guard let id = selectedTaskID, path.last != id else { return }
+                if let found = TaskNode.path(to: id, in: tree) { path = found }
             }
         }
     }
-}
 
-extension TasksPane {
-    private func rows(_ entries: [InspectorTaskEntry]) -> some View {
-        ForEach(entries) { entry in
-            Button { selectedTaskID = entry.id } label: {
-                TaskRow(entry: entry)
-            }
-            .buttonStyle(.plain)
+    private func width(_ index: Int) -> CGFloat { widths[index] ?? (index == 0 ? Self.firstWidth : Self.width) }
+
+    /// The top-level tasks, then the tasks started by each selected one that started some.
+    private func columns(_ tree: [TaskNode]) -> [[TaskNode]] {
+        var result = [tree]
+        for id in path {
+            guard let node = result.last?.first(where: { $0.id == id }), !node.children.isEmpty else { break }
+            result.append(node.children)
         }
+        return result
     }
-}
 
-extension InspectorTaskEntry {
-    /// Still running, in the background or not.
-    var isGoing: Bool { isBackgrounded || SubagentLifecycle.isRunning(call: call, task: task) }
-}
-
-/// One subagent or workflow run: what it is, and whether it's still going, with the sidebar's dot.
-struct TaskRow: View {
-    let entry: InspectorTaskEntry
-
-    var body: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                // The dot on the title's line, the status line under the title, as in the sidebar.
-                HStack(alignment: .firstTextBaseline, spacing: ChatStatusDot.spacing) {
-                    ChatStatusDot(state: state)
-                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] }
-                    Text(entry.task?.description ?? entry.call?.summary
-                         ?? entry.call?.input.string("description") ?? entry.task?.taskId ?? "Task")
-                        .lineLimit(2)
-                }
-                Text(statusText).font(.caption).foregroundStyle(.secondary)
-                    .padding(.leading, ChatStatusDot.gutter)
-            }
-            Spacer(minLength: 4)
-            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
+    /// The task selected in column `index`.
+    private func node(at index: Int, in tree: [TaskNode]) -> TaskNode? {
+        var nodes = tree
+        var found: TaskNode?
+        for id in path.prefix(index + 1) {
+            guard let node = nodes.first(where: { $0.id == id }) else { return nil }
+            found = node
+            nodes = node.children
         }
-        // The status line says it in words; the dot is for the eye.
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(entry.task?.description ?? entry.call?.summary ?? "Task"))
-        .accessibilityValue(statusText)
+        return found
     }
 
-    private var state: ChatState {
-        if entry.isGoing { return .working }
-        let ended = (entry.task?.status ?? entry.task?.event ?? entry.call?.status.rawValue ?? "").lowercased()
-        if ended.contains("fail") || ended.contains("error") { return .failed }
-        if ended.contains("stop") || ended.contains("interrupt") || ended.contains("kill") { return .stopped }
-        return .idle
+    private func selected(in tree: [TaskNode]) -> TaskNode? {
+        path.isEmpty ? nil : node(at: path.count - 1, in: tree)
     }
 
-    private var statusText: String {
-        if entry.isBackgrounded { return "Running in background" }
-        guard let call = entry.call else {
-            // A lifecycle event with no call of ours: the server's own word for it, in plain English.
-            return (entry.task?.status ?? entry.task?.event ?? "Task").humanized
+    private func column(_ nodes: [TaskNode], index: Int, of parent: TaskNode?) -> some View {
+        let selection = Binding<String?>(
+            get: { path.indices.contains(index) ? path[index] : nil },
+            set: { id in
+                path = Array(path.prefix(index))
+                if let id { path.append(id) }
+            })
+        return List(selection: selection) {
+            // No section headers: each row's dot says how it stands, and the order keeps what's
+            // still going first.
+            ForEach(nodes) { TaskNodeRow(node: $0).tag($0.id) }
         }
-        return SubagentLifecycle.title(call: call, task: entry.task, isBackgrounded: entry.isBackgrounded)
-    }
-
-}
-
-/// One task on its own: how it's going, what it was asked, and what it has done so far.
-struct InspectorTaskDetail: View {
-    let entry: InspectorTaskEntry
-    let thread: ThreadModel
-    let connection: HostConnection
-    let close: () -> Void
-
-    var body: some View {
-            Form {
-                // Unheaded: a "Status" section whose first row is "Status" says it twice.
-                Section {
-                    if let call = entry.call {
-                        LabeledContent(
-                            "Status",
-                            value: SubagentLifecycle.title(
-                                call: call,
-                                task: entry.task,
-                                isBackgrounded: entry.isBackgrounded
-                            )
-                        )
-                        if let seconds = call.elapsedSeconds {
-                            LabeledContent("Elapsed", value: Format.duration(seconds))
-                        }
-                    } else if let task = entry.task {
-                        LabeledContent("Status", value: entry.isBackgrounded
-                            ? "Running in background"
-                            : (task.status ?? task.event).humanized)
-                    }
-                    if let summary = entry.task?.summary, !summary.isEmpty {
-                        Text(summary).lineLimit(nil).textSelection(.enabled)
-                    }
-                    if entry.isTaskRunning, let task = entry.task {
-                        HStack {
-                            // Only the chat's own command or agent, while it still holds up its turn.
-                            if entry.canMoveToBackground, let toolUseId = task.toolUseId, thread.isTopLevelCall(toolUseId) {
-                                Button("Move to Background") {
-                                    Task { await connection.moveToBackground(thread, toolUseId: toolUseId) }
-                                }
-                            }
-                            Button("Stop Task", role: .destructive) {
-                                Task { await connection.stopTask(thread, taskId: task.taskId) }
-                            }
-                        }
-                    }
-                }
-                if let prompt = entry.call?.input.string("prompt"), !prompt.isEmpty {
-                    Section("Prompt") {
-                        Text(prompt).lineLimit(nil).textSelection(.enabled)
-                    }
-                }
-                if let toolUseId = entry.call?.id {
-                    let children = thread.children(of: toolUseId)
-                    if !children.isEmpty {
-                        Section("Activity") {
-                            ForEach(children, id: \.id) { ItemView(item: $0, thread: thread) }
-                        }
-                    } else if let output = entry.call?.outputText, !output.isEmpty {
-                        Section("Result") {
-                            Text(output).lineLimit(nil).textSelection(.enabled)
-                        }
-                    }
-                }
-            }
-            // Back to the list, over the task, which scrolls under it.
-            .safeAreaBar(edge: .top) {
-                HStack {
-                    Button("All Tasks", systemImage: "chevron.left", action: close)
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                    Text(entry.task?.description ?? entry.call?.input.string("description") ?? "Task")
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        // What this column holds, named, over a bar of how it's going (its counts in its help),
+        // and Stop for the task that started them, beside both.
+        .safeAreaBar(edge: .top) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(parent?.title ?? "Tasks")
                         .font(.headline)
                         .lineLimit(1)
+                        .help(parent?.title ?? "Tasks")
                         .accessibilityAddTraits(.isHeader)
-                    Spacer()
+                    TaskStatusBar(states: nodes.map(\.state))
                 }
-                .padding(.horizontal, 12)
+                if let parent, parent.entry.isTaskRunning, let task = parent.entry.task {
+                    TaskStopButton { Task { await connection.stopTask(thread, taskId: task.taskId) } }
+                        .controlSize(.large)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
+        }
+    }
+
+    @ViewBuilder private func detail(_ node: TaskNode?) -> some View {
+        if let node {
+            TaskDetail(node: node, thread: thread, connection: connection)
+                // Each task starts at its own end, with its own scroll.
+                .id(node.id)
+        } else {
+            PaneEmptyState("No Task Selected", symbol: WindowTab.tasks.symbol)
+        }
+    }
+}
+
+/// A task's row: its dot on its name's line, as the sidebar's chats have theirs; what it is and how
+/// long it has run, or took, under the name.
+struct TaskNodeRow: View {
+    let node: TaskNode
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: ChatStatusDot.spacing) {
+            TaskStateDot(state: node.state)
+                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(node.title).lineLimit(1)
+                HStack {
+                    Text(node.kind.name)
+                    Spacer(minLength: 8)
+                    TaskTime(node: node)
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .opacity(node.children.isEmpty ? 0 : 1)
+                .accessibilityHidden(true)
+        }
+        // Names run long; the whole one is a hover away.
+        .help(node.title)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// How long a task has run, counting while it runs, or how long it took.
+struct TaskTime: View {
+    let node: TaskNode
+
+    var body: some View {
+        if node.state == .running, let started = node.started {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(Format.duration(max(0, context.date.timeIntervalSince(started))))
+            }
+            .monospacedDigit()
+        } else if let seconds = node.seconds {
+            Text(Format.duration(seconds)).monospacedDigit()
+        }
+    }
+}
+
+/// The sidebar's dot, with one for every state, so each row says how it stands: blue and pulsing
+/// while it runs, red if it failed, a ring if it was stopped, green once done, gray while waiting.
+struct TaskStateDot: View {
+    let state: TaskNode.State
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            switch state {
+            case .running:
+                Image(systemName: "circle.fill").resizable().foregroundStyle(.blue)
+                    .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
+            case .failed: Circle().fill(.red)
+            case .stopped: Circle().strokeBorder(.secondary, lineWidth: 1.5)
+            case .done: Circle().fill(.green)
+            case .waiting: Circle().fill(.quaternary)
+            }
+        }
+        .frame(width: ChatStatusDot.size, height: ChatStatusDot.size)
+        .accessibilityLabel(state.word.capitalized)
+    }
+}
+
+extension TaskNode.State {
+    /// How a count of them reads: "2 failed".
+    var word: String {
+        switch self {
+        case .running: "running"
+        case .waiting: "waiting"
+        case .done: "finished"
+        case .failed: "failed"
+        case .stopped: "stopped"
+        }
+    }
+
+    var style: AnyShapeStyle {
+        switch self {
+        case .running: AnyShapeStyle(.blue)
+        case .waiting: AnyShapeStyle(.quaternary)
+        case .done: AnyShapeStyle(.green)
+        case .failed: AnyShapeStyle(.red)
+        case .stopped: AnyShapeStyle(.gray)
+        }
+    }
+}
+
+/// How many tasks are finished, failed, running, stopped and waiting, as one bar in the dots'
+/// colors, its counts in its help and for VoiceOver. A stacked Swift Charts bar, as the Context
+/// breakdown draws its categories.
+struct TaskStatusBar: View {
+    let states: [TaskNode.State]
+    private static let order: [TaskNode.State] = [.done, .failed, .running, .stopped, .waiting]
+
+    var body: some View {
+        let counts = Self.order.map { state in (state, states.filter { $0 == state }.count) }.filter { $0.1 > 0 }
+        let summary = counts.map { "\($0.1) \($0.0.word)" }.joined(separator: ", ")
+        Chart(counts, id: \.0) { state, count in
+            BarMark(x: .value("Count", count), stacking: .standard)
+                .foregroundStyle(state.style)
+        }
+        .chartXScale(domain: 0...max(states.count, 1))
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartLegend(.hidden)
+        .chartPlotStyle { $0.background(.quaternary.opacity(0.5)) }
+        .clipShape(.capsule)
+        .frame(height: 6)
+        .help(summary)
+        .accessibilityElement()
+        .accessibilityLabel(summary)
+    }
+}
+
+/// Stop, as the composer's: a glass circle with the stop symbol.
+struct TaskStopButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button("Stop", systemImage: "stop.fill", action: action)
+            .labelStyle(.iconOnly)
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .help("Stop")
+            // The header around it may use a smaller text style; Stop keeps the detail's size.
+            .font(.body)
+    }
+}
+
+/// A column's divider, which drags to resize the column before it, as Finder's do.
+private struct ColumnDivider: View {
+    @Binding var width: CGFloat
+    @State private var start: CGFloat?
+
+    var body: some View {
+        Divider()
+            .overlay {
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(.rect)
+                    .pointerStyle(.columnResize)
+                    .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { value in
+                            let from = start ?? width
+                            start = from
+                            width = min(max(from + value.translation.width, 150), 520)
+                        }
+                        .onEnded { _ in start = nil })
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+/// One task on its own: its name and actions across the top, and below, what suits it: an agent's
+/// transcript, a command's output, what a workflow or tool reported.
+struct TaskDetail: View {
+    let node: TaskNode
+    let thread: ThreadModel
+    let connection: HostConnection
+
+    var body: some View {
+        content
+            .safeAreaBar(edge: .top) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(node.title)
+                        .font(.title3).fontWeight(.semibold)
+                        .lineLimit(2)
+                        .help(node.title)
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer(minLength: 12)
+                    // Controls, so glass, at the composer's size.
+                    HStack {
+                        if node.entry.canMoveToBackground, let toolUseId = node.entry.task?.toolUseId,
+                           thread.isTopLevelCall(toolUseId) {
+                            Button("Move to Background") {
+                                Task { await connection.moveToBackground(thread, toolUseId: toolUseId) }
+                            }
+                        }
+                        // A task with tasks of its own is stopped from above its column.
+                        if node.children.isEmpty, node.entry.isTaskRunning, let task = node.entry.task {
+                            TaskStopButton { Task { await connection.stopTask(thread, taskId: task.taskId) } }
+                        }
+                    }
+                    .buttonStyle(.glass)
+                    .controlSize(.large)
+                    .fixedSize()
+                }
+                .scenePadding(.horizontal)
                 .padding(.vertical, 8)
             }
+    }
+
+    @ViewBuilder private var content: some View {
+        if node.kind == .agent, let call = node.call {
+            SubagentTranscript(thread: thread, call: call, running: node.state == .running)
+        } else {
+            TaskReport(node: node)
+        }
+    }
+}
+
+/// An agent's run as the chat draws one: its prompt, then its calls folded and its replies, in the
+/// transcript's own rows, following them as they stream.
+private struct SubagentTranscript: View {
+    let thread: ThreadModel
+    let call: Item.ToolCall
+    let running: Bool
+    @Environment(\.appearance) private var appearance
+
+    var body: some View {
+        let children = thread.children(of: call.id)
+        // Its prompt, in a bubble as a prompt is: what the agent was asked.
+        let prompt: [Item] = call.input.string("prompt").map {
+            [.userMessage(.init(id: "prompt-\(call.id)", createdAt: call.createdAt, content: [.text(.init(text: $0))]))]
+        } ?? []
+        let rows = foldTranscriptRows(prompt + children, grouping: appearance.toolCalls.folding != .everyCall, live: running)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 14) {
+                ForEach(rows, id: \.id) { TranscriptRowView(row: $0, thread: thread) }
+                if running, children.isEmpty {
+                    ActivityLabel(text: "Starting", live: true)
+                }
+            }
+            .scaledFont(.body)
+            .padding(.vertical, 16)
+            .readingColumn()
+        }
+        .accessibilityLabel("Transcript")
+        .defaultScrollAnchor(.bottom)
+        .defaultScrollAnchor(.top, for: .alignment)
+    }
+}
+
+/// What a task that isn't an agent's run has to show: what it ran, what it said last, and its
+/// output, as text that scrolls sideways rather than wrapping.
+private struct TaskReport: View {
+    let node: TaskNode
+
+    var body: some View {
+        let entry = node.entry
+        let command = node.call?.input.string("command")
+        let summary = entry.task?.summary
+        let output = node.call?.outputText
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                if let command, command != node.title {
+                    Text(command)
+                        .font(.callout.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                if let workflow = entry.task?.data["workflow_name"]?.stringValue, workflow != node.title {
+                    LabeledContent("Workflow", value: workflow)
+                }
+                if let summary, !summary.isEmpty {
+                    Text(summary).textSelection(.enabled)
+                }
+                if let output, !output.isEmpty {
+                    ScrollView(.horizontal) {
+                        Text(output)
+                            .font(.callout.monospaced())
+                            .textSelection(.enabled)
+                            .fixedSize()
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .accessibilityLabel("Output")
+                }
+                if summary?.isEmpty ?? true, output?.isEmpty ?? true {
+                    Text(node.state == .running ? "Nothing reported yet" : "Nothing reported")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: 640, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .scenePadding([.horizontal, .bottom])
+            .padding(.top, 8)
+        }
     }
 }
 
@@ -180,7 +426,7 @@ struct InspectorTaskDetail: View {
 #Preview("Tasks") {
     @Previewable @State var selection: String?
     panePreview {
-        TasksPane(thread: .sampleWithTasks(), connection: .sample(), selectedTaskID: $selection).paneStyle()
+        TasksPane(thread: .sampleWithTaskKinds(), connection: .sample(), selectedTaskID: $selection).paneStyle()
     }
 }
 
@@ -191,429 +437,19 @@ struct InspectorTaskDetail: View {
     }
 }
 
-#Preview("Tasks (subagent detail)") {
-    // Live, so All Tasks goes back to the list in the canvas.
+/// A subagent asked for from the chat: its column path opens to it, its transcript beside.
+#Preview("Tasks (subagent)") {
     @Previewable @State var selection: String? = "tool-subagent-explore"
     panePreview {
         TasksPane(thread: .sampleToolCalls(), connection: .sample(), selectedTaskID: $selection).paneStyle()
     }
 }
 
-/// A task still running: it can be stopped from here.
-#Preview("Tasks (running task detail)") {
-    @Previewable @State var selection: String? = "task:task-1"
+/// A command an agent started, two columns in.
+#Preview("Tasks (nested command)") {
+    @Previewable @State var selection: String? = "task:bg-tests"
     panePreview {
-        TasksPane(thread: .sampleWithTasks(), connection: .sample(), selectedTaskID: $selection).paneStyle()
+        TasksPane(thread: .sampleWithTaskKinds(), connection: .sample(), selectedTaskID: $selection).paneStyle()
     }
-}
-
-/// Every shape a row can take, at the inspector's width: running, finished, failed, backgrounded.
-#Preview("TaskRow") {
-    Form {
-        Section {
-            ForEach(ThreadModel.sampleWithTasks().taskEntries) { TaskRow(entry: $0) }
-        }
-    }
-    .formStyle(.grouped)
-    .lineLimit(1)
-    .frame(width: 300, height: 260)
-}
-#endif
-
-#if DEBUG
-
-// A design preview of the Tasks tab as a view of its own: a sidebar of tasks, and a detail that
-// suits each kind (an agent's activity, a command's output, a workflow's phases and agents). Mock
-// data only; nothing in the app uses this yet.
-
-private enum MockKind: String { case agent, shell, workflow
-    var symbol: String {
-        switch self {
-        case .agent: "sparkles"
-        case .shell: "terminal"
-        case .workflow: "point.3.connected.trianglepath.dotted"
-        }
-    }
-    var tint: Color {
-        switch self {
-        case .agent: .purple
-        case .shell: .gray
-        case .workflow: .indigo
-        }
-    }
-}
-
-private enum MockStatus { case running, done, failed, stopped
-    var state: ChatState {
-        switch self {
-        case .running: .working
-        case .done: .idle
-        case .failed: .failed
-        case .stopped: .stopped
-        }
-    }
-}
-
-private struct MockTask: Identifiable, Hashable {
-    let id: String
-    let kind: MockKind
-    let name: String
-    let detail: String
-    let status: MockStatus
-    let elapsed: String
-    var background = false
-}
-
-private let mockTasks: [MockTask] = [
-    .init(id: "w1", kind: .workflow, name: "Review the diff for correctness", detail: "Workflow · 5 of 9 agents done",
-          status: .running, elapsed: "3m 02s", background: true),
-    .init(id: "a1", kind: .agent, name: "Find every SwiftUI view in SundownUI", detail: "Explore · 18 tools",
-          status: .running, elapsed: "1m 40s", background: true),
-    .init(id: "s1", kind: .shell, name: "swift test --package-path SundownKit", detail: "Command · in background",
-          status: .running, elapsed: "52s", background: true),
-    .init(id: "a2", kind: .agent, name: "Research macOS text selection", detail: "General · 4 tools",
-          status: .done, elapsed: "6m 11s"),
-    .init(id: "s2", kind: .shell, name: "xcodebuild -scheme Sundown build", detail: "Command · exit 65",
-          status: .failed, elapsed: "2m 03s"),
-    .init(id: "a3", kind: .agent, name: "Audit AGENTS.md against the code", detail: "Explore · stopped",
-          status: .stopped, elapsed: "40s"),
-]
-
-// MARK: Sidebar
-
-private struct TaskSidebar: View {
-    @Binding var selection: String?
-
-    var body: some View {
-        // Plain stacks in the mock: a sidebar List crashed the preview agent.
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                header("Running")
-                ForEach(mockTasks.filter { $0.status == .running }) { row($0) }
-                header("Finished").padding(.top, 10)
-                ForEach(mockTasks.filter { $0.status != .running }) { row($0) }
-            }
-            .padding(10)
-        }
-        .background(.background.secondary)
-        .safeAreaInset(edge: .bottom) {
-            // What's at work, at a glance: the sidebar's own footer.
-            HStack(spacing: 6) {
-                ChatStatusDot(state: .working)
-                Text("3 running · 2 in the background").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-        }
-    }
-
-    private func row(_ task: MockTask) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: task.kind.symbol)
-                .font(.callout)
-                .foregroundStyle(.white)
-                .frame(width: 24, height: 24)
-                .background(task.kind.tint.gradient, in: .rect(cornerRadius: 6))
-            VStack(alignment: .leading, spacing: 1) {
-                Text(task.name).lineLimit(1)
-                Text("\(task.detail) · \(task.elapsed)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            ChatStatusDot(state: task.status.state)
-        }
-        .padding(.vertical, 4).padding(.horizontal, 8)
-        .background(selection == task.id ? AnyShapeStyle(.tint.opacity(0.25)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 8))
-        .contentShape(.rect)
-        .onTapGesture { selection = task.id }
-    }
-
-    private func header(_ title: String) -> some View {
-        Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.bottom, 2)
-    }
-}
-
-// MARK: Detail header
-
-private struct DetailHeader: View {
-    let task: MockTask
-    var progress: Double?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: task.kind.symbol)
-                    .font(.title2)
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(task.kind.tint.gradient, in: .rect(cornerRadius: 10))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(task.name).font(.title3.weight(.semibold))
-                    HStack(spacing: 6) {
-                        ChatStatusDot(state: task.status.state)
-                        Text(task.status == .running ? "Running" : task.status == .done ? "Done" : task.status == .failed ? "Failed" : "Stopped")
-                        Text("·").foregroundStyle(.tertiary)
-                        Text(task.elapsed).monospacedDigit()
-                        if task.background {
-                            Text("·").foregroundStyle(.tertiary)
-                            Label("In the Background", systemImage: "moon.zzz").labelStyle(.titleAndIcon)
-                        }
-                    }
-                    .font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if task.status == .running {
-                    ControlGroup {
-                        Button("Open in Chat", systemImage: "text.bubble") {}
-                        Button("Stop", systemImage: "stop.fill") {}
-                    }
-                    .fixedSize()
-                }
-            }
-            if let progress {
-                ProgressView(value: progress).progressViewStyle(.linear).tint(task.kind.tint)
-            }
-        }
-        .padding(20)
-    }
-}
-
-// MARK: Workflow detail
-
-private struct MockAgent: Identifiable {
-    let id = UUID()
-    let name: String
-    let doing: String
-    let status: MockStatus
-    let tokens: String
-}
-
-private struct MockPhase: Identifiable {
-    let id = UUID()
-    let title: String
-    let detail: String
-    let agents: [MockAgent]
-}
-
-private let mockPhases: [MockPhase] = [
-    .init(title: "Review", detail: "Each dimension reads the diff", agents: [
-        .init(name: "review: bugs", doing: "3 findings", status: .done, tokens: "41K"),
-        .init(name: "review: performance", doing: "2 findings", status: .done, tokens: "38K"),
-        .init(name: "review: accessibility", doing: "Reading MarkdownText.swift", status: .running, tokens: "22K"),
-    ]),
-    .init(title: "Verify", detail: "Each finding checked on its own", agents: [
-        .init(name: "verify: stale marker widths", doing: "Confirmed", status: .done, tokens: "12K"),
-        .init(name: "verify: empty table cells", doing: "Confirmed", status: .done, tokens: "9K"),
-        .init(name: "verify: undo after send", doing: "Running a test", status: .running, tokens: "15K"),
-        .init(name: "verify: Esc in popovers", doing: "Not a bug", status: .done, tokens: "7K"),
-    ]),
-    .init(title: "Report", detail: "Ranked and written up", agents: [
-        .init(name: "report", doing: "Waiting for Verify", status: .stopped, tokens: "—"),
-    ]),
-]
-
-private struct WorkflowDetail: View {
-    let task: MockTask
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                DetailHeader(task: task, progress: 5.0 / 9)
-                Divider()
-                VStack(alignment: .leading, spacing: 18) {
-                    ForEach(Array(mockPhases.enumerated()), id: \.element.id) { index, phase in
-                        PhaseView(number: index + 1, phase: phase, isLast: index == mockPhases.count - 1)
-                    }
-                }
-                .padding(20)
-            }
-        }
-    }
-}
-
-/// A phase: a step on a timeline, its agents as rows beside it.
-private struct PhaseView: View {
-    let number: Int
-    let phase: MockPhase
-    let isLast: Bool
-
-    private var done: Int { phase.agents.filter { $0.status == .done }.count }
-    private var running: Bool { phase.agents.contains { $0.status == .running } }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            // The timeline: a numbered node, a line on to the next phase.
-            VStack(spacing: 4) {
-                ZStack {
-                    Circle().fill(done == phase.agents.count ? AnyShapeStyle(.green) : running ? AnyShapeStyle(.blue) : AnyShapeStyle(.quaternary))
-                    if done == phase.agents.count {
-                        Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(.white)
-                    } else {
-                        Text("\(number)").font(.caption.bold()).foregroundStyle(running ? .white : .secondary)
-                    }
-                }
-                .frame(width: 24, height: 24)
-                if !isLast { Rectangle().fill(.quaternary).frame(width: 2).frame(maxHeight: .infinity) }
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(phase.title).font(.headline)
-                    Text(phase.detail).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(done) of \(phase.agents.count)").font(.callout).foregroundStyle(.secondary).monospacedDigit()
-                }
-                VStack(spacing: 0) {
-                    ForEach(Array(phase.agents.enumerated()), id: \.element.id) { i, agent in
-                        if i > 0 { Divider().padding(.leading, 34) }
-                        AgentRow(agent: agent)
-                    }
-                }
-                .background(.fill.quinary, in: .rect(cornerRadius: 10))
-            }
-            .padding(.bottom, isLast ? 0 : 4)
-        }
-    }
-}
-
-private struct AgentRow: View {
-    let agent: MockAgent
-
-    var body: some View {
-        HStack(spacing: 10) {
-            // Done is a check; waiting is an empty ring; running pulses as the sidebar's dot does.
-            Group {
-                switch agent.status {
-                case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                case .stopped: Image(systemName: "circle.dashed").foregroundStyle(.tertiary)
-                case .failed: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
-                case .running: ChatStatusDot(state: .working)
-                }
-            }
-            .frame(width: 14)
-            Text(agent.name)
-            Text(agent.doing)
-                .foregroundStyle(agent.status == .running ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-                .italic(agent.status == .running)
-                .lineLimit(1)
-            Spacer()
-            Text(agent.tokens).font(.callout).foregroundStyle(.tertiary).monospacedDigit()
-            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .contentShape(.rect)
-    }
-}
-
-// MARK: Agent and command details
-
-private struct AgentDetail: View {
-    let task: MockTask
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                DetailHeader(task: task)
-                Divider()
-                VStack(alignment: .leading, spacing: 14) {
-                    // The facts in a row of small figures, as Activity Monitor's inspector does.
-                    HStack(spacing: 28) {
-                        figure("Tool Calls", "18")
-                        figure("Tokens", "64K")
-                        figure("Model", "Sonnet")
-                        figure("Started", "2:14 PM")
-                    }
-                    DisclosureGroup("Prompt") {
-                        Text("Find every SwiftUI view in SundownUI and list which read `thread.items`.")
-                            .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    Text("Activity").font(.headline).padding(.top, 4)
-                    VStack(alignment: .leading, spacing: 10) {
-                        activity("Searched code", "rg -n 'thread.items' SundownUI")
-                        activity("Read 6 files", "TranscriptView.swift, ItemViews.swift, …")
-                        Text("Most views read `rows`, not `items`. Two exceptions so far:")
-                        activity("Reading", "ToolCallView.swift", running: true)
-                    }
-                }
-                .padding(20)
-            }
-        }
-    }
-
-    private func figure(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title3.weight(.medium)).monospacedDigit()
-        }
-    }
-
-    private func activity(_ verb: String, _ what: String, running: Bool = false) -> some View {
-        HStack(spacing: 6) {
-            Text(verb).foregroundStyle(.secondary)
-            Text(what).foregroundStyle(.secondary).lineLimit(1)
-            if running { ProgressView().controlSize(.mini) }
-        }
-        .font(.callout)
-    }
-}
-
-private struct CommandDetail: View {
-    let task: MockTask
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            DetailHeader(task: task)
-            Divider()
-            ScrollView {
-                Text("""
-                Building for debugging...
-                [42/88] Compiling SundownUI MarkdownText.swift
-                [43/88] Compiling SundownUI Composer.swift
-                Test Suite 'MarkdownTextTests' started
-                ✔ Test everyCharacterHasAStyle() passed
-                ✔ Test copyIsPlainText() passed
-                """)
-                .font(.callout.monospaced())
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
-            }
-            .background(.fill.quinary)
-            // Follows the output's end, as a terminal does.
-            .defaultScrollAnchor(.bottom)
-        }
-    }
-}
-
-// MARK: The view
-
-private struct TasksViewDesign: View {
-    @State var selection: String? = "w1"
-
-    var body: some View {
-        HStack(spacing: 0) {
-            TaskSidebar(selection: $selection)
-                .frame(width: 280)
-            Divider()
-            Group {
-                switch mockTasks.first(where: { $0.id == selection }) {
-                case let task? where task.kind == .workflow: WorkflowDetail(task: task)
-                case let task? where task.kind == .shell: CommandDetail(task: task)
-                case let task?: AgentDetail(task: task)
-                case nil: ContentUnavailableView("No Task Selected", systemImage: "square.stack.3d.up")
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-}
-
-#Preview("Tasks · workflow", traits: .fixedLayout(width: 1100, height: 720)) {
-    TasksViewDesign(selection: "w1")
-}
-
-#Preview("Tasks · agent", traits: .fixedLayout(width: 1100, height: 720)) {
-    TasksViewDesign(selection: "a1")
-}
-
-#Preview("Tasks · command", traits: .fixedLayout(width: 1100, height: 720)) {
-    TasksViewDesign(selection: "s1")
 }
 #endif
