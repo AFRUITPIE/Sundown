@@ -42,8 +42,9 @@ struct GlassHelp: NSViewRepresentable {
 }
 
 extension View {
-    /// `help`, on glass.
+    /// `help`, on glass. The tag's view is the pointer's alone: VoiceOver and accessibility's hit
+    /// testing reach the control under it (which `help` names), not an empty view over it.
     func glassHelp(_ text: String) -> some View {
-        help(text).overlay { GlassHelp(text: text) }
+        help(text).overlay { GlassHelp(text: text).accessibilityHidden(true) }
     }
 }
