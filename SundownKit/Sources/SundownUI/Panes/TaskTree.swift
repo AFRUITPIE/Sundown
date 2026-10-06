@@ -57,11 +57,17 @@ struct TaskNode: Identifiable, Equatable {
     }
 
     /// A task started by another: its call's parent, or for a task with no call of its own, the
-    /// parent of the call that started it (a command an agent ran in the background).
+    /// parent of the call that started it (a command an agent ran in the background). A workflow
+    /// agent's own task, whose call the chat never has, goes under that agent once the daemon knows
+    /// which it was, else under its workflow; one whose workflow isn't listed (or a subagent's whose
+    /// call isn't held) isn't listed either, never at the top.
     static func tree(_ entries: [InspectorTaskEntry], call: (String) -> Item.ToolCall?) -> [TaskNode] {
         var nodes: [String: TaskNode] = [:]
         var order: [String] = []
         var parents: [String: String] = [:]
+        // A workflow agent's own task's agent, by entry id, and the subagents' tasks with nowhere to go.
+        var agentOf: [String: String] = [:]
+        var unplaced = Set<String>()
         // Which entry a call id belongs to: a subagent's own call, or the call that started a task.
         var entryByCall: [String: String] = [:]
         for entry in entries {
@@ -74,16 +80,32 @@ struct TaskNode: Identifiable, Equatable {
             order.append(entry.id)
             if let parentCall = started?.parentToolUseId, let parent = entryByCall[parentCall], parent != entry.id {
                 parents[entry.id] = parent
+            } else if let task = entry.task, task.isOwnedBySubagent, started == nil {
+                if let workflowCall = task.workflowToolUseId, let workflow = entryByCall[workflowCall], workflow != entry.id {
+                    parents[entry.id] = workflow
+                    if let agent = task.workflowAgentId { agentOf[entry.id] = agent }
+                } else {
+                    unplaced.insert(entry.id)
+                }
             }
         }
         // Children first, so each parent takes its children complete; a parent missing from the
         // list leaves its children at the top.
         func attach(_ id: String) -> TaskNode {
             var node = nodes[id]!
-            node.children = sorted(order.filter { parents[$0] == id }.map(attach)) + agents(of: node)
+            var children = order.filter { parents[$0] == id }
+            var agents = agents(of: node)
+            for i in agents.indices {
+                guard let agentId = agents[i].agent?.agentId else { continue }
+                let own = children.filter { agentOf[$0] == agentId }
+                guard !own.isEmpty else { continue }
+                agents[i].children = sorted(own.map(attach))
+                children.removeAll { own.contains($0) }
+            }
+            node.children = sorted(children.map(attach)) + agents
             return node
         }
-        return sorted(order.filter { parents[$0] == nil || nodes[parents[$0]!] == nil }.map(attach))
+        return sorted(order.filter { !unplaced.contains($0) && (parents[$0] == nil || nodes[parents[$0]!] == nil) }.map(attach))
     }
 
     /// The path of ids from a top-level task down to `id`, for showing a task asked for by id.
@@ -209,6 +231,12 @@ extension TaskNode.State {
         case .stopped: self = .stopped
         }
     }
+}
+
+extension TaskEventNotification {
+    /// Started by a subagent (a workflow agent's background command): said on its every event by
+    /// the daemon, and by the CLI on its start.
+    var isOwnedBySubagent: Bool { ownedBySubagent == true || data["owned_by_subagent"]?.boolValue == true }
 }
 
 extension InspectorTaskEntry {

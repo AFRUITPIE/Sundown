@@ -124,6 +124,62 @@ struct WorkflowCaptureTests {
         #expect(t.text == #"{"verified":[]}"#)
     }
 
+    // MARK: slow-check, as the daemon sends it
+
+    /// A second real run in the same chat, slow-check, whose three Wait agents each ran `sleep 45`
+    /// in the background: the notifications the daemon sends for it
+    /// (`Fixtures/workflow-slow-check-notifications.jsonl`, made by the server's itemizer from its
+    /// capture). The CLI's `<task-notification>` message never reaches the stream, so the finish is
+    /// the daemon's from the task's event, with the run record's result; the agents' commands are
+    /// tasks said to be theirs, and no line in the chat.
+    private func slowCheck() throws -> ThreadModel {
+        let text = String(decoding: try Self.fixture("workflow-slow-check-notifications", "jsonl"), as: UTF8.self)
+        let thread = ThreadModel(id: threadID)
+        thread.loadHistory(items: [], turns: [], seq: 0)
+        let decoder = JSONDecoder()
+        for line in text.split(separator: "\n") {
+            let message = try decoder.decode(JSONValue.self, from: Data(line.utf8))
+            let method = try #require(message["method"]?.stringValue)
+            let params = try JSONEncoder().encode(try #require(message["params"]))
+            let n = RPCClient.carryingWorkflow(try ServerNotification(method: method, params: params, decoder: decoder),
+                                               params: params, decoder: decoder)
+            thread.apply(n)
+        }
+        return thread
+    }
+
+    @Test func slowChecksFinishIsARowBeforeTheReplyAnsweringIt() throws {
+        let thread = try slowCheck()
+        let rows = thread.rows(.summarized)
+        let at = try #require(rows.firstIndex { $0.id == "workflow_wmcpqnf9b_finished" })
+        guard case .item(.userMessage(let finish)) = rows[at], case .text(let t)? = finish.content.first else {
+            Issue.record("no finish row"); return
+        }
+        #expect(finish.origin == "workflow")
+        #expect(finish.originName == "slow-check")
+        #expect(t.text.contains(#""report": "all waited""#))
+        #expect(rows.indices.contains(at + 1) && rows[at + 1].id == "msg_011Cfmk8tuutNMNdJrxLtVJV:0")
+        #expect(thread.turns.map(\.id).last == "turn_workflow_wmcpqnf9b_finished")
+        #expect(!thread.topLevelItems.contains { if case .notice = $0 { true } else { false } })
+    }
+
+    @Test func slowChecksAgentsCommandsAreTheirs() throws {
+        let thread = try slowCheck()
+        let call = "toolu_01Jby5Vz6jDDNapaZdT1BPdG"
+        let run = try #require(thread.workflowRuns[call])
+        #expect(run.status == .completed)
+        let owned = ["burds59jn": "wait-1", "bugthm7m1": "wait-2", "b8r5g0sol": "wait-3", "bv2g61ik6": "wait-3"]
+        for (taskId, label) in owned {
+            let task = try #require(thread.taskEntries.first { $0.id == "task:\(taskId)" }?.task, "\(taskId)")
+            #expect(task.ownedBySubagent == true, "\(taskId)")
+            #expect(task.workflowToolUseId == call, "\(taskId)")
+            #expect(run.agents.first { $0.agentId == task.workflowAgentId }?.label == label, "\(taskId)")
+            #expect(task.status == "stopped", "\(taskId)")
+            // Only the start said so in the CLI's own words; the notification's data didn't.
+            #expect(task.data["owned_by_subagent"]?.boolValue == true, "\(taskId)")
+        }
+    }
+
     // MARK: an agent's transcript
 
     /// The agent's transcript as the daemon's `readAgentItems` serves it, its prompt unframed.

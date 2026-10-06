@@ -102,6 +102,46 @@ struct TaskTreeTests {
         #expect(workflow.children.allSatisfy { $0.state == .done })
     }
 
+    /// A workflow agent's own background command (slow-check's agents each ran `sleep 45`) is
+    /// under that agent, never at the top: the daemon says whose it is on every event.
+    @Test func anAgentsOwnCommandIsUnderItsAgent() throws {
+        let thread = ThreadModel.sampleWorkflow(running: true)
+        let top = TaskNode.tree(thread.taskEntries, call: thread.call)
+        #expect(top.map(\.id) == ["workflow-call"])
+        let workflow = try #require(top.first)
+        #expect(workflow.children.allSatisfy { $0.kind == .agent })
+        let skeptic = try #require(workflow.children.first { $0.title == "skeptic 1" })
+        #expect(skeptic.children.map(\.id) == ["task:bg-skeptic-1"])
+        let command = try #require(skeptic.children.first)
+        #expect(command.kind == .command)
+        #expect(command.title == "swift test --filter TaskTreeTests")
+        #expect(command.state == .running)
+        #expect(TaskNode.path(to: "task:bg-skeptic-1", in: top) == ["workflow-call", skeptic.id, "task:bg-skeptic-1"])
+    }
+
+    /// Until the daemon knows which agent ran it, an agent's command is under its workflow; with
+    /// no workflow to go under (an older daemon says only `owned_by_subagent`, on the start) it
+    /// isn't listed, though its later events don't say so again.
+    @Test func anAgentsCommandWithNoAgentIsUnderItsWorkflowOrNowhere() throws {
+        let thread = ThreadModel.sampleWorkflow(running: true)
+        thread.apply(.taskEvent(.init(threadId: thread.id, seq: 200, event: "started", taskId: "bg-unplaced", toolUseId: "elsewhere-1",
+                                      description: "sleep 45", status: "running", ownedBySubagent: true,
+                                      workflowToolUseId: WorkflowSample.callID,
+                                      data: ["task_type": "local_bash", "owned_by_subagent": true])))
+        thread.apply(.taskEvent(.init(threadId: thread.id, seq: 201, event: "started", taskId: "bg-old-daemon", toolUseId: "elsewhere-2",
+                                      description: "sleep 45", status: "running",
+                                      data: ["task_type": "local_bash", "owned_by_subagent": true, "is_backgrounded": true])))
+        thread.apply(.taskEvent(.init(threadId: thread.id, seq: 202, event: "notification", taskId: "bg-old-daemon",
+                                      toolUseId: "elsewhere-2", status: "stopped", summary: "sleep 45", data: ["status": "stopped"])))
+        let top = TaskNode.tree(thread.taskEntries, call: thread.call)
+        #expect(top.map(\.id) == ["workflow-call"])
+        let workflow = try #require(top.first)
+        #expect(workflow.children.first?.id == "task:bg-unplaced")
+        #expect(workflow.children.dropFirst().allSatisfy { $0.kind == .agent })
+        #expect(flatten(top)["task:bg-old-daemon"] == nil)
+        #expect(thread.taskEntries.contains { $0.id == "task:bg-old-daemon" && $0.task?.status == "stopped" })
+    }
+
     private func flatten(_ nodes: [TaskNode]) -> [String: TaskNode] {
         var all: [String: TaskNode] = [:]
         for node in nodes {

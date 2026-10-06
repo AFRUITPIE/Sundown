@@ -514,9 +514,13 @@ public final class ThreadModel: Identifiable {
         if event.description == nil { event.description = previous.description }
         if event.summary == nil { event.summary = previous.summary }
         if event.status == nil { event.status = previous.status }
+        // Whose task it is, once known, stays known (an older daemon sends none of these).
+        if event.ownedBySubagent == nil { event.ownedBySubagent = previous.ownedBySubagent }
+        if event.workflowToolUseId == nil { event.workflowToolUseId = previous.workflowToolUseId }
+        if event.workflowAgentId == nil { event.workflowAgentId = previous.workflowAgentId }
         guard case .object(var data) = event.data else { return event }
-        // Only `started` says what kind of task it is, and a workflow's name.
-        for key in ["task_type", "workflow_name"] where data[key] == nil {
+        // Only `started` says what kind of task it is, a workflow's name, and that a subagent started it.
+        for key in ["task_type", "workflow_name", "owned_by_subagent"] where data[key] == nil {
             if let value = previous.data[key] { data[key] = value }
         }
         if data["task_type"]?.stringValue == "local_workflow" {

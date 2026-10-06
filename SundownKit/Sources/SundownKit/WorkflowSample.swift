@@ -178,6 +178,20 @@ enum WorkflowSample {
         return events
     }
 
+    /// A background command skeptic 1 ran, as the daemon reports a workflow agent's own task: the
+    /// CLI's `owned_by_subagent`, and which run and agent it was, on every event.
+    static func agentCommandEvents(threadID: String, firstSeq: Int, running: Bool) -> [TaskEventNotification] {
+        func event(_ name: String, seq: Int, status: String, data: [String: JSONValue] = [:]) -> TaskEventNotification {
+            TaskEventNotification(threadId: threadID, seq: seq, event: name, taskId: "bg-skeptic-1", toolUseId: "skeptic-1-bash",
+                                  description: name == "started" ? "swift test --filter TaskTreeTests" : nil, status: status,
+                                  ownedBySubagent: true, workflowToolUseId: callID, workflowAgentId: "a4b7c2d9e8f0",
+                                  data: .object(data.merging(["task_type": "local_bash"]) { a, _ in a }))
+        }
+        var events = [event("started", seq: firstSeq, status: "running", data: ["owned_by_subagent": true, "is_backgrounded": true])]
+        if !running { events.append(event("notification", seq: firstSeq + 1, status: "completed")) }
+        return events
+    }
+
     /// One agent's transcript, as `workflow/agentItems` itemizes it.
     static func agentItems(agentId: String, now: Double) -> [Item] {
         func ago(_ seconds: Double) -> Double { now - seconds * 1000 }

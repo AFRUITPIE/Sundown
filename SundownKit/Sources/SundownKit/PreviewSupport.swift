@@ -355,7 +355,8 @@ extension ThreadModel {
             title: "Review the diff",
             items: WorkflowSample.items(now: now, running: running),
             turns: running ? [.sample(secondsAgo: 288)] : [.sample(secondsAgo: 288), .sample(secondsAgo: 50)],
-            tasks: WorkflowSample.events(threadID: "preview-thread", firstSeq: 1, now: now, running: running))
+            tasks: WorkflowSample.events(threadID: "preview-thread", firstSeq: 1, now: now, running: running)
+                + WorkflowSample.agentCommandEvents(threadID: "preview-thread", firstSeq: 100, running: running))
         for agent in ["a1f09c3e2b7d", "a4b7c2d9e8f0"] {
             thread.rememberWorkflowAgentTranscript(WorkflowSample.agentItems(agentId: agent, now: now),
                                                    runId: WorkflowSample.runID, agentId: agent)
