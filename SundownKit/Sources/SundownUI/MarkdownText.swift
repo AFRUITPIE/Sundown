@@ -159,12 +159,21 @@ struct MarkdownTextView: NSViewRepresentable {
             records = newRecords
 
             if streams {
-                // What's new is whatever follows the text both versions share; fades past that point
-                // were on text that has just been replaced.
+                // What's new is whatever follows the text both versions share. A fade reaching past
+                // that point goes on over what's left of its text; the new text loses whatever
+                // fade it took from the text it replaced (left there, a word's end stayed
+                // invisible once the reply had settled), and fades in afresh.
                 let shared = (old as NSString).commonPrefix(with: tail.string, options: .literal).utf16.count
-                fades.removeAll { $0.range.location + $0.range.length > start + shared }
-                let range = NSRange(location: start + shared, length: tail.length - shared)
-                if range.length > 0 { fade(range) }
+                let cut = start + shared
+                fades = fades.compactMap { fade in
+                    let end = min(fade.range.location + fade.range.length, cut)
+                    return end > fade.range.location ? (NSRange(location: fade.range.location, length: end - fade.range.location), fade.start) : nil
+                }
+                let range = NSRange(location: cut, length: tail.length - shared)
+                if range.length > 0 {
+                    view.layoutManager?.removeTemporaryAttribute(.foregroundColor, forCharacterRange: range)
+                    fade(range)
+                }
             } else {
                 stopFading()
                 Self.settled.setObject(storage.copy() as! NSAttributedString, forKey: cacheKey, cost: storage.length * 2)
@@ -417,6 +426,14 @@ enum MarkdownBuilder {
 
     private static func setParagraph(_ out: NSMutableAttributedString, from start: Int, _ style: NSParagraphStyle) {
         out.addAttribute(.paragraphStyle, value: style, range: NSRange(location: start, length: out.length - start))
+        // A line break inside the block (a prompt's) starts a paragraph for TextKit, which would
+        // put the block's spacing above each line: only its first line has it.
+        let lineBreak = (out.string as NSString).range(of: "\n", range: NSRange(location: start, length: out.length - start))
+        guard lineBreak.location != NSNotFound, style.paragraphSpacingBefore != 0,
+              let rest = style.mutableCopy() as? NSMutableParagraphStyle else { return }
+        rest.paragraphSpacingBefore = 0
+        let from = lineBreak.location + 1
+        out.addAttribute(.paragraphStyle, value: rest, range: NSRange(location: from, length: out.length - from))
     }
 
     private static func appendListItem(_ out: NSMutableAttributedString, indent: Int, marker: String, text: String,
