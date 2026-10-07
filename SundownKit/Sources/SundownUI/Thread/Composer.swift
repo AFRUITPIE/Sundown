@@ -216,6 +216,8 @@ struct Composer: View {
                 addButton(dim: dim)
                 textField(dim: dim)
                     .frame(minWidth: 120)
+                    // From the field itself, not the row's Send button.
+                    .modifier(ModelPopoverAnchor())
                     .overlay {
                         if dropTargeted {
                             RoundedRectangle(cornerRadius: Layout.cardCornerRadius).strokeBorder(.tint, lineWidth: 2)

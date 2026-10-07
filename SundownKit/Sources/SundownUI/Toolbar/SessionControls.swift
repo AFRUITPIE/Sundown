@@ -436,6 +436,12 @@ public struct ChatCommands: View {
         if let window {
             let settings = SessionSettings.current(window)
             Group {
+                // The model popover, from the message field (the Chat tab's, so it's on screen).
+                Button("Model and Effort…") {
+                    window.tab = .chat
+                    window.modelPopoverRequested = true
+                }
+                .keyboardShortcut("m", modifiers: [.command, .control])
                 ModelPicker(settings: settings)
                 FastModeToggle(settings: settings)
                 EffortPicker(settings: settings)
@@ -480,7 +486,7 @@ public struct ChatCommands: View {
             ChatActionItems(window: window, thread: window.selectedThread)
         } else {
             Group {
-                ForEach(["Model", "Fast Mode", "Effort", "Permissions"], id: \.self) { Button($0) {} }
+                ForEach(["Model and Effort…", "Model", "Fast Mode", "Effort", "Permissions"], id: \.self) { Button($0) {} }
                 Divider()
                 Button("Ask a Side Question…") {}
                 Button("Stop") {}
