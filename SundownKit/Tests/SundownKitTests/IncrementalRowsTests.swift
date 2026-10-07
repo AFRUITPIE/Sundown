@@ -260,16 +260,16 @@ struct IncrementalRowsTests {
         #expect(thread.rows(.summarized).last?.id == "edits-p1")
     }
 
-    /// The last item may be a subagent's, so "Thinking…" still follows them.
-    @Test func thinkingFollowsASubagentsSteps() {
+    /// A running subagent's own steps don't move "Thinking…": each one came and went with them,
+    /// many times a second, moving the whole transcript under the Agent call's row.
+    @Test func thinkingIgnoresASubagentsSteps() {
         let thread = ThreadModel(id: threadID)
         thread.loadHistory(items: [prompt("p1", 0), subagent("s1", 1, status: .running)], turns: [], seq: 1)
         thread.apply(.threadStatusChanged(.init(threadId: threadID, seq: 2, status: .running)))
         #expect(!thread.isThinking)
-        let tail = Changed()
-        withObservationTracking { _ = thread.isThinking } onChange: { tail.happened = true }
         thread.apply(.itemStarted(.init(threadId: threadID, seq: 3, item: reply("s1-note", 2, text: "", parent: "s1"))))
-        #expect(tail.happened)
-        #expect(thread.isThinking)
+        #expect(!thread.isThinking)
+        thread.apply(.itemCompleted(.init(threadId: threadID, seq: 4, item: reply("s1-note", 2, text: "Done.", parent: "s1"))))
+        #expect(!thread.isThinking)
     }
 }
