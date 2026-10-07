@@ -96,6 +96,9 @@ public final class WindowModel {
 
     /// What the window's content shows: the chat, its tasks or its diff.
     public var tab: WindowTab = .chat
+    /// Chat ▸ Model and Effort… asks the message field to open the model popover, which clears it
+    /// once it has (`ModelPopoverAnchor`): from Tasks or Diff, the field appears after the request.
+    public var modelPopoverRequested = false
     /// The task the Tasks tab has open.
     public var inspectedTaskID: String?
 
