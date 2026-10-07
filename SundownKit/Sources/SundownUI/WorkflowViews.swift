@@ -52,16 +52,10 @@ struct WorkflowCallView: View {
         let object = ToolCallText.object(call, workflow: run)
         return HStack(spacing: 6) {
             if isRunning {
-                // Live while the run goes on, whatever the turn is doing.
+                // Live while the run goes on, whatever the turn is doing. How far it's got is in
+                // Tasks, which the row opens: the chat only says that it's running.
                 ActivityLabel(text: object.isEmpty ? verb : "\(verb) \(object)", live: true)
                     .fontWeight(.medium)
-                if let run {
-                    Text(run.progressText)
-                        .scaledFont(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                }
             } else {
                 Text(verb).foregroundStyle(.secondary).fontWeight(.medium)
                 if !object.isEmpty {
@@ -77,7 +71,7 @@ struct WorkflowCallView: View {
         .scaledFont(.callout)
     }
 
-    /// Under the row: what a finished run did, or why it didn't finish, in gray.
+    /// Under the row: why a run didn't finish, in gray. What it did is in Tasks.
     private var caption: String? {
         if call.status == .denied { return "Denied" }
         guard let run else { return nil }
@@ -87,16 +81,13 @@ struct WorkflowCallView: View {
                 .split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
             return reason.isEmpty || reason == "Failed" ? "Failed" : "Failed: \(reason)"
         case .stopped: return "Stopped"
-        case .completed:
-            let caption = run.finishedCaption
-            return caption.isEmpty ? nil : caption
         default: return nil
         }
     }
 
     private var statusWords: String {
         switch run?.status {
-        case .running: "Running, \(run?.progressText ?? "")"
+        case .running: "Running"
         case .failed: "Failed"
         case .stopped: "Stopped"
         case .completed: "Finished"
