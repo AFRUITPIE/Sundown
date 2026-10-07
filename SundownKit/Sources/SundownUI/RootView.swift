@@ -193,6 +193,10 @@ struct DetailView: View {
                 if let thread = window.selectedThread, let connection = window.connection {
                     TasksPane(thread: thread, connection: connection, selectedTaskID: $window.inspectedTaskID)
                         .paneStyle()
+                        // A chat chosen while Tasks shows is opened here, as the Chat tab opens it: a
+                        // followed chat let go when the window left it has no items until then, and
+                        // its schedules, goals and agents are worked out from them.
+                        .task(id: thread.id) { await connection.open(thread) }
                 } else {
                     PaneEmptyState("No Chat", symbol: WindowTab.tasks.symbol)
                 }

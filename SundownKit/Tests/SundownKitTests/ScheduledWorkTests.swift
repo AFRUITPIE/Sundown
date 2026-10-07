@@ -183,3 +183,24 @@ struct ScheduledWorkTests {
         #expect(thread.turnReplies(through: reply) == ["It’s 22:13:14."])
     }
 }
+
+/// The capture's /loop chat as the daemon serves it from disk (`thread/read` on a followed
+/// session: the job made and deleted before the daemon last started).
+@MainActor
+@Suite
+struct ScheduledWorkHistoryTests {
+    @Test func aLoopReadFromHistoryIsAScheduleTask() throws {
+        let url = try #require(Bundle.module.url(forResource: "loop-history", withExtension: "json", subdirectory: "Fixtures"))
+        struct Page: Decodable { let items: [Item]; let turns: [Turn] }
+        let page = try JSONDecoder().decode(Page.self, from: Data(contentsOf: url))
+        let thread = ThreadModel(id: "74bd0718-b17d-47ab-9b2c-01c0ded4136b")
+        thread.loadHistory(items: page.items, turns: page.turns, seq: 1)
+        thread.setInfo(.init(threadId: thread.id, status: .notLoaded, cwd: "/private/tmp/wf-scratch", lastSeq: 1))
+        let runs = thread.taskEntries.compactMap(\.schedule)
+        #expect(runs.count == 1)
+        #expect(runs.first?.jobID == "6db9ae9a")
+        #expect(runs.first?.fromLoop == true)
+        #expect(runs.first?.firings.count == 2)
+        #expect(runs.first?.state == .deleted)
+    }
+}
