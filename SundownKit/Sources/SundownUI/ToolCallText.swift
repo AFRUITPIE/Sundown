@@ -1,4 +1,5 @@
 import Foundation
+import SundownKit
 import TetherProtocol
 
 /// The words a tool call's line reads as: a verb in the tense its status calls for ("Reading",
@@ -6,9 +7,19 @@ import TetherProtocol
 /// acted on. And for a run of finished calls, one line that says what they did together:
 /// "Read 3 files, searched code, and ran 2 commands". Pure, so it's tested without a view.
 enum ToolCallText {
-    /// The verb, before what the call acted on.
-    static func verb(_ call: Item.ToolCall) -> String {
+    /// The verb, before what the call acted on. A workflow's tense is its run's (the thread's
+    /// `workflowRuns`): its call comes back as soon as the run has started. Without one, its call's.
+    static func verb(_ call: Item.ToolCall, workflow: WorkflowRun? = nil) -> String {
         let running = call.status == .running || call.status == .pending
+        if call.isWorkflow {
+            if call.status == .denied { return "Run workflow" }
+            return (workflow?.isRunning ?? running) ? "Running workflow" : "Ran workflow"
+        }
+        // A workflow agent's hand-back of its result: what it returned is in the opened row.
+        if call.isStructuredOutput {
+            if call.isFailedResult { return "Couldn’t return its result" }
+            return running ? "Returning its result" : "Returned its result"
+        }
         switch call.kind {
         // Just that it ran: the command is in the help tag and the opened row, not on the line.
         case .bash: return running ? "Running a command" : call.status == .denied ? "Run a command" : "Ran a command"
@@ -30,8 +41,11 @@ enum ToolCallText {
     /// What the call acted on: a file's name (its path is in the help tag and the detail), a
     /// search pattern, a URL's host and path. Nothing for a command: a shell line is more than a
     /// reader wants on every row.
-    static func object(_ call: Item.ToolCall) -> String {
+    static func object(_ call: Item.ToolCall, workflow: WorkflowRun? = nil) -> String {
         if call.kind == .bash { return "" }
+        // Never the script read here: the run's name, else what the call names.
+        if call.isWorkflow { return workflow?.name ?? WorkflowScript.callName(call) ?? "" }
+        if call.isStructuredOutput { return "" }
         if let summary = call.summary { return summary }
         let input = call.input
         switch call.kind {
@@ -99,7 +113,7 @@ enum ToolCallText {
         case .fileEdit, .notebookEdit: return "edit"
         case .grep, .glob: return "search"
         case .mcp: return "mcp:" + (call.mcpServer ?? mcpServerName(call) ?? "")
-        default: return call.kind.rawValue
+        default: return call.isWorkflow ? "workflow" : call.isStructuredOutput ? (call.isFailedResult ? "result-failed" : "result") : call.kind.rawValue
         }
     }
 
@@ -108,6 +122,12 @@ enum ToolCallText {
         let n = calls.count
         let first = calls[0]
         let files = Set(calls.map { object($0) }).count
+        if first.isWorkflow { return n == 1 ? "ran a workflow" : "ran \(n) workflows" }
+        if first.isStructuredOutput {
+            // An agent tries again when its result doesn't fit the script's schema.
+            guard first.isFailedResult else { return "returned its result" }
+            return n == 1 ? "couldn’t return its result" : "couldn’t return its result \(n) times"
+        }
         switch first.kind {
         case .bash: return n == 1 ? "ran a command" : "ran \(n) commands"
         case .fileRead: return files == 1 ? "read \(object(first))" : "read \(files) files"
@@ -133,4 +153,9 @@ enum ToolCallText {
         let parts = call.name.split(separator: "_", omittingEmptySubsequences: true)
         return parts.count >= 3 ? String(parts[1]) : nil
     }
+}
+
+extension Item.ToolCall {
+    /// A workflow agent's hand-back that didn't go through: refused by the script's schema, or denied.
+    fileprivate var isFailedResult: Bool { isStructuredOutput && (status == .failed || status == .denied) }
 }

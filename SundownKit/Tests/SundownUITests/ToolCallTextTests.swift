@@ -35,6 +35,44 @@ struct ToolCallTextTests {
         #expect(ToolCallText.reason(call(.bash, ["command": "make"])) == nil)
     }
 
+    /// A workflow is called by its script's name, in its run's tense: its call comes back at once.
+    @Test func aWorkflowReadsAsItsRun() {
+        let script = "export const meta = { name: 'review-diff', description: 'Review', phases: [] }"
+        let workflow = call(.other, ["script": .string(script)], name: "Workflow")
+        let running = WorkflowRun(call: workflow, task: .init(threadId: "t", seq: 1, event: "progress", taskId: "w",
+                                                             toolUseId: "c", status: "running", data: ["task_type": "local_workflow"]))
+        #expect(ToolCallText.verb(workflow, workflow: running) == "Running workflow")
+        #expect(ToolCallText.object(workflow, workflow: running) == "review-diff")
+        // Without its run, what the call says, never its script read here.
+        #expect(ToolCallText.verb(workflow) == "Ran workflow")
+        #expect(ToolCallText.verb(call(.other, ["script": .string(script)], status: .running, name: "Workflow")) == "Running workflow")
+        #expect(ToolCallText.object(workflow) == "")
+        #expect(ToolCallText.verb(call(.other, [:], status: .denied, name: "Workflow")) == "Run workflow")
+        // By name or path when the script isn't sent.
+        #expect(ToolCallText.object(call(.other, ["scriptPath": "/a/b/spec.js"], name: "Workflow")) == "spec")
+        #expect(ToolCallText.object(call(.other, ["scriptPath": "/a/b/typo-check-wf_a2813ad9-faf.js"], name: "Workflow")) == "typo-check")
+        #expect(ToolCallText.object(call(.other, ["name": "deep-research"], name: "Workflow")) == "deep-research")
+        #expect(ToolCallText.summary([workflow]) == "Ran a workflow")
+        #expect(ToolCallText.summary([workflow, workflow]) == "Ran 2 workflows")
+    }
+
+    /// A workflow agent's hand-back of its result reads as what it is, not a bare tool name.
+    @Test func structuredOutputReadsAsTheAgentsResult() {
+        let result = call(.other, ["findings": []], name: "StructuredOutput")
+        #expect(ToolCallText.verb(result) == "Returned its result")
+        #expect(ToolCallText.object(result) == "")
+        #expect(ToolCallText.verb(call(.other, [:], status: .running, name: "StructuredOutput")) == "Returning its result")
+        #expect(ToolCallText.summary([call(.fileRead, ["file_path": "/a/math.swift"]), result]) == "Read math.swift and returned its result")
+
+        // Refused (its schema didn't fit) or denied, it didn't hand anything back.
+        let refused = call(.other, ["findings": "none"], status: .failed, name: "StructuredOutput")
+        #expect(ToolCallText.verb(refused) == "Couldn’t return its result")
+        #expect(ToolCallText.verb(call(.other, [:], status: .denied, name: "StructuredOutput")) == "Couldn’t return its result")
+        #expect(ToolCallText.summary([refused]) == "Couldn’t return its result")
+        #expect(ToolCallText.summary([refused, result]) == "Couldn’t return its result and returned its result")
+        #expect(ToolCallText.summary([refused, refused, result]) == "Couldn’t return its result 2 times and returned its result")
+    }
+
     @Test func aRunSaysWhatItsCallsDidTogether() {
         let calls = [
             call(.fileRead, ["file_path": "/a/One.swift"]),

@@ -24,6 +24,40 @@ struct RPCBudgetTests {
     /// thread/start alone: New Chat shows the chat at once from what it sent, and the chat it moves
     /// to has its history and subscription from the start, so ThreadView asks for nothing more.
     static let startingAChat = 1
+    /// thread/read and thread/subscribe, and workflow/read for its workflow's run: task events
+    /// aren't kept with history. A finished run read once isn't read again.
+    static let openingAChatWithAWorkflow = 3
+
+    @Test func aWorkflowsRunIsReadOnceItHasFinished() async throws {
+        let host = CountingHost()
+        let connection = HostConnection(host: HostConfig(name: "Budget", kind: .ssh(destination: "budget.invalid")),
+                                        transportProvider: { _ in host })
+        await connection.connect()
+        let window = WindowModel(app: .sample(connections: [connection]), target: WindowTarget(hostID: connection.id))
+        window.start()
+        _ = host.take()
+
+        func show(_ id: String) async throws -> [String] {
+            window.threadID = id
+            let thread = try #require(window.selectedThread)
+            await connection.open(thread) // ThreadView's task
+            try await Task.sleep(for: .milliseconds(50))
+            return host.take()
+        }
+
+        let open = try await show("chat-w")
+        #expect(open.count <= Self.openingAChatWithAWorkflow, "opening a chat with a workflow: \(open)")
+        #expect(open.contains("workflow/read"))
+        let thread = try #require(window.selectedThread)
+        try await eventually { thread.workflowRuns[WorkflowSample.callID]?.status == .completed }
+        #expect(thread.taskEntries.first?.workflow?.agents.count == 5)
+
+        _ = try await show("chat-a")
+        let back = try await show("chat-w")
+        #expect(!back.contains("workflow/read"), "reopening: \(back)")
+        #expect(thread.workflowRuns[WorkflowSample.callID]?.agents.count == 5)
+        await connection.disconnect()
+    }
 
     @Test func openingAndSwitchingChatsStayWithinBudget() async throws {
         let host = CountingHost()
@@ -130,12 +164,18 @@ private final class CountingHost: Transport, @unchecked Sendable {
         case "project/list": return ["projects": []]
         case "model/list": return ["models": []]
         case "thread/list":
-            return json(ThreadListResult(threads: ["chat-a", "chat-b"].map {
+            return json(ThreadListResult(threads: ["chat-a", "chat-b", "chat-w"].map {
                 .init(threadId: $0, title: $0, cwd: "/work/project", updatedAt: 1, status: .idle)
             }))
         case "thread/read":
+            if thread == "chat-w" {
+                return json(ThreadReadResult(items: WorkflowSample.items(now: 1_000_000, running: false), turns: [],
+                                             historySeq: 5, hasMore: false))
+            }
             return json(ThreadReadResult(items: [.agentMessage(.init(id: "\(thread)-answer", createdAt: 1, text: "An answer."))],
                                          turns: [], historySeq: 5, hasMore: false))
+        case "workflow/read":
+            return ["workflow": WorkflowSample.snapshot(now: 1_000_000, running: false)]
         case "thread/subscribe":
             return json(ThreadSubscribeResult(thread: .init(threadId: thread, status: .notLoaded, cwd: "/work/project", lastSeq: 5),
                                               replayed: 0, gap: false))

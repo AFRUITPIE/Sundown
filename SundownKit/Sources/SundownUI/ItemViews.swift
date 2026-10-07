@@ -20,7 +20,7 @@ struct ItemView: View {
     let thread: ThreadModel
     var body: some View {
         switch item {
-        case .userMessage(let m) where m.synthetic == true || m.parentToolUseId != nil:
+        case .userMessage(let m) where m.synthetic == true || m.parentToolUseId != nil || m.origin == "workflow":
             // Not typed here (Claude Code's, a subagent's, another session's): a quiet line in the
             // middle, not a prompt on the person's side.
             SyntheticMessageView(message: m)
@@ -413,6 +413,7 @@ struct SyntheticMessageView: View {
         // A subagent's prompt, which Claude wrote.
         if message.synthetic != true, message.parentToolUseId != nil { return "Claude" }
         switch message.origin {
+        case "workflow": return "a workflow"
         case "peer": return "another session"
         case "channel": return "a channel"
         case "coordinator", "teamLead", "team-lead": return "the team lead"
@@ -433,9 +434,14 @@ struct SyntheticMessageView: View {
         DisclosureGroup(isExpanded: $isOpen) {
             VStack(alignment: .leading, spacing: 6) {
                 if let session = message.originSession { PeerSessionLink(sessionID: session) }
-                Text(text)
-                    .textSelection(.enabled)
-                    .foregroundStyle(.secondary)
+                if message.origin == "workflow" {
+                    // What a workflow returned: JSON as code, else Markdown, as a reply reads.
+                    WorkflowResultView(text: text)
+                } else {
+                    Text(text)
+                        .textSelection(.enabled)
+                        .foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {

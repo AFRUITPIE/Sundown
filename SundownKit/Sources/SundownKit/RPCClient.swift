@@ -146,9 +146,29 @@ public actor RPCClient {
     /// In its own type, or as it came when this client can't read it (a newer server's). Nil when
     /// its params aren't JSON, as a line that isn't is dropped.
     private func notification(_ method: String, params: Data?) -> ServerNotification? {
-        if let n = try? ServerNotification(method: method, params: params ?? Self.emptyObject, decoder: decoder) { return n }
+        if let n = try? ServerNotification(method: method, params: params ?? Self.emptyObject, decoder: decoder) {
+            return Self.carryingWorkflow(n, params: params, decoder: decoder)
+        }
         guard let params else { return .unknown(method: method, params: .null) }
         return (try? decoder.decode(JSONValue.self, from: params)).map { .unknown(method: method, params: $0) }
+    }
+
+    /// A workflow's snapshot (`task/event`'s `workflow`) kept in the event's `data`, where the
+    /// app reads it: a protocol package that predates the member drops it when decoding. Only a
+    /// task event naming one is decoded again.
+    static func carryingWorkflow(_ n: ServerNotification, params: Data?, decoder: JSONDecoder) -> ServerNotification {
+        guard case .taskEvent(var e) = n, let params, params.range(of: Data(#""workflow":"#.utf8)) != nil,
+              let extra = try? decoder.decode(WorkflowMember.self, from: params), let workflow = extra.workflow,
+              workflow.objectValue != nil else { return n }
+        // Data that isn't an object (none, from an event with nothing more to say) still carries it.
+        var data = e.data.objectValue ?? [:]
+        data["workflow"] = workflow
+        e.data = .object(data)
+        return .taskEvent(e)
+    }
+
+    private struct WorkflowMember: Decodable {
+        let workflow: JSONValue?
     }
 
     private func deliver(_ notification: ServerNotification) {

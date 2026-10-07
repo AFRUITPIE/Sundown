@@ -279,6 +279,12 @@ public final class WindowModel {
         tab = .tasks
     }
 
+    /// Stops a background task of the chat shown: a workflow from its row in the chat.
+    func stopTask(_ taskId: String) {
+        guard let thread = selectedThread, let connection else { return }
+        Task { await connection.stopTask(thread, taskId: taskId) }
+    }
+
     /// Branches the chat shown after `messageID`, keeping everything up to it, and shows the branch.
     func fork(at messageID: String) {
         guard let thread = selectedThread, let connection else { return }

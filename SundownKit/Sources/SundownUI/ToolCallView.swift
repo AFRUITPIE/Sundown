@@ -38,13 +38,19 @@ struct ToolCallView: View {
         if call.kind == .bash, let command = input.string("command") {
             Button("Copy Command") { Clipboard.copy(command) }
         }
-        if let output = call.outputText, !output.isEmpty {
+        if call.isStructuredOutput {
+            Button("Copy Result") { Clipboard.copy(PrettyInput.text(for: call.id, input)) }
+        } else if let output = call.outputText, !output.isEmpty {
             Button("Copy Output") { Clipboard.copy(output) }
         }
     }
 
     var body: some View {
-        if call.kind == .subagent {
+        if call.isWorkflow {
+            // A workflow's agents and result are in the Tasks tab; its script and launch receipt
+            // are nothing to read.
+            WorkflowCallView(call: call, run: thread.workflowRuns[call.id])
+        } else if call.kind == .subagent {
             // A subagent opens in the Tasks tab instead of here, behind the same chevron as a row that
             // opens in place.
             VStack(alignment: .leading, spacing: 2) {
@@ -152,6 +158,15 @@ struct ToolCallView: View {
     private var subtitle: String { ToolCallText.object(call) }
 
     @ViewBuilder private var detail: some View {
+        if call.isStructuredOutput {
+            // What the agent returned, as JSON; its output only says the CLI took it.
+            CodeBlock(code: PrettyInput.text(for: call.id, input), language: "JSON", lineLimit: 16)
+        } else {
+            kindDetail
+        }
+    }
+
+    @ViewBuilder private var kindDetail: some View {
         switch call.kind {
         case .bash:
             VStack(alignment: .leading, spacing: 6) {
@@ -210,8 +225,19 @@ struct InspectSubagentAction: Equatable {
     static func == (a: Self, b: Self) -> Bool { a.window === b.window }
 }
 
+/// Stops one of the shown chat's background tasks (a workflow, from its row). Holds the window, as
+/// `InspectSubagentAction` does.
+struct StopTaskAction: Equatable {
+    weak var window: WindowModel?
+
+    @MainActor func callAsFunction(_ taskId: String) { window?.stopTask(taskId) }
+
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
+}
+
 extension EnvironmentValues {
     @Entry var inspectSubagent = InspectSubagentAction()
+    @Entry var stopTask = StopTaskAction()
 
     /// The row id of the turn's work a row is shown inside, for Find in Chat.
     @Entry var findFold: String?
@@ -606,6 +632,17 @@ enum PrettyInput {
     ToolCallView(call: .sample(name: "Bash", kind: .bash,
                                 input: ["command": "swift test --filter ThreadModelTests", "description": "Run ThreadModel tests"],
                                 status: .completed, outputText: "Test Suite 'ThreadModelTests' passed.\nExecuted 6 tests, with 0 failures.", secondsAgo: 30),
+                 thread: .sampleIdleChat(), expandDetails: true)
+        .padding(20)
+        .frame(width: 560)
+}
+
+/// A workflow agent's last call: what it returned, as JSON, behind "Returned its result".
+#Preview("Agent result") {
+    ToolCallView(call: .sample(name: "StructuredOutput", kind: .other, input: [
+        "findings": [["file": "/private/tmp/wf-scratch/math.swift", "line": 2, "kind": "code bug",
+                      "description": "add() subtracts: should be return a + b"]],
+    ], status: .completed, outputText: "Structured output provided successfully", secondsAgo: 30),
                  thread: .sampleIdleChat(), expandDetails: true)
         .padding(20)
         .frame(width: 560)
