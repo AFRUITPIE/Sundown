@@ -8,6 +8,10 @@ import TetherProtocol
 struct TaskNode: Identifiable, Equatable {
     enum Kind: Equatable {
         case workflow, agent, command, monitor, mcpTool
+        /// A job that wakes the chat later (/loop, CronCreate, ScheduleWakeup).
+        case schedule
+        /// A /goal Claude works toward until it's met.
+        case goal
         /// One the SDK names that this app doesn't know yet, in its own words.
         case other(String)
 
@@ -18,6 +22,8 @@ struct TaskNode: Identifiable, Equatable {
             case .command: "Command"
             case .monitor: "Monitor"
             case .mcpTool: "MCP Tool"
+            case .schedule: "Schedule"
+            case .goal: "Goal"
             case .other(let name): name
             }
         }
@@ -46,6 +52,8 @@ struct TaskNode: Identifiable, Equatable {
     /// The phase a workflow's agent ran in, for its column's sections.
     var phase: String?
     var phaseIndex: Int?
+    /// What its row says in place of a time: a schedule's how often or when next, a goal's checks.
+    var note: String?
 
     /// The task Stop stops: a running task's own, or a running workflow's (found after a reload in
     /// its launch receipt). Never a workflow agent's: the CLI can't stop one alone.
@@ -161,6 +169,16 @@ struct TaskNode: Identifiable, Equatable {
     }
 
     private static func node(_ entry: InspectorTaskEntry, startedBy call: Item.ToolCall?) -> TaskNode {
+        if let run = entry.schedule {
+            var node = TaskNode(id: entry.id, title: run.title, kind: .schedule, state: State(run.state), entry: entry)
+            node.note = ScheduleText.note(run)
+            return node
+        }
+        if let goal = entry.goal {
+            var node = TaskNode(id: entry.id, title: goal.condition, kind: .goal, state: State(goal.state), entry: entry)
+            node.note = GoalText.checks(goal)
+            return node
+        }
         let task = entry.task
         let data = task?.data ?? .null
         // A workflow by its name, never the latest agent's words.
@@ -222,6 +240,24 @@ struct TaskNode: Identifiable, Equatable {
 }
 
 extension TaskNode.State {
+    /// Running while it's scheduled; stopped once deleted or gone with its session.
+    init(_ state: ScheduleRun.State) {
+        switch state {
+        case .scheduled: self = .running
+        case .done: self = .done
+        case .deleted, .ended: self = .stopped
+        }
+    }
+
+    init(_ state: GoalRun.State) {
+        switch state {
+        case .active: self = .running
+        case .met: self = .done
+        case .failed: self = .failed
+        case .cleared: self = .stopped
+        }
+    }
+
     init(_ state: WorkflowRun.Agent.State) {
         switch state {
         case .running: self = .running

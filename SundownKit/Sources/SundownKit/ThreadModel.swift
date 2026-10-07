@@ -96,6 +96,8 @@ public final class ThreadModel: Identifiable {
     /// The subagent and workflow calls, the chat's own and its subagents', in transcript order, for
     /// the Tasks list.
     @ObservationIgnored private var taskCallIDs: [String] = []
+    /// The items that tell of scheduled jobs and goals (`ScheduledWork.concerns`), in transcript order.
+    @ObservationIgnored private var scheduleItemIDs: [String] = []
     /// Snapshots of workflow runs read with `workflow/read`, by the Workflow call's id: what a run
     /// with no live task (a reload, a followed chat) is shown from.
     @ObservationIgnored private var loadedWorkflows: [String: JSONValue] = [:]
@@ -202,6 +204,7 @@ public final class ThreadModel: Identifiable {
         if info != i { info = i }
         if status != i.status { status = i.status }
         refreshTitle()
+        refreshScheduledWork()
     }
 
     func setSummary(_ s: ThreadSummary) {
@@ -299,9 +302,11 @@ public final class ThreadModel: Identifiable {
         boxes = next
         childIndexes = [:]
         taskCallIDs = []
+        scheduleItemIDs = []
         for (i, item) in storage.enumerated() {
             if let parent = item.parentToolUseId { childIndexes[parent, default: []].append(i) }
             if item.isTaskCall { taskCallIDs.append(item.id) }
+            if ScheduledWork.concerns(item) { scheduleItemIDs.append(item.id) }
         }
         refreshWorkflowRuns()
         // Every index may have moved: all the rows fold again.
@@ -309,6 +314,7 @@ public final class ThreadModel: Identifiable {
         itemsVersion &+= 1
         childrenVersion &+= 1
         if let id = streamingReplyID, index[id] == nil { setStreamingReply(nil) }
+        scheduledWork = ScheduledWork.make(from: scheduleItemIDs.compactMap { index[$0].map { storage[$0] } }, liveness: scheduleLiveness)
         refreshTaskEntries()
         refreshTitle()
     }
@@ -385,8 +391,10 @@ public final class ThreadModel: Identifiable {
         switch n {
         case .threadStarted(let e): setInfo(e.thread)
         case .threadUpdated(let e):
+            let cronsChanged = info?.sessionCrons != e.thread.sessionCrons
             if info != e.thread { info = e.thread }
             refreshTitle()
+            if cronsChanged { refreshScheduledWork() }
         case .threadStatusChanged(let e):
             // The sidebar reads the status: only a change of it redraws the rows.
             if status != e.status {
@@ -396,11 +404,13 @@ public final class ThreadModel: Identifiable {
             if activity != e.activity?.rawValue { activity = e.activity?.rawValue }
             if let count = e.backgroundTasks, count != backgroundTaskCount { backgroundTaskCount = count }
             if e.status == .idle, apiRetry != nil { apiRetry = nil }
+            refreshScheduledWork()
         case .threadClosed:
             status = .closed
             // Its background tasks ended with its process.
             if backgroundTaskCount != 0 { backgroundTaskCount = 0 }
             settleTasks()
+            refreshScheduledWork()
             setStreamingReply(nil)
         case .turnStarted(let e):
             Signposts.replyStarted(in: self)
@@ -412,6 +422,8 @@ public final class ThreadModel: Identifiable {
             upsertTurn(e.turn)
             if awaitingPrompt { awaitingPrompt = false }
             setStreamingReply(nil)
+            // A firing turn that scheduled no next wakeup ended its loop.
+            refreshScheduledWork()
         case .itemStarted(let e):
             if index[e.item.id] == nil {
                 noteStarted(e.item.id)
@@ -640,6 +652,7 @@ public final class ThreadModel: Identifiable {
         }
         if item.isWorkflowCall { refreshWorkflowRun(id) }
         if item.isTaskCall { refreshTaskEntries() }
+        if ScheduledWork.concerns(item) { refreshScheduledWork() }
         if case .toolCall(let call) = item, call.changesFiles, fileChanges[id] == nil { countChanges(of: call) }
         // Only an opening user message can move the title, and only until Claude names the session.
         if isUnnamed, case .userMessage(let m) = item, m.synthetic != true { refreshTitle() }
@@ -654,6 +667,7 @@ public final class ThreadModel: Identifiable {
             childrenVersion &+= 1
         }
         if isNew, item.isTaskCall { taskCallIDs.append(item.id) }
+        if isNew, ScheduledWork.concerns(item) { scheduleItemIDs.append(item.id) }
         if item.parentToolUseId == nil || item.isEditCall || previous?.isEditCall == true {
             refoldFrom = min(refoldFrom, i)
             itemsVersion &+= 1
@@ -729,7 +743,7 @@ public final class ThreadModel: Identifiable {
         var texts: [String] = []
         while i >= 0 {
             switch storage[i] {
-            case .userMessage(let m) where m.synthetic != true && m.parentToolUseId == nil && m.origin == nil:
+            case .userMessage(let m) where m.parentToolUseId == nil && ((m.synthetic != true && m.origin == nil) || m.origin == "wakeup"):
                 return texts.reversed()
             case .agentMessage(let m) where m.parentToolUseId == nil && !m.text.isEmpty:
                 texts.append(m.text)
@@ -967,6 +981,29 @@ public final class ThreadModel: Identifiable {
     /// when it changes, so an event that changes nothing shown redraws nothing.
     public private(set) var taskEntries: [InspectorTaskEntry] = []
 
+    /// The chat's scheduled jobs (/loop, CronCreate, ScheduleWakeup) and goals, for the Tasks tab
+    /// and the wakeup lines. Stored, and worked out again only when an item that tells of them
+    /// changes, or what the session says will wake it, or whether it runs.
+    public private(set) var scheduledWork = ScheduledWork()
+
+    /// Whether the session's process runs, as far as this client knows, and what will wake it.
+    private var scheduleLiveness: ScheduledWork.Liveness {
+        let turnRunning = isRunning || currentTurn != nil
+        // Said only by a daemon running the chat: after its process ends, the list is empty.
+        if let crons = info?.sessionCrons { return .live(crons: crons, turnRunning: turnRunning) }
+        if status == .closed { return .ended }
+        if status == .notLoaded { return .unknown }
+        return .live(crons: nil, turnRunning: turnRunning)
+    }
+
+    private func refreshScheduledWork() {
+        let items = scheduleItemIDs.compactMap { index[$0].map { storage[$0] } }
+        let next = ScheduledWork.make(from: items, liveness: scheduleLiveness)
+        guard next != scheduledWork else { return }
+        scheduledWork = next
+        refreshTaskEntries()
+    }
+
     private func refreshTaskEntries() {
         // Includes agents launched by other agents, which have no top-level row.
         var matchedTaskIDs = Set<String>()
@@ -995,6 +1032,12 @@ public final class ThreadModel: Identifiable {
                         : nil
                 )
             }
+        entries += scheduledWork.schedules.map {
+            InspectorTaskEntry(id: "schedule:\($0.id)", call: nil, task: nil, isBackgrounded: false, schedule: $0)
+        }
+        entries += scheduledWork.goals.map {
+            InspectorTaskEntry(id: "goal:\($0.id)", call: nil, task: nil, isBackgrounded: false, goal: $0)
+        }
         if entries != taskEntries { taskEntries = entries }
     }
 
@@ -1054,6 +1097,10 @@ public struct InspectorTaskEntry: Identifiable, Equatable {
     public let isBackgrounded: Bool
     /// A workflow's run, its agents and how it stands, for a Workflow call or a workflow task.
     public var workflow: WorkflowRun? = nil
+    /// A scheduled job (/loop, CronCreate, ScheduleWakeup), which has no task of the SDK's.
+    public var schedule: ScheduleRun? = nil
+    /// A /goal, which has no task of the SDK's.
+    public var goal: GoalRun? = nil
 
     /// The CLI still has a task for it: it can be stopped or, while it blocks the turn, backgrounded.
     public var isTaskRunning: Bool { task.map(Self.isRunning) ?? false }

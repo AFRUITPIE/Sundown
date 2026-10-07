@@ -393,6 +393,8 @@ public struct TurnPlaces: Sendable, Equatable {
             switch row {
             case .dateSeparator(let promptID, _): current = promptID
             case .item(let item) where promptIDs.contains(item.id): current = item.id
+            // A scheduled job's wakeup starts a turn as a prompt does, though it's no prompt of the reader's.
+            case .item(.userMessage(let m)) where m.origin == "wakeup" && m.parentToolUseId == nil: current = m.id
             case .item(.agentMessage(let m)) where m.parentToolUseId == nil: lastReply[current] = m.id
             default: break
             }

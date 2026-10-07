@@ -88,4 +88,32 @@ struct ToolCallTextTests {
         #expect(ToolCallText.summary([call(.subagent, ["description": "5 second timer"], name: "Agent"),
                                       call(.subagent, ["description": "10 second timer"], name: "Agent")]) == "Ran 2 agents")
     }
+
+    /// A scheduled job's calls read plainly: what they did to the chat's schedule, then when.
+    @Test func aScheduleCallReadsPlainly() {
+        var create = call(.schedule, ["cron": "*/1 * * * *", "prompt": "reply with the time", "recurring": true],
+                          output: "Scheduled recurring job 6db9ae9a (Every minute). Session-only (not written to disk, dies when Claude exits).",
+                          name: "CronCreate")
+        #expect(ToolCallText.verb(create) == "Scheduled a job")
+        // From the answer's text alone (history), and from its structured answer (live).
+        #expect(ToolCallText.object(create) == "every minute")
+        create.output = ["id": "6db9ae9a", "humanSchedule": "Every 5 minutes"]
+        #expect(ToolCallText.object(create) == "every 5 minutes")
+        #expect(ToolCallText.fullObject(create) == "reply with the time")
+        let running = call(.schedule, ["cron": "0 9 * * *", "prompt": "stand-up notes"], status: .running, name: "CronCreate")
+        #expect(ToolCallText.verb(running) == "Scheduling a job")
+        #expect(ToolCallText.object(running) == "“0 9 * * *”")
+
+        let delete = call(.schedule, ["id": "6db9ae9a"], output: "Cancelled job 6db9ae9a.", name: "CronDelete")
+        #expect(ToolCallText.verb(delete) == "Deleted a scheduled job")
+        #expect(ToolCallText.object(delete) == "")
+
+        let wake = call(.schedule, ["delaySeconds": 270, "reason": "watching CI", "prompt": "/loop check CI"], name: "ScheduleWakeup")
+        #expect(ToolCallText.verb(wake) == "Scheduled the next wakeup")
+        #expect(ToolCallText.object(wake) == "in 5 minutes")
+        let stop = call(.schedule, ["stop": true], name: "ScheduleWakeup")
+        #expect(ToolCallText.verb(stop) == "Stopped the loop")
+
+        #expect(ToolCallText.summary([create, delete]) == "Scheduled a job and deleted a scheduled job")
+    }
 }
