@@ -198,12 +198,15 @@ struct TaskNodeRow: View {
     }
 }
 
-/// How long a task has run, counting while it runs, or how long it took.
+/// How long a task has run, counting while it runs, or how long it took; for a schedule or a goal,
+/// what it says in its place (`TaskNode.note`).
 struct TaskTime: View {
     let node: TaskNode
 
     var body: some View {
-        if node.state == .running, let started = node.started {
+        if let note = node.note {
+            Text(note)
+        } else if node.state == .running, let started = node.started {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text(Format.duration(max(0, context.date.timeIntervalSince(started))))
             }
@@ -370,7 +373,11 @@ struct TaskDetail: View {
     }
 
     @ViewBuilder private var content: some View {
-        if let agent = node.agent, let run = node.workflow {
+        if let run = node.entry.schedule {
+            ScheduleReport(run: run)
+        } else if let goal = node.entry.goal {
+            GoalReport(goal: goal)
+        } else if let agent = node.agent, let run = node.workflow {
             WorkflowAgentTranscript(thread: thread, connection: connection, run: run, agent: agent)
         } else if node.kind == .workflow, let run = node.workflow {
             WorkflowReport(run: run)
@@ -497,6 +504,22 @@ private struct TaskReport: View {
     @Previewable @State var selection: String? = "workflow-call"
     panePreview {
         TasksPane(thread: .sampleWorkflow(running: false), connection: .sample(), selectedTaskID: $selection).paneStyle()
+    }
+}
+
+/// A /loop's job, scheduled, beside a goal still being worked toward: its last check's reason.
+#Preview("Tasks (schedule and goal)") {
+    @Previewable @State var selection: String? = "goal:goal-set"
+    panePreview {
+        TasksPane(thread: .sampleScheduledWork(finished: false), connection: .sample(), selectedTaskID: $selection).paneStyle()
+    }
+}
+
+/// The loop deleted and the goal met.
+#Preview("Tasks (schedule stopped)") {
+    @Previewable @State var selection: String? = "schedule:cron-create"
+    panePreview {
+        TasksPane(thread: .sampleScheduledWork(finished: true), connection: .sample(), selectedTaskID: $selection).paneStyle()
     }
 }
 

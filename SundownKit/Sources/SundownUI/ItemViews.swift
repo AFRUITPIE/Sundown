@@ -20,6 +20,9 @@ struct ItemView: View {
     let thread: ThreadModel
     var body: some View {
         switch item {
+        case .userMessage(let m) where m.origin == "wakeup" && m.parentToolUseId == nil:
+            // A scheduled job firing: where its turn starts, a quiet line, never a message.
+            WakeupLine(message: m, fromLoop: thread.scheduledWork.loopWakeups.contains(m.id))
         case .userMessage(let m) where m.synthetic == true || m.parentToolUseId != nil || m.origin == "workflow":
             // Not typed here (Claude Code's, a subagent's, another session's): a quiet line in the
             // middle, not a prompt on the person's side.
@@ -580,11 +583,56 @@ struct NoticeView: View {
             if notice.level == .warning {
                 Image(systemName: "exclamationmark.circle").accessibilityHidden(true)
             }
-            Text(notice.text).textSelection(.enabled)
+            Text(text).textSelection(.enabled)
         }
         .scaledFont(.callout)
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // What the goal's check said is a hover away; the Tasks tab keeps the last one.
+        .help(notice.goal?.reason ?? "")
+    }
+
+    /// A goal's line says only what happened: its condition is in the prompt that set it.
+    private var text: String {
+        guard notice.kind == "goal", let goal = notice.goal else { return notice.text }
+        return Self.goalText(goal.event)
+    }
+
+    static func goalText(_ event: GoalEvent) -> String {
+        switch event {
+        case .set: "Goal set"
+        case .notMet: "Goal not met yet"
+        case .met: "Goal met"
+        case .failed: "Goal can’t be met"
+        case .cleared: "Goal cleared"
+        default: event.rawValue.humanized
+        }
+    }
+}
+
+/// A scheduled job firing, where the turn it starts begins: "Woke up for /loop", or for the job's
+/// prompt. The gray and size of a tool row, in Claude's column, as a notice is; never a bubble.
+struct WakeupLine: View {
+    let message: Item.UserMessage
+    /// The job was a /loop's.
+    let fromLoop: Bool
+
+    var body: some View {
+        Text(text)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .scaledFont(.callout)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help(prompt)
+            .accessibilityLabel(text)
+    }
+
+    private var prompt: String { message.plainText }
+
+    private var text: String {
+        if fromLoop || prompt.hasPrefix("/loop") || prompt.hasPrefix("<<autonomous-loop") { return "Woke up for /loop" }
+        return "Woke up for “\(prompt)”"
     }
 }
 

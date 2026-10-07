@@ -346,6 +346,69 @@ extension ThreadModel {
             ] + WorkflowSample.events(threadID: "preview-thread", firstSeq: 10, now: preview(secondsAgo: 0), running: true))
     }
 
+    /// A /loop and a /goal as Claude Code 2.1.291 ran them (the loop-goal capture): the loop's job
+    /// made by CronCreate, two wakeups, each starting a turn; the goal set, a check that found it not
+    /// met yet, and then, `finished`, met, with the loop deleted. Unfinished, the session's Stop hook
+    /// still lists the job.
+    public static func sampleScheduledWork(finished: Bool) -> ThreadModel {
+        let prompt = "reply with the current time in one short line"
+        let condition = "notes.md in this directory has no spelling mistakes"
+        func wakeup(_ id: String, secondsAgo: Double) -> Item {
+            .userMessage(.init(id: id, createdAt: preview(secondsAgo: secondsAgo), content: [.text(.init(text: prompt))],
+                               synthetic: true, origin: "wakeup"))
+        }
+        func date(_ secondsAgo: Double, _ time: String) -> [Item] {
+            [.sampleToolCall(name: "Bash", kind: .bash, input: ["command": "date +%H:%M:%S", "description": "Get current time"],
+                             outputText: time, secondsAgo: secondsAgo),
+             .sampleAgentMessage("It’s \(time).", secondsAgo: secondsAgo - 1)]
+        }
+        func goal(_ event: GoalEvent, reason: String? = nil, secondsAgo: Double) -> Item {
+            .notice(.init(id: "goal-\(event.rawValue)", createdAt: preview(secondsAgo: secondsAgo), kind: "goal",
+                          text: "Goal \(event.rawValue)", goal: .init(condition: condition, event: event, reason: reason)))
+        }
+        var items: [Item] = [
+            .userMessage(.init(id: "loop-prompt", createdAt: preview(secondsAgo: 300),
+                               content: [.text(.init(text: "/loop 1m \(prompt)"))])),
+            .toolCall(.init(id: "cron-create", createdAt: preview(secondsAgo: 297), name: "CronCreate", kind: .schedule,
+                            input: ["cron": "*/1 * * * *", "prompt": .string(prompt), "recurring": true], status: .completed,
+                            outputText: "Scheduled recurring job 6db9ae9a (Every minute). Session-only (not written to disk, dies when Claude exits). Auto-expires after 7 days. Use CronDelete to cancel sooner.",
+                            output: ["id": "6db9ae9a", "humanSchedule": "Every minute", "recurring": true, "durable": false])),
+            .sampleAgentMessage("It’s 22:12:02.\n\nScheduled job `6db9ae9a` to run every minute. It lasts until you close this session.", secondsAgo: 295),
+            wakeup("wakeup-1", secondsAgo: 240),
+        ] + date(238, "22:13:14") + [
+            wakeup("wakeup-2", secondsAgo: 180),
+        ] + date(178, "22:14:15") + [
+            .userMessage(.init(id: "goal-prompt", createdAt: preview(secondsAgo: 120), content: [.text(.init(text: "/goal \(condition)"))])),
+            goal(.set, secondsAgo: 120),
+            .sampleAgentMessage("Goal acknowledged: make notes.md free of spelling mistakes. Let me read it.", secondsAgo: 118),
+            .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": "/tmp/wf-scratch/notes.md"], secondsAgo: 117),
+            .sampleToolCall(name: "Write", kind: .fileWrite, input: ["file_path": "/tmp/wf-scratch/notes.md",
+                                                                     "content": "The quick brown fox jumps over the lazy dog.\n"], secondsAgo: 115),
+            goal(.notMet, reason: "Line 2 still says “tommorow”.", secondsAgo: 110),
+            .sampleToolCall(name: "Edit", kind: .fileEdit, input: ["file_path": "/tmp/wf-scratch/notes.md",
+                                                                   "old_string": "tommorow", "new_string": "tomorrow"], secondsAgo: 100),
+            .sampleAgentMessage("I fixed every misspelling in `notes.md` and read it again.", secondsAgo: 98),
+        ]
+        if finished {
+            items += [
+                goal(.met, reason: "The assistant corrected every misspelling and re-read the file.", secondsAgo: 97),
+                .userMessage(.init(id: "stop-prompt", createdAt: preview(secondsAgo: 60), content: [.text(.init(text: "stop the loop"))])),
+                .toolCall(.init(id: "cron-delete", createdAt: preview(secondsAgo: 58), name: "CronDelete", kind: .schedule,
+                                input: ["id": "6db9ae9a"], status: .completed, outputText: "Cancelled job 6db9ae9a.", output: ["id": "6db9ae9a"])),
+                .sampleAgentMessage("The loop is stopped. I cancelled job `6db9ae9a`, so nothing else will fire.", secondsAgo: 56),
+            ]
+        }
+        let turns: [Turn] = [.sample(secondsAgo: 295), .sample(secondsAgo: 237), .sample(secondsAgo: 177),
+                             .sample(status: finished ? .completed : .inProgress, secondsAgo: 97)]
+            + (finished ? [.sample(secondsAgo: 56)] : [])
+        let thread = sample(title: "Loop and goal", status: finished ? .idle : .running, items: items, turns: turns)
+        // What the session's Stop hook last said will wake it, as the daemon sends it.
+        var info = thread.info!
+        info.sessionCrons = finished ? [] : [.init(id: "6db9ae9a", schedule: "*/1 * * * *", recurring: true, prompt: prompt)]
+        thread.apply(.threadUpdated(.init(threadId: thread.id, seq: 1, thread: info)))
+        return thread
+    }
+
     /// A dynamic workflow as Claude Code runs one: its call back at once with the launch receipt,
     /// its task's progress now and then, and, finished, its result as a message and Claude's reply.
     /// One agent's transcript is already read, as `workflow/agentItems` would give it.

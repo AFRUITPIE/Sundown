@@ -142,6 +142,28 @@ struct TaskTreeTests {
         #expect(thread.taskEntries.contains { $0.id == "task:bg-old-daemon" && $0.task?.status == "stopped" })
     }
 
+    /// A /loop's job and a /goal are tasks of their own: the job named for its prompt, saying how
+    /// often it fires; the goal for its condition, saying how many checks it has had.
+    @Test func schedulesAndGoalsAreTasks() throws {
+        let running = flatten(TaskNode.tree(ThreadModel.sampleScheduledWork(finished: false).taskEntries, call: { _ in nil }))
+        let job = try #require(running["schedule:cron-create"])
+        #expect(job.kind == .schedule && job.kind.name == "Schedule")
+        #expect(job.title == "reply with the current time in one short line")
+        #expect(job.state == .running)
+        #expect(job.note == "Every minute")
+        #expect(job.stoppableTaskID == nil)
+        let goal = try #require(running["goal:goal-set"])
+        #expect(goal.kind == .goal && goal.title == "notes.md in this directory has no spelling mistakes")
+        #expect(goal.state == .running)
+        #expect(goal.note == "1 check")
+
+        let finished = flatten(TaskNode.tree(ThreadModel.sampleScheduledWork(finished: true).taskEntries, call: { _ in nil }))
+        #expect(finished["schedule:cron-create"]?.state == .stopped)
+        #expect(finished["schedule:cron-create"]?.note == "Fired 2 times")
+        #expect(finished["goal:goal-set"]?.state == .done)
+        #expect(finished["goal:goal-set"]?.note == "2 checks")
+    }
+
     private func flatten(_ nodes: [TaskNode]) -> [String: TaskNode] {
         var all: [String: TaskNode] = [:]
         for node in nodes {

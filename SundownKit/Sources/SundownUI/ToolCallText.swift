@@ -34,8 +34,51 @@ enum ToolCallText {
         case .monitor: return running ? "Watching" : "Watched"
         case .todoWrite: return "Todos"
         case .mcp: return mcpName(call)
+        case .schedule: return scheduleVerb(call, running: running)
         default: return call.name
         }
+    }
+
+    /// A scheduled job's call says what it did to the chat's schedule, plainly: "Scheduled a job",
+    /// "Deleted a scheduled job"; how often goes after, as what it acted on.
+    private static func scheduleVerb(_ call: Item.ToolCall, running: Bool) -> String {
+        let denied = call.status == .denied
+        switch call.name {
+        case "CronCreate": return running ? "Scheduling a job" : denied ? "Schedule a job" : "Scheduled a job"
+        case "CronDelete": return running ? "Deleting a scheduled job" : denied ? "Delete a scheduled job" : "Deleted a scheduled job"
+        case "CronList": return running ? "Listing scheduled jobs" : denied ? "List scheduled jobs" : "Listed scheduled jobs"
+        case "ScheduleWakeup":
+            if call.input["stop"]?.boolValue == true { return running ? "Stopping the loop" : denied ? "Stop the loop" : "Stopped the loop" }
+            return running ? "Scheduling the next wakeup" : denied ? "Schedule the next wakeup" : "Scheduled the next wakeup"
+        default: return call.name
+        }
+    }
+
+    /// When a job fires, in words: "every minute", "in 5 minutes". Claude Code's own words for a
+    /// cron job once it has answered, else the cron expression.
+    private static func scheduleObject(_ call: Item.ToolCall) -> String {
+        switch call.name {
+        case "CronCreate":
+            if let human = call.output?["humanSchedule"]?.stringValue ?? humanSchedule(in: call.outputText) {
+                return human.prefix(1).lowercased() + human.dropFirst()
+            }
+            return call.input.string("cron").map { "“\($0)”" } ?? ""
+        case "ScheduleWakeup":
+            guard call.input["stop"]?.boolValue != true else { return "" }
+            let seconds = call.output?["clampedDelaySeconds"]?.doubleValue ?? call.input["delaySeconds"]?.doubleValue
+            guard let seconds, seconds > 0 else { return "" }
+            // To the nearest minute past one: "in 5 minutes" for 270 seconds, not "in 4 minutes".
+            let rounded = seconds >= 60 ? (seconds / 60).rounded() * 60 : seconds.rounded()
+            return "in " + Duration.seconds(rounded)
+                .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .wide, maximumUnitCount: 2))
+        default: return ""
+        }
+    }
+
+    /// "Every minute" from CronCreate's answer as text ("Scheduled recurring job 6db9ae9a (Every minute). …").
+    private static func humanSchedule(in text: String?) -> String? {
+        guard let text, let open = text.range(of: " ("), let close = text[open.upperBound...].firstIndex(of: ")") else { return nil }
+        return String(text[open.upperBound..<close])
     }
 
     /// What the call acted on: a file's name (its path is in the help tag and the detail), a
@@ -61,6 +104,7 @@ enum ToolCallText {
         case .subagent: return input.string("description") ?? ""
         case .skill: return input.string("skill") ?? input.string("command") ?? ""
         case .monitor: return input.string("description") ?? ""
+        case .schedule: return scheduleObject(call)
         default: return ""
         }
     }
@@ -73,6 +117,8 @@ enum ToolCallText {
         case .fileRead, .fileWrite, .fileEdit, .notebookEdit:
             return (input.string("file_path") ?? input.string("notebook_path"))?.abbreviatingHome
         case .webFetch: return input.string("url")
+        // What the job fires with, and why a wakeup was chosen.
+        case .schedule: return input.string("prompt") ?? input.string("reason")
         default: return nil
         }
     }
@@ -113,6 +159,7 @@ enum ToolCallText {
         case .fileEdit, .notebookEdit: return "edit"
         case .grep, .glob: return "search"
         case .mcp: return "mcp:" + (call.mcpServer ?? mcpServerName(call) ?? "")
+        case .schedule: return "schedule:" + call.name
         default: return call.isWorkflow ? "workflow" : call.isStructuredOutput ? (call.isFailedResult ? "result-failed" : "result") : call.kind.rawValue
         }
     }
@@ -139,6 +186,13 @@ enum ToolCallText {
         case .skill: return n == 1 ? "used a skill" : "used \(n) skills"
         case .subagent: return n == 1 ? "ran an agent" : "ran \(n) agents"
         case .mcp: return "used " + (first.mcpServer ?? mcpServerName(first) ?? "an MCP server")
+        case .schedule:
+            switch first.name {
+            case "CronCreate": return n == 1 ? "scheduled a job" : "scheduled \(n) jobs"
+            case "CronDelete": return n == 1 ? "deleted a scheduled job" : "deleted \(n) scheduled jobs"
+            case "CronList": return "listed scheduled jobs"
+            default: return first.input["stop"]?.boolValue == true ? "stopped the loop" : "scheduled the next wakeup"
+            }
         default: return n == 1 ? "used \(first.name)" : "used \(first.name) \(n) times"
         }
     }

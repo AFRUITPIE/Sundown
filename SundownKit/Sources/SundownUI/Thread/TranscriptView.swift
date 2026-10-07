@@ -519,6 +519,13 @@ struct TurnOutcome: View {
         .frame(width: 900, height: 760)
 }
 
+/// A /loop's wakeups and a /goal in the chat: each firing a quiet line where its turn starts, the
+/// schedule's calls in plain words, the goal set, checked and met as quiet lines.
+#Preview("TranscriptView (loop and goal)") {
+    TranscriptView(thread: .sampleScheduledWork(finished: true))
+        .frame(width: 900, height: 760)
+}
+
 /// What stands in for a transcript that couldn't be opened. A host that's down is said by the
 /// status card instead ("Status card (chat not loaded)").
 #Preview("TranscriptView (open failed)") {
