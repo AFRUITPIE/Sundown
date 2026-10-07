@@ -882,11 +882,14 @@ struct ShimmerText: View {
                         LinearGradient(colors: [.clear, .black, .clear],
                                        startPoint: UnitPoint(x: start, y: 0.5),
                                        endPoint: UnitPoint(x: start + 0.6, y: 0.5))
+                            // Scoped to the band: a repeating animation started with `withAnimation`
+                            // rode along with whatever else changed size in the same update, and once
+                            // the reader had scrolled, the transcript's height looped with it (the chat
+                            // slid down for 1.6 s, snapped back, and slid again).
+                            .animation(.linear(duration: 1.6).repeatForever(autoreverses: false), value: sweeping)
                     }
             }
-            .onAppear {
-                withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) { sweeping = true }
-            }
+            .onAppear { sweeping = true }
     }
 }
 

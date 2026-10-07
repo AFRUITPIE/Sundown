@@ -188,8 +188,13 @@ public final class ThreadModel: Identifiable {
     /// item: a running tool call has its own spinner, and a reply that has started speaks for itself.
     public var isThinking: Bool {
         guard status == .running else { return false }
-        switch items.last {
-        case .agentMessage(let m): return m.text.isEmpty
+        // Top-level items only: a running subagent's own calls and messages arrive many times a
+        // second while its Agent call is what the chat shows, and each one added and removed the
+        // line, moving the whole transcript. A reply that has started speaks for itself, empty or
+        // not: its first words come a frame after it, and showing the line for that frame bumped
+        // the transcript at every reply.
+        switch items.last(where: { $0.parentToolUseId == nil }) {
+        case .agentMessage: return false
         case .toolCall(let t): return t.status != .running && t.status != .pending
         default: return true
         }

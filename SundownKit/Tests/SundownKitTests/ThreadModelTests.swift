@@ -145,8 +145,8 @@ struct ThreadModelTests {
         #expect(thread.title == "Rebuild the window layout")
     }
 
-    /// A streamed token redraws its own row, not the transcript: it changes the item's box, and the
-    /// rows only on the first token, which ends "Thinking…".
+    /// A streamed token redraws its own row, not the transcript: it changes the item's box, not the
+    /// rows.
     @Test func streamedTextGoesToTheItemsBoxNotTheTranscript() throws {
         let thread = ThreadModel(id: threadID)
         thread.apply(started(userMessage("Explain the reducer"), seq: 1))
@@ -154,7 +154,8 @@ struct ThreadModelTests {
         thread.apply(.threadStatusChanged(.init(threadId: threadID, seq: 3, status: .running)))
         thread.apply(started(.agentMessage(.init(id: "a1", createdAt: 0, text: "")), seq: 4))
         let box = thread.box(for: thread.items.last!)
-        #expect(thread.isThinking)
+        // A reply that has started ends "Thinking…", before its first words.
+        #expect(!thread.isThinking)
 
         thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 5, itemId: "a1", delta: "It ")))
         #expect(!thread.isThinking)
