@@ -181,7 +181,7 @@ The product should feel like a standard current macOS app. Prefer native SwiftUI
 
 ## Task tracking
 
-Work is tracked in GitHub Issues on `AFRUITPIE/tether-app` (private), not in a
+Work is tracked in GitHub Issues on `AFRUITPIE/Sundown` (private), not in a
 checked-in task file. Several agents work on this repository independently and
 cannot see each other's transcripts, so the issue list is the shared state.
 

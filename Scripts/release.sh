@@ -112,10 +112,10 @@ cask "sundown@beta" do
   version "$version"
   sha256 "$sha"
 
-  url "https://github.com/AFRUITPIE/tether-app/releases/download/v#{version}/Sundown-#{version}.zip"
+  url "https://github.com/AFRUITPIE/Sundown/releases/download/v#{version}/Sundown-#{version}.zip"
   name "Sundown"
   desc "Native client for Claude Code, locally or over SSH (beta builds)"
-  homepage "https://github.com/AFRUITPIE/tether-app"
+  homepage "https://github.com/AFRUITPIE/Sundown"
 
   conflicts_with cask: "sundown"
   depends_on macos: :golden_gate

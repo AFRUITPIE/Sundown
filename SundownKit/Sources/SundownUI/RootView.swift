@@ -285,7 +285,7 @@ public struct HelpCommands: View {
     public init() {}
 
     public var body: some View {
-        Button("Sundown Help") { openURL(URL(string: "https://github.com/AFRUITPIE/tether-app#readme")!) }
+        Button("Sundown Help") { openURL(URL(string: "https://github.com/AFRUITPIE/Sundown#readme")!) }
             .keyboardShortcut("?")
         Button("Claude Code Documentation") { openURL(URL(string: "https://code.claude.com/docs/en/overview")!) }
     }
