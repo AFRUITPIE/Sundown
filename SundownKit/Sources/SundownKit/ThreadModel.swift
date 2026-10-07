@@ -259,7 +259,7 @@ public final class ThreadModel: Identifiable {
                      fileChanges changes: [String: [FileChange]] = [:]) {
         if let seq { lastSeq = seq }
         remember(changes)
-        storage = newItems
+        storage = absorbingSkillBodies(newItems)
         if turns != newTurns { turns = newTurns }
         noteLastTurn()
         if awaitingPrompt { awaitingPrompt = false }
@@ -272,7 +272,7 @@ public final class ThreadModel: Identifiable {
     func prependHistory(items older: [Item], hasMore: Bool, fileChanges changes: [String: [FileChange]] = [:]) {
         if hasMoreHistory != hasMore { hasMoreHistory = hasMore }
         remember(changes)
-        let fresh = older.filter { index[$0.id] == nil }
+        let fresh = absorbingSkillBodies(older.filter { index[$0.id] == nil })
         guard !fresh.isEmpty else { return }
         storage.insert(contentsOf: fresh, at: 0)
         reindex()
@@ -322,6 +322,7 @@ public final class ThreadModel: Identifiable {
     /// Drops the transcript so the next open reads it afresh.
     func unload() {
         fileChanges = [:]
+        if !skillBodies.isEmpty { skillBodies = [:] }
         started = [:]
         openingPrompt = nil
         storage = []
@@ -366,6 +367,7 @@ public final class ThreadModel: Identifiable {
             key.split(separator: "/", maxSplits: 1).first.map { runs.contains(String($0)) } ?? false
         }
         fileChanges = fileChanges.filter { held.contains($0.key) }
+        if skillBodies.keys.contains(where: { !held.contains($0) }) { skillBodies = skillBodies.filter { held.contains($0.key) } }
         if !hasMoreHistory { hasMoreHistory = true }
     }
 
@@ -592,7 +594,40 @@ public final class ThreadModel: Identifiable {
         noteLastTurn()
     }
 
+    /// What each skill call loaded: Claude Code puts a skill's instructions in the conversation as
+    /// a message of its own, right after the call, which the call's row shows when opened rather
+    /// than as a message "from Claude Code" (or a new turn) of its own.
+    public private(set) var skillBodies: [String: String] = [:]
+
+    /// The skill call a message right after it is the instructions of: a synthetic message beside a
+    /// skill call of the same agent.
+    private func skillBody(_ item: Item, after previous: Item?) -> (call: String, text: String)? {
+        guard case .userMessage(let m) = item, m.synthetic == true,
+              case .toolCall(let call)? = previous, call.kind == .skill, call.parentToolUseId == m.parentToolUseId,
+              skillBodies[call.id] == nil else { return nil }
+        let text = m.content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n\n")
+        return (call.id, text)
+    }
+
+    /// `items` without the skills' instructions, which go to `skillBodies`.
+    private func absorbingSkillBodies(_ items: [Item]) -> [Item] {
+        var kept: [Item] = []
+        kept.reserveCapacity(items.count)
+        for item in items {
+            if let body = skillBody(item, after: kept.last) {
+                skillBodies[body.call] = body.text
+            } else {
+                kept.append(item)
+            }
+        }
+        return kept
+    }
+
     private func upsert(_ item: Item) {
+        if index[item.id] == nil, let body = skillBody(item, after: storage.last) {
+            skillBodies[body.call] = body.text
+            return
+        }
         let id = item.id
         let i: Int
         let previous: Item?

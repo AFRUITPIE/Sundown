@@ -191,6 +191,13 @@ struct ToolCallView: View {
             TodoListView(todos: input["todos"]?.arrayValue ?? [])
         case .subagent:
             EmptyView() // Subagent transcripts belong in the Tasks inspector.
+        case .skill:
+            // What the skill told Claude, which Claude Code put in the chat as a message of its own.
+            if let body = thread.skillBodies[call.id], !body.isEmpty {
+                CodeBlock(code: body, language: "Instructions", lineLimit: 14)
+            } else {
+                output
+            }
         default:
             VStack(alignment: .leading, spacing: 6) {
                 if input.objectValue?.isEmpty == false {

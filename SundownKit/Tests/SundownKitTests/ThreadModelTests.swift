@@ -17,6 +17,33 @@ struct ThreadModelTests {
         .itemStarted(.init(threadId: threadID, seq: seq, item: item))
     }
 
+    /// A skill's instructions, which Claude Code puts in the chat as a message of their own right
+    /// after the call, belong to the call: neither a message nor a turn of their own, live or read.
+    @Test func aSkillsInstructionsGoToItsCall() {
+        let skill = Item.toolCall(.init(id: "skill-1", createdAt: 1, name: "Skill", kind: .skill,
+                                        input: ["skill": "shadcn"], status: .completed, outputText: "Launching skill: shadcn"))
+        let body = userMessage("Base directory for this skill: /x\n\n# shadcn/ui", id: "u2", synthetic: true)
+        let after = userMessage("Thanks", id: "u3")
+
+        let live = ThreadModel(id: threadID)
+        live.loadHistory(items: [userMessage("Use shadcn")], turns: [], seq: 0)
+        live.apply(started(skill, seq: 1))
+        live.apply(started(body, seq: 2))
+        live.apply(started(after, seq: 3))
+        #expect(live.items.map(\.id) == ["u1", "skill-1", "u3"])
+        #expect(live.skillBodies["skill-1"]?.hasPrefix("Base directory for this skill") == true)
+
+        let read = ThreadModel(id: threadID)
+        read.loadHistory(items: [userMessage("Use shadcn"), skill, body, after], turns: [], seq: 3)
+        #expect(read.items.map(\.id) == ["u1", "skill-1", "u3"])
+        #expect(read.skillBodies["skill-1"] == live.skillBodies["skill-1"])
+
+        // Anything else synthetic after a call stays a message.
+        let other = ThreadModel(id: threadID)
+        other.loadHistory(items: [userMessage("Go"), body], turns: [], seq: 1)
+        #expect(other.items.count == 2)
+    }
+
     /// Only `started` says what a task is, and a later `updated` patch can leave out its tool call.
     @Test func laterTaskEventsKeepWhatEarlierOnesSaid() {
         let thread = ThreadModel(id: threadID)
