@@ -22,12 +22,17 @@ public enum UITestFixture {
         let prompts = host.id == HostConfig.local.id && environment["SUNDOWN_UI_TEST_SCENARIO"] == "prompts"
         let tasks = environment["SUNDOWN_UI_TEST_SCENARIO"] == "tasks"
         let failing = Set((environment["SUNDOWN_UI_TEST_FAIL"] ?? "").split(separator: ",").map(String.init))
+        // SUNDOWN_UI_TEST_GAP=1: every connection after the first is a daemon that lost the stream, so
+        // resubscribing reports a replay gap and the chat reloads (sleep, a daemon restart).
+        let gaps = environment["SUNDOWN_UI_TEST_GAP"] == "1"
         return HostConnection(host: host, transportProvider: { _ in
-            if await attempts.next() <= failedConnects {
+            let attempt = await attempts.next()
+            if attempt <= failedConnects {
                 throw TransportError.launchFailed("Fixture connection unavailable")
             }
             return FixtureTransport(pendingPermission: pendingPermission || prompts, performance: performance,
-                                    prompts: prompts, tasks: tasks, failing: failing)
+                                    prompts: prompts, tasks: tasks, failing: failing,
+                                    reportsGap: gaps && attempt > failedConnects + 1)
         })
     }
 }
@@ -42,9 +47,10 @@ private final class FixtureTransport: Transport, @unchecked Sendable {
     private let stream: AsyncThrowingStream<Data, any Error>
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
 
-    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, tasks: Bool = false, failing: Set<String> = []) {
+    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, tasks: Bool = false, failing: Set<String> = [],
+         reportsGap: Bool = false) {
         script = FixtureScript(pendingPermission: pendingPermission, performance: performance, prompts: prompts,
-                               tasks: tasks, failing: failing)
+                               tasks: tasks, failing: failing, reportsGap: reportsGap)
         var captured: AsyncThrowingStream<Data, any Error>.Continuation!
         stream = AsyncThrowingStream { captured = $0 }
         continuation = captured
@@ -113,6 +119,8 @@ private actor FixtureScript {
     private let tasks: Bool
     /// Methods answered with an error (SUNDOWN_UI_TEST_FAIL).
     private let failing: Set<String>
+    /// A resubscription after events were seen reports a replay gap (SUNDOWN_UI_TEST_GAP).
+    private let reportsGap: Bool
     private var sentPermission = false
     private var nextSequence = 1
     private var nextMessage = 0
@@ -126,7 +134,9 @@ private actor FixtureScript {
     /// How many times Restore Code has run.
     private var rewound = 0
 
-    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, tasks: Bool = false, failing: Set<String> = []) {
+    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, tasks: Bool = false, failing: Set<String> = [],
+         reportsGap: Bool = false) {
+        self.reportsGap = reportsGap
         self.pendingPermission = pendingPermission
         self.performance = performance
         self.prompts = prompts
@@ -218,7 +228,7 @@ private actor FixtureScript {
             let status: ThreadStatus = id.hasPrefix("perf-chat-") ? .notLoaded : .idle
             var reply = Reply(value: .result(json(ThreadSubscribeResult(
                 thread: .init(threadId: id, status: status, cwd: "/tmp/sundown-fixture", lastSeq: nextSequence),
-                replayed: 0, gap: false
+                replayed: 0, gap: reportsGap && (params["afterSeq"]?.intValue ?? 0) > 1
             ))))
             if id == UITestFixture.threadID, tasks {
                 reply.notifications = TaskTranscript.events(threadID: id, firstSeq: nextSequence + 1)
@@ -503,8 +513,27 @@ enum PerformanceTranscript {
                 .agentMessage(.init(id: answerID, createdAt: 1_800_000_000_000 + Double(section * 100 + 50),
                                     text: markdown(section: 100 + section)))))))
         }
+        // SUNDOWN_PERF_LONG_REPLY=n: then one reply of n sections, as a long report is: a single
+        // message thousands of points tall. Streamed faster, 60 characters a frame.
+        if longReplySections > 0 {
+            let answerID = "perf-\(turn)-long"
+            let text = (0..<longReplySections).map { markdown(section: 200 + $0) }.joined(separator: "\n\n")
+            out.append(("item/started", json(ItemStartedNotification(threadId: threadID, seq: next(), item:
+                .agentMessage(.init(id: answerID, createdAt: 1_800_000_090_000, text: ""))))))
+            var rest = Substring(text)
+            while !rest.isEmpty {
+                let chunk = rest.prefix(60)
+                rest = rest.dropFirst(60)
+                out.append(("item/agentMessage/delta", json(ItemAgentMessageDeltaNotification(
+                    threadId: threadID, seq: next(), itemId: answerID, delta: String(chunk)))))
+            }
+            out.append(("item/completed", json(ItemCompletedNotification(threadId: threadID, seq: next(), item:
+                .agentMessage(.init(id: answerID, createdAt: 1_800_000_090_000, text: text))))))
+        }
         return out
     }
+
+    static let longReplySections = Int(ProcessInfo.processInfo.environment["SUNDOWN_PERF_LONG_REPLY"] ?? "") ?? 0
 
     static func markdown(section n: Int) -> String {
         """

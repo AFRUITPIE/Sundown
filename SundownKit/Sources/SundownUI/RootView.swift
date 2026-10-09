@@ -225,6 +225,7 @@ struct DetailView: View {
             }
         }
         .environment(\.messageSendGeometry, window.sendGeometry)
+        .environment(\.transcriptPlaces, window.transcriptPlaces)
     }
 }
 

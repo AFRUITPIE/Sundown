@@ -43,6 +43,8 @@ public final class HostConnection: Identifiable {
     private var subscribed = Set<String>()
     /// Threads a view has asked to open, whether or not we were connected at the time.
     private var openRequested = Set<String>()
+    /// Followed chats let go when no window showed them: unloaded until opened again.
+    private var letGo = Set<String>()
     private var chatsRefreshTask: Task<Void, Never>?
     /// While a chat this client doesn't follow has background work, the list is asked for again
     /// now and then: nothing else would say when that work ends.
@@ -360,6 +362,9 @@ public final class HostConnection: Identifiable {
     private func apply(_ n: ServerNotification) {
         guard let tid = n.threadId else { return }
         let model = thread(tid)
+        // A followed chat let go keeps no items until it's opened again; an item already on its
+        // way when it was unsubscribed would otherwise be its only one.
+        if letGo.contains(tid), n.isItemContent { return }
         guard model.apply(n) else { return }
         // A chat started from New Chat, whose window moves to it once it has the prompt's echo.
         if let op = awaitingEcho[tid], noteReadiness(op, in: model) { awaitingEcho[tid] = nil }
@@ -409,7 +414,7 @@ public final class HostConnection: Identifiable {
             if r.gap || r.thread.lastSeq < model.lastSeq {
                 // Server restarted or buffer overflowed: reload the transcript, and its runs.
                 forgetWorkflows(of: model.id)
-                try await loadHistory(model, force: true)
+                try await loadHistory(model, force: true, keepingHeld: true)
             } else {
                 model.setInfo(r.thread)
             }
@@ -572,6 +577,7 @@ public final class HostConnection: Identifiable {
             if model.historyLoaded, !model.isRunning, model.pending.isEmpty { model.unload() }
         } else if model.isFollowed {
             subscribed.remove(model.id)
+            letGo.insert(model.id)
             model.unload()
             Task { _ = try? await client.call(Methods.ThreadUnsubscribe.self, .init(threadId: model.id)) }
         } else {
@@ -612,18 +618,31 @@ public final class HostConnection: Identifiable {
     public static let initialHistoryLimit = 50
     public static let olderHistoryPageSize = 500
 
-    private func loadHistory(_ model: ThreadModel, force: Bool) async throws {
+    /// `keepingHeld`: a reload after a replay gap reads as far back as the chat already held, and
+    /// no further, so a reader scrolled back into older pages keeps every row they were reading.
+    /// Read from the last page alone, everything above it went at once and the transcript jumped
+    /// (or, scrolled far enough back, was left showing nothing).
+    private func loadHistory(_ model: ThreadModel, force: Bool, keepingHeld: Bool = false) async throws {
         guard let client else { throw RPCError(code: -1, message: "Not connected") }
         if model.historyLoaded && !force { return }
         let signpost = Signposts.historyLoad(model.id)
         defer { signpost.end() }
+        let held = keepingHeld ? model.items.count : 0
+        let firstHeld = keepingHeld ? model.items.first?.id : nil
         let r = try await client.call(Methods.ThreadRead.self, .init(
-            threadId: model.id, cwd: model.cwd, limit: Self.initialHistoryLimit))
+            threadId: model.id, cwd: model.cwd, limit: max(Self.initialHistoryLimit, held + Self.initialHistoryLimit)))
+        var items = r.items
+        var hasMore = r.hasMore ?? false
+        if let firstHeld, let start = items.firstIndex(where: { $0.id == firstHeld }), start > 0 {
+            items.removeFirst(start)
+            hasMore = true
+        }
         // Counted before the page goes in, so its first draw only looks them up. Events that land
         // meanwhile are replayed by the subscription after `historySeq` below.
-        let changes = await FileChange.changes(ofCallsIn: r.items)
+        let changes = await FileChange.changes(ofCallsIn: items)
         if let s = r.summary { model.setSummary(s) }
-        model.loadHistory(items: r.items, turns: r.turns, seq: r.historySeq, hasMore: r.hasMore ?? false, fileChanges: changes)
+        letGo.remove(model.id)
+        model.loadHistory(items: items, turns: r.turns, seq: r.historySeq, hasMore: hasMore, fileChanges: changes)
         if let seq = r.historySeq {
             // Loaded in the daemon: stream everything after the snapshot.
             let sub = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: seq))
@@ -1277,3 +1296,14 @@ extension HostConnection {
     }
 }
 #endif
+
+private extension ServerNotification {
+    /// Adds to or changes a chat's items, rather than saying how the chat stands.
+    var isItemContent: Bool {
+        switch self {
+        case .itemStarted, .itemUpdated, .itemCompleted, .itemAgentMessageDelta, .itemReasoningDelta, .itemToolCallProgress:
+            true
+        default: false
+        }
+    }
+}
