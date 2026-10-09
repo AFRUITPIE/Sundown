@@ -25,8 +25,12 @@ public enum UITestFixture {
         // SUNDOWN_UI_TEST_GAP=1: every connection after the first is a daemon that lost the stream, so
         // resubscribing reports a replay gap and the chat reloads (sleep, a daemon restart).
         let gaps = environment["SUNDOWN_UI_TEST_GAP"] == "1"
+        // SUNDOWN_UI_TEST_RECONNECT_DELAY=s: every connection after the first takes s seconds, as a
+        // host waking or a daemon being replaced does.
+        let reconnectDelay = Double(environment["SUNDOWN_UI_TEST_RECONNECT_DELAY"] ?? "") ?? 0
         return HostConnection(host: host, transportProvider: { _ in
             let attempt = await attempts.next()
+            if attempt > 1, reconnectDelay > 0 { try? await Task.sleep(for: .seconds(reconnectDelay)) }
             if attempt <= failedConnects {
                 throw TransportError.launchFailed("Fixture connection unavailable")
             }

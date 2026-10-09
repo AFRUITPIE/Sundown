@@ -350,12 +350,12 @@ struct TranscriptStabilityTests {
 
     // MARK: 9. a followed chat let go
 
-    /// A followed chat (in the daemon, not loaded) is unloaded when left. Nothing brings its history
-    /// back until something calls `open` again, so a window that still shows it, if the count ever
-    /// let it go, would stay unavailable.
-    @Test func aFollowedChatLeftIsUnloadedUntilItIsOpenedAgain() async throws {
+    /// A followed chat (in the daemon, not loaded) left is unsubscribed but keeps its last page, so
+    /// going back to it, host up or not, shows it at once; opened again, it's read afresh.
+    @Test func aFollowedChatLeftKeepsItsLastPageUntilItIsReadAgain() async throws {
         let daemon = FakeDaemon()
-        let items = chat(turns: 10)
+        let items = chat(turns: 30)
+        #expect(items.count > HostConnection.initialHistoryLimit)
         await daemon.script.queue("thread/read", ThreadReadResult(items: items, turns: [], historySeq: 100, hasMore: false))
         await daemon.script.queue("thread/subscribe", ThreadSubscribeResult(
             thread: .init(threadId: threadID, status: .notLoaded, cwd: "/repo", lastSeq: 100), replayed: 0, gap: false))
@@ -364,27 +364,79 @@ struct TranscriptStabilityTests {
         let thread = connection.thread(threadID)
         await connection.open(thread)
         #expect(thread.isFollowed)
-        #expect(thread.historyLoaded)
 
         connection.leave(thread)
-        #expect(!thread.historyLoaded)
-        #expect(thread.itemsHeld == 0)
+        #expect(thread.historyLoaded, "a chat left went blank")
+        #expect(thread.items.map(\.id) == items.suffix(HostConnection.initialHistoryLimit).map(\.id))
+        #expect(thread.hasMoreHistory)
+        try await eventually { await daemon.script.params(of: "thread/unsubscribe").count == 1 }
 
-        // A turn ends and the list refreshes, with no open call from a window that shows it.
-        await connection.afterTurn()
-        #expect(!thread.historyLoaded, "a left, followed chat came back with nothing having asked for it")
-
-        await daemon.script.queue("thread/read", ThreadReadResult(items: items, turns: [], historySeq: 100, hasMore: false))
+        // Opened again, it's read afresh, with what came meanwhile.
+        let later = items + [prompt("later", 9_000), reply("later-a", 9_001)]
+        await daemon.script.queue("thread/read", ThreadReadResult(items: later, turns: [], historySeq: 120, hasMore: false))
+        await daemon.script.queue("thread/subscribe", ThreadSubscribeResult(
+            thread: .init(threadId: threadID, status: .notLoaded, cwd: "/repo", lastSeq: 120), replayed: 0, gap: false))
         await connection.open(thread)
-        #expect(thread.historyLoaded)
-        #expect(thread.items.map(\.id) == items.map(\.id))
+        #expect(thread.items.last?.id == "later-a")
+        #expect(thread.lastSeq == 120)
+        #expect(await daemon.script.params(of: "thread/subscribe").count == 2)
         await connection.disconnect()
     }
 
-    /// An event in flight when a followed chat is let go lands in the emptied model: one item, with
-    /// no history under it, shown beside "not loaded". A chat let go drops item events until it's
-    /// opened again.
-    @Test func anEventAfterLeavingAFollowedChatDoesNotFillItWithOneItem() async throws {
+    /// A reconnect resubscribes the chats on screen and the live ones, not those let go: each
+    /// subscription to a followed chat costs the daemon a file watcher and its parsed transcript.
+    @Test func aReconnectDoesNotResubscribeAChatLetGo() async throws {
+        let first = FakeDaemon()
+        await first.script.queue("thread/read", ThreadReadResult(items: chat(turns: 30), turns: [], historySeq: 100, hasMore: false))
+        await first.script.queue("thread/subscribe", ThreadSubscribeResult(
+            thread: .init(threadId: threadID, status: .notLoaded, cwd: "/repo", lastSeq: 100), replayed: 0, gap: false))
+        let second = FakeDaemon()
+        let transports = StabilityTransports([first, second])
+        let connection = HostConnection(host: HostConfig(name: "Fake", kind: .ssh(destination: "fake")),
+                                        transportProvider: { _ in await transports.next() })
+        await connection.connect()
+        let thread = connection.thread(threadID)
+        await connection.open(thread)
+        connection.leave(thread)
+
+        await connection.reconnect()
+        #expect(await second.script.params(of: "thread/subscribe").isEmpty)
+        #expect(thread.historyLoaded, "the page it kept went with the reconnect")
+        await connection.disconnect()
+    }
+
+    /// Opened again while the host is down, a chat let go shows the page it kept, and is read
+    /// afresh and subscribed once the host is back.
+    @Test func aChatLetGoOpenedWhileDisconnectedIsReadOnceConnected() async throws {
+        let first = FakeDaemon()
+        await first.script.queue("thread/read", ThreadReadResult(items: chat(turns: 30), turns: [], historySeq: 100, hasMore: false))
+        await first.script.queue("thread/subscribe", ThreadSubscribeResult(
+            thread: .init(threadId: threadID, status: .notLoaded, cwd: "/repo", lastSeq: 100), replayed: 0, gap: false))
+        let second = FakeDaemon()
+        let later = chat(turns: 30) + [prompt("later", 9_000), reply("later-a", 9_001)]
+        await second.script.queue("thread/read", ThreadReadResult(items: later, turns: [], historySeq: 120, hasMore: false))
+        await second.script.queue("thread/subscribe", ThreadSubscribeResult(
+            thread: .init(threadId: threadID, status: .notLoaded, cwd: "/repo", lastSeq: 120), replayed: 0, gap: false))
+        let transports = StabilityTransports([first, second])
+        let connection = HostConnection(host: HostConfig(name: "Fake", kind: .ssh(destination: "fake")),
+                                        transportProvider: { _ in await transports.next() })
+        await connection.connect()
+        let thread = connection.thread(threadID)
+        await connection.open(thread)
+        connection.leave(thread)
+        await connection.disconnect()
+
+        await connection.open(thread)
+        #expect(thread.items.count == HostConnection.initialHistoryLimit, "nothing to show while the host is down")
+        await connection.connect()
+        #expect(thread.items.last?.id == "later-a")
+        #expect(await second.script.params(of: "thread/subscribe").count == 1)
+        await connection.disconnect()
+    }
+
+    /// An event in flight when a followed chat is let go would land in the page it kept, past a gap.
+    /// A chat let go drops item events until it's read again.
+    @Test func anEventAfterLeavingAFollowedChatIsDropped() async throws {
         let daemon = FakeDaemon()
         await daemon.script.queue("thread/read", ThreadReadResult(items: chat(turns: 10), turns: [], historySeq: 100, hasMore: false))
         await daemon.script.queue("thread/subscribe", ThreadSubscribeResult(
@@ -400,8 +452,7 @@ struct TranscriptStabilityTests {
         daemon.emit("thread/status/changed", ["threadId": .string(threadID), "seq": 102, "status": "idle"])
         try await eventually { thread.lastSeq == 102 }
 
-        #expect(thread.items.isEmpty, "an unloaded chat holds \(thread.items.map(\.id))")
-        #expect(!thread.historyLoaded)
+        #expect(!thread.items.contains { $0.id == "late" }, "a chat let go took an item past its gap")
         await connection.disconnect()
     }
 

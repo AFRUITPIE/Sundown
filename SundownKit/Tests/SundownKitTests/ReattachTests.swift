@@ -95,8 +95,9 @@ struct ReattachTests {
 
         connection.leave(thread)
 
-        #expect(!thread.historyLoaded)
-        #expect(thread.items.isEmpty)
+        // Unsubscribed, keeping its last page to show until it's read again.
+        #expect(thread.historyLoaded)
+        #expect(!thread.items.isEmpty)
             try await eventually { await script.calls().contains("thread/unsubscribe") }
         await connection.disconnect()
     }

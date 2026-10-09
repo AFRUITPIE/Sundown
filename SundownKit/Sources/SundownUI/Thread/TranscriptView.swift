@@ -466,17 +466,17 @@ private struct FindHighlight: ViewModifier {
     }
 }
 
-/// Stands in for the transcript before it arrives; a failure says so and offers a way out. Nothing
-/// while the host isn't connected: the status card in the composer's place says that, once.
+/// Stands in for the transcript before it arrives; a failure says so and offers a way out. While
+/// the host isn't connected it waits as it does for the history, the spinner alone: the status card
+/// in the composer's place says why, once. (It was nothing at all, and a chat opened while the host
+/// was reconnecting was a blank window.)
 /// Its own view so `connection.state` and `thread.lastError` are not read in the transcript's body.
 struct TranscriptUnavailable: View {
     let thread: ThreadModel
     var connection: HostConnection?
 
     var body: some View {
-        if let connection, connection.state != .connected {
-            EmptyView()
-        } else if let error = thread.lastError {
+        if let error = thread.lastError, connection?.state == .connected || connection == nil {
             TranscriptPlaceholder("Couldn\u{2019}t Open This Chat", symbol: "exclamationmark.triangle", detail: error) {
                 if let connection { Button("Try Again") { Task { await connection.open(thread) } } }
             }

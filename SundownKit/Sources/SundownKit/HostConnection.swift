@@ -402,7 +402,8 @@ public final class HostConnection: Identifiable {
     private func resubscribeAll() async {
         guard let client else { return }
         await withTaskGroup(of: Void.self) { group in
-            for model in threads.values where model.historyLoaded {
+            // Not the chats let go, which keep a page to show but are read afresh when opened.
+            for model in threads.values where model.historyLoaded && !letGo.contains(model.id) {
                 group.addTask { await self.resubscribe(model, client) }
             }
         }
@@ -430,7 +431,8 @@ public final class HostConnection: Identifiable {
     /// Load threads `open(_:)` was asked for before the connection was up.
     private func openRequestedThreads() async {
         for id in openRequested {
-            guard let model = threads[id], !model.historyLoaded else { continue }
+            // One let go still shows the page it kept, and is read afresh like one never loaded.
+            guard let model = threads[id], !model.historyLoaded || letGo.contains(id) else { continue }
             await loadRequestedThread(model)
         }
     }
@@ -562,27 +564,35 @@ public final class HostConnection: Identifiable {
     }
 
     /// The thread is no longer on screen. A followed one is let go: the daemon keeps a file watcher
-    /// and the whole parsed transcript for each, and reopening reads it afresh. A live thread stays
-    /// subscribed, which is cheap, keeps its sidebar status current and its place in the stream,
-    /// but keeps only its last page once nothing is going on in it (`trimIfOffScreen`); a running
-    /// one is trimmed after its turn. One with no stream at all (read from disk alone, or its query
-    /// closed) is let go like a followed one.
-    /// Synchronous so a quick reselect can't open the thread before this unloads it.
+    /// and the whole parsed transcript for each, so it's unsubscribed, and reopening reads it afresh.
+    /// It keeps its last page meanwhile, so going back to it shows it at once, whether or not the
+    /// host is there to answer: emptied, it was a blank window for as long as a reconnect took
+    /// (after sleep, a daemon restart, an update), with nothing but the status card to say why. A
+    /// live thread stays subscribed, which is cheap, keeps its sidebar status current and its place
+    /// in the stream, but keeps only its last page once nothing is going on in it
+    /// (`trimIfOffScreen`); a running one is trimmed after its turn. One with no stream at all (read
+    /// from disk alone, or its query closed) is let go like a followed one.
+    /// Synchronous so a quick reselect can't open the thread before this lets it go.
     public func leave(_ model: ThreadModel) {
         openRequested.remove(model.id)
         // While disconnected nothing is subscribed; what's live is resubscribed on reconnecting,
         // and trimmed after a turn from then on.
         guard let client else { return }
         if !subscribed.contains(model.id) {
-            if model.historyLoaded, !model.isRunning, model.pending.isEmpty { model.unload() }
+            if model.historyLoaded, !model.isRunning, model.pending.isEmpty { letGoKeepingLastPage(model) }
         } else if model.isFollowed {
             subscribed.remove(model.id)
-            letGo.insert(model.id)
-            model.unload()
+            letGoKeepingLastPage(model)
             Task { _ = try? await client.call(Methods.ThreadUnsubscribe.self, .init(threadId: model.id)) }
         } else {
             trimIfOffScreen(model)
         }
+    }
+
+    /// Unsubscribed, with its last page kept to show until it's read again (`loadRequestedThread`).
+    private func letGoKeepingLastPage(_ model: ThreadModel) {
+        letGo.insert(model.id)
+        model.trim(toLast: Self.initialHistoryLimit)
     }
 
     /// A chat no window shows, idle and with nothing waiting, keeps only its last page: a chat
@@ -601,7 +611,8 @@ public final class HostConnection: Identifiable {
 
     private func loadRequestedThread(_ model: ThreadModel) async {
         do {
-            try await loadHistory(model, force: false)
+            // A chat let go shows the page it kept until this reads it afresh.
+            try await loadHistory(model, force: letGo.contains(model.id))
             model.setError(nil) // clear a stale "Not connected" from an earlier attempt
         } catch {
             model.setError(error.localizedDescription)
