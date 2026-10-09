@@ -262,6 +262,7 @@ public final class ThreadModel: Identifiable {
     /// `fileChanges` are the page's edits, counted off the main actor.
     func loadHistory(items newItems: [Item], turns newTurns: [Turn], seq: Int?, hasMore: Bool = false,
                      fileChanges changes: [String: [FileChange]] = [:]) {
+        reshaped(historyLoaded ? "reloaded \(newItems.count) items over \(storage.count)" : "loaded \(newItems.count) items")
         if let seq { lastSeq = seq }
         remember(changes)
         storage = absorbingSkillBodies(newItems)
@@ -273,12 +274,19 @@ public final class ThreadModel: Identifiable {
         if !historyLoaded { historyLoaded = true }
     }
 
+    /// The last time the items were replaced, cut or added to above, and how: what the transcript
+    /// logs if it finds itself showing no rows.
+    @ObservationIgnored public private(set) var lastReshape: (what: String, at: Date)?
+
+    private func reshaped(_ what: String) { lastReshape = (what, Date()) }
+
     /// Add an older page to the front. `fileChanges` are its edits, counted off the main actor.
     func prependHistory(items older: [Item], hasMore: Bool, fileChanges changes: [String: [FileChange]] = [:]) {
         if hasMoreHistory != hasMore { hasMoreHistory = hasMore }
         remember(changes)
         let fresh = absorbingSkillBodies(older.filter { index[$0.id] == nil })
         guard !fresh.isEmpty else { return }
+        reshaped("an older page of \(fresh.count) items")
         storage.insert(contentsOf: fresh, at: 0)
         reindex()
     }
@@ -326,11 +334,13 @@ public final class ThreadModel: Identifiable {
 
     /// Drops the transcript so the next open reads it afresh.
     func unload() {
+        reshaped("unloaded")
         fileChanges = [:]
         if !skillBodies.isEmpty { skillBodies = [:] }
         started = [:]
         openingPrompt = nil
         storage = []
+        datedPrompts = []
         turns = []
         tasks = [:]
         taskIDsByToolUse = [:]
@@ -352,6 +362,7 @@ public final class ThreadModel: Identifiable {
     func trim(toLast count: Int) {
         defer { dropDerived() }
         guard historyLoaded, storage.count > count else { return }
+        reshaped("trimmed \(storage.count) items to \(count)")
         // Its title stays the prompt it opened with, until Claude names it.
         if openingPrompt == nil { openingPrompt = Self.firstPrompt(in: storage) }
         storage.removeFirst(storage.count - count)
@@ -943,8 +954,9 @@ public final class ThreadModel: Identifiable {
         while start < storage.count {
             var end = start + 1
             while end < storage.count, !storage[end].isPrompt { end += 1 }
-            let rows = transcriptRows(ofTurn: storage[start..<end], folding: folding, running: running && end == storage.count,
+            var rows = transcriptRows(ofTurn: storage[start..<end], folding: folding, running: running && end == storage.count,
                                       dates: &dates) { self.changes(of: $0) }
+            keepDates(in: &rows)
             f.rows += rows
             f.prompts += TranscriptPrompt.list(in: rows)
             f.turns.append(.init(items: start..<end, rowsEnd: f.rows.count, promptsEnd: f.prompts.count, dates: dates))
@@ -955,6 +967,24 @@ public final class ThreadModel: Identifiable {
         refoldFrom = .max
         folded = f
         return f
+    }
+
+    /// The prompts that have had a date above them since the chat was loaded. The first prompt held
+    /// gets one because nothing is known before it; an older page going in above can make it a
+    /// prompt with no break before it, and taking its date away then moved every row under it while
+    /// the reader was looking at the top. So once a prompt has had its date, it keeps it.
+    private var datedPrompts: Set<String> = []
+
+    private func keepDates(in rows: inout [TranscriptRow]) {
+        guard let first = rows.first else { return }
+        switch first {
+        case .dateSeparator(let id, _):
+            datedPrompts.insert(id)
+        case .item(.userMessage(let m)) where m.parentToolUseId == nil && datedPrompts.contains(m.id) && m.createdAt > 0:
+            rows.insert(.dateSeparator(promptID: m.id, ms: m.createdAt), at: 0)
+        default:
+            break
+        }
     }
 
     /// The foldings whose rows are held, for tests: the current one's alone.

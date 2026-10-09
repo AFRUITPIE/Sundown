@@ -22,6 +22,7 @@ struct TranscriptView: View {
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.messageSendGeometry) private var sendGeometry
+    @Environment(\.transcriptPlaces) private var places
 
     var body: some View {
         ScrollView {
@@ -55,21 +56,43 @@ struct TranscriptView: View {
         }
         // Chat ▸ Previous and Next Prompt, from where the reader is.
         .onChange(of: promptNavigator?.step) { goToPrompt() }
+        // The rows the reader was looking at can be folded into others: a different Tool Calls
+        // folding, or a turn ending under Worked For. Back to the row that holds them now.
+        .onChange(of: appearance.toolCalls.folding) { keepPlace(rebuilt: true) }
+        .onChange(of: thread.isRunning) { keepPlace(rebuilt: false) }
         .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { ids in
             onScreen.ids = Set(ids)
-            let last = thread.rows(appearance.toolCalls.folding).last?.id
-            let showing = last.map(onScreen.ids.contains) ?? true
+            let rows = thread.rows(appearance.toolCalls.folding)
+            let showing = rows.last.map { onScreen.ids.contains($0.id) } ?? true
             if showing != lastRowOnScreen { lastRowOnScreen = showing }
+            let top = rows.first { onScreen.ids.contains($0.id) }
+            onScreen.topRow = top?.id
+            onScreen.topItem = top?.firstItemID
+            if ids.isEmpty, !rows.isEmpty, thread.historyLoaded { checkShowingNothing("no row on screen") }
         }
         // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
         // Previous or Next last went to.
         .onScrollPhaseChange { _, new in
+            onScreen.phase = new
             if new == .interacting { onScreen.lastPrompt = nil }
         }
-        .onScrollGeometryChange(for: Bool.self) { g in
-            g.contentSize.height - (g.contentOffset.y + g.containerSize.height) > g.containerSize.height
-        } action: { _, far in
-            farFromEnd = far
+        .onScrollGeometryChange(for: ScrollPlace.self) { g in
+            let toEnd = g.contentSize.height - (g.contentOffset.y + g.containerSize.height)
+            return ScrollPlace(far: toEnd > g.containerSize.height, atEnd: toEnd < 24,
+                               pastContent: g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height)
+        } action: { _, place in
+            if farFromEnd != place.far { farFromEnd = place.far }
+            onScreen.atEnd = place.atEnd
+            if place.pastContent { checkShowingNothing("scrolled past the end of the content") }
+        }
+        // Back from another tab: where the reader was, rather than the end.
+        .task {
+            guard let id = places?.rows.removeValue(forKey: thread.id) else { return }
+            await go(to: id)
+        }
+        .onDisappear {
+            guard let places else { return }
+            places.rows[thread.id] = onScreen.atEnd ? nil : onScreen.topRow
         }
         .overlay(alignment: .bottom) {
             ZStack {
@@ -99,6 +122,66 @@ extension TranscriptView {
     final class OnScreenRows {
         var ids: Set<String> = []
         var lastPrompt: String?
+        var phase: ScrollPhase = .idle
+        /// Scrolled to the end (rows under the bottom bar count as on screen, so this is the
+        /// geometry's word, not the last row's visibility).
+        var atEnd = true
+        /// The topmost row on screen and the first item it holds.
+        var topRow: String?
+        var topItem: String?
+        /// A check for an empty screen already waiting.
+        var checking = false
+    }
+
+    /// Scrolled up: back to the topmost row that was on screen, or, if it has been folded into
+    /// another, the row that holds its first item. `rebuilt`: the rows were made anew (a different
+    /// folding is a new list), so even a row still there has to be gone back to.
+    private func keepPlace(rebuilt: Bool) {
+        guard !onScreen.atEnd, let topRow = onScreen.topRow, let item = onScreen.topItem else { return }
+        let rows = thread.rows(appearance.toolCalls.folding)
+        let still = rows.contains { $0.id == topRow }
+        guard rebuilt || !still, let now = still ? topRow : rows.first(where: { $0.holds(item) })?.id else { return }
+        Task { await go(to: now) }
+    }
+
+    /// Brings a row to the top once the lazy stack has the rows (a frame or two after they change),
+    /// and again if it isn't on screen after that: scrolled to while rows above it were still at the
+    /// stack's estimate, a row can be missed.
+    private func go(to id: String) async {
+        try? await Task.sleep(for: .milliseconds(50))
+        position.scrollTo(id: id, anchor: .top)
+        try? await Task.sleep(for: .milliseconds(250))
+        guard !onScreen.ids.contains(id), onScreen.phase == .idle else { return }
+        position.scrollTo(id: id, anchor: .top)
+    }
+
+    /// What the scroll geometry says that the transcript acts on: whether the end is more than a
+    /// screen away, and whether the view has been left below everything it holds.
+    struct ScrollPlace: Equatable {
+        let far: Bool
+        let atEnd: Bool
+        let pastContent: Bool
+    }
+
+    /// The chat has rows but none is on screen: the view was left past the content, as when a
+    /// reload or a folding change shrank the list under the reader. Given a moment (a lazy stack
+    /// builds the rows it scrolls to a frame or two later) and not while the reader scrolls, it
+    /// goes back to the end and says what happened in the log.
+    private func checkShowingNothing(_ why: String) {
+        guard !onScreen.checking else { return }
+        onScreen.checking = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            onScreen.checking = false
+            let rows = thread.rows(appearance.toolCalls.folding)
+            guard onScreen.ids.isEmpty, !rows.isEmpty, thread.historyLoaded, onScreen.phase == .idle else { return }
+            let reshape = thread.lastReshape.map { "\($0.what), \(Int(-$0.at.timeIntervalSinceNow)) s before" } ?? "none"
+            Signposts.transcriptLog.error("""
+                Transcript showed nothing (\(why, privacy: .public)): \(rows.count) rows, \(thread.items.count) items, \
+                running \(thread.isRunning), last change to the items: \(reshape, privacy: .public). Went to the end.
+                """)
+            position.scrollTo(edge: .bottom)
+        }
     }
 
     /// Brings the prompt before or after the reader's place to the top; past the last one, Next goes
@@ -383,17 +466,17 @@ private struct FindHighlight: ViewModifier {
     }
 }
 
-/// Stands in for the transcript before it arrives; a failure says so and offers a way out. Nothing
-/// while the host isn't connected: the status card in the composer's place says that, once.
+/// Stands in for the transcript before it arrives; a failure says so and offers a way out. While
+/// the host isn't connected it waits as it does for the history, the spinner alone: the status card
+/// in the composer's place says why, once. (It was nothing at all, and a chat opened while the host
+/// was reconnecting was a blank window.)
 /// Its own view so `connection.state` and `thread.lastError` are not read in the transcript's body.
 struct TranscriptUnavailable: View {
     let thread: ThreadModel
     var connection: HostConnection?
 
     var body: some View {
-        if let connection, connection.state != .connected {
-            EmptyView()
-        } else if let error = thread.lastError {
+        if let error = thread.lastError, connection?.state == .connected || connection == nil {
             TranscriptPlaceholder("Couldn\u{2019}t Open This Chat", symbol: "exclamationmark.triangle", detail: error) {
                 if let connection { Button("Try Again") { Task { await connection.open(thread) } } }
             }
@@ -587,7 +670,17 @@ final class TurnHover {
     }
 }
 
+/// Where the reader was in each chat a window showed, for the Chat tab to go back to: switching
+/// to Tasks or Diff takes the transcript away, and made again it opened at the end. Not observed:
+/// read once as the transcript appears, written as it goes.
+@MainActor
+final class TranscriptPlaces {
+    /// The topmost row on screen, by chat; none while the reader was at the end.
+    var rows: [String: String] = [:]
+}
+
 extension EnvironmentValues {
+    @Entry var transcriptPlaces: TranscriptPlaces? = nil
     @Entry var turnHover: TurnHover? = nil
     @Entry var turnPlace: TurnPlace? = nil
 }
@@ -595,4 +688,27 @@ extension EnvironmentValues {
 /// The spring a sent prompt pushes in with.
 private enum TranscriptMotion {
     static let spring = Animation.spring(response: 0.45, dampingFraction: 0.8)
+}
+
+private extension TranscriptRow {
+    /// The first item the row shows: a prompt for its date, a turn's work its first call.
+    var firstItemID: String? {
+        switch self {
+        case .item(let item): item.id
+        case .toolGroup(let calls): calls.first?.id
+        case .turnWork(_, let rows, _): rows.first?.firstItemID
+        case .turnEdits(let edits): edits.promptID
+        case .dateSeparator(let promptID, _): promptID
+        }
+    }
+
+    /// Whether the row shows the item, folded or not.
+    func holds(_ id: String) -> Bool {
+        switch self {
+        case .item(let item): item.id == id
+        case .toolGroup(let calls): calls.contains { $0.id == id }
+        case .turnWork(_, let rows, _): rows.contains { $0.holds(id) }
+        case .turnEdits, .dateSeparator: false
+        }
+    }
 }

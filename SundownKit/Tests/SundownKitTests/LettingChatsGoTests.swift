@@ -229,14 +229,17 @@ struct LettingChatsGoTests {
         await connection.disconnect()
     }
 
-    /// A chat read from disk alone has no stream to keep a place in: it's let go as a followed one is.
+    /// A chat read from disk alone has no stream to keep a place in: it's let go as a followed one
+    /// is, keeping its last page to show until it's read again.
     @Test func leavingAChatWithNoStreamLetsItGo() async throws {
         let daemon = FakeDaemon()
         let (connection, thread) = await connect(daemon, historySeq: nil)
         #expect(thread.historyLoaded)
+        let held = thread.itemsHeld
         connection.leave(thread)
-        #expect(!thread.historyLoaded)
-        #expect(thread.itemsHeld == 0)
+        #expect(thread.historyLoaded)
+        #expect(thread.items.count == HostConnection.initialHistoryLimit)
+        #expect(thread.itemsHeld < held)
         await connection.disconnect()
     }
 
