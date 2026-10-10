@@ -1277,3 +1277,31 @@ extension HostConnection {
     }
 }
 #endif
+
+#if DEBUG
+/// Debug ▸ Stress: what the host does to a chat on its own, on demand, for hunting transcript bugs.
+extension HostConnection {
+    /// As after a replay gap: the chat read again from its last page.
+    public func stressReload(_ model: ThreadModel) async {
+        forgetWorkflows(of: model.id)
+        try? await loadHistory(model, force: true)
+    }
+
+    /// As for a chat no window shows, once idle.
+    public func stressTrim(_ model: ThreadModel) { model.trim(toLast: Self.initialHistoryLimit) }
+
+    /// Let go of and read again, as a followed chat left and reopened.
+    public func stressUnloadAndReopen(_ model: ThreadModel) async {
+        model.unload()
+        try? await Task.sleep(for: .milliseconds(300))
+        await open(model)
+    }
+
+    /// The chat failing to open for a moment, then opening.
+    public func stressErrorFlash(_ model: ThreadModel) async {
+        model.setError("Stress: simulated failure")
+        try? await Task.sleep(for: .milliseconds(500))
+        model.setError(nil)
+    }
+}
+#endif

@@ -21,6 +21,9 @@ public struct WindowRoot: View {
     public var body: some View {
         RootView(window: window)
             .focusedSceneValue(\.window, window)
+            #if DEBUG
+            .modifier(StressDriver(window: window))
+            #endif
             .onAppear {
                 window.start(tab: storedTab)
                 // Kept from the start, so a window never restores another window's tab.

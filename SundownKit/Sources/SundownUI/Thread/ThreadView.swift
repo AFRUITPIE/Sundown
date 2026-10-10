@@ -8,11 +8,14 @@ struct ThreadView: View {
     let connection: HostConnection
 
     var body: some View {
-        TranscriptView(thread: thread, connection: connection)
-            // Controls float over the transcript on glass; content scrolls underneath with the system edge effect.
-            .safeAreaBar(edge: .bottom) {
-                BottomBar(thread: thread, connection: connection)
-            }
+        // The controls go below the transcript, not over it in a `safeAreaBar`: with their height as
+        // the scroll view's bottom inset, the bottom anchor and a bottom-edge scroll position put the
+        // end 55 pt apart, and they took turns on every streamed delta, so the end bounced
+        // (macOS 27, 2026-10-09).
+        VStack(spacing: 0) {
+            TranscriptView(thread: thread, connection: connection)
+            BottomBar(thread: thread, connection: connection)
+        }
             // Find in Chat's bar, above the transcript while it's open. An inset, not a `safeAreaBar`:
             // a top bar, even empty while Find is closed, took the toolbar's scroll edge effect, and
             // text scrolled up under the title and tabs unblurred.
