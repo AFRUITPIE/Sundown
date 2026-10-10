@@ -182,4 +182,13 @@ struct PagedHistoryTests {
         #expect(thread.items.map(\.id) == ["a"])
         #expect(!thread.hasMoreHistory)
     }
+
+    /// A run of calls that the page's calls joined is still found by the item it held.
+    @Test func aFoldedRowHoldsItsItems() {
+        let call = { (id: String) in Item.toolCall(.sample(id: id, name: "Bash", kind: .bash, input: [:], status: .completed, secondsAgo: 1)) }
+        let rows = foldTranscriptRows([call("a"), call("b"), msg("m")])
+        #expect(rows.first?.holds(itemID: "b") == true)
+        #expect(rows.first?.holds(itemID: "m") == false)
+        #expect(rows.last?.holds(itemID: "m") == true)
+    }
 }

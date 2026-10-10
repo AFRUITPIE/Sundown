@@ -431,8 +431,21 @@ enum PerformanceTranscript {
                                                  text: "Found it in `\(files[(turn + burst) % files.count])`. Checking the callers next.")))
             }
         }
-        items.append(.agentMessage(.init(id: "perf-answer-\(turn)", createdAt: t + 500, text: markdown(section: turn))))
+        items.append(.agentMessage(.init(id: "perf-answer-\(turn)", createdAt: t + 500, text: answer(turn))))
         return items
+    }
+
+    /// SUNDOWN_PERF_VARIED=1 makes the answers' heights vary as real ones do: now and then a very
+    /// long one (a dozen sections, or a 300-line code block), sometimes a single line.
+    private static func answer(_ turn: Int) -> String {
+        guard ProcessInfo.processInfo.environment["SUNDOWN_PERF_VARIED"] == "1" else { return markdown(section: turn) }
+        switch turn % 11 {
+        case 0: return (0..<12).map { markdown(section: turn * 100 + $0) }.joined(separator: "\n\n")
+        case 3: return "Done."
+        case 5: return "Here is the file:\n\n```swift\n" + (0..<300).map { "let value\($0) = compute(\($0)) // line \($0)" }.joined(separator: "\n") + "\n```"
+        case 7: return "Short note."
+        default: return markdown(section: turn)
+        }
     }
 
     private static let files = ["Markdown.swift", "TranscriptView.swift", "ThreadModel.swift", "ItemViews.swift", "ToolCallView.swift"]
