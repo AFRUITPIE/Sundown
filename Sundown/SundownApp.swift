@@ -63,6 +63,9 @@ struct SundownApp: App {
             }
             CommandMenu("Host") { HostCommands(app: app) }
             CommandMenu("Chat") { ChatCommands() }
+            #if DEBUG
+            CommandMenu("Stress") { StressCommands() }
+            #endif
             SidebarCommands()
             // View ▸ Customize Toolbar…, for Plan Usage.
             ToolbarCommands()

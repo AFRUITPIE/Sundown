@@ -29,6 +29,18 @@ public indirect enum TranscriptRow: Sendable, Equatable {
     }
 }
 
+extension TranscriptRow {
+    /// Whether this row shows the item with this id, itself or folded into it.
+    public func holds(itemID id: String) -> Bool {
+        switch self {
+        case .item(let item): item.id == id
+        case .toolGroup(let calls): calls.contains { $0.id == id }
+        case .turnWork(_, let rows, _): rows.contains { $0.holds(itemID: id) }
+        case .turnEdits, .dateSeparator: false
+        }
+    }
+}
+
 /// How finished tool calls fold, per View ▸ Tool Calls.
 public enum TranscriptFolding: Sendable, Hashable {
     /// Each run of finished calls on one line.
