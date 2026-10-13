@@ -1,37 +1,67 @@
-# Sundown (macOS app)
+<img src="docs/icon.png" width="128" alt="Sundown's icon"> 
 
-A native SwiftUI client for [tether-server](../tether-server): Claude Code on this Mac, or on any host you can reach over SSH, with sessions that keep running while the app is closed.
+# Sundown
 
+A native macOS app for [Claude Code](https://code.claude.com/docs/en/overview) on your Mac or any machine you can SSH into, with long-running sessions and no claude.ai account. Built in SwiftUI with Liquid Glass, and vibe coded with ❤️ by [Hayden Hong](https://haydenhong.com)!
+
+> [!WARNING]
+> Sundown is in early development. Expect bugs, or help me fix them by [contributing](#contributing)!
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/chat-dark.webp">
+  <img alt="Sundown window showing a chat transcript" src="docs/screenshots/chat-light.webp">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/tasks-dark.webp">
+  <img alt="Sundown window showing a chat's tasks" src="docs/screenshots/tasks-light.webp">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/diff-dark.webp">
+  <img alt="Sundown window showing a chat's file diff" src="docs/screenshots/diff-light.webp">
+</picture>
+
+## Install
+
+Use [Homebrew](https://brew.sh):
+
+```sh
+brew install --cask afruitpie/tap/sundown
 ```
-Sundown.xcodeproj     macOS app target (signing, bundle)
-Sundown/              app entry point + assets
-SundownKit/           Swift package
-  SundownKit          transport (local shell / ssh), JSON-RPC client, host bootstrap, stores
-  SundownUI           SwiftUI views (macOS 27 APIs, standard components, Liquid Glass on controls only)
+
+Requires macOS 27. Each host needs Claude Code installed and configured, and Node.js 18+ with `npx` on its login shell's `PATH`.
+
+## How it works
+
+Sundown starts a [Tether](https://github.com/AFRUITPIE/tether-server) daemon on each host, which keeps your sessions running after you quit the app. Like [Remote Control](https://code.claude.com/docs/en/remote-control), you can leave a session running and pick it up later, from any Mac.
+
+```mermaid
+sequenceDiagram
+    participant Sundown
+    participant Tether as Tether daemon
+    participant SDK as Agent SDK
+    participant Claude as Claude Code
+    Sundown->>+Tether: Prompt
+    Tether->>+SDK: Query
+    SDK->>+Claude: Run the turn
+    Claude-->>-SDK: Replies and tool calls
+    SDK-->>-Tether: Messages
+    Tether-->>-Sundown: Stream into the chat
 ```
 
-Protocol types come from `TetherProtocol`, which is generated in `../tether-server`. Both repos sit side by side in `~/Code`.
+## Privacy
 
-## Develop
+Sundown has no telemetry, period. I couldn't afford to track you if I wanted to!
 
-1. Open `Sundown.xcodeproj` and run the **Sundown** scheme. The app carries no server: each host runs tether-server's npm package with its own `npx` (Node.js 18 or later), at the version the app pins.
-2. To run a `../tether-server` working copy instead, set This Mac's Server Command in Settings ▸ Hosts to `<bun> run <path>/tether-server/src/cli.ts connect`.
-3. Live Swift tests against the real `claude` (Haiku): `SUNDOWN_E2E=1 swift test --package-path SundownKit`.
-4. Debug builds accept `SUNDOWN_OPEN_THREAD=<id>`, set in the scheme's environment variables, to open a chat on launch.
+## Contributing
 
-## Tests
+Issues and PRs welcome! Architecture is in [AGENTS.md](AGENTS.md).
 
-`swift test --package-path SundownKit` runs the package tests without a live Claude session. The
-`SundownAppUITests` target in the shared **Sundown** scheme launches the real app with
-`SUNDOWN_UI_TEST_MODE=1`. That mode supplies an in-process JSON-RPC server and refuses to launch
-the local daemon or SSH for any host without a fixture transport. It exercises Settings, host
-management, chat streaming, and reconnection without inference calls. Run it locally with Xcode's
-**Test** action. `SUNDOWN_E2E=1` is the separate, opt-in live suite and can incur cost.
+## Acknowledgements
 
-The PR workflow runs both suites on the `xcode-27` GitHub runner and uploads the `.xcresult`
-bundle. SwiftPM resolves the pinned `TetherProtocol` package from the public
-`AFRUITPIE/tether-server` repository. No Claude credentials are supplied to CI.
+Built on [Claude Code](https://code.claude.com) and the [Claude Agent SDK](https://docs.claude.com/en/api/agent-sdk/overview). Not affiliated with Anthropic.
 
 ## License
 
-MIT, in [LICENSE](LICENSE).
+[MIT](LICENSE)
