@@ -1,4 +1,4 @@
-<img src="docs/icon.png" width="64" align="middle" alt="Sundown's icon"> 
+<img src="docs/icon.png" width="128" alt="Sundown's icon"> 
 
 # Sundown
 
