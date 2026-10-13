@@ -6,6 +6,8 @@ import TetherProtocol
 /// SUNDOWN_UI_TEST_MODE launch path; unhandled methods return an error instead of reaching Claude.
 public enum UITestFixture {
     public static let threadID = "fixture-thread"
+    /// The chat the `showcase` scenario opens on.
+    public static let showcaseThreadID = ShowcaseTranscript.mainThreadID
 
     /// `failedConnects` attempts fail before one succeeds: two keep the status card up for a few
     /// seconds of retries, long enough to press its Reconnect.
@@ -21,6 +23,7 @@ public enum UITestFixture {
         let environment = ProcessInfo.processInfo.environment
         let prompts = host.id == HostConfig.local.id && environment["SUNDOWN_UI_TEST_SCENARIO"] == "prompts"
         let tasks = environment["SUNDOWN_UI_TEST_SCENARIO"] == "tasks"
+        let showcase = environment["SUNDOWN_UI_TEST_SCENARIO"] == "showcase"
         let failing = Set((environment["SUNDOWN_UI_TEST_FAIL"] ?? "").split(separator: ",").map(String.init))
         // SUNDOWN_UI_TEST_GAP=1: every connection after the first is a daemon that lost the stream, so
         // resubscribing reports a replay gap and the chat reloads (sleep, a daemon restart).
@@ -35,7 +38,7 @@ public enum UITestFixture {
                 throw TransportError.launchFailed("Fixture connection unavailable")
             }
             return FixtureTransport(pendingPermission: pendingPermission || prompts, performance: performance,
-                                    prompts: prompts, tasks: tasks, failing: failing,
+                                    prompts: prompts, tasks: tasks, showcase: showcase, failing: failing,
                                     reportsGap: gaps && attempt > failedConnects + 1)
         })
     }
@@ -51,10 +54,10 @@ private final class FixtureTransport: Transport, @unchecked Sendable {
     private let stream: AsyncThrowingStream<Data, any Error>
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
 
-    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, tasks: Bool = false, failing: Set<String> = [],
-         reportsGap: Bool = false) {
+    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, tasks: Bool = false, showcase: Bool = false,
+         failing: Set<String> = [], reportsGap: Bool = false) {
         script = FixtureScript(pendingPermission: pendingPermission, performance: performance, prompts: prompts,
-                               tasks: tasks, failing: failing, reportsGap: reportsGap)
+                               tasks: tasks, showcase: showcase, failing: failing, reportsGap: reportsGap)
         var captured: AsyncThrowingStream<Data, any Error>.Continuation!
         stream = AsyncThrowingStream { captured = $0 }
         continuation = captured
@@ -95,7 +98,7 @@ private final class FixtureTransport: Transport, @unchecked Sendable {
                 try? await Task.sleep(for: .milliseconds(300))
                 for (name, params) in reply.stream {
                     let notification: JSONValue = ["method": .string(name), "params": params]
-                    if let line = try? JSONEncoder().encode(notification) { continuation.yield(line) }
+                    if name != "fixture/pause", let line = try? JSONEncoder().encode(notification) { continuation.yield(line) }
                     try? await Task.sleep(for: .milliseconds(16))
                 }
             }
@@ -121,6 +124,8 @@ private actor FixtureScript {
     private let prompts: Bool
     /// The `tasks` scenario: the chat has started one of each kind of task (`TaskTranscript`).
     private let tasks: Bool
+    /// The `showcase` scenario: the README's chats (`ShowcaseTranscript`).
+    private let showcase: Bool
     /// Methods answered with an error (SUNDOWN_UI_TEST_FAIL).
     private let failing: Set<String>
     /// A resubscription after events were seen reports a replay gap (SUNDOWN_UI_TEST_GAP).
@@ -138,13 +143,14 @@ private actor FixtureScript {
     /// How many times Restore Code has run.
     private var rewound = 0
 
-    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, tasks: Bool = false, failing: Set<String> = [],
-         reportsGap: Bool = false) {
+    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, tasks: Bool = false, showcase: Bool = false,
+         failing: Set<String> = [], reportsGap: Bool = false) {
         self.reportsGap = reportsGap
         self.pendingPermission = pendingPermission
         self.performance = performance
         self.prompts = prompts
         self.tasks = tasks
+        self.showcase = showcase
         self.failing = failing
     }
 
@@ -155,6 +161,7 @@ private actor FixtureScript {
 
     func reply(method: String, params: JSONValue) -> Reply {
         if failing.contains(method) { return .init(value: .error("Fixture \(method) failed")) }
+        if showcase, let reply = showcaseReply(method: method, params: params) { return reply }
         switch method {
         case "initialize":
             return .init(value: .result(json(InitializeResult(
@@ -304,6 +311,115 @@ private actor FixtureScript {
             return .init(value: .result(["items": json(WorkflowSample.agentItems(agentId: agent, now: TaskTranscript.workflowNow))]))
         default: return .init(value: .error("Unexpected fixture method: \(method)"))
         }
+    }
+
+    // MARK: The showcase scenario
+
+    /// The showcase's answer to `method`, or nil for the fixture's usual one.
+    private func showcaseReply(method: String, params: JSONValue) -> Reply? {
+        let id = params["threadId"]?.stringValue ?? ShowcaseTranscript.mainThreadID
+        switch method {
+        case "project/list": return .init(value: .result(json(ProjectListResult(projects: ShowcaseTranscript.projects))))
+        case "model/list": return .init(value: .result(json(ModelListResult(models: ShowcaseTranscript.models))))
+        case "account/read": return .init(value: .result(json(AccountReadResult(account: .init(subscriptionType: "max")))))
+        case "session/defaults":
+            return .init(value: .result(json(SessionDefaultsResult(model: "opus", effort: .high, permissionMode: .auto))))
+        case "thread/list":
+            let threads = (additionalThreads + ShowcaseTranscript.summaries).filter { !deleted.contains($0.threadId) }
+                .map { summary in
+                    var summary = summary
+                    if let title = titles[summary.threadId] { summary.customTitle = title }
+                    if let tag = tags[summary.threadId] { summary.tag = tag }
+                    return summary
+                }
+            return .init(value: .result(json(ThreadListResult(threads: threads))))
+        case "thread/read":
+            guard let summary = (additionalThreads + ShowcaseTranscript.summaries).first(where: { $0.threadId == id }) else { return nil }
+            let items = id == ShowcaseTranscript.reviewThreadID ? TaskTranscript.items() + ShowcaseTranscript.reviewItems()
+                : ShowcaseTranscript.items(for: id)
+            return .init(value: .result(json(ThreadReadResult(items: items, turns: [], summary: summary, historySeq: 1, hasMore: false))))
+        case "thread/subscribe":
+            let status: ThreadStatus = switch id {
+            case ShowcaseTranscript.flakyThreadID: .requiresAction
+            case ShowcaseTranscript.reviewThreadID: .running
+            default: .idle
+            }
+            var reply = Reply(value: .result(json(ThreadSubscribeResult(
+                thread: .init(threadId: id, status: status, cwd: ShowcaseTranscript.cwd(of: id), model: "opus", appliedEffort: .high,
+                              permissionMode: .auto, mcpServers: ShowcaseTranscript.mcpServers, lastSeq: nextSequence),
+                replayed: 0, gap: false))))
+            if id == ShowcaseTranscript.reviewThreadID {
+                let tasks = TaskTranscript.events(threadID: id, firstSeq: nextSequence + 1)
+                let more = ShowcaseTranscript.reviewEvents(threadID: id, firstSeq: nextSequence + 1 + tasks.count)
+                reply.notifications = tasks + more.map { ("task/event", json($0)) }
+                nextSequence += reply.notifications.count
+            }
+            if id == ShowcaseTranscript.flakyThreadID, !sentPermission {
+                sentPermission = true
+                reply.requests = [(.number(900), "permission/request", json(ShowcaseTranscript.permission(threadID: id)))]
+            }
+            return reply
+        case "thread/contextUsage": return .init(value: .result(json(ThreadContextUsageResult(usage: ShowcaseTranscript.contextUsage))))
+        case "turn/start": return showcaseTurn(threadID: id, input: params["input"])
+        case "git/status":
+            return .init(value: .result(ShowcaseTranscript.gitStatus(cwd: params["cwd"]?.stringValue ?? "")))
+        case "git/diff":
+            let diff = ShowcaseTranscript.gitDiff(cwd: params["cwd"]?.stringValue ?? "", staged: params["staged"]?.boolValue ?? false)
+            return .init(value: .result(["diff": .string(diff)]))
+        case "fs/read":
+            guard let content = ShowcaseTranscript.fileContent(path: params["path"]?.stringValue ?? "") else { return nil }
+            return .init(value: .result(json(FsReadResult(content: content, encoding: .utf8, truncated: false))))
+        case "fs/search":
+            let query = (params["query"]?.stringValue ?? "").lowercased()
+            let paths = ShowcaseTranscript.searchablePaths.filter { query.isEmpty || $0.lowercased().contains(query) }
+            return .init(value: .result(["paths": .array(paths.map { .string($0) })]))
+        default: return nil
+        }
+    }
+
+    /// A prompt sent in the showcase: the turn starts, Thinking, then `ShowcaseTranscript.liveReply`
+    /// streamed in the order a real host sends it, and the turn ends.
+    private func showcaseTurn(threadID: String, input: JSONValue?) -> Reply {
+        nextMessage += 1
+        let turn = nextMessage
+        let text = input?.arrayValue?.first?["text"]?.stringValue ?? ""
+        let now = ShowcaseTranscript.now
+        let user = Item.userMessage(.init(id: "showcase-sent-\(turn)", createdAt: now, content: [.text(.init(text: text))]))
+        var reply = Reply(value: .result(json(TurnStartResult(turnId: "showcase-turn-\(turn)", messageId: "showcase-sent-\(turn)",
+                                                              queued: false))))
+        let started = Turn(id: "showcase-turn-\(turn)", status: .inProgress, startedAt: now)
+        var completed = started
+        completed.status = .completed
+        reply.notifications = [
+            ("turn/started", json(TurnStartedNotification(threadId: threadID, seq: nextSequence + 1, turn: started))),
+            ("item/started", json(ItemStartedNotification(threadId: threadID, seq: nextSequence + 2, item: user))),
+            ("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(nextSequence + 3)), "status": "running"]),
+        ]
+        var seq = nextSequence + 4
+        // A moment's thought before the first call.
+        for _ in 0..<60 { reply.stream.append(("fixture/pause", [:])) }
+        var lastRunning: String?
+        for (name, item, delta) in ShowcaseTranscript.liveReply(threadID: threadID, turn: turn, firstSeq: seq) {
+            switch name {
+            case "pause":
+                guard let lastRunning else { continue }
+                reply.stream.append(("item/toolCall/progress", json(ItemToolCallProgressNotification(
+                    threadId: threadID, seq: seq, itemId: lastRunning, elapsedSeconds: 0.1))))
+            case "item/started":
+                if let item, case .toolCall(let call) = item { lastRunning = call.id }
+                reply.stream.append((name, json(ItemStartedNotification(threadId: threadID, seq: seq, item: item!))))
+            case "item/completed":
+                reply.stream.append((name, json(ItemCompletedNotification(threadId: threadID, seq: seq, item: item!))))
+            default:
+                reply.stream.append((name, json(ItemAgentMessageDeltaNotification(
+                    threadId: threadID, seq: seq, itemId: "live-\(turn)-answer", delta: delta ?? ""))))
+            }
+            seq += 1
+        }
+        reply.stream.append(("turn/completed", json(TurnCompletedNotification(threadId: threadID, seq: seq, turn: completed))))
+        reply.stream.append(("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(seq + 1)), "status": "idle"]))
+        nextSequence = seq + 1
+        return reply
     }
 
     // MARK: The prompts scenario

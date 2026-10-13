@@ -138,18 +138,21 @@ public struct RootView: View {
                     // Everything after the tabs has the default placement, so Customize Toolbar can
                     // move it anywhere; spacers group items, and people can drag in more of their own.
                     ToolbarSpacer(.flexible)
-                    // Model and effort as one popover; permissions a menu of its own.
+                    // Model and effort as one popover, by name or (the default) as the sparkle, which
+                    // shares one capsule with Context and MCP; permissions a popover of its own,
+                    // hidden by default (Chat ▸ Permissions has it).
                     ToolbarItem(id: "modelEffort") {
                         modelEffort
-                    }
-                    ToolbarItem(id: "modelEffortIcon") {
-                        ToolbarSessionControl(window: window) { ModelEffortButton(settings: $0, iconOnly: true) }
                     }
                     .defaultCustomization(.hidden)
                     ToolbarItem(id: "permissions") {
                         permissions
                     }
+                    .defaultCustomization(.hidden)
                     ToolbarSpacer(.fixed)
+                    ToolbarItem(id: "modelEffortIcon") {
+                        ToolbarSessionControl(window: window) { ModelEffortButton(settings: $0, iconOnly: true) }
+                    }
                     ToolbarItem(id: "context") { context }
                     ToolbarItem(id: "mcp") { mcp }
                     ToolbarItem(id: "planUsage") { planUsage }
