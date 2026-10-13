@@ -30,12 +30,11 @@ final class NewChatUITests: SundownUITestCase {
             app.typeKey(.escape, modifierFlags: [])
         }
 
-        // Model (with effort) and permissions are toolbar buttons that open popovers.
+        // Model (with effort) is a toolbar button that opens a popover; permissions are the Chat
+        // menu's, the toolbar's Permissions being hidden by default.
         let toolbar = window.toolbars.firstMatch
         let model = toolbar.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Model'")).firstMatch
-        let permissions = toolbar.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Permissions'")).firstMatch
-        XCTAssertTrue(model.appears(timeout: 5), "no Model button in the toolbar")
-        XCTAssertTrue(permissions.appears(timeout: 5), "no Permissions button in the toolbar: \(toolbar.buttons.allElementsBoundByIndex.map(\.label))")
+        XCTAssertTrue(model.appears(timeout: 5), "no Model button in the toolbar: \(toolbar.buttons.allElementsBoundByIndex.map(\.label))")
 
         // New Chat keeps its directory with the composer, not in a form under the toolbar: the
         // directory, the branch checked out there, and Work In, in one row above the field.
@@ -53,34 +52,17 @@ final class NewChatUITests: SundownUITestCase {
         XCTAssertTrue(input.appears(timeout: 5))
         XCTAssertLessThan(folder.frame.maxY, input.frame.minY, "the directory isn't above the field")
 
-        // The popovers choose the session's settings, and the permissions button says the mode in
-        // its label. From a known mode: New Chat starts in the host's (Auto in the fixture).
-        func chooseInPopover(_ button: XCUIElement, _ option: String) {
-            button.click()
-            let popover = app.popovers.firstMatch
-            XCTAssertTrue(popover.appears(timeout: 5), "\(button.label) opened no popover")
-            popover.settle()
-            // Each row is a button naming the choice, selected when it is the chosen one.
-            let item = popover.buttons.matching(NSPredicate(format: "label CONTAINS %@", option)).firstMatch
-            XCTAssertTrue(item.appears(timeout: 5), "no \(option) in the popover")
-            // A tall popover scrolls: the row is brought into it first.
-            // Pointed at first: a popover's row takes the click only once the pointer has hovered it.
-            let target = item.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
-            target.hover()
-            Thread.sleep(forTimeInterval: 0.3)
-            target.click()
-            Thread.sleep(forTimeInterval: 1)
+        // Chat ▸ Permissions chooses the session's mode, its rows toggles checked by the one chosen.
+        // From a known mode: New Chat starts in the host's (Auto in the fixture).
+        func assertChosen(_ option: String) {
+            app.menuBars.menuBarItems["Chat"].click()
+            app.menuBars.menuItems["Permissions"].hover()
+            let item = app.menuBars.menuItems[option].firstMatch
+            XCTAssertTrue(item.appears(timeout: 5), "no \(option) in Chat ▸ Permissions")
+            XCTAssertTrue(waitUntil(5) { (item.value as? String)?.isEmpty == false || item.isSelected },
+                          "\(option) isn't checked: \(item.value ?? "nil")")
             app.typeKey(.escape, modifierFlags: [])
-            XCTAssertTrue(popover.disappears(timeout: 5), "the popover stayed open after \(option)")
-        }
-        // The toolbar buttons' labels are their names only: the chosen row is the popover's.
-        func assertChosen(_ button: XCUIElement, _ option: String) {
-            button.click()
-            let item = app.popovers.buttons.matching(NSPredicate(format: "label CONTAINS %@", option)).firstMatch
-            XCTAssertTrue(item.appears(timeout: 5), "no \(option) in the popover")
-            XCTAssertTrue(waitUntil(5) { item.isSelected }, "\(option) isn't the chosen row: \(app.popovers.buttons.allElementsBoundByIndex.map { "\($0.label)=\($0.isSelected)" })")
             app.typeKey(.escape, modifierFlags: [])
-            XCTAssertTrue(app.popovers.firstMatch.disappears(timeout: 5))
         }
         // Effort is a slider in the model's popover, whose value is the level's name.
         func assertEffort(_ level: String) {
@@ -94,17 +76,17 @@ final class NewChatUITests: SundownUITestCase {
             app.typeKey(.escape, modifierFlags: [])
             XCTAssertTrue(app.popovers.firstMatch.disappears(timeout: 5))
         }
-        chooseInPopover(permissions, "Ask Before Edits")
-        assertChosen(permissions, "Ask Before Edits")
-        let before = permissions.frame
+        chooseMenuItem("Chat", "Ask Before Edits", in: "Permissions")
+        assertChosen("Ask Before Edits")
+        let before = model.frame
         // Don't Ask, not Bypass Permissions: Settings offers Bypass only when asked to.
-        chooseInPopover(permissions, "Don't Ask")
-        assertChosen(permissions, "Don't Ask")
+        chooseMenuItem("Chat", "Don't Ask", in: "Permissions")
+        assertChosen("Don't Ask")
         chooseMenuItem("Chat", "Max", in: "Effort")
         assertEffort("Max")
         // Within a point: AppKit rounds the toolbar's items to the pixel grid by where their symbol sits.
-        XCTAssertEqual(permissions.frame.minX, before.minX, accuracy: 1, "Permissions moved")
-        XCTAssertEqual(permissions.frame.width, before.width, accuracy: 1, "Permissions changed width")
+        XCTAssertEqual(model.frame.minX, before.minX, accuracy: 1, "Model moved")
+        XCTAssertEqual(model.frame.width, before.width, accuracy: 1, "Model changed width")
 
         // New Worktree starts the chat in a new git worktree.
         workIn.click()
