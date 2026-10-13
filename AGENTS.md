@@ -269,7 +269,7 @@ launches its scenario rather than a test of its own, and keep logic (ordering, f
 kept across launches) in the package tests. Scenarios (`SUNDOWN_UI_TEST_SCENARIO`): none (one short
 chat), `performance` (three long chats; `SUNDOWN_PERF_TURNS` shortens them), `connect-failure`,
 `permission`, and `prompts` (a permission, another, a question, a form and a too-long question, each
-asked once the one before is answered, each answer said in the chat). `SUNDOWN_UI_TEST_FAIL=a,b`
+asked once the one before is answered, each answer said in the chat), and `showcase` (the README's screenshots: a full sidebar, a finished chat with its diff, one waiting on a permission, one running a workflow and agents, a reply streamed for any prompt; the Sundown Showcase scheme launches it). `SUNDOWN_UI_TEST_FAIL=a,b`
 makes the fixture answer those methods with an error.
 
 `SundownPerformanceUITests` (in the same target) measures hitches with
