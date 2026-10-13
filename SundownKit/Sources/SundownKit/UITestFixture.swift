@@ -323,7 +323,8 @@ private actor FixtureScript {
             return .init(value: .result(json(ThreadListResult(threads: threads))))
         case "thread/read":
             guard let summary = (additionalThreads + ShowcaseTranscript.summaries).first(where: { $0.threadId == id }) else { return nil }
-            let items = id == ShowcaseTranscript.reviewThreadID ? TaskTranscript.items() : ShowcaseTranscript.items(for: id)
+            let items = id == ShowcaseTranscript.reviewThreadID ? TaskTranscript.items() + ShowcaseTranscript.reviewItems()
+                : ShowcaseTranscript.items(for: id)
             return .init(value: .result(json(ThreadReadResult(items: items, turns: [], summary: summary, historySeq: 1, hasMore: false))))
         case "thread/subscribe":
             let status: ThreadStatus = switch id {
@@ -336,7 +337,9 @@ private actor FixtureScript {
                               permissionMode: .auto, mcpServers: ShowcaseTranscript.mcpServers, lastSeq: nextSequence),
                 replayed: 0, gap: false))))
             if id == ShowcaseTranscript.reviewThreadID {
-                reply.notifications = TaskTranscript.events(threadID: id, firstSeq: nextSequence + 1)
+                let tasks = TaskTranscript.events(threadID: id, firstSeq: nextSequence + 1)
+                let more = ShowcaseTranscript.reviewEvents(threadID: id, firstSeq: nextSequence + 1 + tasks.count)
+                reply.notifications = tasks + more.map { ("task/event", json($0)) }
                 nextSequence += reply.notifications.count
             }
             if id == ShowcaseTranscript.flakyThreadID, !sentPermission {

@@ -431,3 +431,72 @@ enum ShowcaseTranscript {
     The app builds. To try it, run *Simulate Background Fetch* from Xcode's Debug menu.
     """
 }
+
+// MARK: The Tasks tab
+
+extension ShowcaseTranscript {
+    /// The review chat's work beyond the `tasks` scenario's: more agents, one with an agent of its
+    /// own, background commands and a monitor, running, finished and failed, so Tasks is busy.
+    static func reviewItems() -> [Item] {
+        let now = self.now
+        func ago(_ seconds: Double) -> Double { now - seconds * 1000 }
+        func call(_ id: String, _ name: String, _ kind: ToolKind, _ input: JSONValue, status: ToolStatus = .completed,
+                  output: String? = nil, parent: String? = nil, at seconds: Double) -> Item {
+            .toolCall(.init(id: id, parentToolUseId: parent, createdAt: ago(seconds), name: name, kind: kind, input: input,
+                            status: status, outputText: output))
+        }
+        let root = "\(sundown)/SundownKit/Sources/SundownUI/"
+        return [
+            call("agent-tests", "Task", .subagent, [
+                "subagent_type": "general-purpose", "description": "Write tests for TaskNode.tree",
+                "prompt": "Write tests for TaskNode.tree covering nested agents and orphaned commands.",
+            ], output: "Added 9 tests to TaskTreeTests; all pass.", at: 640),
+            call("bg-lint", "Bash", .bash, ["command": "swiftlint --strict", "run_in_background": true],
+                 output: "Command running in background", at: 520),
+            call("agent-a11y", "Task", .subagent, [
+                "subagent_type": "Explore", "description": "Audit VoiceOver labels in Tasks",
+                "prompt": "Check that every status in the Tasks tab is said in words, not only by color.",
+            ], status: .running, at: 260),
+            call("agent-a11y-grep", "Grep", .grep, ["pattern": "accessibilityLabel", "path": .string(root + "Panes")],
+                 output: "TasksPane.swift:212\nTaskTree.swift:88", parent: "agent-a11y", at: 250),
+            call("agent-a11y-dot", "Task", .subagent, [
+                "description": "Check TaskStateDot's label", "prompt": "Read TaskStateDot and say what VoiceOver reads for each state.",
+            ], status: .running, parent: "agent-a11y", at: 120),
+            call("agent-perf", "Task", .subagent, [
+                "subagent_type": "general-purpose", "description": "Profile scrolling a long chat",
+                "prompt": "Record a SwiftUI trace while scrolling the performance scenario's long chat.",
+            ], status: .running, at: 180),
+            call("bg-trace", "Bash", .bash, [
+                "command": "xcrun xctrace record --template SwiftUI --time-limit 30s --launch Sundown.app",
+                "run_in_background": true,
+            ], output: "Command running in background", parent: "agent-perf", at: 150),
+        ]
+    }
+
+    static func reviewEvents(threadID: String, firstSeq: Int) -> [TaskEventNotification] {
+        var seq = firstSeq
+        func event(_ name: String, _ id: String, _ type: String, _ description: String, toolUseId: String? = nil,
+                   status: String, summary: String? = nil, usage: (Double, Double, Double)? = nil) -> TaskEventNotification {
+            var data: [String: JSONValue] = ["task_type": .string(type)]
+            if let usage {
+                data["usage"] = ["duration_ms": .number(usage.0), "total_tokens": .number(usage.1), "tool_uses": .number(usage.2)]
+            }
+            defer { seq += 1 }
+            return TaskEventNotification(threadId: threadID, seq: seq, event: name, taskId: id, toolUseId: toolUseId,
+                                         description: description, status: status, summary: summary, data: .object(data))
+        }
+        return [
+            event("started", "task-tests", "local_agent", "Write tests for TaskNode.tree", toolUseId: "agent-tests", status: "running"),
+            event("notification", "task-tests", "local_agent", "Write tests for TaskNode.tree", toolUseId: "agent-tests",
+                  status: "completed", summary: "Added 9 tests to TaskTreeTests; all pass.", usage: (184_000, 41_200, 23)),
+            event("started", "task-lint", "local_bash", "swiftlint --strict", toolUseId: "bg-lint", status: "running"),
+            event("notification", "task-lint", "local_bash", "swiftlint --strict", toolUseId: "bg-lint",
+                  status: "completed", summary: "No violations.", usage: (38_000, 0, 0)),
+            event("started", "task-a11y", "local_agent", "Audit VoiceOver labels in Tasks", toolUseId: "agent-a11y", status: "running"),
+            event("started", "task-a11y-dot", "local_agent", "Check TaskStateDot's label", toolUseId: "agent-a11y-dot", status: "running"),
+            event("started", "task-perf", "local_agent", "Profile scrolling a long chat", toolUseId: "agent-perf", status: "running"),
+            event("started", "task-trace", "local_bash", "xcrun xctrace record --template SwiftUI", toolUseId: "bg-trace", status: "running"),
+            event("started", "task-daemon-log", "monitor", "Tail the daemon's log for errors", status: "running"),
+        ]
+    }
+}
