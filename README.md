@@ -1,3 +1,13 @@
+<img src="docs/icon.png" width="128" alt="Sundown's icon: a sun setting behind a hill">
+
+# Sundown
+
+Sundown is a native macOS app for Claude Code.
+
+```sh
+brew install --cask afruitpie/tap/sundown
+```
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/chat-dark.webp">
   <img alt="A Sundown window: a sidebar of chats, a conversation in which Claude added offline caching, and the Context popover showing how full the context window is." src="docs/screenshots/chat-light.webp">
