@@ -8,18 +8,18 @@ A native macOS app for [Claude Code](https://code.claude.com/docs/en/overview) o
 > Sundown is in early development. Expect bugs, or help me fix them by [contributing](#contributing)!
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/chat-dark.png">
-  <img alt="Sundown window showing a chat transcript" src="docs/screenshots/chat-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/chat-dark.webp">
+  <img alt="Sundown window showing a chat transcript" src="docs/screenshots/chat-light.webp">
 </picture>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/tasks-dark.png">
-  <img alt="Sundown window showing a chat's tasks" src="docs/screenshots/tasks-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/tasks-dark.webp">
+  <img alt="Sundown window showing a chat's tasks" src="docs/screenshots/tasks-light.webp">
 </picture>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/diff-dark.png">
-  <img alt="Sundown window showing a chat's file diff" src="docs/screenshots/diff-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/diff-dark.webp">
+  <img alt="Sundown window showing a chat's file diff" src="docs/screenshots/diff-light.webp">
 </picture>
 
 ## Install
