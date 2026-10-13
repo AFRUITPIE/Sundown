@@ -52,18 +52,6 @@ final class NewChatUITests: SundownUITestCase {
         XCTAssertTrue(input.appears(timeout: 5))
         XCTAssertLessThan(folder.frame.maxY, input.frame.minY, "the directory isn't above the field")
 
-        // Chat ▸ Permissions chooses the session's mode, its rows toggles checked by the one chosen.
-        // From a known mode: New Chat starts in the host's (Auto in the fixture).
-        func assertChosen(_ option: String) {
-            app.menuBars.menuBarItems["Chat"].click()
-            app.menuBars.menuItems["Permissions"].hover()
-            let item = app.menuBars.menuItems[option].firstMatch
-            XCTAssertTrue(item.appears(timeout: 5), "no \(option) in Chat ▸ Permissions")
-            XCTAssertTrue(waitUntil(5) { (item.value as? String)?.isEmpty == false || item.isSelected },
-                          "\(option) isn't checked: \(item.value ?? "nil")")
-            app.typeKey(.escape, modifierFlags: [])
-            app.typeKey(.escape, modifierFlags: [])
-        }
         // Effort is a slider in the model's popover, whose value is the level's name.
         func assertEffort(_ level: String) {
             model.click()
@@ -76,12 +64,12 @@ final class NewChatUITests: SundownUITestCase {
             app.typeKey(.escape, modifierFlags: [])
             XCTAssertTrue(app.popovers.firstMatch.disappears(timeout: 5))
         }
+        // Chat ▸ Permissions chooses the session's mode. Which row is checked is
+        // PermissionMenuItemsTests': XCUITest doesn't read a menu item's checkmark.
         chooseMenuItem("Chat", "Ask Before Edits", in: "Permissions")
-        assertChosen("Ask Before Edits")
         let before = model.frame
         // Don't Ask, not Bypass Permissions: Settings offers Bypass only when asked to.
         chooseMenuItem("Chat", "Don't Ask", in: "Permissions")
-        assertChosen("Don't Ask")
         chooseMenuItem("Chat", "Max", in: "Effort")
         assertEffort("Max")
         // Within a point: AppKit rounds the toolbar's items to the pixel grid by where their symbol sits.
