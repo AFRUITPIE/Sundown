@@ -11,12 +11,12 @@ final class LayoutUITests: SundownUITestCase {
         let end = text(longChatEnd)
         XCTAssertTrue(end.appears(timeout: 20), "the long chat never showed")
 
-        // Model and Permissions are toolbar buttons.
+        // Model is a toolbar button; Permissions is hidden until Customize Toolbar adds it.
         let toolbar = mainWindow().toolbars.element(boundBy: 0)
-        for name in ["Model", "Permissions"] {
-            let button = toolbar.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
-            XCTAssertTrue(button.appears(timeout: 5), "no \(name) button in the toolbar")
-        }
+        let model = toolbar.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Model'")).firstMatch
+        XCTAssertTrue(model.appears(timeout: 5), "no Model button in the toolbar")
+        let permissions = toolbar.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Permissions'")).firstMatch
+        XCTAssertFalse(permissions.exists, "Permissions is in the default toolbar")
 
         // Every Call puts each finished call on a row of its own; Summarized folds runs of them
         // again. The rows are laid out again from the end of the chat with no scrolling needed: the
