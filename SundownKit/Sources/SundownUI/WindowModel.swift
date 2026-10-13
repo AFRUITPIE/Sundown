@@ -91,6 +91,8 @@ public final class WindowModel {
     /// Whether this is the key window, for deciding whether a chat is in front of you. Unobserved:
     /// nothing on screen depends on it.
     @ObservationIgnored var isKey = false
+    /// Where the reader was in each chat, for the Chat tab to go back to after Tasks or Diff.
+    @ObservationIgnored let transcriptPlaces = TranscriptPlaces()
     /// Which host `selectedThread` came from, so it is let go on the right connection.
     private var selectedThreadHost: UUID?
 
@@ -386,6 +388,8 @@ public final class WindowModel {
             selectedThreadHost = nil
         }
         guard previous !== selectedThread else { return }
+        // A chat chosen opens at its end; only coming back from another tab goes back to a place.
+        if let id = selectedThread?.id { transcriptPlaces.rows[id] = nil }
         app.retain(selectedThread)
         app.release(previous, on: previousHost)
     }

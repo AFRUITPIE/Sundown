@@ -25,6 +25,10 @@ public enum Signposts {
 
     /// Each host's connection log, as its Connection Log window shows it.
     public static let connectionLog = Logger(subsystem: subsystem, category: "Connection")
+    /// The transcript's own reports: when it found itself showing no rows, and what had just
+    /// happened to the chat's items. Errors, so they're kept: `log show --predicate
+    /// 'subsystem == "com.haydenhong.Sundown" AND category == "Transcript"'`.
+    public static let transcriptLog = Logger(subsystem: subsystem, category: "Transcript")
 
     static func begin(_ signposter: OSSignposter, _ name: StaticString, _ message: String) -> SignpostInterval {
         let id = signposter.makeSignpostID()
