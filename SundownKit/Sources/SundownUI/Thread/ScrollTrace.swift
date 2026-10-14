@@ -19,6 +19,7 @@ struct ScrollTrace: ViewModifier {
         let container: CGFloat
         let top: CGFloat
         let bottom: CGFloat
+        var visibleMaxY: CGFloat = 0
     }
 
     func body(content: Content) -> some View {
@@ -27,7 +28,7 @@ struct ScrollTrace: ViewModifier {
                 .onScrollGeometryChange(for: Geometry.self) { g in
                     Geometry(offset: g.contentOffset.y.rounded(), content: g.contentSize.height.rounded(),
                              container: g.containerSize.height.rounded(),
-                             top: g.contentInsets.top.rounded(), bottom: g.contentInsets.bottom.rounded())
+                             top: g.contentInsets.top.rounded(), bottom: g.contentInsets.bottom.rounded(), visibleMaxY: g.visibleRect.maxY.rounded())
                 } action: { old, new in
                     StressState.offset = new.offset
                     StressState.content = new.content
@@ -39,7 +40,7 @@ struct ScrollTrace: ViewModifier {
                     }
                     Self.log.debug("""
                         geom offset=\(new.offset) dOffset=\(new.offset - old.offset) content=\(new.content) \
-                        dContent=\(new.content - old.content) fromEnd=\(fromEnd) insets=\(new.top),\(new.bottom) container=\(new.container) visible=\(visible.ids.count) \
+                        dContent=\(new.content - old.content) fromEnd=\(fromEnd) visibleToEnd=\(new.content - new.visibleMaxY) insets=\(new.top),\(new.bottom) container=\(new.container) visible=\(visible.ids.count) \
                         items=\(thread.items.count)
                         """)
                 }

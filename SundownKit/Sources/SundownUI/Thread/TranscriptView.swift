@@ -124,7 +124,9 @@ struct TranscriptView: View {
                 if new == .idle { recoverIfCollapsed("after scrolling") }
             }
             .onScrollGeometryChange(for: ScrollPlace.self) { g in
-                let toEnd = g.contentSize.height - (g.contentOffset.y + g.containerSize.height)
+                // From what's visible: the offset and container count the toolbar's inset, so at the
+                // end they said 52 pt short of it, and the reader was never at the end.
+                let toEnd = g.contentSize.height - g.visibleRect.maxY
                 return ScrollPlace(far: toEnd > g.containerSize.height, atEnd: toEnd < 24,
                                    pastContent: g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height)
             } action: { _, place in
