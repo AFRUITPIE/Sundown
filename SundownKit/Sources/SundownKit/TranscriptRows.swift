@@ -94,6 +94,9 @@ public func foldTranscriptRows(_ items: [Item], grouping: Bool = true, live: Boo
     for item in items {
         if case .reasoning = item {
             continue
+        } else if item.isTaskOutcome {
+            // In Tasks, and in what Claude says of it.
+            continue
         } else if grouping, case .toolCall(let call) = item, live ? isFoldable(call) : isGroupable(call) {
             run.append(call)
         } else if !run.isEmpty, item.isTaskSettled {
@@ -168,6 +171,24 @@ private func isGroupable(_ call: Item.ToolCall) -> Bool {
 /// workflow, which runs on long after its call has come back.
 private func isFoldable(_ call: Item.ToolCall) -> Bool {
     call.kind != .todoWrite && !call.isWorkflow
+}
+
+extension Item {
+    /// A background task's outcome, which the transcript leaves to the Tasks tab and to what Claude
+    /// says of it, as Claude Code does: an agent's report or a workflow's result (each a message
+    /// "from" it, which starts the turn Claude answers it in), and a task's notice that it finished.
+    /// A notice that it failed stays, as a warning. One line per agent or command, they read as
+    /// noise beside Claude's own account of them.
+    public var isTaskOutcome: Bool {
+        switch self {
+        case .userMessage(let m):
+            return m.synthetic == true && m.parentToolUseId == nil && (m.origin == "subagent" || m.origin == "workflow")
+        case .notice(let n):
+            return n.kind == "taskNotification" && n.level != .warning
+        default:
+            return false
+        }
+    }
 }
 
 private extension Item {

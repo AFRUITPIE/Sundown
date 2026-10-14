@@ -745,11 +745,12 @@ public final class ThreadModel: Identifiable {
     }
 
     /// The last item the transcript draws: a top-level one that isn't reasoning, which is kept
-    /// but never shown. What the live run of calls and the Thinking line go by.
+    /// but never shown, nor a task's outcome, which Tasks shows. What the live run of calls and
+    /// the Thinking line go by.
     public var lastShownItem: Item? {
         items.last { item in
             if case .reasoning = item { return false }
-            return item.parentToolUseId == nil
+            return item.parentToolUseId == nil && !item.isTaskOutcome
         }
     }
 

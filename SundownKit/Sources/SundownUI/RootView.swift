@@ -64,6 +64,7 @@ public struct RootView: View {
     public var body: some View {
         splitView
         .environment(\.inspectSubagent, InspectSubagentAction(window: window))
+        .environment(\.showTasks, ShowTasksAction(window: window))
         .environment(\.composerWindow, ComposerWindow(window: window))
         .environment(\.stopTask, StopTaskAction(window: window))
         .environment(\.restoreCode, RestoreCodeAction(window: window))

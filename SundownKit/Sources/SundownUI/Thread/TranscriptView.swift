@@ -721,14 +721,40 @@ struct TranscriptTail: View {
 
     var body: some View {
         Group {
-            if let activity {
-                ActivityLine(text: activity)
+            // The chat's background work as one count, after what the turn is doing (or alone, once
+            // it's done), opening Tasks: not a line per agent or command as each one ends.
+            if activity != nil || thread.hasBackgroundWork {
+                HStack(spacing: 6) {
+                    if let activity { ActivityLine(text: activity) }
+                    if activity != nil, thread.hasBackgroundWork {
+                        Text(verbatim: "·").foregroundStyle(.tertiary).accessibilityHidden(true)
+                    }
+                    if thread.hasBackgroundWork { RunningTasksLink(count: thread.backgroundTaskCount) }
+                }
+                .scaledFont(.callout)
             }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
                 TurnOutcome(status: turn.status, error: turn.result?.errors?.first)
             }
         }
+    }
+}
+
+/// How many of the chat's tasks are still running, as a link to them in the Tasks tab.
+struct RunningTasksLink: View {
+    let count: Int
+    @Environment(\.showTasks) private var showTasks
+
+    var body: some View {
+        Button { showTasks() } label: {
+            Text("^[\(count) running task](inflect: true)")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+        .fontWeight(.medium)
+        .help("Show Tasks")
+        .accessibilityHint("Shows them in the Tasks tab")
     }
 }
 

@@ -126,6 +126,22 @@ struct ThreadView: View {
     .frame(width: 900, height: 420)
 }
 
+/// Background agents, as Claude Code lays them out: one run of Agent calls, no line per report or
+/// notice (Tasks has them), Claude's replies, and how many are still running under them.
+#Preview("Background agents") {
+    NavigationStack {
+        ThreadView(thread: .sampleBackgroundAgents(), connection: .sample())
+    }
+    .frame(width: 900, height: 520)
+}
+
+#Preview("Background agents (while thinking)") {
+    NavigationStack {
+        ThreadView(thread: .sampleBackgroundAgents(status: .running, running: 5), connection: .sample())
+    }
+    .frame(width: 900, height: 420)
+}
+
 #Preview("Pending permission") {
     let connection = HostConnection.sample()
     NavigationStack {

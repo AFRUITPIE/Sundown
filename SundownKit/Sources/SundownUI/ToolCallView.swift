@@ -235,7 +235,18 @@ struct StopTaskAction: Equatable {
     static func == (a: Self, b: Self) -> Bool { a.window === b.window }
 }
 
+/// Shows the chat's tasks: the Tasks tab, from the transcript's count of running ones. Holds the
+/// window, as `InspectSubagentAction` does.
+struct ShowTasksAction: Equatable {
+    weak var window: WindowModel?
+
+    @MainActor func callAsFunction() { window?.tab = .tasks }
+
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
+}
+
 extension EnvironmentValues {
+    @Entry var showTasks = ShowTasksAction()
     @Entry var inspectSubagent = InspectSubagentAction()
     @Entry var stopTask = StopTaskAction()
 

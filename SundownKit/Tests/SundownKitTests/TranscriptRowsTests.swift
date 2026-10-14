@@ -74,22 +74,30 @@ struct TranscriptRowsTests {
         #expect(try #require(rows[0].toolGroup).count == 5)
     }
 
-    /// A background task settling mid-run doesn't cut the run in two: its notice goes after the run.
-    /// Any other notice still ends it, and a notice with no run open stays where it came.
-    @Test func aSettledTaskWaitsForTheRunToEnd() throws {
-        let settled = Item.notice(.sample("Background command \"Build\" completed (exit code 0)", kind: "taskNotification", secondsAgo: 1))
-        let rows = foldTranscriptRows([call("t1"), settled, call("t2"), message("m1")])
-        #expect(rows.map(\.id) == ["group-t1", settled.id, "m1"])
+    /// A background task's outcome is left to Tasks and to Claude: its notice that it finished, and
+    /// an agent's report or a workflow's result, aren't rows, and don't cut a run of calls in two. A
+    /// notice that it failed stays, after the run.
+    @Test func aTasksOutcomeIsLeftToTasks() throws {
+        let finished = Item.notice(.sample("Background command \"Build\" completed (exit code 0)", kind: "taskNotification", secondsAgo: 1))
+        let report = Item.userMessage(.init(id: "report", createdAt: 0, content: [.text(.init(text: "hello"))], synthetic: true, origin: "subagent"))
+        let result = Item.userMessage(.init(id: "result", createdAt: 0, content: [.text(.init(text: "{}"))], synthetic: true, origin: "workflow"))
+        let rows = foldTranscriptRows([call("t1"), finished, call("t2"), report, result, message("m1")])
+        #expect(rows.map(\.id) == ["group-t1", "m1"])
         #expect(try #require(rows[0].toolGroup).map(\.id) == ["t1", "t2"])
-        // Live, the run is one row with the notice under it, as it will be once the turn ends.
-        let live = foldTranscriptRows([prompt("p1", at: 0), call("t1"), settled, call("t2", status: .running)],
+        // Live, the run is one row.
+        let live = foldTranscriptRows([prompt("p1", at: 0), call("t1"), finished, call("t2", status: .running)],
                                       folding: .summarized, lastTurnRunning: true)
-        #expect(live.map(\.id) == ["p1", "group-t1", settled.id])
-        // Every Call keeps the order things happened in.
-        #expect(foldTranscriptRows([call("t1"), settled, call("t2")], grouping: false).map(\.id) == ["t1", settled.id, "t2"])
-        #expect(foldTranscriptRows([settled, call("t1"), call("t2")]).map(\.id) == [settled.id, "group-t1"])
+        #expect(live.map(\.id) == ["p1", "group-t1"])
+        // Every Call leaves them out too.
+        #expect(foldTranscriptRows([call("t1"), finished, report, call("t2")], grouping: false).map(\.id) == ["t1", "t2"])
+        // A failure stays, after the run; any other notice still ends a run.
+        let failed = Item.notice(.sample("Background command \"Build\" failed with exit code 1", kind: "taskNotification", level: .warning, secondsAgo: 1))
+        #expect(foldTranscriptRows([call("t1"), failed, call("t2")]).map(\.id) == ["group-t1", failed.id])
         let other = Item.notice(.sample("Interrupted", kind: "interrupted", secondsAgo: 1))
         #expect(foldTranscriptRows([call("t1"), other, call("t2")]).map(\.id) == ["t1", other.id, "t2"])
+        // A message from another session, or Claude Code's own, is still a row.
+        let peer = Item.userMessage(.init(id: "peer", createdAt: 0, content: [.text(.init(text: "hi"))], synthetic: true, origin: "peer"))
+        #expect(foldTranscriptRows([peer]).map(\.id) == ["peer"])
     }
 
     private func prompt(_ id: String, at ms: Double) -> Item {
