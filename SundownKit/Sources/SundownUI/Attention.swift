@@ -422,7 +422,7 @@ public final class SundownAppDelegate: NSObject, NSApplicationDelegate {
     /// chat window.
     public func applicationDidFinishLaunching(_ notification: Notification) {
         Signposts.launchBegan()
-        if let app { Metrics.start(app) }
+        if let app, #available(macOS 27, *) { Metrics.start(app) }
         app?.isActive = NSApp.isActive
         app?.startAttention()
         app?.connectAll()

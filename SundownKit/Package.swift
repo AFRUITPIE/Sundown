@@ -11,7 +11,7 @@ let useSiblingServer = Context.environment["SUNDOWN_USE_RELEASE"] != "1"
 
 let package = Package(
     name: "SundownKit",
-    platforms: [.macOS("27.0")],
+    platforms: [.macOS("26.0")],
     products: [
         .library(name: "SundownKit", targets: ["SundownKit"]),
         .library(name: "SundownUI", targets: ["SundownUI"]),
