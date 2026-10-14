@@ -92,6 +92,35 @@ struct TranscriptRowsTests {
         #expect(foldTranscriptRows([call("t1"), other, call("t2")]).map(\.id) == ["t1", other.id, "t2"])
     }
 
+    /// In a finished turn, Claude's short updates between calls go into the run, after the call each
+    /// followed; a long one, one with more than a paragraph, or one with no call after it stays.
+    @Test func aFinishedRunTakesInClaudesShortUpdates() throws {
+        let short = Item.agentMessage(.init(id: "n1", createdAt: 0, text: "Now the README:"))
+        let long = Item.agentMessage(.init(id: "n2", createdAt: 0, text: String(repeating: "word ", count: 80)))
+        let paragraphs = Item.agentMessage(.init(id: "n3", createdAt: 0, text: "Found it.\n\nNext, the callers."))
+        let rows = foldTranscriptRows([prompt("p1", at: 0), call("t1"), short, call("t2"), call("t3"), long, call("t4"),
+                                       paragraphs, call("t5"), message("end")])
+        #expect(rows.map(\.id) == ["p1", "group-t1", "n2", "t4", "n3", "t5", "end"])
+        guard case .toolGroup(let calls, let notes) = rows[1] else { Issue.record("not a run"); return }
+        #expect(calls.map(\.id) == ["t1", "t2", "t3"])
+        #expect(notes == [ToolGroupNote(afterCallID: "t1", message: try #require(short.agentMessage))])
+        #expect(rows[1].holds(itemID: "n1"))
+        #expect(rows[1].matches("README"))
+        // Two updates in a row, and a task's notice among them: the updates join, the notice goes after.
+        let settled = Item.notice(.sample("Background command \"Build\" completed (exit code 0)", kind: "taskNotification", secondsAgo: 1))
+        let more = Item.agentMessage(.init(id: "n4", createdAt: 0, text: "Building."))
+        let mixed = foldTranscriptRows([call("t1"), short, settled, more, call("t2")])
+        #expect(mixed.map(\.id) == ["group-t1", settled.id])
+        guard case .toolGroup(_, let mixedNotes) = mixed[0] else { Issue.record("not a run"); return }
+        #expect(mixedNotes.map(\.message.id) == ["n1", "n4"])
+        // An update with no call after it ends the run, as a message does.
+        #expect(foldTranscriptRows([call("t1"), call("t2"), short]).map(\.id) == ["group-t1", "n1"])
+        // While the turn runs, the updates are shown.
+        let live = foldTranscriptRows([prompt("p1", at: 0), call("t1"), short, call("t2", status: .running)],
+                                      folding: .summarized, lastTurnRunning: true)
+        #expect(live.map(\.id) == ["p1", "group-t1", "n1", "group-t2"])
+    }
+
     private func prompt(_ id: String, at ms: Double) -> Item {
         .userMessage(.init(id: id, createdAt: ms, content: [.text(.init(text: "go"))]))
     }

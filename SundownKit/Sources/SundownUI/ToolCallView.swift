@@ -334,6 +334,8 @@ struct DisclosureIndicator: View {
 /// the same leading edge, each a line of its own; a failed one has its own gray glyph.
 struct ToolCallGroupView: View {
     let calls: [Item.ToolCall]
+    /// Claude's short updates between the calls, in a finished turn: shown after the call each followed.
+    var notes: [ToolGroupNote] = []
     let thread: ThreadModel
     /// The transcript row's id, so Find in Chat opens the group when it's the current match.
     var rowID: String?
@@ -351,8 +353,9 @@ struct ToolCallGroupView: View {
         return nil
     }
 
-    init(calls: [Item.ToolCall], thread: ThreadModel, rowID: String? = nil, initiallyExpanded: Bool = false) {
+    init(calls: [Item.ToolCall], notes: [ToolGroupNote] = [], thread: ThreadModel, rowID: String? = nil, initiallyExpanded: Bool = false) {
         self.calls = calls
+        self.notes = notes
         self.thread = thread
         self.rowID = rowID
         self._expanded = State(initialValue: initiallyExpanded)
@@ -372,6 +375,12 @@ struct ToolCallGroupView: View {
                 ForEach(calls, id: \.id) { call in
                     VStack(alignment: .leading, spacing: 8) {
                         ToolCallView(call: call, thread: thread, expandDetails: expandAll)
+                        // What Claude said before the next call, in its own words.
+                        ForEach(notes.filter { $0.afterCallID == call.id }, id: \.message.id) { note in
+                            MarkdownView(text: note.message.text)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityLabel(Text("Claude: \(note.message.text)"))
+                        }
                         if call.id != calls.last?.id { Divider() }
                     }
                 }
@@ -385,7 +394,7 @@ struct ToolCallGroupView: View {
         }
         .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.toolGroup", value: liveTitle == nil ? nil : "Running"))
         .modifier(OpensForFind(rowID: rowID, expanded: $expanded,
-                               matches: { TranscriptRow.toolGroup(calls).matches($0) }))
+                               matches: { TranscriptRow.toolGroup(calls, notes: notes).matches($0) }))
     }
 }
 
@@ -747,6 +756,17 @@ private func sampleFinishedRun() -> [Item.ToolCall] {
 
 #Preview("Tool group (expanded)") {
     ToolCallGroupView(calls: sampleFinishedRun(), thread: .sampleIdleChat(), initiallyExpanded: true)
+        .padding(20)
+        .frame(width: 560)
+}
+
+/// A finished run with Claude's short updates between its calls, opened.
+#Preview("Tool group (expanded, with updates)") {
+    let calls = sampleFinishedRun()
+    ToolCallGroupView(calls: calls, notes: [
+        ToolGroupNote(afterCallID: calls[1].id, message: .sample("Found it in `ThreadView.swift`. Folding the rows there.", secondsAgo: 33)),
+        ToolGroupNote(afterCallID: calls[3].id, message: .sample("Built. Checking the item views next.", secondsAgo: 20)),
+    ], thread: .sampleIdleChat(), initiallyExpanded: true)
         .padding(20)
         .frame(width: 560)
 }

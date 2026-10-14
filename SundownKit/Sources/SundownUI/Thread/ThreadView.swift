@@ -126,6 +126,27 @@ struct ThreadView: View {
     .frame(width: 900, height: 420)
 }
 
+/// A finished turn that narrated as it worked: its one-paragraph updates go into the runs, while a
+/// note of two paragraphs and the answer stay.
+#Preview("Work with updates (summarized)") {
+    let items: [Item] = [
+        .sampleUserMessage("Fix the failing release build.", secondsAgo: 120),
+        .sampleToolCall(name: "Bash", kind: .bash, input: ["command": .string("xcodebuild -scheme Sundown")], status: .completed, secondsAgo: 115),
+        .sampleAgentMessage("The build fails in the protocol package. Checking its pin:", secondsAgo: 110),
+        .sampleToolCall(name: "Bash", kind: .bash, input: ["command": .string("cat Package.resolved")], status: .completed, secondsAgo: 105),
+        .sampleAgentMessage("Pinned to 0.5.19. Bumping it:", secondsAgo: 100),
+        .sampleToolCall(name: "Bash", kind: .bash, input: ["command": .string("swift package update")], status: .completed, secondsAgo: 95),
+        .sampleToolCall(name: "Bash", kind: .bash, input: ["command": .string("xcodebuild -scheme Sundown")], status: .completed, secondsAgo: 90),
+        .sampleAgentMessage("It builds now, but one test fails, and it's a real failure rather than a flaky one.\n\nThe fixture still sends the old handshake, so the client rejects it before any test step runs. Updating the fixture to send what 0.5.21 sends.", secondsAgo: 80),
+        .sampleToolCall(name: "Bash", kind: .bash, input: ["command": .string("swift test")], status: .completed, secondsAgo: 70),
+        .sampleAgentMessage("The release build passes again: the protocol package was pinned to 0.5.19, and the fixture now speaks 0.5.21's handshake.", secondsAgo: 60),
+    ]
+    NavigationStack {
+        ThreadView(thread: .sample(title: "Work with updates", items: items, turns: [.sample()]), connection: .sample())
+    }
+    .frame(width: 900, height: 520)
+}
+
 #Preview("Pending permission") {
     let connection = HostConnection.sample()
     NavigationStack {
