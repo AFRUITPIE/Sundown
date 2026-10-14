@@ -24,73 +24,9 @@ struct TranscriptView: View {
     @Environment(\.messageSendGeometry) private var sendGeometry
     @Environment(\.transcriptPlaces) private var places
 
+    // In parts: as one chain, the preview canvas couldn't type-check it in time.
     var body: some View {
-        ScrollView {
-            TranscriptContent(thread: thread, connection: connection, position: $position)
-                // A different Tool Calls folding is a different list of rows, made new: the lazy
-                // stack kept the rows it had built for the old one, and once the content had shrunk
-                // to the new one's height they lay outside what it showed, so the transcript stayed
-                // blank until the reader scrolled.
-                .id(appearance.toolCalls.folding)
-        }
-        .accessibilityLabel("Transcript")
-        .defaultScrollAnchor(.bottom)
-        // Bottom-aligned short content pushed the top edge effect down the window.
-        .defaultScrollAnchor(.top, for: .alignment)
-        .scrollPosition($position)
-        // Shown again (back from Tasks or Diff) on a chat already loaded: at its end, unless the
-        // reader had scrolled up, whose place the `task` below goes back to.
-        .onAppear { if thread.historyLoaded, places?.rows[thread.id] == nil { scrollToEnd() } }
-        // A newly opened chat starts at its latest message.
-        .onChange(of: thread.historyLoaded) {
-            guard thread.historyLoaded else { return }
-            scrollToEnd()
-        }
-        // Sending from this window goes back to the end, where the prompt is about to land.
-        .onChange(of: sendGeometry?.sends) {
-            onScreen.lastPrompt = nil
-            withAnimation(reduceMotion ? nil : .default) { scrollToEnd() }
-        }
-        // Find Next and Previous bring the match into view.
-        .onChange(of: find?.step) {
-            guard let id = find?.current else { return }
-            onScreen.lastPrompt = nil
-            withAnimation(reduceMotion ? nil : .default) { position.scrollTo(id: id, anchor: .center) }
-        }
-        // Chat ▸ Previous and Next Prompt, from where the reader is.
-        .onChange(of: promptNavigator?.step) { goToPrompt() }
-        // The rows the reader was looking at can be folded into others: a different Tool Calls
-        // folding, or a turn ending under Worked For. Back to the row that holds them now.
-        .onChange(of: appearance.toolCalls.folding) { keepPlace(rebuilt: true) }
-        .onChange(of: thread.isRunning) { keepPlace(rebuilt: false) }
-        .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { ids in
-            onScreen.ids = Set(ids)
-            let rows = thread.rows(appearance.toolCalls.folding)
-            let showing = rows.last.map { onScreen.ids.contains($0.id) } ?? true
-            if showing != lastRowOnScreen { lastRowOnScreen = showing }
-            let top = rows.first { onScreen.ids.contains($0.id) }
-            onScreen.topRow = top?.id
-            onScreen.topItem = top?.firstItemID
-            if ids.isEmpty, !rows.isEmpty, thread.historyLoaded { checkShowingNothing("no row on screen") }
-        }
-        // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
-        // Previous or Next last went to.
-        .onScrollPhaseChange { _, new in
-            onScreen.phase = new
-            if new == .interacting {
-                onScreen.lastPrompt = nil
-                onScreen.settling &+= 1
-            }
-        }
-        .onScrollGeometryChange(for: ScrollPlace.self) { g in
-            let toEnd = g.contentSize.height - (g.contentOffset.y + g.containerSize.height)
-            return ScrollPlace(far: toEnd > g.containerSize.height, atEnd: toEnd < 24,
-                               pastContent: g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height)
-        } action: { _, place in
-            if farFromEnd != place.far { farFromEnd = place.far }
-            onScreen.atEnd = place.atEnd
-            if place.pastContent { checkShowingNothing("scrolled past the end of the content") }
-        }
+        observingScroll(reacting(scrollView))
         // Back from another tab: where the reader was, rather than the end.
         .task {
             guard let id = places?.rows.removeValue(forKey: thread.id) else { return }
@@ -106,6 +42,85 @@ struct TranscriptView: View {
         .onReceive(NotificationCenter.default.publisher(for: .stressScroll), perform: stressScroll)
         #endif
         .overlay(alignment: .bottom) { jumpToLatest }
+    }
+
+    private var scrollView: some View {
+        ScrollView {
+            TranscriptContent(thread: thread, connection: connection, position: $position)
+                // A different Tool Calls folding is a different list of rows, made new: the lazy
+                // stack kept the rows it had built for the old one, and once the content had shrunk
+                // to the new one's height they lay outside what it showed, so the transcript stayed
+                // blank until the reader scrolled.
+                .id(appearance.toolCalls.folding)
+        }
+        .accessibilityLabel("Transcript")
+        .defaultScrollAnchor(.bottom)
+        // Bottom-aligned short content pushed the top edge effect down the window.
+        .defaultScrollAnchor(.top, for: .alignment)
+        .scrollPosition($position)
+    }
+
+    /// What brings the reader somewhere: opening, sending, Find, Previous and Next Prompt, a fold.
+    private func reacting(_ content: some View) -> some View {
+        content
+            // Shown again (back from Tasks or Diff) on a chat already loaded: at its end, unless the
+            // reader had scrolled up, whose place the `task` below goes back to.
+            .onAppear { if thread.historyLoaded, places?.rows[thread.id] == nil { scrollToEnd() } }
+            // A newly opened chat starts at its latest message.
+            .onChange(of: thread.historyLoaded) {
+                guard thread.historyLoaded else { return }
+                scrollToEnd()
+            }
+            // Sending from this window goes back to the end, where the prompt is about to land.
+            .onChange(of: sendGeometry?.sends) {
+                onScreen.lastPrompt = nil
+                withAnimation(reduceMotion ? nil : .default) { scrollToEnd() }
+            }
+            // Find Next and Previous bring the match into view.
+            .onChange(of: find?.step) {
+                guard let id = find?.current else { return }
+                onScreen.lastPrompt = nil
+                withAnimation(reduceMotion ? nil : .default) { position.scrollTo(id: id, anchor: .center) }
+            }
+            // Chat ▸ Previous and Next Prompt, from where the reader is.
+            .onChange(of: promptNavigator?.step) { goToPrompt() }
+            // The rows the reader was looking at can be folded into others: a different Tool Calls
+            // folding, or a turn ending under Worked For. Back to the row that holds them now.
+            .onChange(of: appearance.toolCalls.folding) { keepPlace(rebuilt: true) }
+            .onChange(of: thread.isRunning) { keepPlace(rebuilt: false) }
+    }
+
+    /// Where the reader is, from the scroll view.
+    private func observingScroll(_ content: some View) -> some View {
+        content
+            .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { ids in
+                onScreen.ids = Set(ids)
+                let rows = thread.rows(appearance.toolCalls.folding)
+                let showing = rows.last.map { onScreen.ids.contains($0.id) } ?? true
+                if showing != lastRowOnScreen { lastRowOnScreen = showing }
+                let top = rows.first { onScreen.ids.contains($0.id) }
+                onScreen.topRow = top?.id
+                onScreen.topItem = top?.firstItemID
+                if ids.isEmpty, !rows.isEmpty, thread.historyLoaded { checkShowingNothing("no row on screen") }
+            }
+            // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
+            // Previous or Next last went to.
+            .onScrollPhaseChange { _, new in
+                onScreen.phase = new
+                if new == .interacting {
+                    onScreen.lastPrompt = nil
+                    onScreen.settling &+= 1
+                }
+            }
+            .onScrollGeometryChange(for: ScrollPlace.self) { g in
+                let toEnd = g.contentSize.height - (g.contentOffset.y + g.containerSize.height)
+                return ScrollPlace(far: toEnd > g.containerSize.height, atEnd: toEnd < 24,
+                                   pastContent: g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height)
+            } action: { _, place in
+                if farFromEnd != place.far { farFromEnd = place.far }
+                onScreen.atEnd = place.atEnd
+                if place.pastContent { checkShowingNothing("scrolled past the end of the content") }
+            }
     }
 
     /// Jump to Latest, while the reader is more than a screen from the end and the last row is off it.
