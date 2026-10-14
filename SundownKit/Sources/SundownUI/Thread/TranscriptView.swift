@@ -314,9 +314,9 @@ private struct TranscriptContent: View {
             }
             // The end, which going to the latest scrolls to: always there, and never empty — a row
             // with no height is no place to scroll to: the lazy stack left the transcript blank
-            // (2026-10-09).
-            VStack(spacing: 0) { TranscriptTail(thread: thread) }
-                .frame(maxWidth: .infinity, minHeight: 1)
+            // (2026-10-09). Leading, as Claude's column is: centered, the Thinking line sat mid-column.
+            VStack(alignment: .leading, spacing: 0) { TranscriptTail(thread: thread) }
+                .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
                 .id(Self.endID)
         }
         // Rows are scroll targets by their ids: Previous Prompt and Find scroll to them.

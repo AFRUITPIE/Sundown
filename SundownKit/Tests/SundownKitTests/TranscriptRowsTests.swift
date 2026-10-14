@@ -74,6 +74,24 @@ struct TranscriptRowsTests {
         #expect(try #require(rows[0].toolGroup).count == 5)
     }
 
+    /// A background task settling mid-run doesn't cut the run in two: its notice goes after the run.
+    /// Any other notice still ends it, and a notice with no run open stays where it came.
+    @Test func aSettledTaskWaitsForTheRunToEnd() throws {
+        let settled = Item.notice(.sample("Background command \"Build\" completed (exit code 0)", kind: "taskNotification", secondsAgo: 1))
+        let rows = foldTranscriptRows([call("t1"), settled, call("t2"), message("m1")])
+        #expect(rows.map(\.id) == ["group-t1", settled.id, "m1"])
+        #expect(try #require(rows[0].toolGroup).map(\.id) == ["t1", "t2"])
+        // Live, the run is one row with the notice under it, as it will be once the turn ends.
+        let live = foldTranscriptRows([prompt("p1", at: 0), call("t1"), settled, call("t2", status: .running)],
+                                      folding: .summarized, lastTurnRunning: true)
+        #expect(live.map(\.id) == ["p1", "group-t1", settled.id])
+        // Every Call keeps the order things happened in.
+        #expect(foldTranscriptRows([call("t1"), settled, call("t2")], grouping: false).map(\.id) == ["t1", settled.id, "t2"])
+        #expect(foldTranscriptRows([settled, call("t1"), call("t2")]).map(\.id) == [settled.id, "group-t1"])
+        let other = Item.notice(.sample("Interrupted", kind: "interrupted", secondsAgo: 1))
+        #expect(foldTranscriptRows([call("t1"), other, call("t2")]).map(\.id) == ["t1", other.id, "t2"])
+    }
+
     private func prompt(_ id: String, at ms: Double) -> Item {
         .userMessage(.init(id: id, createdAt: ms, content: [.text(.init(text: "go"))]))
     }

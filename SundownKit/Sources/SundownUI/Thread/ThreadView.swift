@@ -1,5 +1,6 @@
 import SwiftUI
 import SundownKit
+import TetherProtocol
 
 /// One chat: its transcript, with the controls pinned to the bottom edge. Nothing else — the
 /// window's title, subtitle, toolbar and inspector belong to the shell.
@@ -107,6 +108,22 @@ struct ThreadView: View {
         ]), connection: connection)
     }
     .frame(width: 900, height: 400)
+}
+
+/// A background command settling between calls: one run of calls, the notice after it.
+#Preview("Task settles mid-run") {
+    let items: [Item] = [
+        .sampleUserMessage("Run the tests in the background and keep going.", secondsAgo: 60),
+        .sampleToolCall(name: "Bash", kind: .bash, input: ["command": .string("swift test")], status: .completed, secondsAgo: 55),
+        .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string("/tmp/App.swift")], status: .completed, secondsAgo: 50),
+        .notice(.sample("Background command \"Run the package tests\" completed (exit code 0)", kind: "taskNotification", secondsAgo: 45)),
+        .sampleToolCall(name: "Bash", kind: .bash, input: ["command": .string("git status")], status: .completed, secondsAgo: 40),
+        .sampleAgentMessage("The tests pass and the tree is clean.", secondsAgo: 30),
+    ]
+    NavigationStack {
+        ThreadView(thread: .sample(title: "Task settles mid-run", items: items, turns: [.sample()]), connection: .sample())
+    }
+    .frame(width: 900, height: 420)
 }
 
 #Preview("Pending permission") {

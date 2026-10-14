@@ -63,6 +63,10 @@ public enum TranscriptFolding: Sendable, Hashable {
 /// it in the inspector.
 /// A single ungroupable-adjacent completed call is left as a plain `.item`, not a one-call group.
 ///
+/// A background task settling between two calls ("Background command … completed") doesn't break
+/// the run: it says nothing about the calls around it, and arrives whenever the task ends, so it
+/// cut runs in two at random ("Ran a command", the notice, "Ran a command"). It goes after the run.
+///
 /// Reasoning items are dropped here rather than rendered: the model's internal monologue competes
 /// with its actual answer. `ThreadModel` still keeps them, and `ThreadModel.isThinking` drives the
 /// one line that marks the wait before a reply starts.
@@ -73,6 +77,8 @@ public enum TranscriptFolding: Sendable, Hashable {
 public func foldTranscriptRows(_ items: [Item], grouping: Bool = true, live: Bool = false) -> [TranscriptRow] {
     var rows: [TranscriptRow] = []
     var run: [Item.ToolCall] = []
+    /// Background tasks' notices that came during the run, for after it.
+    var settled: [Item] = []
 
     func flushRun() {
         switch run.count {
@@ -81,6 +87,8 @@ public func foldTranscriptRows(_ items: [Item], grouping: Bool = true, live: Boo
         default: rows.append(.toolGroup(run))
         }
         run.removeAll()
+        rows += settled.map(TranscriptRow.item)
+        settled.removeAll()
     }
 
     for item in items {
@@ -88,6 +96,8 @@ public func foldTranscriptRows(_ items: [Item], grouping: Bool = true, live: Boo
             continue
         } else if grouping, case .toolCall(let call) = item, live ? isFoldable(call) : isGroupable(call) {
             run.append(call)
+        } else if !run.isEmpty, item.isTaskSettled {
+            settled.append(item)
         } else {
             flushRun()
             rows.append(.item(item))
@@ -161,6 +171,11 @@ private func isFoldable(_ call: Item.ToolCall) -> Bool {
 }
 
 private extension Item {
+    /// A background task's notice that it finished, failed or stopped.
+    var isTaskSettled: Bool {
+        if case .notice(let n) = self { n.kind == "taskNotification" } else { false }
+    }
+
     var isWorkflowCall: Bool {
         if case .toolCall(let call) = self { call.isWorkflow } else { false }
     }
