@@ -239,9 +239,15 @@ extension TranscriptView {
 
     /// Scrolled up: back to the topmost row that was on screen, or, if it has been folded into
     /// another, the row that holds its first item. `rebuilt`: the rows were made anew (a different
-    /// folding is a new list), so even a row still there has to be gone back to.
+    /// folding is a new list), so even a row still there has to be gone back to; at the end, that's
+    /// the end: left to the bottom anchor, a new list of very different height left the reader a
+    /// screen or more above it (Every Call from Summarized), and the next folding then kept that place.
     private func keepPlace(rebuilt: Bool) {
-        guard !onScreen.atEnd, let topRow = onScreen.topRow, let item = onScreen.topItem else { return }
+        if onScreen.atEnd {
+            if rebuilt { scrollToEnd() }
+            return
+        }
+        guard let topRow = onScreen.topRow, let item = onScreen.topItem else { return }
         let rows = thread.rows(appearance.toolCalls.folding)
         let still = rows.contains { $0.id == topRow }
         guard rebuilt || !still, let now = still ? topRow : rows.first(where: { $0.holds(item) })?.id else { return }
