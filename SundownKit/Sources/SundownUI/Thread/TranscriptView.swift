@@ -719,23 +719,46 @@ struct TranscriptTail: View {
         return nil
     }
 
+    /// The last row says what's happening now (a call running, or a run of calls saying Thinking),
+    /// and so has the running tasks' count beside it.
+    private var rowIsCurrent: Bool {
+        guard case .toolCall(let call)? = thread.lastShownItem else { return false }
+        if call.status == .running || call.status == .pending { return !call.isWorkflow }
+        return thread.isThinking && runSaysIt
+    }
+
     var body: some View {
         Group {
-            // The chat's background work as one count, after what the turn is doing (or alone, once
-            // it's done), opening Tasks: not a line per agent or command as each one ends.
-            if activity != nil || thread.hasBackgroundWork {
-                HStack(spacing: 6) {
-                    if let activity { ActivityLine(text: activity) }
-                    if activity != nil, thread.hasBackgroundWork {
-                        Text(verbatim: "·").foregroundStyle(.tertiary).accessibilityHidden(true)
-                    }
-                    if thread.hasBackgroundWork { RunningTasksLink(count: thread.backgroundTaskCount) }
+            // The chat's background work as one count beside what's happening now (this line, or the
+            // row saying it), or alone once nothing is, opening Tasks: not a line per agent or
+            // command as each one ends.
+            if let activity {
+                HStack(spacing: 8) {
+                    ActivityLine(text: activity)
+                    RunningTasksCount(thread: thread)
                 }
-                .scaledFont(.callout)
+                .transcriptLine()
+            } else if thread.hasBackgroundWork, !rowIsCurrent {
+                RunningTasksLink(count: thread.backgroundTaskCount)
+                    .transcriptLine()
             }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
                 TurnOutcome(status: turn.status, error: turn.result?.errors?.first)
+            }
+        }
+    }
+}
+
+/// "· 3 running tasks", after what's happening now, while any of the chat's tasks run.
+struct RunningTasksCount: View {
+    let thread: ThreadModel
+
+    var body: some View {
+        if thread.hasBackgroundWork {
+            HStack(spacing: 8) {
+                Text(verbatim: "·").foregroundStyle(.tertiary).accessibilityHidden(true)
+                RunningTasksLink(count: thread.backgroundTaskCount)
             }
         }
     }

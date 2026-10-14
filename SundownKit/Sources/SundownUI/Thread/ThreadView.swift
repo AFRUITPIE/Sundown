@@ -142,6 +142,28 @@ struct ThreadView: View {
     .frame(width: 900, height: 420)
 }
 
+/// The running tasks counted beside what's happening now: a run of calls with a command running,
+/// then (its command done) the same run saying Thinking.
+#Preview("Running tasks beside the current row", traits: .fixedLayout(width: 900, height: 620)) {
+    @Previewable @State var commandDone = false
+    let agents: [Item] = (1...3).map { n in
+        .toolCall(.sample(id: "agent-\(n)", name: "Agent", kind: .subagent, input: ["description": .string("ls after \(n) s")],
+                          status: .completed, secondsAgo: 20))
+    }
+    let command = Item.toolCall(.sample(id: "wc", name: "Bash", kind: .bash, input: ["command": "wc -l poem.md"],
+                                        status: commandDone ? .completed : .running, secondsAgo: 2))
+    let items: [Item] = [.sampleUserMessage("Delegate ls to 3 background agents, then count the poem's lines.", secondsAgo: 30)] + agents + [command]
+    VStack(spacing: 0) {
+        Toggle("Command done", isOn: $commandDone).padding(8)
+        NavigationStack {
+            ThreadView(thread: .sample(title: "Running tasks", status: .running, items: items,
+                                       turns: [.sample(status: .inProgress)], backgroundTasks: 3),
+                       connection: .sample())
+        }
+        .id(commandDone)
+    }
+}
+
 #Preview("Pending permission") {
     let connection = HostConnection.sample()
     NavigationStack {

@@ -115,6 +115,7 @@ struct ToolCallView: View {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
             status
+            if isRunning, call.parentToolUseId == nil, call.id == thread.lastShownItem?.id { RunningTasksCount(thread: thread) }
         }
         .transcriptLine()
         .contextMenu { menu }
@@ -374,6 +375,13 @@ struct ToolCallGroupView: View {
         return nil
     }
 
+    /// The run is what's happening now: a call of it running, or, its calls done, Thinking where the
+    /// line under the transcript would (not after an agent or a checklist, whose rows don't say it).
+    private var saysWhatsHappening: Bool {
+        guard liveTitle != nil, let last = calls.last, last.id == thread.lastShownItem?.id else { return false }
+        return calls.contains { $0.status == .running || $0.status == .pending } || (last.kind != .subagent && last.kind != .todoWrite)
+    }
+
     init(calls: [Item.ToolCall], edits: TurnEdits? = nil, thread: ThreadModel, rowID: String? = nil, initiallyExpanded: Bool = false) {
         self.calls = calls
         self.edits = edits
@@ -410,6 +418,8 @@ struct ToolCallGroupView: View {
             HStack(spacing: 8) {
                 ActivityLabel(text: liveTitle ?? ToolCallText.summary(calls, edited: edits?.files.map(\.path)), live: liveTitle != nil)
                 if let edits { LineCounts(added: edits.added, removed: edits.removed) }
+                // What's happening now, so the chat's running tasks are counted beside it.
+                if saysWhatsHappening { RunningTasksCount(thread: thread) }
             }
             .transcriptLine()
         }
