@@ -224,7 +224,7 @@ struct WorkflowAgentTranscript: View {
                     VStack(alignment: .leading, spacing: 0) {
                         switch row {
                         case .item(let item): ItemView(item: item, thread: thread)
-                        case .toolGroup(let calls, let notes): ToolCallGroupView(calls: calls, notes: notes, thread: thread, rowID: row.id)
+                        case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread, rowID: row.id)
                         default: TranscriptRowView(row: row, thread: thread)
                         }
                     }
