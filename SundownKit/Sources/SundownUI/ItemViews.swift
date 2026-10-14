@@ -42,14 +42,12 @@ struct ItemView: View {
         case .compaction(let c):
             // A quiet line in Claude's column, as a tool row; Claude Code's summary follows it.
             Text(c.preTokens.map { "Conversation compacted from \(Format.tokens($0)) tokens" } ?? "Conversation compacted")
-                .scaledFont(.callout)
-                .foregroundStyle(.secondary)
+                .transcriptLine()
                 .frame(maxWidth: .infinity, alignment: .leading)
         // Quiet, like a failed call: said, selectable to copy, not alarming.
         case .error(let e):
             Label(e.message, systemImage: "exclamationmark.circle")
-                .scaledFont(.callout)
-                .foregroundStyle(.secondary)
+                .transcriptLine()
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         case .notice(let n): NoticeView(notice: n)
@@ -430,7 +428,7 @@ struct SyntheticMessageView: View {
         if message.origin == "compaction" || text.hasPrefix(Self.compactionSummaryOpening) {
             return Text("Summary of the earlier conversation")
         }
-        return Text("Message from \(Text(sender).foregroundStyle(.primary))")
+        return Text("Message from \(sender)")
     }
 
     var body: some View {
@@ -448,7 +446,7 @@ struct SyntheticMessageView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
-            label.foregroundStyle(.secondary)
+            label.transcriptLine()
         }
         .scaledFont(.callout)
         .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.synthetic"))
@@ -585,8 +583,7 @@ struct NoticeView: View {
             }
             Text(text).textSelection(.enabled)
         }
-        .scaledFont(.callout)
-        .foregroundStyle(.secondary)
+        .transcriptLine()
         .frame(maxWidth: .infinity, alignment: .leading)
         // What the goal's check said is a hover away; the Tasks tab keeps the last one.
         .help(notice.goal?.reason ?? "")
@@ -621,8 +618,7 @@ struct WakeupLine: View {
         Text(text)
             .lineLimit(1)
             .truncationMode(.tail)
-            .scaledFont(.callout)
-            .foregroundStyle(.secondary)
+            .transcriptLine()
             .frame(maxWidth: .infinity, alignment: .leading)
             .help(prompt)
             .accessibilityLabel(text)

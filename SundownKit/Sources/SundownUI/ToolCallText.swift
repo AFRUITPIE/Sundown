@@ -140,7 +140,9 @@ enum ToolCallText {
     }
 
     /// A run of finished calls as one line, the kinds in the order they first appear.
-    static func summary(_ calls: [Item.ToolCall]) -> String {
+    /// `edited`: the files the turn edited, when its edits are part of this run's row: they're said
+    /// once, as the turn's ("ran a command and edited 3 files"), in place of the run's own edits.
+    static func summary(_ calls: [Item.ToolCall], edited: [String]? = nil) -> String {
         var order: [String] = []
         var groups: [String: [Item.ToolCall]] = [:]
         for call in calls {
@@ -148,10 +150,22 @@ enum ToolCallText {
             if groups[key] == nil { order.append(key) }
             groups[key, default: []].append(call)
         }
-        let phrases = order.map { phrase(for: groups[$0]!) }
+        var phrases: [String] = []
+        for key in order {
+            if let edited, key == "edit" || key == ToolKind.fileWrite.rawValue {
+                if !phrases.contains(where: { $0.hasPrefix("edited ") }) { phrases.append(editedPhrase(edited)) }
+            } else {
+                phrases.append(phrase(for: groups[key]!))
+            }
+        }
+        if let edited, !phrases.contains(where: { $0.hasPrefix("edited ") }) { phrases.append(editedPhrase(edited)) }
         guard !phrases.isEmpty else { return "" }
         let joined = ListFormatter.localizedString(byJoining: phrases)
         return joined.prefix(1).uppercased() + joined.dropFirst()
+    }
+
+    private static func editedPhrase(_ paths: [String]) -> String {
+        paths.count == 1 ? "edited \((paths[0] as NSString).lastPathComponent)" : "edited \(paths.count) files"
     }
 
     private static func groupKey(_ call: Item.ToolCall) -> String {

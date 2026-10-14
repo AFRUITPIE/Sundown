@@ -544,7 +544,7 @@ struct TranscriptRowView: View, Equatable {
         guard a.thread === b.thread, a.place == b.place else { return false }
         switch (a.row, b.row) {
         case (.item(let x), .item(let y)): return x.id == y.id
-        case (.toolGroup(let x), .toolGroup(let y)): return x == y
+        case (.toolGroup(let x, let xe), .toolGroup(let y, let ye)): return x == y && xe == ye
         // The same turn's work, as long as it holds the same rows; each item reads its own box.
         case (.turnWork(let x, let xs, let xd), .turnWork(let y, let ys, let yd)):
             return x == y && xd == yd && xs.map(\.id) == ys.map(\.id)
@@ -564,7 +564,7 @@ struct TranscriptRowView: View, Equatable {
                 LiveItemView(box: thread.box(for: item), thread: thread)
                     .modifier(FadesIn(isNew: thread.justStarted(item.id) && sendGeometry?.landedPrompt != item.id,
                                       pushes: item.isOwnPrompt))
-            case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread, rowID: row.id)
+            case .toolGroup(let calls, let edits): ToolCallGroupView(calls: calls, edits: edits, thread: thread, rowID: row.id)
             case .turnWork(let id, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread, rowID: id)
             case .turnEdits(let edits): TurnEditsView(edits: edits, cwd: thread.cwd)
             case .dateSeparator(_, let ms): DateSeparatorView(ms: ms)
@@ -764,8 +764,7 @@ struct ActivityLine: View {
 
     var body: some View {
         ActivityLabel(text: text, live: true)
-            .fontWeight(.medium)
-            .scaledFont(.callout)
+            .transcriptLine()
             // The model's changes carry no animation, so the transition brings its own.
             .transition(.opacity.animation(.easeOut(duration: 0.2)))
     }
@@ -917,7 +916,7 @@ private extension TranscriptRow {
     var firstItemID: String? {
         switch self {
         case .item(let item): item.id
-        case .toolGroup(let calls): calls.first?.id
+        case .toolGroup(let calls, _): calls.first?.id
         case .turnWork(_, let rows, _): rows.first?.firstItemID
         case .turnEdits(let edits): edits.promptID
         case .dateSeparator(let promptID, _): promptID
@@ -928,7 +927,7 @@ private extension TranscriptRow {
     func holds(_ id: String) -> Bool {
         switch self {
         case .item(let item): item.id == id
-        case .toolGroup(let calls): calls.contains { $0.id == id }
+        case .toolGroup: holds(itemID: id)
         case .turnWork(_, let rows, _): rows.contains { $0.holds(id) }
         case .turnEdits, .dateSeparator: false
         }

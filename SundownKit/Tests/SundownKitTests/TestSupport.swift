@@ -33,7 +33,7 @@ extension Item {
 
 extension TranscriptRow {
     var item: Item? { if case .item(let item) = self { item } else { nil } }
-    var toolGroup: [Item.ToolCall]? { if case .toolGroup(let calls) = self { calls } else { nil } }
+    var toolGroup: [Item.ToolCall]? { if case .toolGroup(let calls, _) = self { calls } else { nil } }
     var turnWork: (rows: [TranscriptRow], durationMs: Double?)? {
         if case .turnWork(_, let rows, let durationMs) = self { (rows, durationMs) } else { nil }
     }

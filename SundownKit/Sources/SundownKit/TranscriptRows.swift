@@ -6,7 +6,9 @@ import TetherProtocol
 /// files a finished turn edited, or the date above a prompt.
 public indirect enum TranscriptRow: Sendable, Equatable {
     case item(Item)
-    case toolGroup([Item.ToolCall])
+    /// A run of calls; `edits`, when the turn's edits come right after it, are the turn's too
+    /// ("Ran a command and edited 3 files").
+    case toolGroup([Item.ToolCall], edits: TurnEdits? = nil)
     /// Everything a finished turn did before its last message, as one "Worked for" line
     /// (View ▸ Tool Calls ▸ Worked For). `durationMs` runs from the prompt to that
     /// message, when both are known.
@@ -21,7 +23,7 @@ public indirect enum TranscriptRow: Sendable, Equatable {
         case .item(let item): return item.id
         // Keyed on the first call's id: stable as long as the group's contents don't reorder,
         // which they don't — items only ever append or mutate in place.
-        case .toolGroup(let calls): return "group-\(calls.first?.id ?? "")"
+        case .toolGroup(let calls, _): return "group-\(calls.first?.id ?? "")"
         case .turnWork(let id, _, _): return id
         case .turnEdits(let edits): return "edits-\(edits.promptID)"
         case .dateSeparator(let promptID, _): return "date-\(promptID)"
@@ -34,7 +36,7 @@ extension TranscriptRow {
     public func holds(itemID id: String) -> Bool {
         switch self {
         case .item(let item): item.id == id
-        case .toolGroup(let calls): calls.contains { $0.id == id }
+        case .toolGroup(let calls, _): calls.contains { $0.id == id }
         case .turnWork(_, let rows, _): rows.contains { $0.holds(itemID: id) }
         case .turnEdits, .dateSeparator: false
         }
@@ -211,7 +213,15 @@ public func decorateTranscriptRows(_ rows: [TranscriptRow], dates: [String: Doub
     out.reserveCapacity(rows.count + dates.count + edits.count)
     var turn: String?
     func endTurn() {
-        if let turn, let e = edits[turn] { out.append(.turnEdits(e)) }
+        guard let turn, let e = edits[turn] else { return }
+        // Right after the turn's last run of calls (or a call), they're one row with it: two quiet
+        // lines in a row ("Ran a command", "Edited 3 files") read as two kinds of thing.
+        switch out.last {
+        case .toolGroup(let calls, nil)?: out[out.count - 1] = .toolGroup(calls, edits: e)
+        case .item(.toolCall(let call))? where call.status != .running && call.status != .pending
+            && call.kind != .todoWrite && !call.isWorkflow: out[out.count - 1] = .toolGroup([call], edits: e)
+        default: out.append(.turnEdits(e))
+        }
     }
     for row in rows {
         if case .item(.userMessage(let m)) = row, m.parentToolUseId == nil {
@@ -370,7 +380,7 @@ extension TranscriptRow {
     public var searchText: String {
         switch self {
         case .item(let item): return item.searchText
-        case .toolGroup(let calls): return calls.map { Item.toolCall($0).searchText }.joined(separator: "\n")
+        case .toolGroup(let calls, _): return calls.map { Item.toolCall($0).searchText }.joined(separator: "\n")
         case .turnWork(_, let rows, _): return rows.map(\.searchText).joined(separator: "\n")
         // Their files are in the calls, which match already.
         case .turnEdits, .dateSeparator: return ""
