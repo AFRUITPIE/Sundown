@@ -142,6 +142,23 @@ struct ThreadView: View {
     .frame(width: 900, height: 420)
 }
 
+/// Claude using a skill, as a real session reads: the skill's instructions, which Claude Code puts
+/// in the chat right after the call, are the call's (opened), not a message from Claude Code.
+#Preview("Skill") {
+    let items: [Item] = [
+        .sampleUserMessage("Run the Sundown demo skill.", secondsAgo: 30),
+        .toolCall(.sample(name: "Skill", kind: .skill, input: ["skill": "sundown-demo"], status: .completed,
+                          outputText: "Launching skill: sundown-demo", secondsAgo: 28)),
+        .sampleUserMessage("Base directory for this skill: /tmp/skilldemo/.claude/skills/sundown-demo\n\n# Sundown demo skill\n\nWhen this skill is used, reply with exactly one line.",
+                           secondsAgo: 28, synthetic: true),
+        .sampleAgentMessage("The Sundown demo skill ran.", secondsAgo: 26),
+    ]
+    NavigationStack {
+        ThreadView(thread: .sample(title: "Skill", items: items, turns: [.sample()]), connection: .sample())
+    }
+    .frame(width: 900, height: 360)
+}
+
 /// The running tasks counted beside what's happening now: a run of calls with a command running,
 /// then (its command done) the same run saying Thinking.
 #Preview("Running tasks beside the current row", traits: .fixedLayout(width: 900, height: 620)) {
