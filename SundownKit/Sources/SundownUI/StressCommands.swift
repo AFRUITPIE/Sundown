@@ -1,4 +1,5 @@
 #if DEBUG
+import AppKit
 import OSLog
 import SwiftUI
 import SundownKit
@@ -57,6 +58,7 @@ extension Notification.Name {
 ///   fold summarized | workedFor | everyCall
 ///   chat <index in the sidebar's list> | chat next
 ///   tab chat | tasks | diff
+///   snap left | right | full | center [now]   (the window tiled as ⌃⌥←, →, ↑ do; animated unless now)
 ///   reconnect | wait <ms> | mark <words>
 struct StressDriver: ViewModifier {
     let window: WindowModel
@@ -130,7 +132,19 @@ struct StressDriver: ViewModifier {
             default: window.tab = .chat
             }
         case "reconnect": if let connection { Task { await connection.reconnect() } }
-        case "snap": BlankSampler.snapshot()
+        case "snap":
+            guard let screen = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }) else { return }
+            let parts = arg.split(separator: " ")
+            guard let area = screen.screen?.visibleFrame, let side = parts.first else { BlankSampler.snapshot(); return }
+            let half = area.width / 2
+            let frame: NSRect = switch side {
+            case "left": NSRect(x: area.minX, y: area.minY, width: half, height: area.height)
+            case "right": NSRect(x: area.minX + half, y: area.minY, width: half, height: area.height)
+            case "center": NSRect(x: area.midX - 500, y: area.midY - 370, width: 1000, height: 740)
+            default: area
+            }
+            screen.setFrame(frame, display: true, animate: parts.last != "now")
+        case "shot": BlankSampler.snapshot()
         case "wait": try? await Task.sleep(for: .milliseconds(Int(arg) ?? 100))
         default: break
         }
