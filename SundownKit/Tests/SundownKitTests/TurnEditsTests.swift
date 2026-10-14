@@ -142,6 +142,23 @@ struct TurnEditsTests {
         #expect(rows.map(\.id) == ["date-p1", "p1", "e1", "m1", "edits-p1", "date-p2", "p2", "m2"])
     }
 
+    /// A turn whose last row is a run of calls (or a call) has its edits in that row, one line:
+    /// "Ran a command and edited a.swift", not two quiet lines in a row.
+    @Test func editsRightAfterARunAreThatRows() throws {
+        let bash = Item.toolCall(.init(id: "b1", createdAt: 1_100, name: "Bash", kind: .bash, input: ["command": "make"], status: .completed))
+        let lone = [prompt("p1"), reply("m1"), edit("e1", "/r/a.swift", old: "a", new: "b"), prompt("p2"), reply("m2")]
+        let rows = decorateTranscriptRows(foldTranscriptRows(lone), dates: [:], edits: turnEdits(in: lone, lastTurnRunning: false))
+        #expect(rows.map(\.id) == ["p1", "m1", "group-e1", "p2", "m2"])
+        guard case .toolGroup(let calls, let edits?) = rows[2] else { Issue.record("no joined row"); return }
+        #expect(calls.map(\.id) == ["e1"])
+        #expect(edits.promptID == "p1")
+        let run = [prompt("p1"), edit("e1", "/r/a.swift", old: "a", new: "b"), bash]
+        let joined = decorateTranscriptRows(foldTranscriptRows(run), dates: [:], edits: turnEdits(in: run, lastTurnRunning: false))
+        #expect(joined.map(\.id) == ["p1", "group-e1"])
+        guard case .toolGroup(_, let e?) = joined[1] else { Issue.record("no joined row"); return }
+        #expect(e.files.map(\.path) == ["/r/a.swift"])
+    }
+
     /// Worked For keeps the edits after the reply that ends the folded work.
     @Test func workedForKeepsTheEditsAfterTheReply() {
         let items = [prompt("p1"), edit("e1", "/r/a.swift", old: "a", new: "b"), reply("m1")]

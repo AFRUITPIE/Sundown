@@ -6,7 +6,9 @@ import TetherProtocol
 /// files a finished turn edited, or the date above a prompt.
 public indirect enum TranscriptRow: Sendable, Equatable {
     case item(Item)
-    case toolGroup([Item.ToolCall])
+    /// A run of calls; `edits`, when the turn's edits come right after it, are the turn's too
+    /// ("Ran a command and edited 3 files").
+    case toolGroup([Item.ToolCall], edits: TurnEdits? = nil)
     /// Everything a finished turn did before its last message, as one "Worked for" line
     /// (View ▸ Tool Calls ▸ Worked For). `durationMs` runs from the prompt to that
     /// message, when both are known.
@@ -21,7 +23,7 @@ public indirect enum TranscriptRow: Sendable, Equatable {
         case .item(let item): return item.id
         // Keyed on the first call's id: stable as long as the group's contents don't reorder,
         // which they don't — items only ever append or mutate in place.
-        case .toolGroup(let calls): return "group-\(calls.first?.id ?? "")"
+        case .toolGroup(let calls, _): return "group-\(calls.first?.id ?? "")"
         case .turnWork(let id, _, _): return id
         case .turnEdits(let edits): return "edits-\(edits.promptID)"
         case .dateSeparator(let promptID, _): return "date-\(promptID)"
@@ -34,7 +36,7 @@ extension TranscriptRow {
     public func holds(itemID id: String) -> Bool {
         switch self {
         case .item(let item): item.id == id
-        case .toolGroup(let calls): calls.contains { $0.id == id }
+        case .toolGroup(let calls, _): calls.contains { $0.id == id }
         case .turnWork(_, let rows, _): rows.contains { $0.holds(itemID: id) }
         case .turnEdits, .dateSeparator: false
         }
@@ -63,6 +65,10 @@ public enum TranscriptFolding: Sendable, Hashable {
 /// it in the inspector.
 /// A single ungroupable-adjacent completed call is left as a plain `.item`, not a one-call group.
 ///
+/// A background task settling between two calls ("Background command … completed") doesn't break
+/// the run: it says nothing about the calls around it, and arrives whenever the task ends, so it
+/// cut runs in two at random ("Ran a command", the notice, "Ran a command"). It goes after the run.
+///
 /// Reasoning items are dropped here rather than rendered: the model's internal monologue competes
 /// with its actual answer. `ThreadModel` still keeps them, and `ThreadModel.isThinking` drives the
 /// one line that marks the wait before a reply starts.
@@ -73,6 +79,8 @@ public enum TranscriptFolding: Sendable, Hashable {
 public func foldTranscriptRows(_ items: [Item], grouping: Bool = true, live: Bool = false) -> [TranscriptRow] {
     var rows: [TranscriptRow] = []
     var run: [Item.ToolCall] = []
+    /// Background tasks' notices that came during the run, for after it.
+    var settled: [Item] = []
 
     func flushRun() {
         switch run.count {
@@ -81,13 +89,20 @@ public func foldTranscriptRows(_ items: [Item], grouping: Bool = true, live: Boo
         default: rows.append(.toolGroup(run))
         }
         run.removeAll()
+        rows += settled.map(TranscriptRow.item)
+        settled.removeAll()
     }
 
     for item in items {
         if case .reasoning = item {
             continue
+        } else if item.isTaskOutcome {
+            // In Tasks, and in what Claude says of it.
+            continue
         } else if grouping, case .toolCall(let call) = item, live ? isFoldable(call) : isGroupable(call) {
             run.append(call)
+        } else if !run.isEmpty, item.isTaskSettled {
+            settled.append(item)
         } else {
             flushRun()
             rows.append(.item(item))
@@ -160,7 +175,30 @@ private func isFoldable(_ call: Item.ToolCall) -> Bool {
     call.kind != .todoWrite && !call.isWorkflow
 }
 
+extension Item {
+    /// A background task's outcome, which the transcript leaves to the Tasks tab and to what Claude
+    /// says of it, as Claude Code does: an agent's report or a workflow's result (each a message
+    /// "from" it, which starts the turn Claude answers it in), and a task's notice that it finished.
+    /// A notice that it failed stays, as a warning. One line per agent or command, they read as
+    /// noise beside Claude's own account of them.
+    public var isTaskOutcome: Bool {
+        switch self {
+        case .userMessage(let m):
+            return m.synthetic == true && m.parentToolUseId == nil && (m.origin == "subagent" || m.origin == "workflow")
+        case .notice(let n):
+            return n.kind == "taskNotification" && n.level != .warning
+        default:
+            return false
+        }
+    }
+}
+
 private extension Item {
+    /// A background task's notice that it finished, failed or stopped.
+    var isTaskSettled: Bool {
+        if case .notice(let n) = self { n.kind == "taskNotification" } else { false }
+    }
+
     var isWorkflowCall: Bool {
         if case .toolCall(let call) = self { call.isWorkflow } else { false }
     }
@@ -175,7 +213,15 @@ public func decorateTranscriptRows(_ rows: [TranscriptRow], dates: [String: Doub
     out.reserveCapacity(rows.count + dates.count + edits.count)
     var turn: String?
     func endTurn() {
-        if let turn, let e = edits[turn] { out.append(.turnEdits(e)) }
+        guard let turn, let e = edits[turn] else { return }
+        // Right after the turn's last run of calls (or a call), they're one row with it: two quiet
+        // lines in a row ("Ran a command", "Edited 3 files") read as two kinds of thing.
+        switch out.last {
+        case .toolGroup(let calls, nil)?: out[out.count - 1] = .toolGroup(calls, edits: e)
+        case .item(.toolCall(let call))? where call.status != .running && call.status != .pending
+            && call.kind != .todoWrite && !call.isWorkflow: out[out.count - 1] = .toolGroup([call], edits: e)
+        default: out.append(.turnEdits(e))
+        }
     }
     for row in rows {
         if case .item(.userMessage(let m)) = row, m.parentToolUseId == nil {
@@ -334,7 +380,7 @@ extension TranscriptRow {
     public var searchText: String {
         switch self {
         case .item(let item): return item.searchText
-        case .toolGroup(let calls): return calls.map { Item.toolCall($0).searchText }.joined(separator: "\n")
+        case .toolGroup(let calls, _): return calls.map { Item.toolCall($0).searchText }.joined(separator: "\n")
         case .turnWork(_, let rows, _): return rows.map(\.searchText).joined(separator: "\n")
         // Their files are in the calls, which match already.
         case .turnEdits, .dateSeparator: return ""

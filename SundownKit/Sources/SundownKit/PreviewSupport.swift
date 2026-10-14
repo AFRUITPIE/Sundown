@@ -237,6 +237,7 @@ extension ThreadModel {
         pending: [PendingRequest] = [],
         tasks: [TaskEventNotification] = [],
         mcpServers: [McpServerStatus]? = nil,
+        backgroundTasks: Int? = nil,
         lastError: String? = nil
     ) -> ThreadModel {
         let thread = ThreadModel(id: id)
@@ -244,10 +245,41 @@ extension ThreadModel {
         thread.setInfo(.init(threadId: id, status: status, cwd: cwd, title: title, model: model, effort: effort,
                               permissionMode: permissionMode, fastModeState: fastModeState,
                               fastModeDisabledReason: fastModeDisabledReason, mcpServers: mcpServers, lastSeq: 0))
+        // As the daemon counts them, in the chat's summary.
+        if let backgroundTasks {
+            thread.setSummary(.init(threadId: id, title: title ?? "", cwd: cwd, updatedAt: 0, status: status,
+                                    backgroundTasks: backgroundTasks))
+        }
         for p in pending { thread.addPending(p) }
         for t in tasks { thread.apply(.taskEvent(t)) }
         if let lastError { thread.setError(lastError) }
         return thread
+    }
+
+    /// Five background agents asked for at once, as a real session goes: one run of Agent calls,
+    /// their reports (each a message from its agent, which starts the turn Claude answers it in),
+    /// Claude's replies, and the last two agents still running.
+    public static func sampleBackgroundAgents(status: ThreadStatus = .idle, running: Int = 2) -> ThreadModel {
+        func agent(_ n: Int) -> Item {
+            .toolCall(.sample(id: "agent-\(n)", name: "Agent", kind: .subagent,
+                              input: ["description": .string("ls after \(n) s"), "run_in_background": true],
+                              status: .completed, outputText: "Async agent launched successfully.", secondsAgo: 60))
+        }
+        func report(_ n: Int) -> Item {
+            .userMessage(.init(id: "report-\(n)", createdAt: preview(secondsAgo: Double(50 - n * 5)),
+                               content: [.text(.init(text: "Sundown\ntether-server"))], synthetic: true,
+                               origin: "subagent", originName: "ls after \(n) s"))
+        }
+        let done = 5 - running
+        var items: [Item] = [.sampleUserMessage("Delegate running ls to 5 background agents that wait 1–5 seconds.", secondsAgo: 70)]
+        items += (1...5).map(agent)
+        items.append(.sampleAgentMessage("Five background agents are running, each waiting 1 to 5 seconds before listing `/home/user`.", secondsAgo: 58))
+        for n in stride(from: 1, through: done, by: 1) {
+            items.append(report(n))
+            items.append(.notice(.sample("Agent \"ls after \(n) s\" finished", kind: "taskNotification", secondsAgo: Double(49 - n * 5))))
+            items.append(.sampleAgentMessage("The \(n)-second agent returned `Sundown/` and `tether-server/`.", secondsAgo: Double(48 - n * 5)))
+        }
+        return sample(title: "Background agents", status: status, items: items, turns: [.sample()], backgroundTasks: running)
     }
 
     /// A chat as `thread/list` first hands it over: a title, a folder and a timestamp, with no

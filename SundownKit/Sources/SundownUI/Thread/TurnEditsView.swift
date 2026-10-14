@@ -11,42 +11,60 @@ struct TurnEditsView: View {
     /// The chat's folder, which each file's folder is shown relative to.
     let cwd: String?
     @State private var expanded: Bool
-    @State private var openFiles: Set<String>
-    @Environment(\.restoreCode) private var restoreCode
+    private let openFiles: Set<String>
 
     init(edits: TurnEdits, cwd: String?, expanded: Bool = false, openFiles: Set<String> = []) {
         self.edits = edits
         self.cwd = cwd
         _expanded = State(initialValue: expanded)
-        _openFiles = State(initialValue: openFiles)
+        self.openFiles = openFiles
     }
 
     private var title: LocalizedStringKey { "Edited ^[\(edits.files.count) file](inflect: true)" }
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(edits.files) { file in
-                    EditedFileRow(file: file, cwd: cwd, isOpen: Binding(
-                        get: { openFiles.contains(file.path) },
-                        set: { open in if open { openFiles.insert(file.path) } else { openFiles.remove(file.path) } }))
-                }
-                Button("Restore Files…") { restoreCode(edits.promptID) }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-                    .scaledFont(.callout)
-                    .help("Restore Files")
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
+            TurnEditsList(edits: edits, cwd: cwd, openFiles: openFiles)
         } label: {
             HStack(spacing: 8) {
-                Text(title).foregroundStyle(.secondary)
+                Text(title)
                 LineCounts(added: edits.added, removed: edits.removed)
             }
-            .scaledFont(.callout)
+            .transcriptLine()
         }
         .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.edits",
                                                         value: LineCounts.description(added: edits.added, removed: edits.removed)))
+    }
+}
+
+/// A turn's edited files, one line each opening to its diffs, and Restore Files…: what the turn's
+/// edits row opens to, or a run of calls that took them in.
+struct TurnEditsList: View {
+    let edits: TurnEdits
+    let cwd: String?
+    @State private var openFiles: Set<String>
+    @Environment(\.restoreCode) private var restoreCode
+
+    init(edits: TurnEdits, cwd: String?, openFiles: Set<String> = []) {
+        self.edits = edits
+        self.cwd = cwd
+        _openFiles = State(initialValue: openFiles)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(edits.files) { file in
+                EditedFileRow(file: file, cwd: cwd, isOpen: Binding(
+                    get: { openFiles.contains(file.path) },
+                    set: { open in if open { openFiles.insert(file.path) } else { openFiles.remove(file.path) } }))
+            }
+            Button("Restore Files…") { restoreCode(edits.promptID) }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .scaledFont(.callout)
+                .help("Restore Files")
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
     }
 }
 

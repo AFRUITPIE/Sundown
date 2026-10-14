@@ -287,7 +287,11 @@ struct LettingChatsGoTests {
         thread.apply(.itemCompleted(.init(threadId: threadID, seq: 4, item: edit("live-edit", 1))))
         try await eventually { thread.fileChanges["live-edit"] != nil }
         thread.apply(.threadStatusChanged(.init(threadId: threadID, seq: 5, status: .idle)))
-        #expect(thread.rows(.summarized).last?.id == "edits-m0")
+        // The turn ends with the edit, so its edits are that call's row.
+        guard case .toolGroup(let calls, let edits?)? = thread.rows(.summarized).last else {
+            Issue.record("the turn's edits aren't with its last call"); return
+        }
+        #expect(calls.map(\.id) == ["live-edit"] && edits.promptID == "m0")
         #expect(thread.changesCountedOnMainActor == 0)
     }
 }

@@ -55,11 +55,10 @@ struct WorkflowCallView: View {
                 // Live while the run goes on, whatever the turn is doing. How far it's got is in
                 // Tasks, which the row opens: the chat only says that it's running.
                 ActivityLabel(text: object.isEmpty ? verb : "\(verb) \(object)", live: true)
-                    .fontWeight(.medium)
             } else {
-                Text(verb).foregroundStyle(.secondary).fontWeight(.medium)
+                Text(verb)
                 if !object.isEmpty {
-                    Text(object).foregroundStyle(.primary).lineLimit(1).truncationMode(.middle)
+                    Text(object).lineLimit(1).truncationMode(.middle)
                 }
                 switch run?.status {
                 case .failed: Image(systemName: "exclamationmark.circle").foregroundStyle(.tertiary).scaledFont(.caption)
@@ -68,7 +67,7 @@ struct WorkflowCallView: View {
                 }
             }
         }
-        .scaledFont(.callout)
+        .transcriptLine()
     }
 
     /// Under the row: why a run didn't finish, in gray. What it did is in Tasks.
@@ -224,7 +223,7 @@ struct WorkflowAgentTranscript: View {
                     VStack(alignment: .leading, spacing: 0) {
                         switch row {
                         case .item(let item): ItemView(item: item, thread: thread)
-                        case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread, rowID: row.id)
+                        case .toolGroup(let calls, _): ToolCallGroupView(calls: calls, thread: thread, rowID: row.id)
                         default: TranscriptRowView(row: row, thread: thread)
                         }
                     }

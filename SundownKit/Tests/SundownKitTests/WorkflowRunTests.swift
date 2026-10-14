@@ -285,15 +285,16 @@ struct WorkflowRunTests {
         #expect(!work.contains { $0.id == WorkflowSample.callID })
     }
 
-    /// The workflow's result is a message of its own, so the turn after it stands on its own.
+    /// The workflow's result is in Tasks, not a row of the chat; being a message, it still starts
+    /// the turn Claude answers it in, so that reply isn't folded into the launching turn's work.
     @Test func theResultStartsATurn() {
         let thread = ThreadModel(id: threadID)
         thread.loadHistory(items: WorkflowSample.items(now: 1_000_000, running: false), turns: [], seq: 1)
         let rows = thread.rows(.workedFor)
         let ids = rows.map(\.id)
-        #expect(ids.contains("wf-result"))
+        #expect(!ids.contains("wf-result"), "the result is the workflow's, in Tasks")
         #expect(!ids.contains("wf-peer"), "an agent's message is filed under the workflow")
-        #expect(rows.firstIndex { $0.id == "wf-result" }! < rows.firstIndex { $0.id == "wf-followup" }!)
+        #expect(ids.contains("wf-followup"), "Claude's reply to the result stands on its own")
     }
 
     // MARK: the wire

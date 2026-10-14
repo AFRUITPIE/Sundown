@@ -105,19 +105,19 @@ struct ToolCallView: View {
                 // something is still doing it (its turn, or the background task it became).
                 ActivityLabel(text: subtitle.isEmpty ? title : "\(title) \(subtitle)",
                               live: thread.isRunning || thread.isTaskBackgrounded(toolUseId: call.id))
-                    .fontWeight(.medium)
             } else {
-                Text(title).foregroundStyle(.secondary).fontWeight(.medium)
+                Text(title)
                 if !subtitle.isEmpty {
-                    Text(subtitle).foregroundStyle(.primary).lineLimit(1).truncationMode(.middle)
+                    Text(subtitle).lineLimit(1).truncationMode(.middle)
                 }
             }
             if let s = call.elapsedSeconds, call.status == .running {
                 Text(Format.duration(s)).scaledFont(.caption).foregroundStyle(.secondary).monospacedDigit()
             }
             status
+            if isRunning, call.parentToolUseId == nil, call.id == thread.lastShownItem?.id { RunningTasksCount(thread: thread) }
         }
-        .scaledFont(.callout)
+        .transcriptLine()
         .contextMenu { menu }
         .help(ToolCallText.fullObject(call) ?? "")
         .draggableFile(hostIsLocal ? filePath : nil)
@@ -235,7 +235,18 @@ struct StopTaskAction: Equatable {
     static func == (a: Self, b: Self) -> Bool { a.window === b.window }
 }
 
+/// Shows the chat's tasks: the Tasks tab, from the transcript's count of running ones. Holds the
+/// window, as `InspectSubagentAction` does.
+struct ShowTasksAction: Equatable {
+    weak var window: WindowModel?
+
+    @MainActor func callAsFunction() { window?.tab = .tasks }
+
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
+}
+
 extension EnvironmentValues {
+    @Entry var showTasks = ShowTasksAction()
     @Entry var inspectSubagent = InspectSubagentAction()
     @Entry var stopTask = StopTaskAction()
 
@@ -266,6 +277,16 @@ enum SubagentLifecycle {
 /// A transcript row that opens, as a disclosure group: its words with the chevron right after them,
 /// and what it holds beneath at the same leading edge, so nothing indents. VoiceOver hears whether
 /// it's open along with the row's own value (a call's status, a file's line counts).
+extension View {
+    /// The one look of the transcript's quiet lines (a call, a run of calls, Worked For, a turn's
+    /// edits, a message from someone else, a notice, a compaction, the activity under a turn): the
+    /// callout size, medium weight, gray, in one tone. Each drew its own, and side by side a call
+    /// and a turn's edits read as two kinds of thing.
+    func transcriptLine() -> some View {
+        scaledFont(.callout).fontWeight(.medium).foregroundStyle(.secondary)
+    }
+}
+
 struct TranscriptDisclosureStyle: DisclosureGroupStyle {
     /// Between the row and what it holds.
     var spacing: CGFloat = 6
@@ -334,6 +355,9 @@ struct DisclosureIndicator: View {
 /// the same leading edge, each a line of its own; a failed one has its own gray glyph.
 struct ToolCallGroupView: View {
     let calls: [Item.ToolCall]
+    /// The turn's edits, when they come right after this run: said in its line and listed under
+    /// its calls.
+    var edits: TurnEdits? = nil
     let thread: ThreadModel
     /// The transcript row's id, so Find in Chat opens the group when it's the current match.
     var rowID: String?
@@ -351,8 +375,16 @@ struct ToolCallGroupView: View {
         return nil
     }
 
-    init(calls: [Item.ToolCall], thread: ThreadModel, rowID: String? = nil, initiallyExpanded: Bool = false) {
+    /// The run is what's happening now: a call of it running, or, its calls done, Thinking where the
+    /// line under the transcript would (not after an agent or a checklist, whose rows don't say it).
+    private var saysWhatsHappening: Bool {
+        guard liveTitle != nil, let last = calls.last, last.id == thread.lastShownItem?.id else { return false }
+        return calls.contains { $0.status == .running || $0.status == .pending } || (last.kind != .subagent && last.kind != .todoWrite)
+    }
+
+    init(calls: [Item.ToolCall], edits: TurnEdits? = nil, thread: ThreadModel, rowID: String? = nil, initiallyExpanded: Bool = false) {
         self.calls = calls
+        self.edits = edits
         self.thread = thread
         self.rowID = rowID
         self._expanded = State(initialValue: initiallyExpanded)
@@ -375,13 +407,21 @@ struct ToolCallGroupView: View {
                         if call.id != calls.last?.id { Divider() }
                     }
                 }
+                if let edits {
+                    Divider()
+                    TurnEditsList(edits: edits, cwd: thread.cwd)
+                }
             }
             .padding(12)
             .background(.fill.quinary, in: .rect(cornerRadius: 10))
         } label: {
-            ActivityLabel(text: liveTitle ?? ToolCallText.summary(calls), live: liveTitle != nil)
-                .fontWeight(.medium)
-                .scaledFont(.callout)
+            HStack(spacing: 8) {
+                ActivityLabel(text: liveTitle ?? ToolCallText.summary(calls, edited: edits?.files.map(\.path)), live: liveTitle != nil)
+                if let edits { LineCounts(added: edits.added, removed: edits.removed) }
+                // What's happening now, so the chat's running tasks are counted beside it.
+                if saysWhatsHappening { RunningTasksCount(thread: thread) }
+            }
+            .transcriptLine()
         }
         .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.toolGroup", value: liveTitle == nil ? nil : "Running"))
         .modifier(OpensForFind(rowID: rowID, expanded: $expanded,
@@ -413,8 +453,7 @@ struct TurnWorkView: View {
                     .environment(\.findFold, rowID)
             }
         } label: {
-            Text(title).foregroundStyle(.secondary)
-                .scaledFont(.callout)
+            Text(title).transcriptLine()
         }
         .disclosureGroupStyle(TranscriptDisclosureStyle(spacing: 10, identifier: "transcript.turnWork"))
         .modifier(OpensForFind(rowID: rowID, expanded: $expanded))

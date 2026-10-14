@@ -29,12 +29,14 @@ struct ThreadModelTests {
         live.loadHistory(items: [userMessage("Use shadcn")], turns: [], seq: 0)
         live.apply(started(skill, seq: 1))
         live.apply(started(body, seq: 2))
-        live.apply(started(after, seq: 3))
+        // The daemon sends the instructions again as they complete (a real session's order).
+        live.apply(.itemCompleted(.init(threadId: threadID, seq: 3, item: body)))
+        live.apply(started(after, seq: 4))
         #expect(live.items.map(\.id) == ["u1", "skill-1", "u3"])
         #expect(live.skillBodies["skill-1"]?.hasPrefix("Base directory for this skill") == true)
 
         let read = ThreadModel(id: threadID)
-        read.loadHistory(items: [userMessage("Use shadcn"), skill, body, after], turns: [], seq: 3)
+        read.loadHistory(items: [userMessage("Use shadcn"), skill, body, after], turns: [], seq: 4)
         #expect(read.items.map(\.id) == ["u1", "skill-1", "u3"])
         #expect(read.skillBodies["skill-1"] == live.skillBodies["skill-1"])
 

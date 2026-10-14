@@ -107,8 +107,8 @@ struct WorkflowCaptureTests {
     }
 
     /// A daemon may say a workflow has finished at once, by a message of its own with a stable id,
-    /// and fill in its result once it has it: one row, showing the latest.
-    @Test func theFinishIsOneRowUpdatedInPlace() throws {
+    /// and fill in its result once it has it: one item, holding the latest (in Tasks, not a row).
+    @Test func theFinishIsOneItemUpdatedInPlace() throws {
         let (thread, _) = try thread()
         func finish(_ text: String) -> Item {
             .userMessage(.init(id: "workflow-finish-wsjxcgcst", createdAt: 1_791_322_778_430, content: [.text(.init(text: text))],
@@ -116,12 +116,13 @@ struct WorkflowCaptureTests {
         }
         thread.apply(.itemCompleted(.init(threadId: threadID, seq: 1, item: finish("Workflow completed"))))
         thread.apply(.itemCompleted(.init(threadId: threadID, seq: 2, item: finish(#"{"verified":[]}"#))))
-        let rows = thread.rows(.summarized).filter { $0.id == "workflow-finish-wsjxcgcst" }
-        #expect(rows.count == 1)
-        guard case .item(.userMessage(let m))? = rows.first, case .text(let t)? = m.content.first else {
-            Issue.record("no finish row"); return
+        let held = thread.items.filter { $0.id == "workflow-finish-wsjxcgcst" }
+        #expect(held.count == 1)
+        guard case .userMessage(let m)? = held.first, case .text(let t)? = m.content.first else {
+            Issue.record("no finish"); return
         }
         #expect(t.text == #"{"verified":[]}"#)
+        #expect(!thread.rows(.summarized).contains { $0.id == "workflow-finish-wsjxcgcst" }, "the result is in Tasks")
     }
 
     // MARK: slow-check, as the daemon sends it
@@ -148,17 +149,19 @@ struct WorkflowCaptureTests {
         return thread
     }
 
-    @Test func slowChecksFinishIsARowBeforeTheReplyAnsweringIt() throws {
+    @Test func slowChecksFinishComesBeforeTheReplyAnsweringIt() throws {
         let thread = try slowCheck()
-        let rows = thread.rows(.summarized)
-        let at = try #require(rows.firstIndex { $0.id == "workflow_wmcpqnf9b_finished" })
-        guard case .item(.userMessage(let finish)) = rows[at], case .text(let t)? = finish.content.first else {
-            Issue.record("no finish row"); return
+        let items = thread.topLevelItems
+        let at = try #require(items.firstIndex { $0.id == "workflow_wmcpqnf9b_finished" })
+        guard case .userMessage(let finish) = items[at], case .text(let t)? = finish.content.first else {
+            Issue.record("no finish"); return
         }
         #expect(finish.origin == "workflow")
         #expect(finish.originName == "slow-check")
         #expect(t.text.contains(#""report": "all waited""#))
-        #expect(rows.indices.contains(at + 1) && rows[at + 1].id == "msg_011Cfmk8tuutNMNdJrxLtVJV:0")
+        #expect(items.dropFirst(at + 1).first { if case .reasoning = $0 { false } else { true } }?.id == "msg_011Cfmk8tuutNMNdJrxLtVJV:0")
+        // In the chat, the reply stands for it.
+        #expect(!thread.rows(.summarized).contains { $0.id == finish.id })
         #expect(thread.turns.map(\.id).last == "turn_workflow_wmcpqnf9b_finished")
         #expect(!thread.topLevelItems.contains { if case .notice = $0 { true } else { false } })
     }

@@ -17,6 +17,11 @@ struct TranscriptView: View {
     /// The rows on screen, for Chat ▸ Previous and Next Prompt. Not observed: it changes as rows
     /// scroll in and out, and nothing is drawn from it.
     @State private var onScreen = OnScreenRows()
+    /// The rows the lazy stack has built, counted as they appear and disappear: a new count for
+    /// each list it builds.
+    @State private var built = BuiltRows()
+    /// Bumped to build the rows anew, when the lazy stack has lost them (`recoverIfCollapsed`).
+    @State private var rebuilds = 0
     @Environment(\.transcriptFind) private var find
     @Environment(\.promptNavigator) private var promptNavigator
     @Environment(\.appearance) private var appearance
@@ -24,73 +29,9 @@ struct TranscriptView: View {
     @Environment(\.messageSendGeometry) private var sendGeometry
     @Environment(\.transcriptPlaces) private var places
 
+    // In parts: as one chain, the preview canvas couldn't type-check it in time.
     var body: some View {
-        ScrollView {
-            TranscriptContent(thread: thread, connection: connection, position: $position)
-                // A different Tool Calls folding is a different list of rows, made new: the lazy
-                // stack kept the rows it had built for the old one, and once the content had shrunk
-                // to the new one's height they lay outside what it showed, so the transcript stayed
-                // blank until the reader scrolled.
-                .id(appearance.toolCalls.folding)
-        }
-        .accessibilityLabel("Transcript")
-        .defaultScrollAnchor(.bottom)
-        // Bottom-aligned short content pushed the top edge effect down the window.
-        .defaultScrollAnchor(.top, for: .alignment)
-        .scrollPosition($position)
-        // Shown again (back from Tasks or Diff) on a chat already loaded: at its end, unless the
-        // reader had scrolled up, whose place the `task` below goes back to.
-        .onAppear { if thread.historyLoaded, places?.rows[thread.id] == nil { scrollToEnd() } }
-        // A newly opened chat starts at its latest message.
-        .onChange(of: thread.historyLoaded) {
-            guard thread.historyLoaded else { return }
-            scrollToEnd()
-        }
-        // Sending from this window goes back to the end, where the prompt is about to land.
-        .onChange(of: sendGeometry?.sends) {
-            onScreen.lastPrompt = nil
-            withAnimation(reduceMotion ? nil : .default) { scrollToEnd() }
-        }
-        // Find Next and Previous bring the match into view.
-        .onChange(of: find?.step) {
-            guard let id = find?.current else { return }
-            onScreen.lastPrompt = nil
-            withAnimation(reduceMotion ? nil : .default) { position.scrollTo(id: id, anchor: .center) }
-        }
-        // Chat ▸ Previous and Next Prompt, from where the reader is.
-        .onChange(of: promptNavigator?.step) { goToPrompt() }
-        // The rows the reader was looking at can be folded into others: a different Tool Calls
-        // folding, or a turn ending under Worked For. Back to the row that holds them now.
-        .onChange(of: appearance.toolCalls.folding) { keepPlace(rebuilt: true) }
-        .onChange(of: thread.isRunning) { keepPlace(rebuilt: false) }
-        .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { ids in
-            onScreen.ids = Set(ids)
-            let rows = thread.rows(appearance.toolCalls.folding)
-            let showing = rows.last.map { onScreen.ids.contains($0.id) } ?? true
-            if showing != lastRowOnScreen { lastRowOnScreen = showing }
-            let top = rows.first { onScreen.ids.contains($0.id) }
-            onScreen.topRow = top?.id
-            onScreen.topItem = top?.firstItemID
-            if ids.isEmpty, !rows.isEmpty, thread.historyLoaded { checkShowingNothing("no row on screen") }
-        }
-        // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
-        // Previous or Next last went to.
-        .onScrollPhaseChange { _, new in
-            onScreen.phase = new
-            if new == .interacting {
-                onScreen.lastPrompt = nil
-                onScreen.settling &+= 1
-            }
-        }
-        .onScrollGeometryChange(for: ScrollPlace.self) { g in
-            let toEnd = g.contentSize.height - (g.contentOffset.y + g.containerSize.height)
-            return ScrollPlace(far: toEnd > g.containerSize.height, atEnd: toEnd < 24,
-                               pastContent: g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height)
-        } action: { _, place in
-            if farFromEnd != place.far { farFromEnd = place.far }
-            onScreen.atEnd = place.atEnd
-            if place.pastContent { checkShowingNothing("scrolled past the end of the content") }
-        }
+        observingScroll(reacting(scrollView))
         // Back from another tab: where the reader was, rather than the end.
         .task {
             guard let id = places?.rows.removeValue(forKey: thread.id) else { return }
@@ -106,6 +47,100 @@ struct TranscriptView: View {
         .onReceive(NotificationCenter.default.publisher(for: .stressScroll), perform: stressScroll)
         #endif
         .overlay(alignment: .bottom) { jumpToLatest }
+    }
+
+    private var scrollView: some View {
+        ScrollView {
+            TranscriptContent(thread: thread, connection: connection, position: $position)
+                .environment(\.builtRows, built)
+                // A different Tool Calls folding is a different list of rows, made new: the lazy
+                // stack kept the rows it had built for the old one, and once the content had shrunk
+                // to the new one's height they lay outside what it showed, so the transcript stayed
+                // blank until the reader scrolled. So is a list the lazy stack lost.
+                .id(RowsIdentity(folding: appearance.toolCalls.folding, rebuilds: rebuilds))
+        }
+        .accessibilityLabel("Transcript")
+        .defaultScrollAnchor(.bottom)
+        // Bottom-aligned short content pushed the top edge effect down the window.
+        .defaultScrollAnchor(.top, for: .alignment)
+        .scrollPosition($position)
+    }
+
+    /// What brings the reader somewhere: opening, sending, Find, Previous and Next Prompt, a fold.
+    private func reacting(_ content: some View) -> some View {
+        content
+            // Shown again (back from Tasks or Diff) on a chat already loaded: at its end, unless the
+            // reader had scrolled up, whose place the `task` below goes back to.
+            .onAppear { if thread.historyLoaded, places?.rows[thread.id] == nil { scrollToEnd() } }
+            // A newly opened chat starts at its latest message.
+            .onChange(of: thread.historyLoaded) {
+                guard thread.historyLoaded else { return }
+                scrollToEnd()
+            }
+            // Sending from this window goes back to the end, where the prompt is about to land.
+            .onChange(of: sendGeometry?.sends) {
+                onScreen.lastPrompt = nil
+                withAnimation(reduceMotion ? nil : .default) { scrollToEnd() }
+            }
+            // Find Next and Previous bring the match into view.
+            .onChange(of: find?.step) {
+                guard let id = find?.current else { return }
+                onScreen.lastPrompt = nil
+                withAnimation(reduceMotion ? nil : .default) { position.scrollTo(id: id, anchor: .center) }
+            }
+            // Chat ▸ Previous and Next Prompt, from where the reader is.
+            .onChange(of: promptNavigator?.step) { goToPrompt() }
+            // The rows the reader was looking at can be folded into others: a different Tool Calls
+            // folding, or a turn ending under Worked For. Back to the row that holds them now.
+            .onChange(of: appearance.toolCalls.folding) { keepPlace(rebuilt: true) }
+            .onChange(of: thread.isRunning) { keepPlace(rebuilt: false) }
+    }
+
+    /// Where the reader is, from the scroll view.
+    private func observingScroll(_ content: some View) -> some View {
+        content
+            .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { ids in
+                onScreen.ids = Set(ids)
+                let rows = thread.rows(appearance.toolCalls.folding)
+                let showing = rows.last.map { onScreen.ids.contains($0.id) } ?? true
+                if showing != lastRowOnScreen { lastRowOnScreen = showing }
+                // Mid-resize the rows are where the lazy stack guessed: the place is the one before it.
+                if !onScreen.resizing {
+                    let top = rows.first { onScreen.ids.contains($0.id) }
+                    onScreen.topRow = top?.id
+                    onScreen.topItem = top?.firstItemID
+                }
+                if ids.isEmpty, !rows.isEmpty, thread.historyLoaded { checkShowingNothing("no row on screen") }
+            }
+            // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
+            // Previous or Next last went to.
+            .onScrollPhaseChange { _, new in
+                onScreen.phase = new
+                if new == .interacting {
+                    onScreen.lastPrompt = nil
+                    onScreen.settling &+= 1
+                }
+                // Scrolling didn't always bring back rows the lazy stack had lost.
+                if new == .idle { recoverIfCollapsed("after scrolling") }
+            }
+            .onScrollGeometryChange(for: ScrollPlace.self) { g in
+                // From what's visible: the offset and container count the toolbar's inset, so at the
+                // end they said 52 pt short of it, and the reader was never at the end.
+                let toEnd = g.contentSize.height - g.visibleRect.maxY
+                return ScrollPlace(far: toEnd > g.containerSize.height, atEnd: toEnd < 24,
+                                   pastContent: g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height)
+            } action: { _, place in
+                if farFromEnd != place.far { farFromEnd = place.far }
+                if !onScreen.resizing { onScreen.atEnd = place.atEnd }
+                if place.pastContent { checkShowingNothing("scrolled past the end of the content") }
+            }
+            // A new width lays every row's text out again, and the lazy stack places what it hasn't
+            // built at a guess: snapping a window back and forth (⌃⌥← and →) left the rows it had
+            // built outside the window, which stayed blank until the next layout, while the
+            // visibility callback still listed rows on screen (2026-10-13).
+            .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.width.rounded() } action: { old, new in
+                if old > 0, old != new { resized() }
+            }
     }
 
     /// Jump to Latest, while the reader is more than a screen from the end and the last row is off it.
@@ -158,13 +193,63 @@ extension TranscriptView {
         var checking = false
         /// Counts requests to go to the end; a new one, or the reader scrolling, ends the last.
         var settling = 0
+        /// The width is changing: `atEnd` and `topRow` keep what they were before it began.
+        var resizing = false
+        var resizes = 0
+    }
+
+    /// Once the width has stopped changing, back to where the reader was before: the end, or the
+    /// row that was at the top. Going to a row by its id has the lazy stack build the rows there.
+    private func resized() {
+        onScreen.resizing = true
+        onScreen.resizes &+= 1
+        let resize = onScreen.resizes
+        Task {
+            try? await Task.sleep(for: .milliseconds(180))
+            guard onScreen.resizes == resize else { return }
+            onScreen.resizing = false
+            if onScreen.atEnd {
+                scrollToEnd()
+            } else if let top = onScreen.topRow {
+                await go(to: top)
+            }
+            recoverIfCollapsed("after a resize")
+        }
+    }
+
+    /// The lazy stack can lose its rows altogether after rapid resizes: none built, its content
+    /// height shrinking toward nothing, and neither a scroll from code nor the reader's own brought
+    /// them back (2026-10-13). Given a moment to build them, a chat with rows and none built is
+    /// built anew, and the reader taken back to where they were.
+    private func recoverIfCollapsed(_ why: String) {
+        let count = built
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard count === built, built.count == 0, thread.historyLoaded, onScreen.phase == .idle,
+                  !thread.rows(appearance.toolCalls.folding).isEmpty else { return }
+            Signposts.transcriptLog.error("Transcript had no rows built (\(why, privacy: .public)): built them again.")
+            built = BuiltRows()
+            rebuilds &+= 1
+            try? await Task.sleep(for: .milliseconds(50))
+            if onScreen.atEnd {
+                scrollToEnd()
+            } else if let top = onScreen.topRow {
+                await go(to: top)
+            }
+        }
     }
 
     /// Scrolled up: back to the topmost row that was on screen, or, if it has been folded into
     /// another, the row that holds its first item. `rebuilt`: the rows were made anew (a different
-    /// folding is a new list), so even a row still there has to be gone back to.
+    /// folding is a new list), so even a row still there has to be gone back to; at the end, that's
+    /// the end: left to the bottom anchor, a new list of very different height left the reader a
+    /// screen or more above it (Every Call from Summarized), and the next folding then kept that place.
     private func keepPlace(rebuilt: Bool) {
-        guard !onScreen.atEnd, let topRow = onScreen.topRow, let item = onScreen.topItem else { return }
+        if onScreen.atEnd {
+            if rebuilt { scrollToEnd() }
+            return
+        }
+        guard let topRow = onScreen.topRow, let item = onScreen.topItem else { return }
         let rows = thread.rows(appearance.toolCalls.folding)
         let still = rows.contains { $0.id == topRow }
         guard rebuilt || !still, let now = still ? topRow : rows.first(where: { $0.holds(item) })?.id else { return }
@@ -203,7 +288,7 @@ extension TranscriptView {
             try? await Task.sleep(for: .milliseconds(400))
             onScreen.checking = false
             let rows = thread.rows(appearance.toolCalls.folding)
-            guard onScreen.ids.isEmpty, !rows.isEmpty, thread.historyLoaded, onScreen.phase == .idle else { return }
+            guard onScreen.ids.isEmpty || built.count == 0, !rows.isEmpty, thread.historyLoaded, onScreen.phase == .idle else { return }
             let reshape = thread.lastReshape.map { "\($0.what), \(Int(-$0.at.timeIntervalSinceNow)) s before" } ?? "none"
             Signposts.transcriptLog.error("""
                 Transcript showed nothing (\(why, privacy: .public)): \(rows.count) rows, \(thread.items.count) items, \
@@ -314,9 +399,9 @@ private struct TranscriptContent: View {
             }
             // The end, which going to the latest scrolls to: always there, and never empty — a row
             // with no height is no place to scroll to: the lazy stack left the transcript blank
-            // (2026-10-09).
-            VStack(spacing: 0) { TranscriptTail(thread: thread) }
-                .frame(maxWidth: .infinity, minHeight: 1)
+            // (2026-10-09). Leading, as Claude's column is: centered, the Thinking line sat mid-column.
+            VStack(alignment: .leading, spacing: 0) { TranscriptTail(thread: thread) }
+                .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
                 .id(Self.endID)
         }
         // Rows are scroll targets by their ids: Previous Prompt and Find scroll to them.
@@ -453,12 +538,13 @@ struct TranscriptRowView: View, Equatable {
     var place: TurnPlace? = nil
     @Environment(\.messageSendGeometry) private var sendGeometry
     @Environment(\.turnHover) private var turnHover
+    @Environment(\.builtRows) private var builtRows
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
         guard a.thread === b.thread, a.place == b.place else { return false }
         switch (a.row, b.row) {
         case (.item(let x), .item(let y)): return x.id == y.id
-        case (.toolGroup(let x), .toolGroup(let y)): return x == y
+        case (.toolGroup(let x, let xe), .toolGroup(let y, let ye)): return x == y && xe == ye
         // The same turn's work, as long as it holds the same rows; each item reads its own box.
         case (.turnWork(let x, let xs, let xd), .turnWork(let y, let ys, let yd)):
             return x == y && xd == yd && xs.map(\.id) == ys.map(\.id)
@@ -478,7 +564,7 @@ struct TranscriptRowView: View, Equatable {
                 LiveItemView(box: thread.box(for: item), thread: thread)
                     .modifier(FadesIn(isNew: thread.justStarted(item.id) && sendGeometry?.landedPrompt != item.id,
                                       pushes: item.isOwnPrompt))
-            case .toolGroup(let calls): ToolCallGroupView(calls: calls, thread: thread, rowID: row.id)
+            case .toolGroup(let calls, let edits): ToolCallGroupView(calls: calls, edits: edits, thread: thread, rowID: row.id)
             case .turnWork(let id, let rows, let durationMs): TurnWorkView(rows: rows, durationMs: durationMs, thread: thread, rowID: id)
             case .turnEdits(let edits): TurnEditsView(edits: edits, cwd: thread.cwd)
             case .dateSeparator(_, let ms): DateSeparatorView(ms: ms)
@@ -491,6 +577,9 @@ struct TranscriptRowView: View, Equatable {
         .transformEnvironment(\.turnPlace) { if let place { $0 = place } }
         // Anywhere in a turn shows its actions, after its last reply.
         .onHover { inside in if let place { turnHover?.pointer(inside, turn: place.turn) } }
+        // Built and let go by the lazy stack.
+        .onAppear { builtRows?.count += 1 }
+        .onDisappear { builtRows?.count -= 1 }
     }
 }
 
@@ -630,10 +719,28 @@ struct TranscriptTail: View {
         return nil
     }
 
+    /// The last row says what's happening now (a call running, or a run of calls saying Thinking),
+    /// and so has the running tasks' count beside it.
+    private var rowIsCurrent: Bool {
+        guard case .toolCall(let call)? = thread.lastShownItem else { return false }
+        if call.status == .running || call.status == .pending { return !call.isWorkflow }
+        return thread.isThinking && runSaysIt
+    }
+
     var body: some View {
         Group {
+            // The chat's background work as one count beside what's happening now (this line, or the
+            // row saying it), or alone once nothing is, opening Tasks: not a line per agent or
+            // command as each one ends.
             if let activity {
-                ActivityLine(text: activity)
+                HStack(spacing: 8) {
+                    ActivityLine(text: activity)
+                    RunningTasksCount(thread: thread)
+                }
+                .transcriptLine()
+            } else if thread.hasBackgroundWork, !rowIsCurrent {
+                RunningTasksLink(count: thread.backgroundTaskCount)
+                    .transcriptLine()
             }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
@@ -643,14 +750,44 @@ struct TranscriptTail: View {
     }
 }
 
+/// "· 3 running tasks", after what's happening now, while any of the chat's tasks run.
+struct RunningTasksCount: View {
+    let thread: ThreadModel
+
+    var body: some View {
+        if thread.hasBackgroundWork {
+            HStack(spacing: 8) {
+                Text(verbatim: "·").foregroundStyle(.tertiary).accessibilityHidden(true)
+                RunningTasksLink(count: thread.backgroundTaskCount)
+            }
+        }
+    }
+}
+
+/// How many of the chat's tasks are still running, as a link to them in the Tasks tab.
+struct RunningTasksLink: View {
+    let count: Int
+    @Environment(\.showTasks) private var showTasks
+
+    var body: some View {
+        Button { showTasks() } label: {
+            Text("^[\(count) running task](inflect: true)")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+        .fontWeight(.medium)
+        .help("Show Tasks")
+        .accessibilityHint("Shows them in the Tasks tab")
+    }
+}
+
 /// A shimmering line for what the turn is doing while it has nothing else to show.
 struct ActivityLine: View {
     let text: String
 
     var body: some View {
         ActivityLabel(text: text, live: true)
-            .fontWeight(.medium)
-            .scaledFont(.callout)
+            .transcriptLine()
             // The model's changes carry no animation, so the transition brings its own.
             .transition(.opacity.animation(.easeOut(duration: 0.2)))
     }
@@ -771,7 +908,22 @@ final class TranscriptPlaces {
     var rows: [String: String] = [:]
 }
 
+/// How many of the transcript's rows the lazy stack has built. Not observed: counted as rows appear
+/// and disappear, and read only to tell whether it has lost them.
+@MainActor
+final class BuiltRows {
+    var count = 0
+}
+
+/// The list of rows the transcript's lazy stack builds: a new one for another folding, or to
+/// rebuild rows it lost.
+private struct RowsIdentity: Hashable {
+    let folding: TranscriptFolding
+    let rebuilds: Int
+}
+
 extension EnvironmentValues {
+    @Entry var builtRows: BuiltRows? = nil
     @Entry var transcriptPlaces: TranscriptPlaces? = nil
     @Entry var turnHover: TurnHover? = nil
     @Entry var turnPlace: TurnPlace? = nil
@@ -787,7 +939,7 @@ private extension TranscriptRow {
     var firstItemID: String? {
         switch self {
         case .item(let item): item.id
-        case .toolGroup(let calls): calls.first?.id
+        case .toolGroup(let calls, _): calls.first?.id
         case .turnWork(_, let rows, _): rows.first?.firstItemID
         case .turnEdits(let edits): edits.promptID
         case .dateSeparator(let promptID, _): promptID
@@ -798,7 +950,7 @@ private extension TranscriptRow {
     func holds(_ id: String) -> Bool {
         switch self {
         case .item(let item): item.id == id
-        case .toolGroup(let calls): calls.contains { $0.id == id }
+        case .toolGroup: holds(itemID: id)
         case .turnWork(_, let rows, _): rows.contains { $0.holds(id) }
         case .turnEdits, .dateSeparator: false
         }

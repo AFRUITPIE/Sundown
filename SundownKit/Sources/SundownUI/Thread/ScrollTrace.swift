@@ -19,6 +19,7 @@ struct ScrollTrace: ViewModifier {
         let container: CGFloat
         let top: CGFloat
         let bottom: CGFloat
+        var visibleMaxY: CGFloat = 0
     }
 
     func body(content: Content) -> some View {
@@ -27,7 +28,7 @@ struct ScrollTrace: ViewModifier {
                 .onScrollGeometryChange(for: Geometry.self) { g in
                     Geometry(offset: g.contentOffset.y.rounded(), content: g.contentSize.height.rounded(),
                              container: g.containerSize.height.rounded(),
-                             top: g.contentInsets.top.rounded(), bottom: g.contentInsets.bottom.rounded())
+                             top: g.contentInsets.top.rounded(), bottom: g.contentInsets.bottom.rounded(), visibleMaxY: g.visibleRect.maxY.rounded())
                 } action: { old, new in
                     StressState.offset = new.offset
                     StressState.content = new.content
@@ -39,7 +40,7 @@ struct ScrollTrace: ViewModifier {
                     }
                     Self.log.debug("""
                         geom offset=\(new.offset) dOffset=\(new.offset - old.offset) content=\(new.content) \
-                        dContent=\(new.content - old.content) fromEnd=\(fromEnd) insets=\(new.top),\(new.bottom) container=\(new.container) visible=\(visible.ids.count) \
+                        dContent=\(new.content - old.content) fromEnd=\(fromEnd) visibleToEnd=\(new.content - new.visibleMaxY) insets=\(new.top),\(new.bottom) container=\(new.container) visible=\(visible.ids.count) \
                         items=\(thread.items.count)
                         """)
                 }
@@ -88,7 +89,7 @@ struct TraceRowFrame: ViewModifier {
     }
 }
 
-/// Samples the rows on screen every 100 ms; two empty samples in a row with items held is a blank.
+/// Samples the rows on screen every 33 ms; 200 ms of empty samples with items held is a blank.
 struct BlankSampler: ViewModifier {
     let thread: ThreadModel
     private static let log = Logger(subsystem: "com.haydenhong.Sundown", category: "ScrollTrace")
@@ -130,20 +131,22 @@ struct BlankSampler: ViewModifier {
             var reported = false
             var tick = 0
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(100))
+                try? await Task.sleep(for: .milliseconds(33))
                 let n = RowFrames.shared.onScreen(height: StressState.container)
                 tick += 1
-                if tick % 20 == 0 { Self.log.debug("SAMPLE rows=\(n) built=\(RowFrames.shared.frames.count) ink=\(Self.ink() ?? -1)") }
+                if tick % 60 == 0 { Self.log.debug("SAMPLE rows=\(n) built=\(RowFrames.shared.frames.count) ink=\(Self.ink() ?? -1)") }
                 if n == 0, thread.historyLoaded, !thread.items.isEmpty {
                     empty += 1
-                    if empty >= 2, !reported {
+                    // Every empty sample, for counting short blanks a resize leaves.
+                    Self.log.error("EMPTYSAMPLE offset=\(StressState.offset) content=\(StressState.content) built=\(RowFrames.shared.frames.count)")
+                    if empty >= 6, !reported {
                         reported = true
                         Self.log.error("TRUEBLANK no built row on screen items=\(thread.items.count) offset=\(StressState.offset) content=\(StressState.content) built=\(RowFrames.shared.frames.count) visibleWindow=\(NSApp.windows.contains { $0.isVisible && $0.occlusionState.contains(.visible) && $0.contentView != nil }) active=\(NSApp.isActive)")
                         Self.log.error("TRUEBLANK ink=\(Self.ink() ?? -1)")
                         Self.snapshot()
                     }
                 } else {
-                    if reported { Self.log.error("TRUEBLANK ended after \(empty * 100) ms rows=\(n)") }
+                    if reported { Self.log.error("TRUEBLANK ended after \(empty * 33) ms rows=\(n)") }
                     empty = 0
                     reported = false
                 }

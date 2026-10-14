@@ -337,6 +337,7 @@ public final class ThreadModel: Identifiable {
         reshaped("unloaded")
         fileChanges = [:]
         if !skillBodies.isEmpty { skillBodies = [:] }
+        skillMessages = [:]
         started = [:]
         openingPrompt = nil
         storage = []
@@ -384,6 +385,7 @@ public final class ThreadModel: Identifiable {
         }
         fileChanges = fileChanges.filter { held.contains($0.key) }
         if skillBodies.keys.contains(where: { !held.contains($0) }) { skillBodies = skillBodies.filter { held.contains($0.key) } }
+        skillMessages = skillMessages.filter { held.contains($0.value) }
         if !hasMoreHistory { hasMoreHistory = true }
     }
 
@@ -614,14 +616,20 @@ public final class ThreadModel: Identifiable {
     /// a message of its own, right after the call, which the call's row shows when opened rather
     /// than as a message "from Claude Code" (or a new turn) of its own.
     public private(set) var skillBodies: [String: String] = [:]
+    /// The messages taken as skills' instructions, and whose: the daemon sends one as it starts and
+    /// again as it completes, and the second, no longer right after its call, was added as a message
+    /// "from Claude Code" under the call.
+    private var skillMessages: [String: String] = [:]
 
     /// The skill call a message right after it is the instructions of: a synthetic message beside a
-    /// skill call of the same agent.
+    /// skill call of the same agent, or one already taken as a call's.
     private func skillBody(_ item: Item, after previous: Item?) -> (call: String, text: String)? {
-        guard case .userMessage(let m) = item, m.synthetic == true,
-              case .toolCall(let call)? = previous, call.kind == .skill, call.parentToolUseId == m.parentToolUseId,
-              skillBodies[call.id] == nil else { return nil }
+        guard case .userMessage(let m) = item, m.synthetic == true else { return nil }
         let text = m.content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n\n")
+        if let call = skillMessages[m.id] { return (call, text) }
+        guard case .toolCall(let call)? = previous, call.kind == .skill, call.parentToolUseId == m.parentToolUseId,
+              skillBodies[call.id] == nil else { return nil }
+        skillMessages[m.id] = call.id
         return (call.id, text)
     }
 
@@ -745,11 +753,12 @@ public final class ThreadModel: Identifiable {
     }
 
     /// The last item the transcript draws: a top-level one that isn't reasoning, which is kept
-    /// but never shown. What the live run of calls and the Thinking line go by.
+    /// but never shown, nor a task's outcome, which Tasks shows. What the live run of calls and
+    /// the Thinking line go by.
     public var lastShownItem: Item? {
         items.last { item in
             if case .reasoning = item { return false }
-            return item.parentToolUseId == nil
+            return item.parentToolUseId == nil && !item.isTaskOutcome
         }
     }
 
