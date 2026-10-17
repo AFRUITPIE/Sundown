@@ -308,7 +308,8 @@ private actor FixtureScript {
         case "fs/search": return .init(value: .result(["paths": []]))
         // A host whose home (/tmp) holds no directories, above it a readable / and one that isn't.
         case "fs/list":
-            let path = params["path"]?.stringValue ?? ""
+            // "~" is the home, as the server expands it for listing (thread/start doesn't).
+            let path = params["path"]?.stringValue == "~" ? "/tmp" : params["path"]?.stringValue ?? ""
             let entries: [FsListResult.Entry]? = switch path {
             case "/": [.init(name: "private", path: "/private", isDirectory: true, size: 0),
                        .init(name: "tmp", path: "/tmp", isDirectory: true, size: 0)]
