@@ -11,6 +11,10 @@ import os
 /// state, so the reports' hang and hitch numbers come broken down by it.
 ///
 /// Debug ▸ MetricKit ▸ Simulate MetricKit Payloads, in a run from Xcode, writes sample reports there.
+///
+/// macOS 27 only: MetricKit's `MetricManager` and StateReporting are new there. On macOS 26 the app
+/// keeps no reports.
+@available(macOS 27, *)
 @MainActor
 final class Metrics {
     /// Started by the app delegate; one for the app, as MetricKit asks.
@@ -62,6 +66,7 @@ final class Metrics {
 }
 
 /// View ▸ Tool Calls: each choice a state of its own.
+@available(macOS 27, *)
 private struct LayoutState: ReportableMetadata {
     let toolCalls: String
 
@@ -100,6 +105,7 @@ struct MetricArchive: Sendable {
     }
 }
 
+@available(macOS 27, *)
 private extension DiagnosticResult {
     /// For the file's name.
     var kind: String {

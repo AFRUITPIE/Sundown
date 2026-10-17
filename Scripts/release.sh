@@ -118,7 +118,7 @@ cask "sundown@beta" do
   homepage "https://github.com/AFRUITPIE/Sundown"
 
   conflicts_with cask: "sundown"
-  depends_on macos: :golden_gate
+  depends_on macos: :tahoe
 
   app "Sundown.app"
 
