@@ -181,7 +181,8 @@ private actor FixtureScript {
             return .init(value: .result(json(SessionDefaultsResult(model: "sonnet", effort: .medium, permissionMode: .auto))))
         case "thread/list":
             let perf = performance ? PerformanceTranscript.otherChats : []
-            let threads = (additionalThreads + perf + [originalSummary])
+            let followed = tasks ? [TaskTranscript.followedChat] : []
+            let threads = (additionalThreads + perf + followed + [originalSummary])
                 .filter { !deleted.contains($0.threadId) }
                 .map { summary in
                     var summary = summary
@@ -212,9 +213,10 @@ private actor FixtureScript {
             let requested = params["threadId"]?.stringValue ?? UITestFixture.threadID
             // A fork reads as the chat it was made from.
             let id = forks[requested] ?? requested
-            var summary = (additionalThreads + PerformanceTranscript.otherChats).first { $0.threadId == requested } ?? originalSummary
+            var summary = (additionalThreads + PerformanceTranscript.otherChats + [TaskTranscript.followedChat])
+                .first { $0.threadId == requested } ?? originalSummary
             if let title = titles[requested] { summary.customTitle = title }
-            let items: [Item] = tasks && id == UITestFixture.threadID ? TaskTranscript.items()
+            let items: [Item] = tasks && (id == UITestFixture.threadID || id == TaskTranscript.followedChat.threadId) ? TaskTranscript.items()
                 : performance && (id == UITestFixture.threadID || id.hasPrefix("perf-chat-")) ? PerformanceTranscript.history : id == UITestFixture.threadID ? [
                 .userMessage(.init(id: "fixture-user", createdAt: 1_700_000_000_000,
                                    content: [.text(.init(text: "Summarize this project"))])),
@@ -229,14 +231,15 @@ private actor FixtureScript {
             let limit = params["limit"]?.intValue ?? page.count
             let shown = Array(page.suffix(limit))
             return .init(value: .result(json(ThreadReadResult(
-                items: shown, turns: [], summary: summary, historySeq: id == UITestFixture.threadID || id.hasPrefix("perf-chat-") ? 1 : 0,
+                items: shown, turns: [], summary: summary,
+                historySeq: id == UITestFixture.threadID || id.hasPrefix("perf-chat-") || id == TaskTranscript.followedChat.threadId ? 1 : 0,
                 hasMore: shown.count < page.count
             ))))
         case "thread/subscribe":
             let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
             // The performance scenario's other chats aren't live in the daemon, as most of a real
             // host's aren't: they're followed, let go when left, and read again when reopened.
-            let status: ThreadStatus = id.hasPrefix("perf-chat-") ? .notLoaded : .idle
+            let status: ThreadStatus = id.hasPrefix("perf-chat-") || id == TaskTranscript.followedChat.threadId ? .notLoaded : .idle
             var reply = Reply(value: .result(json(ThreadSubscribeResult(
                 thread: .init(threadId: id, status: status, cwd: "/tmp/sundown-fixture", lastSeq: nextSequence),
                 replayed: 0, gap: reportsGap && (params["afterSeq"]?.intValue ?? 0) > 1
@@ -700,8 +703,13 @@ enum PerformanceTranscript {
 
 /// The `tasks` scenario's chat: a workflow that has finished (`WorkflowSample`, its result a
 /// message of its own before the next prompt), then an agent that started an agent and a
-/// background command, a monitor and an MCP tool, as the SDK reports them, running and finished.
+/// background command, a monitor and an MCP tool, as the SDK reports them, running and finished;
+/// and messages the person didn't type (Claude Code's, another session's, a compaction's summary).
+/// A second chat holds the same items, followed rather than live, as most of a host's chats are.
 private enum TaskTranscript {
+    static let followedChat = ThreadSummary(threadId: "tasks-followed", title: "Followed Tasks", cwd: "/tmp/sundown-fixture",
+                                            updatedAt: 1_699_999_999_000, status: .notLoaded)
+
     /// When the workflow ran: before the rest of the chat.
     static var workflowNow: Double { Date().timeIntervalSince1970 * 1000 - 500_000 }
 
@@ -736,6 +744,14 @@ private enum TaskTranscript {
                  status: .running, parent: "agent-2", at: 5),
             call("failed-call", "Bash", .bash, ["command": "xcodebuild -scheme Sundown build", "run_in_background": true],
                  output: "** BUILD FAILED **", at: 300),
+            .compaction(.init(id: "tasks-compaction", createdAt: ago(4), preTokens: 84_000)),
+            .userMessage(.init(id: "tasks-summary", createdAt: ago(4), content: [.text(.init(text:
+                "This session is being continued from a previous conversation that ran out of context."))],
+                               synthetic: true, origin: "compaction")),
+            .userMessage(.init(id: "tasks-claude-code", createdAt: ago(3), content: [.text(.init(text:
+                "Caveat: the messages below were generated while running local commands."))], synthetic: true)),
+            .userMessage(.init(id: "tasks-peer", createdAt: ago(2), content: [.text(.init(text: "The release notes are drafted."))],
+                               synthetic: true, origin: "peer", originName: "release-notes")),
         ]
     }
 
