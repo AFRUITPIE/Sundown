@@ -194,7 +194,7 @@ private struct MessageMenu: ViewModifier {
     private func copyText() {
         guard isMarkdown else { Clipboard.copy(text); return }
         let markdown = place?.isEnd == true ? turnText?() ?? text : text
-        Clipboard.copy(MarkdownView.plainText(markdown))
+        Clipboard.copy(MarkdownBuilder.plainText(markdown))
     }
 }
 

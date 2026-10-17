@@ -14,15 +14,15 @@ enum MarkdownStyle: Hashable {
 /// one `Text` per block selected a block at a time, and one `Text` for the whole reply ignores
 /// paragraph styles, so lists and quotes lost their indents (macOS 27, 2026-10-05).
 ///
-/// It takes the parsed blocks (`MarkdownCache`) and turns only the changed ones into text, so a
-/// streamed reply rebuilds its tail, not the whole message, and new text fades in.
-struct MarkdownTextView: NSViewRepresentable {
-    let blocks: [MarkdownView.Rendered]
-    var style: MarkdownStyle = .reply
-    /// The reply being streamed into: its new text fades in.
+/// Its text is built from the Markdown (`MarkdownBuilder`); a streamed reply builds only its tail
+/// (`MarkdownStream`), and new text fades in.
+struct MarkdownView: NSViewRepresentable {
+    let text: String
+    /// Whether this is the reply being streamed into: only then does new text fade in. Every
+    /// settled reply, and every other use, draws its text at once.
     var streams = false
-    /// The whole message, the key for the text built from it once it has settled.
-    var source: String
+    /// A reply's colors, or a prompt's in its bubble.
+    var style: MarkdownStyle = .reply
 
     // Read so a change updates the view; `setText` takes them from the context, as sizing must.
     @Environment(\.textScale) private var textScale
@@ -51,7 +51,7 @@ struct MarkdownTextView: NSViewRepresentable {
         let theme = MarkdownTheme(style: style, scale: context.environment.textScale,
                                   increasedContrast: context.environment.colorSchemeContrast == .increased)
         view.theme = theme
-        context.coordinator.apply(blocks, source: source, theme: theme, streams: streams)
+        context.coordinator.apply(text, theme: theme, streams: streams)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: MarkdownNSTextView, context: Context) -> CGSize? {
@@ -69,28 +69,40 @@ struct MarkdownTextView: NSViewRepresentable {
         coordinator.stopFading()
     }
 
+    /// Builds replies off the main actor and keeps their text, so their rows find it built: a chat
+    /// opening, or an older page going in above the reader, otherwise built each reply in its row
+    /// on the main thread. Pass a page of replies, not a whole long chat's: what's kept is bounded.
+    static func prewarm(_ texts: [String], theme: MarkdownTheme) async {
+        var seen = Set<String>()
+        let fresh = texts.filter { Coordinator.built($0, theme: theme) == nil && seen.insert($0).inserted }
+        guard !fresh.isEmpty else { return }
+        for (text, built) in zip(fresh, await buildAll(fresh, theme: theme)) { Coordinator.keep(built, for: text, theme: theme) }
+    }
+
+    /// Each message's text, stopping early if the caller has gone.
+    @concurrent
+    private nonisolated static func buildAll(_ texts: [String], theme: MarkdownTheme) async -> [NSAttributedString] {
+        var out: [NSAttributedString] = []
+        for text in texts {
+            if Task.isCancelled { break }
+            out.append(MarkdownBuilder.build(text, theme: theme))
+        }
+        return out
+    }
+
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         weak var view: MarkdownNSTextView?
         var openURL: OpenURLAction?
-        /// What the storage holds: how each block was built, and where it ends.
-        private var records: [(key: BuildKey, end: Int)] = []
         private var theme: MarkdownTheme?
-        /// Built blocks, kept while the reply streams, so only its tail is built again.
-        private var built: [BuildKey: NSAttributedString] = [:]
+        /// What the storage was built from, and how much of it is settled.
+        private var stream = MarkdownStream()
         private var fades: [(range: NSRange, start: CFTimeInterval)] = []
         private var displayLink: CADisplayLink?
 
-        /// A block as built: the same parse at the same place in the same list builds the same text.
-        struct BuildKey: Hashable {
-            let id: Int
-            let leading: Bool
-            let spacing: CGFloat
-            let marker: String?
-        }
-
-        /// Whole settled messages already built, so a row scrolled back into view or a chat
-        /// reopened sets its text at once. Bounded by size too: a long chat's replies are megabytes.
+        /// Whole settled messages already built, so a row scrolled back into view, a chat reopened or
+        /// a reply prewarmed sets its text at once. Bounded by size too: a long chat's replies are
+        /// megabytes.
         private static let settled: NSCache<NSString, NSAttributedString> = {
             let cache = NSCache<NSString, NSAttributedString>()
             cache.countLimit = 300
@@ -98,96 +110,72 @@ struct MarkdownTextView: NSViewRepresentable {
             return cache
         }()
 
-        private static func keys(for blocks: [MarkdownView.Rendered]) -> [BuildKey] {
-            let markers = MarkdownView.widestMarkers(blocks)
-            return blocks.indices.map { i in
-                BuildKey(id: blocks[i].id, leading: i > 0,
-                         spacing: i == 0 ? 0 : MarkdownBuilder.spacing(after: blocks[i - 1].block, before: blocks[i].block),
-                         marker: markers[i])
-            }
+        private static func key(_ text: String, _ theme: MarkdownTheme) -> NSString {
+            "\(theme.cacheKey)|\(NSFont.preferredFont(forTextStyle: .body).pointSize)|\(text)" as NSString
         }
 
-        func apply(_ blocks: [MarkdownView.Rendered], source: String, theme: MarkdownTheme, streams: Bool) {
+        static func built(_ text: String, theme: MarkdownTheme) -> NSAttributedString? {
+            settled.object(forKey: key(text, theme))
+        }
+
+        static func keep(_ built: NSAttributedString, for text: String, theme: MarkdownTheme) {
+            settled.setObject(built, forKey: key(text, theme), cost: built.length * 2)
+        }
+
+        func apply(_ text: String, theme: MarkdownTheme, streams: Bool) {
             guard let view, let storage = view.textStorage else { return }
             if theme != self.theme {
                 self.theme = theme
-                records = []
-                built = [:]
+                stream = MarkdownStream()
                 storage.setAttributedString(NSAttributedString())
             }
-            let keys = Self.keys(for: blocks)
-            if keys.count == records.count, zip(keys, records).allSatisfy({ $0 == $1.key }) { return }
-            // Find's marks went with the text they were on.
-            highlighted = nil
-
-            let cacheKey = "\(theme.cacheKey)|\(NSFont.preferredFont(forTextStyle: .body).pointSize)|\(source)" as NSString
-            if records.isEmpty, storage.length == 0, !streams, let cached = Self.settled.object(forKey: cacheKey) {
+            if storage.length == 0, !streams, text != stream.source, let cached = Self.built(text, theme: theme) {
                 storage.setAttributedString(cached)
-                records = Self.records(for: keys, in: cached)
+                stream = MarkdownStream(source: text)
+                highlighted = nil
                 view.textChanged()
                 return
             }
-
-            // From the first block built differently: a new parse, or a list whose widest marker
-            // grew, which moves every item's text.
-            var first = 0
-            while first < min(keys.count, records.count), keys[first] == records[first].key { first += 1 }
-            let start = first == 0 ? 0 : records[first - 1].end
-            let old = storage.length > start
-                ? (storage.string as NSString).substring(from: start)
-                : ""
-
-            let tail = NSMutableAttributedString()
-            var newRecords = Array(records.prefix(first))
-            var keep: [BuildKey: NSAttributedString] = [:]
-            for i in blocks.indices where i >= first || streams {
-                let key = keys[i]
-                let piece = built[key] ?? MarkdownBuilder.build(blocks[i], leading: key.leading, spacing: key.spacing,
-                                                               widestMarker: key.marker, theme: theme)
-                if streams { keep[key] = piece }
-                if i >= first {
-                    tail.append(piece)
-                    newRecords.append((key, start + tail.length))
-                }
+            guard let (start, old) = stream.update(storage, to: text, theme: theme, streaming: streams) else {
+                // A streamed reply has arrived: its text is the settled text.
+                if !streams, unkept { keep(text, theme) }
+                return
             }
-            built = keep
-
-            storage.beginEditing()
-            storage.replaceCharacters(in: NSRange(location: start, length: storage.length - start), with: tail)
-            storage.endEditing()
-            records = newRecords
-
+            // Find's marks went with the text they were on.
+            highlighted = nil
+            unkept = streams
             if streams {
                 // What's new is whatever follows the text both versions share. A fade reaching past
                 // that point goes on over what's left of its text; the new text loses whatever
                 // fade it took from the text it replaced (left there, a word's end stayed
                 // invisible once the reply had settled), and fades in afresh.
-                let shared = (old as NSString).commonPrefix(with: tail.string, options: .literal).utf16.count
+                let new = (storage.string as NSString).substring(from: start)
+                let shared = (old as NSString).commonPrefix(with: new, options: .literal).utf16.count
                 let cut = start + shared
                 fades = fades.compactMap { fade in
                     let end = min(fade.range.location + fade.range.length, cut)
                     return end > fade.range.location ? (NSRange(location: fade.range.location, length: end - fade.range.location), fade.start) : nil
                 }
-                let range = NSRange(location: cut, length: tail.length - shared)
+                let range = NSRange(location: cut, length: storage.length - cut)
                 if range.length > 0 {
                     view.layoutManager?.removeTemporaryAttribute(.foregroundColor, forCharacterRange: range)
                     fade(range)
                 }
             } else {
-                stopFading()
-                Self.settled.setObject(storage.copy() as! NSAttributedString, forKey: cacheKey, cost: storage.length * 2)
+                keep(text, theme)
             }
             view.textChanged()
         }
 
-        /// Where each block ends in a text built in one go, found from the separators between blocks.
-        private static func records(for keys: [BuildKey], in text: NSAttributedString) -> [(key: BuildKey, end: Int)] {
-            var ends: [Int] = []
-            text.enumerateAttribute(.markdownBlockEnd, in: NSRange(location: 0, length: text.length)) { value, range, _ in
-                if value != nil { ends.append(range.location + range.length) }
-            }
-            guard ends.count == keys.count else { return [] }
-            return Array(zip(keys, ends))
+        /// Whether the text was streamed and not kept yet: each length of a streaming reply would
+        /// be a key never looked up again.
+        private var unkept = false
+
+        private func keep(_ text: String, _ theme: MarkdownTheme) {
+            guard let storage = view?.textStorage else { return }
+            unkept = false
+            stopFading()
+            Self.keep(storage.copy() as! NSAttributedString, for: text, theme: theme)
         }
 
         // MARK: Find
@@ -346,8 +334,6 @@ extension NSAttributedString.Key {
     static let markdownCopyAs = NSAttributedString.Key("SundownMarkdownCopyAs")
     /// A heading's level, for VoiceOver's headings rotor.
     static let markdownHeading = NSAttributedString.Key("SundownMarkdownHeading")
-    /// The last character of a block, so a text built once can be split into its blocks again.
-    static let markdownBlockEnd = NSAttributedString.Key("SundownMarkdownBlockEnd")
 }
 
 /// One drawn block: the same object across its characters, so its whole range can be found.
@@ -355,290 +341,6 @@ final class MarkdownDecoration: NSObject {
     enum Kind: Equatable { case code(language: String, source: String), quote, table, rule }
     let kind: Kind
     init(_ kind: Kind) { self.kind = kind }
-}
-
-@MainActor
-enum MarkdownBuilder {
-    /// List items sit closer together than paragraphs; headings have more room above.
-    static func spacing(after previous: MarkdownView.Block, before block: MarkdownView.Block) -> CGFloat {
-        if case .bullet = previous, case .bullet = block { return 6 }
-        if case .heading = block { return 18 }
-        return 12
-    }
-
-    /// One block's text, starting with the newline that ends the block before it.
-    static func build(_ rendered: MarkdownView.Rendered, leading: Bool, spacing: CGFloat, widestMarker: String?,
-                      theme: MarkdownTheme) -> NSAttributedString {
-        let out = NSMutableAttributedString()
-        if leading {
-            // The paragraph break belongs to the block before; a tiny font keeps it from making
-            // that block's last line taller.
-            // Copied as a blank line between blocks, as Markdown writes them, except between items
-            // of one list.
-            let tight: Bool = if case .bullet = rendered.block, spacing == 6 { true } else { false }
-            out.append(NSAttributedString(string: "\n", attributes: [
-                .font: NSFont.systemFont(ofSize: 1), .markdownCopyAs: tight ? "\n" : "\n\n",
-            ]))
-        }
-        let spacingBefore = spacing * theme.scale
-        let start = out.length
-        // What's inside a list item lines up with the item's text.
-        let inset = rendered.block.listDepth.map {
-            ListGeometry(depth: $0 - 1, widest: widestMarker ?? "•", theme: theme).textStart
-        } ?? 0
-        switch rendered.block {
-        case .paragraph(let text, _):
-            out.append(inline(text, font: theme.body, color: theme.text, theme: theme))
-            let p = style(theme, before: spacingBefore)
-            p.headIndent = inset
-            p.firstLineHeadIndent = inset
-            setParagraph(out, from: start, p)
-        case .heading(let level, let text):
-            out.append(inline(text, font: theme.heading(level), color: theme.text, theme: theme))
-            setParagraph(out, from: start, style(theme, before: spacingBefore))
-            out.addAttribute(.markdownHeading, value: level, range: NSRange(location: start, length: out.length - start))
-        case .bullet(let indent, let marker, let task, let text):
-            appendListItem(out, indent: indent, marker: marker, task: task, text: text,
-                           widest: widestMarker ?? marker, before: spacingBefore, theme: theme)
-        case .quote(let text, _):
-            out.append(inline(text, font: theme.body, color: theme.secondary, theme: theme))
-            let p = style(theme, before: spacingBefore)
-            p.headIndent = inset + theme.quoteIndent
-            p.firstLineHeadIndent = inset + theme.quoteIndent
-            setParagraph(out, from: start, p)
-            out.addAttribute(.markdownDecoration, value: MarkdownDecoration(.quote),
-                             range: NSRange(location: start, length: out.length - start))
-        case .code(let lang, let body, _):
-            appendCode(out, language: lang, body: body, inset: inset, before: spacingBefore, theme: theme)
-        case .rule:
-            // A paragraph the line is drawn across; copied as nothing.
-            out.append(NSAttributedString(string: " ", attributes: [
-                .font: theme.body, .markdownCopyAs: "",
-                .markdownDecoration: MarkdownDecoration(.rule),
-            ]))
-            setParagraph(out, from: start, style(theme, before: spacingBefore))
-        case .table(let rows, let alignments):
-            appendTable(out, rows: rows, alignments: alignments, before: spacingBefore, theme: theme)
-        }
-        if out.length > start {
-            out.addAttribute(.markdownBlockEnd, value: true, range: NSRange(location: out.length - 1, length: 1))
-        }
-        return out
-    }
-
-    private static func style(_ theme: MarkdownTheme, before: CGFloat) -> NSMutableParagraphStyle {
-        let p = NSMutableParagraphStyle()
-        p.lineSpacing = theme.lineSpacing
-        p.paragraphSpacingBefore = before
-        return p
-    }
-
-    private static func setParagraph(_ out: NSMutableAttributedString, from start: Int, _ style: NSParagraphStyle) {
-        out.addAttribute(.paragraphStyle, value: style, range: NSRange(location: start, length: out.length - start))
-        // A line break inside the block (a prompt's) starts a paragraph for TextKit, which would
-        // put the block's spacing above each line: only its first line has it.
-        let lineBreak = (out.string as NSString).range(of: "\n", range: NSRange(location: start, length: out.length - start))
-        guard lineBreak.location != NSNotFound, style.paragraphSpacingBefore != 0,
-              let rest = style.mutableCopy() as? NSMutableParagraphStyle else { return }
-        rest.paragraphSpacingBefore = 0
-        let from = lineBreak.location + 1
-        out.addAttribute(.paragraphStyle, value: rest, range: NSRange(location: from, length: out.length - from))
-    }
-
-    /// Where a list item at a depth draws: its marker right-aligned to the list's widest, then its text.
-    struct ListGeometry {
-        let lead: CGFloat
-        let markerEnd: CGFloat
-        let textStart: CGFloat
-
-        init(depth: Int, widest: String, theme: MarkdownTheme) {
-            lead = (6 + CGFloat(depth) * 18) * theme.scale
-            let widestWidth = NSAttributedString(string: widest, attributes: [.font: theme.body.withMonospacedDigits]).size().width
-            markerEnd = lead + max(widestWidth, 12 * theme.scale)
-            textStart = markerEnd + 8 * theme.scale
-        }
-    }
-
-    private static func appendListItem(_ out: NSMutableAttributedString, indent: Int, marker: String, task: Bool?,
-                                       text: AttributedString, widest: String, before: CGFloat, theme: MarkdownTheme) {
-        let start = out.length
-        let markerFont = theme.body.withMonospacedDigits
-        let geometry = ListGeometry(depth: indent, widest: widest, theme: theme)
-
-        let markerAttributes: [NSAttributedString.Key: Any] = [.font: markerFont, .foregroundColor: theme.secondary]
-        out.append(NSAttributedString(string: "\t", attributes: markerAttributes))
-        if let task {
-            let symbol = NSImage(systemSymbolName: task ? "checkmark.square.fill" : "square",
-                                 accessibilityDescription: task ? "Done" : "Not done")
-            let attachment = NSTextAttachment()
-            attachment.image = symbol?.withSymbolConfiguration(.init(pointSize: theme.body.pointSize, weight: .regular))
-            let box = NSMutableAttributedString(attachment: attachment)
-            box.addAttributes([.foregroundColor: task ? NSColor.controlAccentColor : theme.secondary,
-                               .baselineOffset: -1 * theme.scale],
-                              range: NSRange(location: 0, length: box.length))
-            out.append(box)
-        } else {
-            out.append(NSAttributedString(string: marker, attributes: markerAttributes))
-        }
-        out.append(NSAttributedString(string: "\t", attributes: markerAttributes))
-        let copyMarker = task.map { $0 ? "[x] " : "[ ] " } ?? (marker == "•" ? "• " : marker + " ")
-        out.addAttribute(.markdownCopyAs, value: String(repeating: "  ", count: indent) + copyMarker,
-                         range: NSRange(location: start, length: out.length - start))
-        out.append(inline(text, font: theme.body, color: theme.text, theme: theme))
-
-        let p = style(theme, before: before)
-        p.firstLineHeadIndent = geometry.lead
-        p.headIndent = geometry.textStart
-        p.tabStops = [NSTextTab(textAlignment: .right, location: geometry.markerEnd),
-                      NSTextTab(textAlignment: .left, location: geometry.textStart)]
-        setParagraph(out, from: start, p)
-    }
-
-    /// `inset`: where the box starts, in a list item; the code is inset within it.
-    private static func appendCode(_ out: NSMutableAttributedString, language: String, body: String, inset: CGFloat,
-                                   before: CGFloat, theme: MarkdownTheme) {
-        let start = out.length
-        let code = body.isEmpty ? " " : body
-        let colored = NSMutableAttributedString(string: code, attributes: [.font: theme.code, .foregroundColor: theme.text])
-        if theme.style == .reply { highlight(colored, code: code, language: language) }
-        out.append(colored)
-        let range = NSRange(location: start, length: out.length - start)
-        let p = NSMutableParagraphStyle()
-        p.lineSpacing = 2 * theme.scale
-        p.headIndent = inset + theme.codeInset
-        p.firstLineHeadIndent = inset + theme.codeInset
-        p.tailIndent = -theme.codeInset
-        out.addAttribute(.paragraphStyle, value: p, range: range)
-        // The first line leaves room for the box's header, the last for its foot.
-        let first = (out.string as NSString).paragraphRange(for: NSRange(location: start, length: 0))
-        let top = p.mutableCopy() as! NSMutableParagraphStyle
-        top.paragraphSpacingBefore = before + theme.codeHeader
-        out.addAttribute(.paragraphStyle, value: top, range: first)
-        let last = (out.string as NSString).paragraphRange(for: NSRange(location: out.length - 1, length: 0))
-        let bottom = (last == first ? top : p).mutableCopy() as! NSMutableParagraphStyle
-        bottom.paragraphSpacing = theme.codeBottom
-        out.addAttribute(.paragraphStyle, value: bottom, range: last)
-        out.addAttribute(.markdownDecoration, value: MarkdownDecoration(.code(language: language, source: body)), range: range)
-    }
-
-    /// Code in Xcode's colors, from `SyntaxHighlight`'s scan; plain for a language it doesn't know.
-    private static func highlight(_ text: NSMutableAttributedString, code: String, language: String) {
-        guard code.utf8.count <= SyntaxHighlight.limit, let grammar = SyntaxHighlight.grammar(for: language) else { return }
-        let utf8 = code.utf8
-        for run in SyntaxHighlight.scan(Array(utf8), grammar) {
-            let lower = utf8.index(utf8.startIndex, offsetBy: run.start)
-            let upper = utf8.index(utf8.startIndex, offsetBy: run.end)
-            text.addAttribute(.foregroundColor, value: color(run.kind), range: NSRange(lower..<upper, in: code))
-        }
-    }
-
-    static func color(_ kind: SyntaxHighlight.Kind) -> NSColor {
-        switch kind {
-        case .comment: .secondaryLabelColor
-        case .string: .systemRed
-        case .number: .systemBlue
-        case .keyword: .systemPink
-        case .type: .systemTeal
-        }
-    }
-
-    private static func appendTable(_ out: NSMutableAttributedString, rows: [[AttributedString]],
-                                    alignments: [MarkdownView.ColumnAlignment], before: CGFloat, theme: MarkdownTheme) {
-        let columns = rows.first?.count ?? 0
-        guard columns > 0 else { return }
-        let start = out.length
-        let table = NSTextTable()
-        table.numberOfColumns = columns
-        table.collapsesBorders = true
-        table.hidesEmptyCells = false
-        table.setWidth(before, type: .absoluteValueType, for: .margin, edge: .minY)
-        for (r, row) in rows.enumerated() {
-            for c in 0..<columns {
-                let block = NSTextTableBlock(table: table, startingRow: r, rowSpan: 1, startingColumn: c, columnSpan: 1)
-                block.setWidth(5 * theme.scale, type: .absoluteValueType, for: .padding, edge: .minY)
-                block.setWidth(5 * theme.scale, type: .absoluteValueType, for: .padding, edge: .maxY)
-                block.setWidth(10 * theme.scale, type: .absoluteValueType, for: .padding, edge: .minX)
-                block.setWidth(10 * theme.scale, type: .absoluteValueType, for: .padding, edge: .maxX)
-                if r == 0 {
-                    block.setBorderColor(theme.rule, for: .maxY)
-                    block.setWidth(1, type: .absoluteValueType, for: .border, edge: .maxY)
-                }
-                let cellStart = out.length
-                let text = c < row.count ? row[c] : AttributedString()
-                out.append(Self.inline(text, font: r == 0 ? theme.body.bold : theme.body, color: theme.text, theme: theme))
-                // A tab between cells and a line between rows when copied, as a spreadsheet takes them.
-                out.append(NSAttributedString(string: "\n", attributes: [
-                    .font: theme.body, .markdownCopyAs: c == columns - 1 ? "\n" : "\t",
-                ]))
-                let p = NSMutableParagraphStyle()
-                p.textBlocks = [block]
-                p.lineSpacing = theme.lineSpacing
-                p.alignment = switch c < alignments.count ? alignments[c] : .natural {
-                case .natural: .natural
-                case .left: .left
-                case .center: .center
-                case .right: .right
-                }
-                out.addAttribute(.paragraphStyle, value: p, range: NSRange(location: cellStart, length: out.length - cellStart))
-            }
-        }
-        // The table's last newline is the block's end, ending the last cell's paragraph.
-        out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1))
-        out.addAttribute(.markdownDecoration, value: MarkdownDecoration(.table), range: NSRange(location: start, length: out.length - start))
-    }
-
-    /// Inline Markdown with fonts and colors: emphasis, strong, code, strikethrough and links.
-    static func inline(_ parsed: AttributedString, font: NSFont, color: NSColor, theme: MarkdownTheme) -> NSAttributedString {
-        let out = NSMutableAttributedString()
-        for run in parsed.runs {
-            let string = String(parsed[run.range].characters)
-            var attributes: [NSAttributedString.Key: Any] = [.foregroundColor: color]
-            var runFont = font
-            if let intent = run.inlinePresentationIntent {
-                if intent.contains(.code) {
-                    runFont = .monospacedSystemFont(ofSize: font.pointSize * 0.94, weight: font.isBold ? .semibold : .regular)
-                    attributes[.markdownInlineCode] = true
-                }
-                if intent.contains(.stronglyEmphasized) { runFont = runFont.bold }
-                if intent.contains(.emphasized) { runFont = runFont.italic }
-                if intent.contains(.strikethrough) { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-            }
-            if let url = run.link {
-                attributes[.link] = url
-                attributes[.toolTip] = url.isFileURL ? url.path : url.absoluteString
-                attributes[.foregroundColor] = theme.link
-                if theme.style == .prompt { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-            }
-            attributes[.font] = runFont
-            out.append(NSAttributedString(string: string, attributes: attributes))
-        }
-        padInlineCode(out, theme: theme)
-        return out
-    }
-}
-
-@MainActor
-private func padInlineCode(_ text: NSMutableAttributedString, theme: MarkdownTheme) {
-    // Room for the fill on either side of inline code: kerning after the character before it and
-    // after its last character, so its neighbors don't touch the fill.
-    let pad = 4 * theme.scale
-    text.enumerateAttribute(.markdownInlineCode, in: NSRange(location: 0, length: text.length)) { value, run, _ in
-        guard value != nil, run.length > 0 else { return }
-        if run.location > 0 { text.addAttribute(.kern, value: pad, range: NSRange(location: run.location - 1, length: 1)) }
-        text.addAttribute(.kern, value: pad, range: NSRange(location: run.location + run.length - 1, length: 1))
-    }
-}
-
-private extension NSFont {
-    var bold: NSFont { NSFontManager.shared.convert(self, toHaveTrait: .boldFontMask) }
-    var italic: NSFont {
-        let converted = NSFontManager.shared.convert(self, toHaveTrait: .italicFontMask)
-        // The system font has no italic face in some weights; a slant reads as one.
-        return converted.fontDescriptor.symbolicTraits.contains(.italic) ? converted
-            : NSFont(descriptor: fontDescriptor.withMatrix(AffineTransform(m11: 1, m12: 0, m21: 0.2, m22: 1, tX: 0, tY: 0)), size: pointSize) ?? self
-    }
-    var isBold: Bool { fontDescriptor.symbolicTraits.contains(.bold) }
-    var withMonospacedDigits: NSFont { .monospacedDigitSystemFont(ofSize: pointSize, weight: .regular) }
 }
 
 // MARK: - The view
@@ -790,29 +492,8 @@ final class MarkdownNSTextView: NSTextView {
 
     override func writeSelection(to pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
         guard type == .string, let storage = textStorage else { return super.writeSelection(to: pboard, type: type) }
-        let text = selectedRanges.map(\.rangeValue).map { Self.plain(storage, in: $0) }.joined(separator: "\n")
+        let text = selectedRanges.map(\.rangeValue).map { MarkdownBuilder.plain(storage, in: $0) }.joined(separator: "\n")
         return pboard.setString(text, forType: .string)
-    }
-
-    static func plain(_ storage: NSAttributedString, in range: NSRange) -> String {
-        var out = ""
-        storage.enumerateAttribute(.markdownCopyAs, in: range) { value, run, _ in
-            if let replacement = value as? String {
-                // A marker's characters are replaced once, not once per character.
-                var effective = NSRange()
-                _ = storage.attribute(.markdownCopyAs, at: run.location, longestEffectiveRange: &effective,
-                                      in: NSRange(location: 0, length: storage.length))
-                if replacement == "\t" || replacement == "\n" {
-                    // Once per character: adjacent empty cells are one run.
-                    out += String(repeating: replacement, count: run.length)
-                } else if run.location == effective.location || run.location == range.location {
-                    out += replacement
-                }
-            } else {
-                out += (storage.string as NSString).substring(with: run).replacingOccurrences(of: "\u{FFFC}", with: "")
-            }
-        }
-        return out
     }
 
     // MARK: VoiceOver

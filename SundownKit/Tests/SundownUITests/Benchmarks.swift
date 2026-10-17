@@ -106,8 +106,8 @@ final class TranscriptBenchmark: XCTestCase {
         }
     }
 
-    /// Every reply of the performance scenario's chat parsed whole, as a chat opening does for the
-    /// replies it shows.
+    /// Every reply of the performance scenario's chat parsed and built whole, as a chat opening
+    /// does for the replies it shows.
     @MainActor
     func testParsingMarkdown() throws {
         try Bench.skipUnlessEnabled()
@@ -115,7 +115,7 @@ final class TranscriptBenchmark: XCTestCase {
             if case .agentMessage(let m) = item { m.text } else { nil }
         }
         measure(metrics: Bench.metrics) {
-            for reply in replies { _ = MarkdownView.parse(reply) }
+            for reply in replies { _ = MarkdownBuilder.build(reply, theme: .standard) }
         }
     }
 }

@@ -342,7 +342,7 @@ extension XCUIElement {
 }
 
 extension XCUIApplication {
-    /// A message is one text view holding all of its text (`MarkdownTextView`); other words are
+    /// A message is one text view holding all of its text (`MarkdownView`); other words are
     /// static texts. The message field is a text view too, and never matches.
     private static func texts(_ words: NSPredicate) -> NSPredicate {
         NSCompoundPredicate(orPredicateWithSubpredicates: [

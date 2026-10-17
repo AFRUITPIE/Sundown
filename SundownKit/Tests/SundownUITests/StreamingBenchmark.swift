@@ -71,8 +71,9 @@ struct StreamingFrameTests {
 @MainActor
 private final class Replay {
     let thread = ThreadModel(id: "perf")
-    let markdown = MarkdownCache()
-    /// Building the streaming block's text, as `MarkdownTextView` does for its changed tail.
+    /// The streaming reply's text, built as `MarkdownView` builds its tail.
+    var markdown = MarkdownStream()
+    let text = NSMutableAttributedString()
     let theme = MarkdownTheme.standard
     var fading = Duration.zero
 
@@ -84,12 +85,9 @@ private final class Replay {
         thread.apply(n)
         _ = thread.rows(.summarized)
         if case .agentMessage(let m) = thread.box(for: thread.items.last!).item {
-            let blocks = markdown.blocks(for: m.text)
-            if let last = blocks.last {
-                let clock = ContinuousClock(), fadeStart = clock.now
-                _ = MarkdownBuilder.build(last, leading: blocks.count > 1, spacing: 12, widestMarker: nil, theme: theme)
-                fading += clock.now - fadeStart
-            }
+            let clock = ContinuousClock(), start = clock.now
+            _ = markdown.update(text, to: m.text, theme: theme, streaming: true)
+            fading += clock.now - start
         }
     }
 }
