@@ -157,21 +157,21 @@ extension HostConnection.State {
     HostsSettings(app: .sample())
 }
 
+/// Settings on `connection`'s host, listed first so the pane opens on it.
+@MainActor
+private func hostsPreview(first connection: HostConnection) -> some View {
+    HostsSettings(app: .sample(connections: [connection, .sample()]))
+}
+
 #Preview("Hosts (connected SSH host)") {
-    let ssh = HostConnection.sampleConnectedSSH()
-    // First, so Settings opens on it.
-    return HostsSettings(app: .sample(connections: [ssh, .sample()]))
+    hostsPreview(first: .sampleConnectedSSH())
 }
 
 #Preview("Hosts (connection failed)") {
-    let failed = HostConnection.sampleFailed()
-    // First, so Settings opens on it.
-    return HostsSettings(app: .sample(connections: [failed, .sample()]))
+    hostsPreview(first: .sampleFailed())
 }
 
 #Preview("Hosts (connecting)") {
-    let connecting = HostConnection.sampleConnecting()
-    // First, so Settings opens on it.
-    return HostsSettings(app: .sample(connections: [connecting, .sample()]))
+    hostsPreview(first: .sampleConnecting())
 }
 #endif

@@ -159,7 +159,16 @@ struct Composer: View {
         return s
     }
 
+    /// What the empty field says: Claude's suggestion, else what sending does now.
+    private var fieldPlaceholder: String {
+        suggestion ?? (thread?.isRunning == true ? "Queue a message…" : placeholder)
+    }
+
     private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !images.isEmpty }
+
+    /// Whether Send goes now: something to send, no request to answer first, no attachment still
+    /// being read (a file read or a photo prepared off the main actor), and the host connected.
+    private var canSendNow: Bool { canSend && !awaitingAnswer && attaching == 0 && connection.state == .connected }
 
     var body: some View {
         // While the host isn't connected, a card says so in the field's place. The composer stays,
@@ -200,7 +209,7 @@ struct Composer: View {
         }
     }
 
-    /// A native editor between two circles, sized from the editor's one-line intrinsic height.
+    /// A native editor between two circles; its height is its text's, as the text view reports it (`fieldHeight`).
     private var field: some View {
         // Under a prompt card the composer is still there and still typable, just clearly not the
         // thing being asked of you: its contents dim, under the glass rather than over it.
@@ -314,13 +323,13 @@ struct Composer: View {
         // exactly what's in the field.
         ComposerTextView(text: $text, height: $fieldHeight, scale: textScale, onKey: key, onFocus: { focused = $0 },
                          onPasteOther: pasteAttachments, focusRequest: focusRequests,
-                         placeholder: suggestion ?? (thread?.isRunning == true ? "Queue a message…" : placeholder))
+                         placeholder: fieldPlaceholder)
             .frame(height: max(fieldHeight, ComposerMarkdown.lineHeight(scale: textScale)))
             // Claude's suggested next prompt is the empty field's placeholder, as in the CLI: an
             // offer, not text you've written, and Tab takes it.
             .overlay(alignment: .topLeading) {
                 if text.isEmpty {
-                    Text(suggestion ?? (thread?.isRunning == true ? "Queue a message…" : placeholder))
+                    Text(fieldPlaceholder)
                         .scaledFont(.body)
                         .foregroundStyle(.placeholder)
                         .lineLimit(1)
@@ -364,8 +373,8 @@ struct Composer: View {
             else if let suggestion { text = suggestion }
             else { return false }
             return true
-        case .up: return moveSuggestion(by: -1) == .handled
-        case .down: return moveSuggestion(by: 1) == .handled
+        case .up: return moveSuggestion(by: -1)
+        case .down: return moveSuggestion(by: 1)
         case .escape:
             switch Self.escapeAction(suggestionsShowing: !suggestions.isEmpty,
                                      canStop: thread?.isRunning == true && onStop != nil) {
@@ -425,18 +434,6 @@ struct Composer: View {
         .glassEffect(.regular, in: .rect(cornerRadius: 12))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(text.hasPrefix("/") ? "Commands" : "Files")
-        // The native multiline editor handles arrows before onKeyPress. These SwiftUI commands
-        // exist only while its completion list is visible; ordinary editing keeps its arrow keys.
-        .background {
-            VStack {
-                Button("Previous Completion") { _ = moveSuggestion(by: -1) }
-                    .keyboardShortcut(.upArrow, modifiers: [])
-                Button("Next Completion") { _ = moveSuggestion(by: 1) }
-                    .keyboardShortcut(.downArrow, modifiers: [])
-            }
-            .hidden()
-            .accessibilityHidden(true)
-        }
     }
 
     private func completionRow(_ suggestion: Suggestion, selected: Bool) -> some View {
@@ -459,10 +456,12 @@ struct Composer: View {
         .contentShape(.rect)
     }
 
-    private func moveSuggestion(by direction: Int) -> KeyPress.Result {
-        guard !suggestions.isEmpty else { return .ignored }
+    /// The arrows through the completions (the field's `moveUp:` and `moveDown:`); false when
+    /// there are none, leaving the arrow to the field.
+    private func moveSuggestion(by direction: Int) -> Bool {
+        guard !suggestions.isEmpty else { return false }
         selectedSuggestion = (selectedSuggestion + direction + suggestions.count) % suggestions.count
-        return .handled
+        return true
     }
 
     private func completeSuggestion(at index: Int? = nil) {
@@ -493,8 +492,7 @@ struct Composer: View {
         // Send in the accent's prominent glass; Stop in the clear glass of the + beside it. A
         // prominent button fills with its tint, so a gray tint had made Stop a dark gray disc.
         .buttonStyle(SendOrStopStyle(prominent: !showStop))
-        // Not while an attachment is still being read.
-        .disabled(!showStop && (!canSend || awaitingAnswer || attaching > 0 || connection.state != .connected))
+        .disabled(!showStop && !canSendNow)
         .glassHelp(showStop ? "Stop" : sendHelp)
         .buttonBorderShape(.circle)
         .labelStyle(.iconOnly)
@@ -521,7 +519,7 @@ struct Composer: View {
                 commands = cached
                 commandsLoaded = true
             }
-        } else if !commandsWanted {
+        } else {
             commandsWanted = true
         }
     }
@@ -532,9 +530,7 @@ struct Composer: View {
         selectedSuggestion = 0
     }
 
-    /// The + menu, as the desktop app has it: attach, mention a file, or browse the commands
-    /// that typing / offers, for someone who doesn't know them yet.
-    /// The Add circle's diameter: the one-line field's height, as the Send circle's extra large control size draws it.
+    /// The circles' diameter at the standard text size: the one-line field's height.
     private static let baseCircleDiameter: CGFloat = 31
     /// Follows View ▸ Bigger / Smaller with the field's line (17 pt of the 41 at 100%), whose
     /// padding doesn't scale, so the circles stay as tall as a one-line field.
@@ -546,6 +542,8 @@ struct Composer: View {
     /// it), for what lines up with the field above it, as New Chat's chips do.
     static func fieldInset(textScale: CGFloat) -> CGFloat { circleDiameter(textScale: textScale) + 10 }
 
+    /// The + menu, as the desktop app has it: attach, mention a file, or browse the commands
+    /// that typing / offers, for someone who doesn't know them yet.
     private func addButton(dim: Double) -> some View {
         Menu {
             Button("Attach Files…", systemImage: "paperclip") { choosingFiles = true }
@@ -597,13 +595,18 @@ struct Composer: View {
             if rest.hasPrefix("/") { rest = rest.drop { $0 != " " } }
             text = token + rest.trimmingCharacters(in: .whitespaces)
         } else {
-            text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + token
+            appendToken(token)
         }
         focus()
     }
 
+    /// Adds `token` to the end of the text, set off from the words before it.
+    private func appendToken(_ token: String) {
+        text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + token
+    }
+
     private func send() {
-        guard canSend, !awaitingAnswer, attaching == 0, connection.state == .connected else { return }
+        guard canSendNow else { return }
         sent += 1
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var input: [UserInput] = []
@@ -652,7 +655,7 @@ struct Composer: View {
                 if url.hasDirectoryPath, let takesDirectory { takesDirectory(url.path) } else { reads.append(item) }
             case .file(let url):
                 // A web link, written into the message.
-                text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + url.absoluteString + " "
+                appendToken(url.absoluteString + " ")
             case .image:
                 reads.append(item)
             }
@@ -670,7 +673,7 @@ struct Composer: View {
             for item in items {
                 switch await Self.prepare(item, hostIsLocal: hostIsLocal) {
                 case .attachment(let attachment): images.append(attachment)
-                case .mention(let path): text += (text.isEmpty || text.hasSuffix(" ") ? "" : " ") + "@" + path + " "
+                case .mention(let path): appendToken("@" + path + " ")
                 case .nothing: break
                 }
             }
@@ -859,97 +862,63 @@ private extension EnvironmentValues {
     @Entry var composerPreviewCommands: [SlashCommand] = []
 }
 
-#Preview("Idle") {
-    let connection = HostConnection.sample()
-    let thread = ThreadModel.sampleIdleChat()
+/// A composer on a sample connection, in the width a preview shows it at (none: as is).
+@MainActor
+private func previewComposer(_ thread: ThreadModel? = nil, placeholder: String = "Ask Claude…",
+                             onStop: (() -> Void)? = nil, width: CGFloat? = 560) -> some View {
     GlassEffectContainer {
-        Composer(connection: connection, cwd: thread.cwd, thread: thread, onStop: {}, submit: { _ in true })
+        Composer(connection: .sample(), cwd: thread?.cwd, thread: thread, placeholder: placeholder,
+                 onStop: onStop, submit: { _ in true })
     }
-    .padding(20)
-    .frame(width: 560)
+    .padding(width == nil ? 0 : 20)
+    .frame(width: width)
+}
+
+#Preview("Idle") {
+    previewComposer(.sampleIdleChat(), onStop: {})
 }
 
 #Preview("Running (shows Stop)") {
-    let connection = HostConnection.sample()
-    let thread = ThreadModel.sampleRunningTurn()
-    GlassEffectContainer {
-        Composer(connection: connection, cwd: thread.cwd, thread: thread, onStop: {}, submit: { _ in true })
-    }
-    .padding(20)
-    .frame(width: 560)
-}
-
-/// A draft with a request still to answer: the text is kept, Send is off, Stop is still there.
-#Preview("Awaiting an answer (draft kept)") {
-    let connection = HostConnection.sample()
-    let thread = ThreadModel.samplePendingPermission()
-    GlassEffectContainer {
-        Composer(connection: connection, cwd: thread.cwd, thread: thread, awaitingAnswer: true, onStop: {}, submit: { _ in true })
-    }
-    .environment(\.composerDraft, "…and once that's done, run the package tests")
-    .padding(20)
-    .frame(width: 560)
+    previewComposer(.sampleRunningTurn(), onStop: {})
 }
 
 #Preview("New chat (no thread yet)") {
-    let connection = HostConnection.sample()
-    GlassEffectContainer {
-        Composer(connection: connection, cwd: nil, placeholder: "Choose a directory, then ask Claude…", submit: { _ in true })
-    }
-    .padding(20)
-    .frame(width: 560)
+    previewComposer(placeholder: "Choose a directory, then ask Claude…")
 }
 
 /// The native multiline field expands while Send remains a separate, usable control.
 #Preview("Several lines, and bigger text") {
-    let connection = HostConnection.sample()
     let thread = ThreadModel.sampleIdleChat()
     VStack(spacing: 20) {
-        GlassEffectContainer {
-            Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in true })
-        }
-        .environment(\.composerDraft, "Rename the helper,\nthen update its callers,\nand run the package tests")
-        GlassEffectContainer {
-            Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in true })
-        }
-        .scaledFont(.body)
-        .environment(\.textScale, 1.5)
+        previewComposer(thread, width: nil)
+            .environment(\.composerDraft, "Rename the helper,\nthen update its callers,\nand run the package tests")
+        previewComposer(thread, width: nil)
+            .scaledFont(.body)
+            .environment(\.textScale, 1.5)
     }
     .padding(20)
     .frame(width: 560)
 }
 
 #Preview("Glass composer, dark appearance") {
-    let connection = HostConnection.sample()
-    let thread = ThreadModel.sampleIdleChat()
-    GlassEffectContainer {
-        Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in true })
-    }
-    .environment(\.composerDraft, "Review the implementation and suggest the next improvement.")
-    .padding(20)
-    .frame(width: 680)
-    .preferredColorScheme(.dark)
+    previewComposer(.sampleIdleChat(), width: 680)
+        .environment(\.composerDraft, "Review the implementation and suggest the next improvement.")
+        .preferredColorScheme(.dark)
 }
 
 #Preview("Commands above composer") {
-    let connection = HostConnection.sample()
-    let thread = ThreadModel.sampleIdleChat()
-    GlassEffectContainer {
-        Composer(connection: connection, cwd: thread.cwd, thread: thread, submit: { _ in true })
-    }
-    .environment(\.composerDraft, "/")
-    .environment(\.composerPreviewCommands, [
-        .init(name: "compact", description: "Compact the conversation"),
-        .init(name: "context", description: "Show context usage"),
-        .init(name: "cost", description: "Show token usage and cost"),
-        .init(name: "diff", description: "Review working tree changes"),
-        .init(name: "help", description: "Show available commands"),
-        .init(name: "review", description: "Review the implementation"),
-        .init(name: "status", description: "Show session status"),
-        .init(name: "summary", description: "Summarize this conversation"),
-    ])
-    .padding(20)
-    .frame(width: 680)
+    previewComposer(.sampleIdleChat(), width: 680)
+        .environment(\.composerDraft, "/")
+        .environment(\.composerPreviewCommands, [
+            .init(name: "compact", description: "Compact the conversation"),
+            .init(name: "context", description: "Show context usage"),
+            .init(name: "cost", description: "Show token usage and cost"),
+            .init(name: "diff", description: "Review working tree changes"),
+            .init(name: "help", description: "Show available commands"),
+            .init(name: "review", description: "Review the implementation"),
+            .init(name: "status", description: "Show session status"),
+            .init(name: "summary", description: "Summarize this conversation"),
+        ])
 }
 
 #endif

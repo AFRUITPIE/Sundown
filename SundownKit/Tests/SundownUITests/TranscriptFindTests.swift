@@ -54,10 +54,10 @@ struct TranscriptFindTests {
     /// folded work is the fold row, which the transcript can scroll to and open.
     @Test func aMatchInsideWorkedForIsItsFoldRow() {
         let thread = ThreadModel.sample(items: [
-            .sampleUserMessage("Why does the reducer drop deltas?", secondsAgo: 30),
-            .sampleToolCall(name: "Bash", kind: .bash, input: ["command": "rg -n coalesce Sources"], status: .completed,
-                            outputText: "HostConnection.swift", secondsAgo: 20),
-            .sampleAgentMessage("They're coalesced per frame.", secondsAgo: 10),
+            .userMessage(.sample("Why does the reducer drop deltas?", secondsAgo: 30)),
+            .toolCall(.sample(name: "Bash", kind: .bash, input: ["command": "rg -n coalesce Sources"], status: .completed,
+                            outputText: "HostConnection.swift", secondsAgo: 20)),
+            .agentMessage(.sample("They're coalesced per frame.", secondsAgo: 10)),
         ])
         let shown = thread.rows(Appearance.ToolCallDisplay.workedFor.folding)
         let find = TranscriptFind()

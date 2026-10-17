@@ -174,6 +174,6 @@ enum ComposerEditing {
     nonisolated static func isURL(_ string: String) -> Bool {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.contains(where: \.isWhitespace), let url = URL(string: trimmed), let scheme = url.scheme?.lowercased() else { return false }
-        return (scheme == "http" || scheme == "https" || scheme == "mailto") && url.host() != nil || scheme == "mailto"
+        return scheme == "mailto" || (scheme == "http" || scheme == "https") && url.host() != nil
     }
 }

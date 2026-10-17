@@ -100,14 +100,6 @@ struct TranscriptRowsTests {
         #expect(foldTranscriptRows([peer]).map(\.id) == ["peer"])
     }
 
-    private func prompt(_ id: String, at ms: Double) -> Item {
-        .userMessage(.init(id: id, createdAt: ms, content: [.text(.init(text: "go"))]))
-    }
-
-    private func reply(_ id: String, at ms: Double) -> Item {
-        .agentMessage(.init(id: id, createdAt: ms, text: "done"))
-    }
-
     /// Worked For: a finished turn keeps its prompt and last reply, and folds what came between,
     /// timed from the prompt to that reply.
     @Test func workedForFoldsAFinishedTurnsWork() throws {

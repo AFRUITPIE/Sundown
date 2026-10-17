@@ -66,8 +66,7 @@ public struct FileDiff: Identifiable, Sendable, Equatable {
 
     /// A new file's whole content as one added hunk, for an untracked file git has no diff of.
     public static func added(path: String, content: String) -> FileDiff {
-        var lines = content.components(separatedBy: "\n")
-        if lines.last == "" { lines.removeLast() }
+        let lines = LineDiff.split(content)
         let kept = lines.prefix(UnifiedDiff.maxLinesPerFile)
         let numbered = kept.enumerated().map {
             Line(kind: .added, text: UnifiedDiff.clipped($1), oldNumber: nil, newNumber: $0 + 1)
@@ -79,7 +78,7 @@ public struct FileDiff: Identifiable, Sendable, Equatable {
 
 public enum UnifiedDiff {
     /// Lines kept per file. Past it they're counted, not kept: a generated file or a lockfile can
-    /// be hundreds of thousands of lines, which no one reads in the inspector.
+    /// be hundreds of thousands of lines, which no one reads in the Diff tab.
     public static let maxLinesPerFile = 5_000
     /// Characters kept per line; a minified file is one line of megabytes.
     public static let maxLineLength = 1_000

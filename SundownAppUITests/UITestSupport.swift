@@ -137,14 +137,13 @@ class SundownUITestCase: XCTestCase {
     @MainActor
     func visibleButton(_ title: String) -> XCUIElement {
         let predicate = NSPredicate(format: "title == %@ OR label == %@", title, title)
-        let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline {
-            for query in [app.windows.buttons.matching(predicate), app.dialogs.buttons.matching(predicate)] {
-                if let button = query.allElementsBoundByIndex.first(where: { $0.isHittable }) { return button }
-            }
-            Thread.sleep(forTimeInterval: 0.2)
+        var visible: XCUIElement?
+        waitUntil(5) {
+            visible = [app.windows.buttons.matching(predicate), app.dialogs.buttons.matching(predicate)].lazy
+                .compactMap { $0.allElementsBoundByIndex.first(where: { $0.isHittable }) }.first
+            return visible != nil
         }
-        return app.windows.buttons.matching(predicate).firstMatch
+        return visible ?? app.windows.buttons.matching(predicate).firstMatch
     }
 
     /// The menu bar's `menu` ▸ `item`, through a submenu when given.
@@ -187,14 +186,11 @@ class SundownUITestCase: XCTestCase {
     @MainActor
     func waitForWindows(_ expected: [String], timeout: TimeInterval = 8) -> Bool {
         let counts = Dictionary(expected.map { ($0, 1) }, uniquingKeysWith: +)
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if app.windows.count == expected.count, counts.allSatisfy({ title, count in
+        return waitUntil(timeout) {
+            app.windows.count == expected.count && counts.allSatisfy { title, count in
                 app.windows.matching(NSPredicate(format: "title BEGINSWITH %@", title)).count == count
-            }) { return true }
-            Thread.sleep(forTimeInterval: 0.3)
-        } while Date() < deadline
-        return false
+            }
+        }
     }
 
     /// Every window's title, for a failure message.
@@ -285,6 +281,15 @@ func waitUntil(_ timeout: TimeInterval = 5, _ condition: () -> Bool) -> Bool {
         if condition() { return true }
         if Date() >= deadline { return false }
         Thread.sleep(forTimeInterval: 0.1)
+    }
+}
+
+extension XCUIElementSnapshot {
+    /// What a message in the transcript says, in a snapshot: a static text, or a text view holding
+    /// all of its text (the message field isn't one).
+    var messageWords: String? {
+        guard elementType == .staticText || elementType == .textView && identifier != "composer.input" else { return nil }
+        return value as? String
     }
 }
 

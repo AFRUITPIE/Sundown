@@ -6,14 +6,6 @@ import TetherProtocol
 @MainActor
 @Suite
 struct TurnEditsTests {
-    private func prompt(_ id: String, at ms: Double = 1_000) -> Item {
-        .userMessage(.init(id: id, createdAt: ms, content: [.text(.init(text: "go"))]))
-    }
-
-    private func reply(_ id: String) -> Item {
-        .agentMessage(.init(id: id, createdAt: 2_000, text: "done"))
-    }
-
     private func edit(_ id: String, _ path: String, old: String, new: String, status: ToolStatus = .completed,
                       parent: String? = nil) -> Item {
         .toolCall(.sample(id: id, name: "Edit", kind: .fileEdit, input: ["file_path": .string(path), "old_string": .string(old),

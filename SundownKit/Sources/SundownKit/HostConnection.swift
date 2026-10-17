@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 import TetherProtocol
 
 /// Live connection to one host's Sundown daemon, plus that host's projects and threads.
@@ -57,23 +58,18 @@ public final class HostConnection: Identifiable {
     static let appVersion: String =
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
 
-    public init(host: HostConfig) {
-        self.host = host
-        self.id = host.id
-        self.transportProvider = nil
-        self.network = .shared
-        observeTurns()
-        NetworkPath.shared.watch(self)
+    public convenience init(host: HostConfig) {
+        self.init(host: host, network: .shared, transportProvider: nil)
     }
 
-    /// Test seam for reconnect/replay coverage. `network` is the path a test drives; without one
-    /// the host never waits for the network.
-    init(host: HostConfig, network: NetworkPath? = nil, transportProvider: @escaping TransportProvider) {
+    /// The designated init, and the test seam for reconnect/replay coverage. `network` is the path
+    /// a test drives; without one the host never waits for the network. Without a
+    /// `transportProvider` the host runs its server with `npx`, or over `ssh`.
+    init(host: HostConfig, network: NetworkPath? = nil, transportProvider: TransportProvider?) {
         self.host = host
         self.id = host.id
         self.transportProvider = transportProvider
         self.network = network
-        observeTurns()
         network?.watch(self)
     }
 
@@ -93,19 +89,15 @@ public final class HostConnection: Identifiable {
     /// Connects if it isn't, and returns once it is, or once the attempt fails: for work asked of a
     /// host before it's up, such as a Shortcut that launches the app to start a chat.
     public func connected() async -> Bool {
-        if case .connected = state { return true }
-        if case .connecting = state {
-            while case .connecting = state {
-                // Woken by the next change of state, not by polling it.
-                await withCheckedContinuation { (resume: CheckedContinuation<Void, Never>) in
-                    withObservationTracking { _ = self.state } onChange: { resume.resume() }
-                }
+        if state == .connected { return true }
+        if case .connecting = state {} else { await connect() }
+        while case .connecting = state {
+            // Woken by the next change of state, not by polling it.
+            await withCheckedContinuation { (resume: CheckedContinuation<Void, Never>) in
+                withObservationTracking { _ = self.state } onChange: { resume.resume() }
             }
-        } else {
-            await connect()
         }
-        if case .connected = state { return true }
-        return false
+        return state == .connected
     }
 
     public func connect() async {
@@ -116,7 +108,7 @@ public final class HostConnection: Identifiable {
         defer { signpost.end() }
         state = .connecting("Starting…")
         do {
-            // UI tests must never fall through to the bundled daemon or SSH, even if a
+            // UI tests must never fall through to npx or SSH, even if a
             // screen creates another host while the fixture app is running.
             if ProcessInfo.processInfo.environment["SUNDOWN_UI_TEST_MODE"] == "1", transportProvider == nil {
                 throw TransportError.launchFailed("UI test host has no fixture transport")
@@ -369,7 +361,7 @@ public final class HostConnection: Identifiable {
         guard model.apply(n) else { return }
         // A chat started from New Chat, whose window moves to it once it has the prompt's echo.
         if let op = awaitingEcho[tid], noteReadiness(op, in: model) { awaitingEcho[tid] = nil }
-        if case .threadStarted(let e) = n, let cwd = Optional(e.thread.cwd) { attach(model, toProject: cwd) }
+        if case .threadStarted(let e) = n { attach(model, toProject: e.thread.cwd) }
         // Its query is gone. The next send resumes it with history rather than streaming into a
         // subscription to the process that ended.
         if case .threadClosed = n { subscribed.remove(tid) }
@@ -383,6 +375,8 @@ public final class HostConnection: Identifiable {
             // A reply nobody has seen: the sidebar's green dot, until a window shows the chat.
             if e.turn.status == .completed, !openRequested.contains(tid) { model.noteUnseenReply() }
             scheduleChatsRefresh()
+            // A turn can have added commands (a file in .claude/commands).
+            forgetCommands(after: tid)
             NotificationCenter.default.post(name: .sundownTurnFinished, object: self,
                                             userInfo: ["threadId": tid, "status": e.turn.status.rawValue])
         }
@@ -423,7 +417,7 @@ public final class HostConnection: Identifiable {
             subscribed.insert(model.id)
         } catch let e as RPCError where e.code == RPCError.threadNotLoaded {
             // Thread was unloaded (idle eviction / daemon restart); it resumes on next send.
-            model.setError(nil)
+            model.lastError = nil
         } catch {
             appendLog("Resubscribe \(model.id) failed: \(error.localizedDescription)")
         }
@@ -446,9 +440,9 @@ public final class HostConnection: Identifiable {
         }
         let model = thread(tid)
         return await withCheckedContinuation { (cont: CheckedContinuation<JSONValue?, Never>) in
-            let once = OnceFlag()
+            let once = OSAllocatedUnfairLock(initialState: false)
             model.addPending(PendingRequest(id: rid, request: req, respond: { value in
-                if once.claim() { cont.resume(returning: value) }
+                if once.withLock({ done in defer { done = true }; return !done }) { cont.resume(returning: value) }
             }))
             NotificationCenter.default.post(name: .sundownNeedsAttention, object: self,
                                             userInfo: ["threadId": tid, "requestId": rid])
@@ -488,12 +482,6 @@ public final class HostConnection: Identifiable {
         projects = (projects + added).sorted { $0.lastActivity > $1.lastActivity }
     }
 
-    /// The host's chats, most recent first: the list the host has now, which drops chats deleted
-    /// elsewhere or past the limit.
-    public func loadChats(limit: Int = 200) async {
-        await loadChats(limit: limit, recentOnly: false)
-    }
-
     /// How many chats the refresh after a turn asks for: the ones that just changed are the latest.
     static let recentChatsLimit = 5
 
@@ -503,7 +491,10 @@ public final class HostConnection: Identifiable {
         await loadChats(limit: Self.recentChatsLimit, recentOnly: true)
     }
 
-    private func loadChats(limit: Int, recentOnly: Bool) async {
+    /// The host's chats, most recent first: the list the host has now, which drops chats deleted
+    /// elsewhere or past the limit. `recentOnly`: only the latest came back, so the rest of the
+    /// list held keeps its places.
+    public func loadChats(limit: Int = 200, recentOnly: Bool = false) async {
         guard let client else { return }
         do {
             let r = try await client.call(Methods.ThreadList.self, .init(limit: limit))
@@ -615,9 +606,9 @@ public final class HostConnection: Identifiable {
         do {
             // A chat let go shows the page it kept until this reads it afresh.
             try await loadHistory(model, force: letGo.contains(model.id))
-            model.setError(nil) // clear a stale "Not connected" from an earlier attempt
+            model.lastError = nil // clear a stale "Not connected" from an earlier attempt
         } catch {
-            model.setError(error.localizedDescription)
+            model.lastError = error.localizedDescription
         }
         Signposts.chatReady(model.id)
     }
@@ -636,7 +627,7 @@ public final class HostConnection: Identifiable {
     /// Read from the last page alone, everything above it went at once and the transcript jumped
     /// (or, scrolled far enough back, was left showing nothing).
     private func loadHistory(_ model: ThreadModel, force: Bool, keepingHeld: Bool = false) async throws {
-        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        guard let client else { throw RPCError.notConnected }
         if model.historyLoaded && !force { return }
         let signpost = Signposts.historyLoad(model.id)
         defer { signpost.end() }
@@ -740,7 +731,7 @@ public final class HostConnection: Identifiable {
     }
 
     public func startThread(cwd: String, input: [UserInput], options: NewThreadOptions) async throws -> ThreadModel {
-        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        guard let client else { throw RPCError.notConnected }
         let r = try await client.call(Methods.ThreadStart.self, .init(
             cwd: cwd,
             model: options.model,
@@ -784,7 +775,7 @@ public final class HostConnection: Identifiable {
 
     /// A question about the chat, answered with its context but kept out of it (the CLI's /btw).
     public func sideQuestion(_ model: ThreadModel, _ question: String) async throws -> String? {
-        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        guard let client else { throw RPCError.notConnected }
         try await makeLive(model, client)
         return try await client.call(Methods.ThreadSideQuestion.self, .init(threadId: model.id, question: question)).answer
     }
@@ -792,20 +783,16 @@ public final class HostConnection: Identifiable {
     /// What restoring the files to before a prompt would change (`dryRun`), or did change. Claude
     /// Code keeps a checkpoint of each file an edit touched, per prompt.
     public func rewindFiles(_ model: ThreadModel, to userMessageID: String, dryRun: Bool) async throws -> RewindResult {
-        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        guard let client else { throw RPCError.notConnected }
         try await makeLive(model, client)
         let r = try await client.call(Methods.ThreadRewindFiles.self, .init(threadId: model.id, userMessageId: userMessageID, dryRun: dryRun))
         return RewindResult(r.result)
     }
 
     public func send(_ model: ThreadModel, input: [UserInput]) async {
-        guard let client else { model.setError("Not connected"); return }
-        do {
-            try await makeLive(model, client)
-            _ = try await client.call(Methods.TurnStart.self, .init(threadId: model.id, input: input))
-            model.setError(nil)
-        } catch {
-            model.setError(error.localizedDescription)
+        await perform(model) { client in
+            try await self.makeLive(model, client)
+            return try await client.call(Methods.TurnStart.self, .init(threadId: model.id, input: input))
         }
     }
 
@@ -821,35 +808,30 @@ public final class HostConnection: Identifiable {
     /// Lets the turn go on without a command or agent that is holding it up, like Control-B in
     /// the terminal. The CLI only knows a foreground command as a task a few seconds in.
     public func moveToBackground(_ model: ThreadModel, toolUseId: String) async {
-        guard let client else { model.setError("Not connected"); return }
-        do {
-            let r = try await client.call(Methods.TaskBackground.self, .init(threadId: model.id, toolUseId: toolUseId))
-            model.setError(r.backgrounded ? nil : "Claude Code couldn’t move that task to the background.")
-        } catch {
-            model.setError(error.localizedDescription)
-        }
+        let moved = await perform(model) { try await $0.call(Methods.TaskBackground.self, .init(threadId: model.id, toolUseId: toolUseId)) }
+        if let moved, !moved.backgrounded { model.lastError = "Claude Code couldn’t move that task to the background." }
     }
 
     // Settings for a thread the daemon hasn't loaded are held until it resumes, rather than
     // failing with "not loaded": there is nothing there to change yet.
 
     public func setModel(_ model: ThreadModel, _ value: String?) async {
-        guard isLoaded(model) else { return model.editPendingSettings { $0.model = .some(value) } }
+        guard isLoaded(model) else { model.pendingSettings.model = .some(value); return }
         await perform(model) { try await $0.call(Methods.ThreadSetModel.self, .init(threadId: model.id, model: value)) }
     }
 
     public func setEffort(_ model: ThreadModel, _ value: EffortLevel?) async {
-        guard isLoaded(model) else { return model.editPendingSettings { $0.effort = .some(value) } }
+        guard isLoaded(model) else { model.pendingSettings.effort = .some(value); return }
         await perform(model) { try await $0.call(Methods.ThreadSetEffort.self, .init(threadId: model.id, effort: value)) }
     }
 
     public func setPermissionMode(_ model: ThreadModel, _ value: PermissionMode) async {
-        guard isLoaded(model) else { return model.editPendingSettings { $0.permissionMode = value } }
+        guard isLoaded(model) else { model.pendingSettings.permissionMode = value; return }
         await perform(model) { try await $0.call(Methods.ThreadSetPermissionMode.self, .init(threadId: model.id, mode: value)) }
     }
 
     public func setFastMode(_ model: ThreadModel, _ on: Bool) async {
-        guard isLoaded(model) else { return model.editPendingSettings { $0.fastMode = on } }
+        guard isLoaded(model) else { model.pendingSettings.fastMode = on; return }
         await perform(model) { try await $0.call(Methods.ThreadSetFastMode.self, .init(threadId: model.id, enabled: on)) }
     }
 
@@ -1002,21 +984,25 @@ public final class HostConnection: Identifiable {
     /// finished agent's is kept with the chat until the chat is let go.
     public func workflowAgentItems(_ model: ThreadModel, runId: String, agentId: String, finished: Bool) async throws -> [Item] {
         if let known = model.workflowAgentTranscript(runId: runId, agentId: agentId) { return known }
-        guard let client else { throw RPCError(code: -1, message: "Not connected") }
-        if workflowMethodsMissing { throw RPCError(code: -32601, message: "This host’s server can’t read workflow agents.") }
+        guard let client else { throw RPCError.notConnected }
+        if workflowMethodsMissing { throw Self.workflowAgentsUnavailable(-32601) }
         do {
             let r = try await client.call(WorkflowMethods.AgentItems.self, .init(threadId: model.id, runId: runId, agentId: agentId))
             if finished { model.rememberWorkflowAgentTranscript(r.items, runId: runId, agentId: agentId) }
             return r.items
         } catch let e as RPCError where e.code == -32601 {
             workflowMethodsMissing = true
-            throw RPCError(code: e.code, message: "This host’s server can’t read workflow agents.")
+            throw Self.workflowAgentsUnavailable(e.code)
         }
     }
 
-    /// Throws so the inspector can explain a thread the daemon hasn't loaded.
+    private static func workflowAgentsUnavailable(_ code: Int) -> RPCError {
+        RPCError(code: code, message: "This host’s server can’t read workflow agents.")
+    }
+
+    /// Throws so the Context popover can explain a thread the daemon hasn't loaded.
     public func contextUsage(_ model: ThreadModel) async throws -> JSONValue? {
-        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        guard let client else { throw RPCError.notConnected }
         return try await client.call(Methods.ThreadContextUsage.self, .init(threadId: model.id, detail: .summary)).usage
     }
 
@@ -1042,7 +1028,6 @@ public final class HostConnection: Identifiable {
     @ObservationIgnored private var commandFetches: [CommandScope: Task<[SlashCommand]?, Never>] = [:]
     /// Bumped whenever the lists are let go, so a fetch under way then isn't kept.
     @ObservationIgnored private var commandGeneration = 0
-    @ObservationIgnored private var turnObserver: (any NSObjectProtocol)?
 
     private func commandScope(cwd: String?, thread: ThreadModel?) -> CommandScope {
         if let thread, isLoaded(thread) { return .thread(thread.id) }
@@ -1095,36 +1080,19 @@ public final class HostConnection: Identifiable {
         commandFetches.removeAll()
     }
 
-    /// Told of each turn that ends by `apply`'s own announcement, which the app's notifications
-    /// use too. Delivered on the posting thread, the main one.
-    private func observeTurns() {
-        turnObserver = NotificationCenter.default.addObserver(forName: .sundownTurnFinished, object: self, queue: nil) { [weak self] note in
-            guard let id = note.userInfo?["threadId"] as? String else { return }
-            MainActor.assumeIsolated { self?.forgetCommands(after: id) }
-        }
-    }
-
-    isolated deinit {
-        if let turnObserver { NotificationCenter.default.removeObserver(turnObserver) }
-    }
-
     public func searchFiles(cwd: String, query: String) async -> [String] {
         (try? await client?.call(Methods.FsSearch.self, .init(cwd: cwd, query: query, limit: 30)).paths) ?? []
     }
 
     public func listDirectory(_ path: String) async throws -> [FsListResult.Entry] {
-        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        guard let client else { throw RPCError.notConnected }
         return try await client.call(Methods.FsList.self, .init(path: path)).entries
-    }
-
-    public func gitDiff(cwd: String) async -> String? {
-        try? await client?.call(Methods.GitDiff.self, .init(cwd: cwd)).diff
     }
 
     /// Everything that differs from the last commit in `cwd`: staged and unstaged edits, and new
     /// files git doesn't track yet (their whole content, as added). Nil when `cwd` isn't a repository.
     public func workingChanges(cwd: String) async throws -> WorkingChanges? {
-        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        guard let client else { throw RPCError.notConnected }
         let status = try await client.call(Methods.GitStatus.self, .init(cwd: cwd))
         guard status.isRepo else { return nil }
         async let unstaged = client.call(Methods.GitDiff.self, .init(cwd: cwd))
@@ -1166,7 +1134,7 @@ public final class HostConnection: Identifiable {
     /// when it has uncommitted changes, unless `force`, and `RPCError.worktreeUnmerged` when its
     /// branch has commits merged nowhere else, unless `discardCommits`.
     public func removeWorktree(_ path: String, force: Bool, discardCommits: Bool) async throws {
-        guard let client else { throw RPCError(code: -1, message: "Not connected") }
+        guard let client else { throw RPCError.notConnected }
         _ = try await client.call(Methods.GitRemoveWorktree.self, .init(path: path, force: force, discardCommits: discardCommits))
     }
 
@@ -1186,9 +1154,19 @@ public final class HostConnection: Identifiable {
         await perform(model) { try await $0.call(Methods.McpToggle.self, .init(threadId: model.id, name: name, enabled: enabled)) }
     }
 
-    private func perform(_ model: ThreadModel, _ f: (RPCClient) async throws -> some Any) async {
-        guard let client else { model.setError("Not connected"); return }
-        do { _ = try await f(client); model.setError(nil) } catch { model.setError(error.localizedDescription) }
+    /// Runs `f` against the connection and clears the chat’s error, or sets it to why `f` couldn’t
+    /// run. Nil when it didn’t.
+    @discardableResult
+    private func perform<T>(_ model: ThreadModel, _ f: (RPCClient) async throws -> T) async -> T? {
+        guard let client else { model.lastError = RPCError.notConnected.message; return nil }
+        do {
+            let result = try await f(client)
+            model.lastError = nil
+            return result
+        } catch {
+            model.lastError = error.localizedDescription
+            return nil
+        }
     }
 
     private func appendLog(_ m: String) {
@@ -1280,12 +1258,6 @@ extension Notification.Name {
     public static let sundownRequestResolved = Notification.Name("SundownRequestResolved")
 }
 
-final class OnceFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var done = false
-    func claim() -> Bool { lock.withLock { if done { return false }; done = true; return true } }
-}
-
 #if DEBUG
 extension HostConnection {
     /// Seeds in-memory state for `#Preview`s without touching the network.
@@ -1342,9 +1314,9 @@ extension HostConnection {
 
     /// The chat failing to open for a moment, then opening.
     public func stressErrorFlash(_ model: ThreadModel) async {
-        model.setError("Stress: simulated failure")
+        model.lastError = "Stress: simulated failure"
         try? await Task.sleep(for: .milliseconds(500))
-        model.setError(nil)
+        model.lastError = nil
     }
 }
 #endif

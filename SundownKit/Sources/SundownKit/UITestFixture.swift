@@ -21,27 +21,41 @@ public enum UITestFixture {
                                   pendingPermission: Bool = false, performance: Bool = false) -> HostConnection {
         let attempts = FixtureAttempts()
         let environment = ProcessInfo.processInfo.environment
-        let prompts = host.id == HostConfig.local.id && environment["SUNDOWN_UI_TEST_SCENARIO"] == "prompts"
-        let tasks = environment["SUNDOWN_UI_TEST_SCENARIO"] == "tasks"
-        let showcase = environment["SUNDOWN_UI_TEST_SCENARIO"] == "showcase"
-        let failing = Set((environment["SUNDOWN_UI_TEST_FAIL"] ?? "").split(separator: ",").map(String.init))
+        let scenario = environment["SUNDOWN_UI_TEST_SCENARIO"]
+        let prompts = host.id == HostConfig.local.id && scenario == "prompts"
+        let options = FixtureOptions(
+            pendingPermission: pendingPermission || prompts, performance: performance, prompts: prompts,
+            tasks: scenario == "tasks", showcase: scenario == "showcase",
+            failing: Set((environment["SUNDOWN_UI_TEST_FAIL"] ?? "").split(separator: ",").map(String.init)))
         // SUNDOWN_UI_TEST_GAP=1: every connection after the first is a daemon that lost the stream, so
         // resubscribing reports a replay gap and the chat reloads (sleep, a daemon restart).
         let gaps = environment["SUNDOWN_UI_TEST_GAP"] == "1"
-        // SUNDOWN_UI_TEST_RECONNECT_DELAY=s: every connection after the first takes s seconds, as a
-        // host waking or a daemon being replaced does.
-        let reconnectDelay = Double(environment["SUNDOWN_UI_TEST_RECONNECT_DELAY"] ?? "") ?? 0
         return HostConnection(host: host, transportProvider: { _ in
             let attempt = await attempts.next()
-            if attempt > 1, reconnectDelay > 0 { try? await Task.sleep(for: .seconds(reconnectDelay)) }
             if attempt <= failedConnects {
                 throw TransportError.launchFailed("Fixture connection unavailable")
             }
-            return FixtureTransport(pendingPermission: pendingPermission || prompts, performance: performance,
-                                    prompts: prompts, tasks: tasks, showcase: showcase, failing: failing,
-                                    reportsGap: gaps && attempt > failedConnects + 1)
+            var options = options
+            options.reportsGap = gaps && attempt > failedConnects + 1
+            return FixtureTransport(options)
         })
     }
+}
+
+/// What a fixture connection plays, read once from the launch's environment.
+private struct FixtureOptions: Sendable {
+    var pendingPermission = false
+    var performance = false
+    /// The `prompts` scenario: each answered request brings the next (`answered`).
+    var prompts = false
+    /// The `tasks` scenario: the chat has started one of each kind of task (`TaskTranscript`).
+    var tasks = false
+    /// The `showcase` scenario: the README's chats (`ShowcaseTranscript`).
+    var showcase = false
+    /// Methods answered with an error (SUNDOWN_UI_TEST_FAIL).
+    var failing: Set<String> = []
+    /// A resubscription after events were seen reports a replay gap (SUNDOWN_UI_TEST_GAP).
+    var reportsGap = false
 }
 
 private actor FixtureAttempts {
@@ -54,10 +68,8 @@ private final class FixtureTransport: Transport, @unchecked Sendable {
     private let stream: AsyncThrowingStream<Data, any Error>
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
 
-    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, tasks: Bool = false, showcase: Bool = false,
-         failing: Set<String> = [], reportsGap: Bool = false) {
-        script = FixtureScript(pendingPermission: pendingPermission, performance: performance, prompts: prompts,
-                               tasks: tasks, showcase: showcase, failing: failing, reportsGap: reportsGap)
+    init(_ options: FixtureOptions) {
+        script = FixtureScript(options)
         var captured: AsyncThrowingStream<Data, any Error>.Continuation!
         stream = AsyncThrowingStream { captured = $0 }
         continuation = captured
@@ -118,18 +130,7 @@ private actor FixtureScript {
         var stream: [(String, JSONValue)] = []
     }
 
-    private let pendingPermission: Bool
-    private let performance: Bool
-    /// The `prompts` scenario: each answered request brings the next (`answered`).
-    private let prompts: Bool
-    /// The `tasks` scenario: the chat has started one of each kind of task (`TaskTranscript`).
-    private let tasks: Bool
-    /// The `showcase` scenario: the README's chats (`ShowcaseTranscript`).
-    private let showcase: Bool
-    /// Methods answered with an error (SUNDOWN_UI_TEST_FAIL).
-    private let failing: Set<String>
-    /// A resubscription after events were seen reports a replay gap (SUNDOWN_UI_TEST_GAP).
-    private let reportsGap: Bool
+    private let options: FixtureOptions
     private var sentPermission = false
     private var nextSequence = 1
     private var nextMessage = 0
@@ -143,25 +144,26 @@ private actor FixtureScript {
     /// How many times Restore Code has run.
     private var rewound = 0
 
-    init(pendingPermission: Bool, performance: Bool, prompts: Bool = false, tasks: Bool = false, showcase: Bool = false,
-         failing: Set<String> = [], reportsGap: Bool = false) {
-        self.reportsGap = reportsGap
-        self.pendingPermission = pendingPermission
-        self.performance = performance
-        self.prompts = prompts
-        self.tasks = tasks
-        self.showcase = showcase
-        self.failing = failing
-    }
+    init(_ options: FixtureOptions) { self.options = options }
 
     private var originalSummary: ThreadSummary {
         .init(threadId: UITestFixture.threadID, title: "Fixture Chat", cwd: "/tmp/sundown-fixture",
               updatedAt: 1_700_000_000_000, status: .idle)
     }
 
+    /// `threads` as the list shows them: what was deleted gone, what was renamed or tagged so.
+    private func listed(_ threads: [ThreadSummary]) -> [ThreadSummary] {
+        threads.filter { !deleted.contains($0.threadId) }.map { summary in
+            var summary = summary
+            if let title = titles[summary.threadId] { summary.customTitle = title }
+            if let tag = tags[summary.threadId] { summary.tag = tag }
+            return summary
+        }
+    }
+
     func reply(method: String, params: JSONValue) -> Reply {
-        if failing.contains(method) { return .init(value: .error("Fixture \(method) failed")) }
-        if showcase, let reply = showcaseReply(method: method, params: params) { return reply }
+        if options.failing.contains(method) { return .init(value: .error("Fixture \(method) failed")) }
+        if options.showcase, let reply = showcaseReply(method: method, params: params) { return reply }
         switch method {
         case "initialize":
             return .init(value: .result(json(InitializeResult(
@@ -180,17 +182,10 @@ private actor FixtureScript {
         case "session/defaults":
             return .init(value: .result(json(SessionDefaultsResult(model: "sonnet", effort: .medium, permissionMode: .auto))))
         case "thread/list":
-            let perf = performance ? PerformanceTranscript.otherChats : []
-            let followed = tasks ? [TaskTranscript.followedChat] : []
-            let threads = (additionalThreads + perf + followed + [originalSummary])
-                .filter { !deleted.contains($0.threadId) }
-                .map { summary in
-                    var summary = summary
-                    if let title = titles[summary.threadId] { summary.customTitle = title }
-                    if let tag = tags[summary.threadId] { summary.tag = tag }
-                    return summary
-                }
-            return .init(value: .result(json(ThreadListResult(threads: threads))))
+            let perf = options.performance ? PerformanceTranscript.otherChats : []
+            let followed = options.tasks ? [TaskTranscript.followedChat] : []
+            return .init(value: .result(json(ThreadListResult(
+                threads: listed(additionalThreads + perf + followed + [originalSummary])))))
         case "thread/tag":
             if let id = params["threadId"]?.stringValue { tags[id] = params["tag"]?.stringValue }
             return .init(value: .result([:]))
@@ -216,8 +211,8 @@ private actor FixtureScript {
             var summary = (additionalThreads + PerformanceTranscript.otherChats + [TaskTranscript.followedChat])
                 .first { $0.threadId == requested } ?? originalSummary
             if let title = titles[requested] { summary.customTitle = title }
-            let items: [Item] = tasks && (id == UITestFixture.threadID || id == TaskTranscript.followedChat.threadId) ? TaskTranscript.items()
-                : performance && (id == UITestFixture.threadID || id.hasPrefix("perf-chat-")) ? PerformanceTranscript.history : id == UITestFixture.threadID ? [
+            let items: [Item] = options.tasks && (id == UITestFixture.threadID || id == TaskTranscript.followedChat.threadId) ? TaskTranscript.items()
+                : options.performance && (id == UITestFixture.threadID || id.hasPrefix("perf-chat-")) ? PerformanceTranscript.history : id == UITestFixture.threadID ? [
                 .userMessage(.init(id: "fixture-user", createdAt: 1_700_000_000_000,
                                    content: [.text(.init(text: "Summarize this project"))])),
                 .agentMessage(.init(id: "fixture-answer", createdAt: 1_700_000_000_001,
@@ -242,13 +237,13 @@ private actor FixtureScript {
             let status: ThreadStatus = id.hasPrefix("perf-chat-") || id == TaskTranscript.followedChat.threadId ? .notLoaded : .idle
             var reply = Reply(value: .result(json(ThreadSubscribeResult(
                 thread: .init(threadId: id, status: status, cwd: "/tmp/sundown-fixture", lastSeq: nextSequence),
-                replayed: 0, gap: reportsGap && (params["afterSeq"]?.intValue ?? 0) > 1
+                replayed: 0, gap: options.reportsGap && (params["afterSeq"]?.intValue ?? 0) > 1
             ))))
-            if id == UITestFixture.threadID, tasks {
-                reply.notifications = TaskTranscript.events(threadID: id, firstSeq: nextSequence + 1)
+            if id == UITestFixture.threadID, options.tasks {
+                reply.notifications = TaskTranscript.events(threadID: id, firstSeq: nextSequence + 1).map { ("task/event", json($0)) }
                 nextSequence += reply.notifications.count
             }
-            if id == UITestFixture.threadID, pendingPermission, !sentPermission {
+            if id == UITestFixture.threadID, options.pendingPermission, !sentPermission {
                 sentPermission = true
                 let prompt = PermissionRequestParams(
                     threadId: id, requestId: "fixture-permission", toolUseId: "fixture-tool",
@@ -270,7 +265,7 @@ private actor FixtureScript {
                          notifications: turnNotifications(threadID: id, input: params["input"]))
         case "turn/start":
             let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
-            if performance { return performanceTurn(threadID: id, input: params["input"]) }
+            if options.performance { return performanceTurn(threadID: id, input: params["input"]) }
             let notifications = turnNotifications(threadID: id, input: params["input"])
             return .init(value: .result(json(TurnStartResult(turnId: "fixture-turn", messageId: "fixture-sent-\(nextMessage)", queued: false))),
                          notifications: notifications)
@@ -340,14 +335,7 @@ private actor FixtureScript {
         case "session/defaults":
             return .init(value: .result(json(SessionDefaultsResult(model: "opus", effort: .high, permissionMode: .auto))))
         case "thread/list":
-            let threads = (additionalThreads + ShowcaseTranscript.summaries).filter { !deleted.contains($0.threadId) }
-                .map { summary in
-                    var summary = summary
-                    if let title = titles[summary.threadId] { summary.customTitle = title }
-                    if let tag = tags[summary.threadId] { summary.tag = tag }
-                    return summary
-                }
-            return .init(value: .result(json(ThreadListResult(threads: threads))))
+            return .init(value: .result(json(ThreadListResult(threads: listed(additionalThreads + ShowcaseTranscript.summaries)))))
         case "thread/read":
             guard let summary = (additionalThreads + ShowcaseTranscript.summaries).first(where: { $0.threadId == id }) else { return nil }
             let items = id == ShowcaseTranscript.reviewThreadID ? TaskTranscript.items() + ShowcaseTranscript.reviewItems()
@@ -366,7 +354,7 @@ private actor FixtureScript {
             if id == ShowcaseTranscript.reviewThreadID {
                 let tasks = TaskTranscript.events(threadID: id, firstSeq: nextSequence + 1)
                 let more = ShowcaseTranscript.reviewEvents(threadID: id, firstSeq: nextSequence + 1 + tasks.count)
-                reply.notifications = tasks + more.map { ("task/event", json($0)) }
+                reply.notifications = (tasks + more).map { ("task/event", json($0)) }
                 nextSequence += reply.notifications.count
             }
             if id == ShowcaseTranscript.flakyThreadID, !sentPermission {
@@ -395,14 +383,28 @@ private actor FixtureScript {
     /// A prompt sent in the showcase: the turn starts, Thinking, then `ShowcaseTranscript.liveReply`
     /// streamed in the order a real host sends it, and the turn ends.
     private func showcaseTurn(threadID: String, input: JSONValue?) -> Reply {
+        scriptedTurn(threadID: threadID, input: input, idPrefix: "showcase", defaultText: "",
+                     startedAt: { _ in ShowcaseTranscript.now }) { firstSeq, turn in
+            // A moment's thought before the first call.
+            Array(repeating: ("fixture/pause", [:]), count: 60)
+                + ShowcaseTranscript.liveReply(threadID: threadID, turn: turn, firstSeq: firstSeq)
+        }
+    }
+
+    /// A turn the fixture plays by itself: the turn, the prompt and "running" at once, then `stream`
+    /// (notifications numbered from the `firstSeq` it is given, `fixture/pause`s taking none), then
+    /// the turn's end and "idle", in the order a real host sends them.
+    private func scriptedTurn(threadID: String, input: JSONValue?, idPrefix: String, defaultText: String,
+                              startedAt: (_ turn: Int) -> Double,
+                              stream: (_ firstSeq: Int, _ turn: Int) -> [(String, JSONValue)]) -> Reply {
         nextMessage += 1
         let turn = nextMessage
-        let text = input?.arrayValue?.first?["text"]?.stringValue ?? ""
-        let now = ShowcaseTranscript.now
-        let user = Item.userMessage(.init(id: "showcase-sent-\(turn)", createdAt: now, content: [.text(.init(text: text))]))
-        var reply = Reply(value: .result(json(TurnStartResult(turnId: "showcase-turn-\(turn)", messageId: "showcase-sent-\(turn)",
+        let text = input?.arrayValue?.first?["text"]?.stringValue ?? defaultText
+        let time = startedAt(turn)
+        let user = Item.userMessage(.init(id: "\(idPrefix)-sent-\(turn)", createdAt: time, content: [.text(.init(text: text))]))
+        var reply = Reply(value: .result(json(TurnStartResult(turnId: "\(idPrefix)-turn-\(turn)", messageId: "\(idPrefix)-sent-\(turn)",
                                                               queued: false))))
-        let started = Turn(id: "showcase-turn-\(turn)", status: .inProgress, startedAt: now)
+        let started = Turn(id: "\(idPrefix)-turn-\(turn)", status: .inProgress, startedAt: time)
         var completed = started
         completed.status = .completed
         reply.notifications = [
@@ -410,30 +412,11 @@ private actor FixtureScript {
             ("item/started", json(ItemStartedNotification(threadId: threadID, seq: nextSequence + 2, item: user))),
             ("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(nextSequence + 3)), "status": "running"]),
         ]
-        var seq = nextSequence + 4
-        // A moment's thought before the first call.
-        for _ in 0..<60 { reply.stream.append(("fixture/pause", [:])) }
-        var lastRunning: String?
-        for (name, item, delta) in ShowcaseTranscript.liveReply(threadID: threadID, turn: turn, firstSeq: seq) {
-            switch name {
-            case "pause":
-                guard let lastRunning else { continue }
-                reply.stream.append(("item/toolCall/progress", json(ItemToolCallProgressNotification(
-                    threadId: threadID, seq: seq, itemId: lastRunning, elapsedSeconds: 0.1))))
-            case "item/started":
-                if let item, case .toolCall(let call) = item { lastRunning = call.id }
-                reply.stream.append((name, json(ItemStartedNotification(threadId: threadID, seq: seq, item: item!))))
-            case "item/completed":
-                reply.stream.append((name, json(ItemCompletedNotification(threadId: threadID, seq: seq, item: item!))))
-            default:
-                reply.stream.append((name, json(ItemAgentMessageDeltaNotification(
-                    threadId: threadID, seq: seq, itemId: "live-\(turn)-answer", delta: delta ?? ""))))
-            }
-            seq += 1
-        }
-        reply.stream.append(("turn/completed", json(TurnCompletedNotification(threadId: threadID, seq: seq, turn: completed))))
-        reply.stream.append(("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(seq + 1)), "status": "idle"]))
-        nextSequence = seq + 1
+        reply.stream = stream(nextSequence + 4, turn)
+        let last = nextSequence + 4 + reply.stream.filter { $0.0 != "fixture/pause" }.count
+        reply.stream.append(("turn/completed", json(TurnCompletedNotification(threadId: threadID, seq: last, turn: completed))))
+        reply.stream.append(("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(last + 1)), "status": "idle"]))
+        nextSequence = last + 1
         return reply
     }
 
@@ -443,7 +426,7 @@ private actor FixtureScript {
     /// JSON, keys sorted), and the request that comes after it: the permission asked on subscribe
     /// (900), a second permission, a question, a form, then a question too long for the window.
     func answered(id: JSONValue, result: JSONValue) -> [JSONValue] {
-        guard prompts, let answered = id.intValue else { return [] }
+        guard options.prompts, let answered = id.intValue else { return [] }
         let thread = UITestFixture.threadID
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
@@ -495,26 +478,10 @@ private actor FixtureScript {
     /// "running" at once, then tool calls and Markdown streamed a few characters a frame, then the
     /// turn's end and "idle", in the order a real host sends them.
     private func performanceTurn(threadID: String, input: JSONValue?) -> Reply {
-        nextMessage += 1
-        let turn = nextMessage
-        let text = input?.arrayValue?.first?["text"]?.stringValue ?? "Fixture input"
-        let user = Item.userMessage(.init(id: "perf-sent-\(turn)", createdAt: 1_900_000_000_000 + Double(turn * 1000),
-                                          content: [.text(.init(text: text))]))
-        var reply = Reply(value: .result(json(TurnStartResult(turnId: "perf-turn-\(turn)", messageId: "perf-sent-\(turn)", queued: false))))
-        let started = Turn(id: "perf-turn-\(turn)", status: .inProgress, startedAt: 1_900_000_000_000 + Double(turn * 1000))
-        var completed = started
-        completed.status = .completed
-        reply.notifications = [
-            ("turn/started", json(TurnStartedNotification(threadId: threadID, seq: nextSequence + 1, turn: started))),
-            ("item/started", json(ItemStartedNotification(threadId: threadID, seq: nextSequence + 2, item: user))),
-            ("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(nextSequence + 3)), "status": "running"]),
-        ]
-        reply.stream = PerformanceTranscript.reply(threadID: threadID, firstSeq: nextSequence + 4, turn: turn)
-        let last = nextSequence + 4 + reply.stream.count
-        reply.stream.append(("turn/completed", json(TurnCompletedNotification(threadId: threadID, seq: last, turn: completed))))
-        reply.stream.append(("thread/status/changed", ["threadId": .string(threadID), "seq": .number(Double(last + 1)), "status": "idle"]))
-        nextSequence = last + 1
-        return reply
+        scriptedTurn(threadID: threadID, input: input, idPrefix: "perf", defaultText: "Fixture input",
+                     startedAt: { 1_900_000_000_000 + Double($0 * 1000) }) { firstSeq, turn in
+            PerformanceTranscript.reply(threadID: threadID, firstSeq: firstSeq, turn: turn)
+        }
     }
 
     private func turnNotifications(threadID: String, input: JSONValue?) -> [(String, JSONValue)] {
@@ -718,7 +685,44 @@ enum PerformanceTranscript {
 /// background command, a monitor and an MCP tool, as the SDK reports them, running and finished;
 /// and messages the person didn't type (Claude Code's, another session's, a compaction's summary).
 /// A second chat holds the same items, followed rather than live, as most of a host's chats are.
-private enum TaskTranscript {
+/// Times as seconds before now, and the calls and task events the task scenarios (`TaskTranscript`,
+/// `ShowcaseTranscript.reviewItems`) and the Tasks previews are made of.
+struct TaskClock {
+    let now = Date().timeIntervalSince1970 * 1000
+
+    func ago(_ seconds: Double) -> Double { now - seconds * 1000 }
+
+    func call(_ id: String, _ name: String, _ kind: ToolKind, _ input: JSONValue, status: ToolStatus = .completed,
+              output: String? = nil, parent: String? = nil, at seconds: Double) -> Item {
+        .toolCall(.init(id: id, parentToolUseId: parent, createdAt: ago(seconds), name: name, kind: kind, input: input,
+                        status: status, outputText: output))
+    }
+}
+
+/// `task/event`s numbered one after another from `firstSeq`.
+struct TaskEvents {
+    let threadID: String
+    private(set) var seq: Int
+
+    init(threadID: String, firstSeq: Int) {
+        self.threadID = threadID
+        seq = firstSeq
+    }
+
+    /// The SDK's `task_type`, and its `usage` (milliseconds, tokens, tool uses) once it has finished.
+    mutating func next(_ name: String, _ id: String, _ type: String, _ description: String, toolUseId: String? = nil,
+                       status: String, summary: String? = nil, usage: (Double, Double, Double)? = nil) -> TaskEventNotification {
+        var data: [String: JSONValue] = ["task_type": .string(type)]
+        if let usage {
+            data["usage"] = ["duration_ms": .number(usage.0), "total_tokens": .number(usage.1), "tool_uses": .number(usage.2)]
+        }
+        defer { seq += 1 }
+        return TaskEventNotification(threadId: threadID, seq: seq, event: name, taskId: id, toolUseId: toolUseId,
+                                     description: description, status: status, summary: summary, data: .object(data))
+    }
+}
+
+enum TaskTranscript {
     static let followedChat = ThreadSummary(threadId: "tasks-followed", title: "Followed Tasks", cwd: "/tmp/sundown-fixture",
                                             updatedAt: 1_699_999_999_000, status: .notLoaded)
 
@@ -726,75 +730,58 @@ private enum TaskTranscript {
     static var workflowNow: Double { Date().timeIntervalSince1970 * 1000 - 500_000 }
 
     static func items() -> [Item] {
-        let now = Date().timeIntervalSince1970 * 1000
-        func ago(_ seconds: Double) -> Double { now - seconds * 1000 }
-        func call(_ id: String, _ name: String, _ kind: ToolKind, _ input: JSONValue, status: ToolStatus = .completed,
-                  output: String? = nil, parent: String? = nil, at seconds: Double) -> Item {
-            .toolCall(.init(id: id, parentToolUseId: parent, createdAt: ago(seconds), name: name, kind: kind, input: input,
-                            status: status, outputText: output))
-        }
+        let clock = TaskClock()
         let root = "/tmp/sundown-fixture/Sources/"
         return WorkflowSample.items(now: workflowNow, running: false) + [
-            .userMessage(.init(id: "tasks-user", createdAt: ago(400),
+            .userMessage(.init(id: "tasks-user", createdAt: clock.ago(400),
                                content: [.text(.init(text: "Review the changes, and find which views read thread.items."))])),
-            call("agent-1", "Task", .subagent, [
+            clock.call("agent-1", "Task", .subagent, [
                 "subagent_type": "Explore", "description": "Find every SwiftUI view",
                 "prompt": "Find every SwiftUI view and list which read `thread.items`.",
             ], status: .running, at: 100),
-            call("agent-1-grep", "Grep", .grep, ["pattern": "thread\\.items", "path": .string(root)],
-                 output: "TranscriptFind.swift:88\nThreadView.swift:41", parent: "agent-1", at: 95),
-            .agentMessage(.init(id: "agent-1-reply", parentToolUseId: "agent-1", createdAt: ago(80),
+            clock.call("agent-1-grep", "Grep", .grep, ["pattern": "thread\\.items", "path": .string(root)],
+                       output: "TranscriptFind.swift:88\nThreadView.swift:41", parent: "agent-1", at: 95),
+            .agentMessage(.init(id: "agent-1-reply", parentToolUseId: "agent-1", createdAt: clock.ago(80),
                                 text: "Most views read `rows`, not `items`. Two exceptions so far:\n\n- `TranscriptFind` builds its search text from items.\n- `ThreadView` reads the last item.")),
-            call("bg-call", "Bash", .bash, [
+            clock.call("bg-call", "Bash", .bash, [
                 "command": "swift test", "description": "Run the tests", "run_in_background": true,
             ], output: "Command running in background", parent: "agent-1", at: 70),
-            call("agent-2", "Task", .subagent, [
+            clock.call("agent-2", "Task", .subagent, [
                 "description": "Check how TranscriptFind reads items",
                 "prompt": "Read TranscriptFind.swift and say how it builds its search text.",
             ], status: .running, parent: "agent-1", at: 34),
-            call("agent-2-read", "Read", .fileRead, ["file_path": .string(root + "TranscriptFind.swift")],
-                 status: .running, parent: "agent-2", at: 5),
-            call("failed-call", "Bash", .bash, ["command": "xcodebuild -scheme Sundown build", "run_in_background": true],
-                 output: "** BUILD FAILED **", at: 300),
-            .compaction(.init(id: "tasks-compaction", createdAt: ago(4), preTokens: 84_000)),
-            .userMessage(.init(id: "tasks-summary", createdAt: ago(4), content: [.text(.init(text:
+            clock.call("agent-2-read", "Read", .fileRead, ["file_path": .string(root + "TranscriptFind.swift")],
+                       status: .running, parent: "agent-2", at: 5),
+            clock.call("failed-call", "Bash", .bash, ["command": "xcodebuild -scheme Sundown build", "run_in_background": true],
+                       output: "** BUILD FAILED **", at: 300),
+            .compaction(.init(id: "tasks-compaction", createdAt: clock.ago(4), preTokens: 84_000)),
+            .userMessage(.init(id: "tasks-summary", createdAt: clock.ago(4), content: [.text(.init(text:
                 "This session is being continued from a previous conversation that ran out of context."))],
                                synthetic: true, origin: "compaction")),
-            .userMessage(.init(id: "tasks-claude-code", createdAt: ago(3), content: [.text(.init(text:
+            .userMessage(.init(id: "tasks-claude-code", createdAt: clock.ago(3), content: [.text(.init(text:
                 "Caveat: the messages below were generated while running local commands."))], synthetic: true)),
-            .userMessage(.init(id: "tasks-peer", createdAt: ago(2), content: [.text(.init(text: "The release notes are drafted."))],
+            .userMessage(.init(id: "tasks-peer", createdAt: clock.ago(2), content: [.text(.init(text: "The release notes are drafted."))],
                                synthetic: true, origin: "peer", originName: "release-notes")),
         ]
     }
 
-    static func events(threadID: String, firstSeq: Int) -> [(String, JSONValue)] {
-        var seq = firstSeq
-        func event(_ name: String, _ id: String, _ type: String, _ description: String, toolUseId: String? = nil,
-                   status: String, summary: String? = nil, extra: [String: JSONValue] = [:]) -> (String, JSONValue) {
-            var data: [String: JSONValue] = ["task_type": .string(type)]
-            for (k, v) in extra { data[k] = v }
-            defer { seq += 1 }
-            return ("task/event", json(TaskEventNotification(threadId: threadID, seq: seq, event: name, taskId: id, toolUseId: toolUseId,
-                                                             description: description, status: status, summary: summary,
-                                                             data: .object(data))))
-        }
-        let workflow = WorkflowSample.events(threadID: threadID, firstSeq: seq, now: workflowNow, running: false)
-            .map { ("task/event", json($0)) }
-        seq += workflow.count
+    static func events(threadID: String, firstSeq: Int) -> [TaskEventNotification] {
+        let workflow = WorkflowSample.events(threadID: threadID, firstSeq: firstSeq, now: workflowNow, running: false)
+        var events = TaskEvents(threadID: threadID, firstSeq: firstSeq + workflow.count)
         return workflow + [
-            event("started", "agent-task-1", "local_agent", "Find every SwiftUI view", toolUseId: "agent-1", status: "running"),
-            event("started", "bg-tests", "local_bash", "swift test", toolUseId: "bg-call", status: "running"),
-            event("started", "agent-task-2", "local_agent", "Check how TranscriptFind reads items", toolUseId: "agent-2",
-                  status: "running"),
-            event("started", "monitor-1", "monitor", "Watch CI on the pull request", status: "running"),
-            event("notification", "mcp-1", "mcp_task", "Run all tests in Xcode", status: "completed",
-                  summary: "412 tests passed, 3 skipped.", extra: ["usage": ["duration_ms": 243_000, "total_tokens": 0, "tool_uses": 1]]),
-            event("notification", "build-1", "local_bash", "xcodebuild -scheme Sundown build", toolUseId: "failed-call",
-                  status: "failed", summary: "Build failed", extra: ["usage": ["duration_ms": 123_000, "total_tokens": 0, "tool_uses": 0]]),
+            events.next("started", "agent-task-1", "local_agent", "Find every SwiftUI view", toolUseId: "agent-1", status: "running"),
+            events.next("started", "bg-tests", "local_bash", "swift test", toolUseId: "bg-call", status: "running"),
+            events.next("started", "agent-task-2", "local_agent", "Check how TranscriptFind reads items", toolUseId: "agent-2",
+                        status: "running"),
+            events.next("started", "monitor-1", "monitor", "Watch CI on the pull request", status: "running"),
+            events.next("notification", "mcp-1", "mcp_task", "Run all tests in Xcode", status: "completed",
+                        summary: "412 tests passed, 3 skipped.", usage: (243_000, 0, 1)),
+            events.next("notification", "build-1", "local_bash", "xcodebuild -scheme Sundown build", toolUseId: "failed-call",
+                        status: "failed", summary: "Build failed", usage: (123_000, 0, 0)),
         ]
     }
 }
 
-private func json<T: Encodable>(_ value: T) -> JSONValue {
+func json<T: Encodable>(_ value: T) -> JSONValue {
     try! JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
 }

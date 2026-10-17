@@ -70,9 +70,9 @@ struct GeneralSettings: View {
         .frame(width: 560, height: 780)
 }
 
-/// Files open in an editor, and new chats start in Plan Mode, whose line reads under the row. The
-/// editors listed are the ones installed on the Mac rendering the preview.
-#Preview("General (editor, plan mode)") {
+/// Files open in an editor. The editors listed are the ones installed on the Mac rendering the
+/// preview.
+#Preview("General (editor)") {
     let app = AppModel.sample()
     app.appearance.openFilesWith = .xcode
     return GeneralSettings(app: app)

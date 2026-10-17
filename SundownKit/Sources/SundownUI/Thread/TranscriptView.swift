@@ -3,7 +3,7 @@ import SundownKit
 import TetherProtocol
 
 /// The scrolling transcript: the scroll state, over the rows in `TranscriptContent`. The two are
-/// separate views because the scroll position changes on every frame of a resize or an inspector
+/// separate views because the scroll position changes on every frame of a resize or a sidebar
 /// animation, and with the rows in this body each of those frames rebuilt the whole list.
 struct TranscriptView: View {
     let thread: ThreadModel
@@ -82,15 +82,12 @@ struct TranscriptView: View {
                 scrollToEnd()
             }
             // Sending from this window goes back to the end, where the prompt is about to land.
-            .onChange(of: sendGeometry?.sends) {
-                onScreen.lastPrompt = nil
-                withAnimation(reduceMotion ? nil : .default) { scrollToEnd() }
-            }
+            .onChange(of: sendGeometry?.sends) { jumpToEnd() }
             // Find Next and Previous bring the match into view.
             .onChange(of: find?.step) {
                 guard let id = find?.current else { return }
                 onScreen.lastPrompt = nil
-                withAnimation(reduceMotion ? nil : .default) { position.scrollTo(id: id, anchor: .center) }
+                withAnimation(motion) { position.scrollTo(id: id, anchor: .center) }
             }
             // Chat ▸ Previous and Next Prompt, from where the reader is.
             .onChange(of: promptNavigator?.step) { goToPrompt() }
@@ -157,10 +154,7 @@ struct TranscriptView: View {
     private var jumpToLatest: some View {
             ZStack {
                 if farFromEnd, !lastRowOnScreen {
-                    Button("Jump to Latest", systemImage: "arrow.down") {
-                        onScreen.lastPrompt = nil
-                        withAnimation(reduceMotion ? nil : .default) { scrollToEnd() }
-                    }
+                    Button("Jump to Latest", systemImage: "arrow.down") { jumpToEnd() }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
@@ -218,6 +212,25 @@ extension TranscriptView {
         var resizes = 0
     }
 
+    /// The animation for a scroll the reader asked for: none under Reduce Motion.
+    private var motion: Animation? { reduceMotion ? nil : .default }
+
+    /// To the end for the reader (sending, Jump to Latest, Next Prompt past the last): the prompt
+    /// Previous and Next last went to is forgotten.
+    private func jumpToEnd() {
+        onScreen.lastPrompt = nil
+        withAnimation(motion) { scrollToEnd() }
+    }
+
+    /// Back to where the reader was: the end, or the row that was at the top.
+    private func returnToPlace() async {
+        if onScreen.atEnd {
+            scrollToEnd()
+        } else if let top = onScreen.topRow {
+            await go(to: top)
+        }
+    }
+
     /// Once the width has stopped changing, back to where the reader was before: the end, or the
     /// row that was at the top. Going to a row by its id has the lazy stack build the rows there.
     private func resized() {
@@ -228,11 +241,7 @@ extension TranscriptView {
             try? await Task.sleep(for: .milliseconds(180))
             guard onScreen.resizes == resize else { return }
             onScreen.resizing = false
-            if onScreen.atEnd {
-                scrollToEnd()
-            } else if let top = onScreen.topRow {
-                await go(to: top)
-            }
+            await returnToPlace()
             recoverIfCollapsed("after a resize")
         }
     }
@@ -251,11 +260,7 @@ extension TranscriptView {
             built = BuiltRows()
             rebuilds &+= 1
             try? await Task.sleep(for: .milliseconds(50))
-            if onScreen.atEnd {
-                scrollToEnd()
-            } else if let top = onScreen.topRow {
-                await go(to: top)
-            }
+            await returnToPlace()
         }
     }
 
@@ -272,7 +277,7 @@ extension TranscriptView {
         guard let topRow = onScreen.topRow, let item = onScreen.topItem else { return }
         let rows = thread.rows(appearance.toolCalls.folding)
         let still = rows.contains { $0.id == topRow }
-        guard rebuilt || !still, let now = still ? topRow : rows.first(where: { $0.holds(item) })?.id else { return }
+        guard rebuilt || !still, let now = still ? topRow : rows.first(where: { $0.holds(itemID: item) })?.id else { return }
         Task { await go(to: now) }
     }
 
@@ -329,8 +334,7 @@ extension TranscriptView {
         if let id = promptTarget(direction) {
             show(prompt: id)
         } else if direction == .next {
-            onScreen.lastPrompt = nil
-            withAnimation(reduceMotion ? nil : .default) { scrollToEnd() }
+            jumpToEnd()
         } else if thread.hasMoreHistory, let connection {
             Task {
                 // Page by page until one has a prompt; not past a page that fails, or a host that's down.
@@ -352,6 +356,9 @@ extension TranscriptView {
         }
     }
 
+    /// The whole transcript is on screen, so there's no end to go to.
+    private var fitsOnScreen: Bool { onScreen.fits && !onScreen.ids.isEmpty }
+
     /// To the end of the transcript, in three steps, until the reader scrolls for themselves:
     /// - its end row, by id, not the bottom edge. The edge is the lazy stack's estimate of the rows
     ///   it hasn't built, which for replies from a line to thousands of points tall was far off: it
@@ -365,8 +372,6 @@ extension TranscriptView {
     /// - the bottom edge, once the rows there are built and the edge is where they are: a position
     ///   held by a row's id keeps that row still, so streamed text grew below the window; held by
     ///   the edge, it follows the end.
-    /// The whole transcript is on screen, so there's no end to go to.
-    private var fitsOnScreen: Bool { onScreen.fits && !onScreen.ids.isEmpty }
 
     private func scrollToEnd() {
         // A transcript that fits sits at the top (the alignment anchor), and has no end to go to:
@@ -395,7 +400,7 @@ extension TranscriptView {
 
     private func show(prompt id: String) {
         onScreen.lastPrompt = id
-        withAnimation(reduceMotion ? nil : .default) { position.scrollTo(id: id, anchor: .top) }
+        withAnimation(motion) { position.scrollTo(id: id, anchor: .top) }
     }
 }
 
@@ -627,16 +632,17 @@ private struct FadesIn: ViewModifier {
     private let pushes: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(isNew: Bool, pushes: Bool = false) {
+    init(isNew: Bool, pushes: Bool) {
         _shown = State(initialValue: !isNew)
         self.pushes = pushes
     }
 
     func body(content: Content) -> some View {
         let push = pushes && !reduceMotion
+        let below = push && !shown
         content
             .visualEffect { view, proxy in
-                view.offset(y: push && !shown ? proxy.size.height : 0)
+                view.offset(y: below ? proxy.size.height : 0)
             }
             .opacity(shown ? 1 : 0)
             .onAppear {
@@ -699,9 +705,14 @@ struct TranscriptUnavailable: View {
     var body: some View {
         // Loading is `TranscriptLoading`, over the transcript's middle.
         if let error = Self.failure(thread, connection) {
-            TranscriptPlaceholder("Couldn\u{2019}t Open This Chat", symbol: "exclamationmark.triangle", detail: error) {
+            ContentUnavailableView {
+                Label("Couldn\u{2019}t Open This Chat", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error).textSelection(.enabled)
+            } actions: {
                 if let connection { Button("Try Again") { Task { await connection.open(thread) } } }
             }
+            .padding(.vertical, 40)
         }
     }
 }
@@ -720,35 +731,8 @@ struct TranscriptLoading: View {
     }
 }
 
-/// The transcript's stand-in when there is nothing to show: a reason and a way forward.
-struct TranscriptPlaceholder<Actions: View>: View {
-    let title: String
-    let symbol: String
-    let detail: String?
-    @ViewBuilder var actions: Actions
-
-    init(_ title: String, symbol: String, detail: String?, @ViewBuilder actions: () -> Actions) {
-        self.title = title
-        self.symbol = symbol
-        self.detail = detail
-        self.actions = actions()
-    }
-
-    var body: some View {
-        ContentUnavailableView {
-            Label(title, systemImage: symbol)
-        } description: {
-            if let detail { Text(detail).textSelection(.enabled) }
-        } actions: {
-            actions
-        }
-        .padding(.vertical, 40)
-    }
-}
-
 /// The end of the transcript: the wait before a turn has anything to show, and why the last turn
 /// stopped short. Its own view so `isThinking` and `turns` are read here rather than beside the rows.
-/// A `Group` rather than a stack, so that with neither of them the enclosing spacing collapses too.
 struct TranscriptTail: View {
     let thread: ThreadModel
     @Environment(\.appearance) private var appearance
@@ -778,24 +762,22 @@ struct TranscriptTail: View {
     }
 
     var body: some View {
-        Group {
-            // The chat's background work as one count beside what's happening now (this line, or the
-            // row saying it), or alone once nothing is, opening Tasks: not a line per agent or
-            // command as each one ends.
-            if let activity {
-                HStack(spacing: 8) {
-                    ActivityLine(text: activity)
-                    RunningTasksCount(thread: thread)
-                }
+        // The chat's background work as one count beside what's happening now (this line, or the
+        // row saying it), or alone once nothing is, opening Tasks: not a line per agent or
+        // command as each one ends.
+        if let activity {
+            HStack(spacing: 8) {
+                ActivityLine(text: activity)
+                RunningTasksCount(thread: thread)
+            }
+            .transcriptLine()
+        } else if thread.hasBackgroundWork, !rowIsCurrent {
+            RunningTasksLink(count: thread.backgroundTaskCount)
                 .transcriptLine()
-            } else if thread.hasBackgroundWork, !rowIsCurrent {
-                RunningTasksLink(count: thread.backgroundTaskCount)
-                    .transcriptLine()
-            }
-            // A turn that finished normally says nothing; its cost and time are in the Session pane.
-            if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
-                TurnOutcome(turn: turn)
-            }
+        }
+        // A turn that finished normally says nothing.
+        if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
+            TurnOutcome(turn: turn)
         }
     }
 }
@@ -817,10 +799,10 @@ struct RunningTasksCount: View {
 /// How many of the chat's tasks are still running, as a link to them in the Tasks tab.
 struct RunningTasksLink: View {
     let count: Int
-    @Environment(\.showTasks) private var showTasks
+    @Environment(\.windowRef) private var windowRef
 
     var body: some View {
-        Button { showTasks() } label: {
+        Button { windowRef.window?.tab = .tasks } label: {
             Text("^[\(count) running task](inflect: true)")
         }
         .buttonStyle(.plain)
@@ -847,17 +829,6 @@ struct TurnOutcome: View {
     let status: TurnStatus
     let error: String?
 
-    init(status: TurnStatus, error: String?) {
-        self.status = status
-        self.error = error
-    }
-
-    /// Why the turn stopped, from its result's errors: never the result's subtype, a wire value
-    /// such as `error_during_execution` (#50).
-    init(turn: Turn) {
-        self.init(status: turn.status, error: turn.result?.errors?.first)
-    }
-
     /// What the line says.
     var words: String { status == .interrupted ? "Interrupted" : error ?? "The turn failed" }
 
@@ -875,6 +846,14 @@ struct TurnOutcome: View {
     }
 }
 
+extension TurnOutcome {
+    /// Why the turn stopped, from its result's errors: never the result's subtype, a wire value
+    /// such as `error_during_execution` (#50).
+    init(turn: Turn) {
+        self.init(status: turn.status, error: turn.result?.errors?.first)
+    }
+}
+
 #if DEBUG
 #Preview("TranscriptView") {
     TranscriptView(thread: .sampleToolCalls())
@@ -882,15 +861,15 @@ struct TurnOutcome: View {
 }
 
 #Preview("TranscriptView (long settled turn)") {
-    var items: [Item] = [.sampleUserMessage("Check each part of the renderer.", secondsAgo: 100)]
+    var items: [Item] = [.userMessage(.sample("Check each part of the renderer.", secondsAgo: 100))]
     for index in 0..<40 {
         let ago = Double(90 - index * 2)
-        items.append(.sampleToolCall(name: "Read", kind: .fileRead,
+        items.append(.toolCall(.sample(name: "Read", kind: .fileRead,
                                     input: ["file_path": .string("/tmp/Renderer\(index).swift")],
-                                    status: .completed, secondsAgo: ago))
-        items.append(.sampleAgentMessage("Checked renderer \(index). Continuing with the next part.", secondsAgo: ago - 1))
+                                    status: .completed, secondsAgo: ago)))
+        items.append(.agentMessage(.sample("Checked renderer \(index). Continuing with the next part.", secondsAgo: ago - 1)))
     }
-    items.append(.sampleAgentMessage("## Finished\n\nThe renderer's checks are complete.", secondsAgo: 4))
+    items.append(.agentMessage(.sample("## Finished\n\nThe renderer's checks are complete.", secondsAgo: 4)))
     return TranscriptView(thread: .sample(title: "Long settled turn", items: items, turns: [.sample()]))
         .frame(width: 900, height: 760)
 }
@@ -1012,16 +991,6 @@ private extension TranscriptRow {
         case .turnWork(_, let rows, _): rows.first?.firstItemID
         case .turnEdits(let edits): edits.promptID
         case .dateSeparator(let promptID, _): promptID
-        }
-    }
-
-    /// Whether the row shows the item, folded or not.
-    func holds(_ id: String) -> Bool {
-        switch self {
-        case .item(let item): item.id == id
-        case .toolGroup: holds(itemID: id)
-        case .turnWork(_, let rows, _): rows.contains { $0.holds(id) }
-        case .turnEdits, .dateSeparator: false
         }
     }
 }

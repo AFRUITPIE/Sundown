@@ -45,8 +45,7 @@ final class LayoutUITests: SundownUITestCase {
         let calls = app.disclosureTriangles.matching(NSPredicate(format: "identifier IN %@", ["transcript.toolCall", "transcript.toolGroup"]))
         let before = calls.count
         fold.click()
-        let deadline = Date().addingTimeInterval(5)
-        while calls.count <= before && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+        waitUntil(5) { calls.count > before }
         XCTAssertGreaterThan(calls.count, before, "the Worked For line opened to no calls")
 
         // Scrolled into the middle of the chat, switching doesn't blank it either, and the end is
@@ -71,9 +70,7 @@ final class LayoutUITests: SundownUITestCase {
                 var found = false
                 func walk(_ element: any XCUIElementSnapshot) {
                     if found { return }
-                    // A message is a text view holding all its text; the message field isn't one.
-                    if element.elementType == .staticText || element.elementType == .textView && element.identifier != "composer.input",
-                       let words = element.value as? String,
+                    if let words = element.messageWords,
                        words.hasPrefix("Section ") || words.hasPrefix("Step "),
                        element.frame.width > 0, window.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)) {
                         found = true

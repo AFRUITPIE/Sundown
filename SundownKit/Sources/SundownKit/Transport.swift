@@ -32,8 +32,6 @@ public final class ProcessTransport: Transport, @unchecked Sendable {
     private var stderrBuffer = Data()
     /// Only touched from stdout's readabilityHandler, which the system serializes.
     private var stdoutLines = LineSplitter()
-    private var started = false
-    public let commandDescription: String
 
     public init(executable: String, arguments: [String], environment: [String: String]? = nil) {
         process.executableURL = URL(fileURLWithPath: executable)
@@ -42,7 +40,6 @@ public final class ProcessTransport: Transport, @unchecked Sendable {
         process.standardInput = stdin
         process.standardOutput = stdout
         process.standardError = stderr
-        commandDescription = ([executable] + arguments).joined(separator: " ")
     }
 
     public var stderrText: String {
@@ -78,7 +75,6 @@ public final class ProcessTransport: Transport, @unchecked Sendable {
             }
             do {
                 try process.run()
-                lock.withLock { started = true }
             } catch {
                 continuation.finish(throwing: TransportError.launchFailed(error.localizedDescription))
             }

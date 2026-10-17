@@ -13,7 +13,7 @@ public struct HostConfig: Codable, Identifiable, Hashable, Sendable {
     public var kind: Kind
     /// Environment overrides for Claude on this host, e.g. AWS_PROFILE / AWS_REGION for Bedrock.
     public var env: [String: String]
-    /// Developer override: a shell command that speaks Sundown JSONL on stdio (skips install).
+    /// Developer override: a shell command that speaks Sundown JSONL on stdio, run as it is instead of `npx`.
     public var serverCommand: String?
     /// Have Claude Code name each chat on this host, where it doesn't on its own: it names none
     /// while `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set. One small-model call per chat.

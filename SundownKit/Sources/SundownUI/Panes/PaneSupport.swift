@@ -1,11 +1,6 @@
 import SwiftUI
 import SundownKit
 
-extension EnvironmentValues {
-    /// Changes for a preview, which has no repository to read.
-    @Entry var previewChanges: WorkingChanges?
-}
-
 extension View {
     /// What every pane's Form is dressed in, applied by the pane itself — and so by its previews too.
     func paneStyle() -> some View {

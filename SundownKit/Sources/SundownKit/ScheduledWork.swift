@@ -122,7 +122,7 @@ public struct ScheduledWork: Equatable, Sendable {
             switch item {
             case .userMessage(let m) where m.origin == "wakeup":
                 settleFiring()
-                let prompt = m.joinedText
+                let prompt = m.plainText
                 let i = work.schedules.lastIndex { $0.state == .scheduled && Self.same($0.prompt, prompt) }
                     ?? work.schedules.lastIndex { Self.same($0.prompt, prompt) }
                 guard let i else {
@@ -149,7 +149,7 @@ public struct ScheduledWork: Equatable, Sendable {
             case .userMessage(let m):
                 guard m.synthetic != true else { continue }
                 settleFiring()
-                loopPrompt = m.joinedText.hasPrefix("/loop")
+                loopPrompt = m.plainText.hasPrefix("/loop")
             case .toolCall(let call) where call.kind == .schedule:
                 guard call.status == .completed, call.isError != true else { continue }
                 apply(call, to: &work, loopPrompt: loopPrompt, firing: &firing)
@@ -174,13 +174,13 @@ public struct ScheduledWork: Equatable, Sendable {
             let recurring = input["recurring"]?.boolValue ?? output["recurring"]?.boolValue ?? !text.contains("one-shot")
             var run = ScheduleRun(
                 id: call.id,
-                jobID: output["id"]?.stringValue ?? Self.match(#"job ([0-9A-Za-z_-]+)"#, in: text),
+                jobID: output["id"]?.stringValue ?? firstCapture(#"job ([0-9A-Za-z_-]+)"#, in: text),
                 prompt: input["prompt"]?.stringValue ?? "",
                 fromLoop: loopPrompt,
                 isWakeup: false,
                 recurring: recurring,
                 cron: input["cron"]?.stringValue,
-                humanSchedule: output["humanSchedule"]?.stringValue ?? Self.match(#"job [0-9A-Za-z_-]+ \(([^)]+)\)"#, in: text),
+                humanSchedule: output["humanSchedule"]?.stringValue ?? firstCapture(#"job [0-9A-Za-z_-]+ \(([^)]+)\)"#, in: text),
                 durable: output["durable"]?.boolValue ?? input["durable"]?.boolValue ?? false,
                 createdAt: call.createdAt)
             if run.humanSchedule == run.cron { run.humanSchedule = nil }
@@ -275,21 +275,5 @@ public struct ScheduledWork: Equatable, Sendable {
         if let c = cut(b) { return a.hasPrefix(c) }
         return false
     }
-
-    private static func match(_ pattern: String, in text: String) -> String? {
-        guard let r = text.range(of: pattern, options: .regularExpression) else { return nil }
-        let found = String(text[r])
-        // The first group: what the pattern's parentheses hold.
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let m = regex.firstMatch(in: found, range: NSRange(found.startIndex..., in: found)), m.numberOfRanges > 1,
-              let g = Range(m.range(at: 1), in: found) else { return nil }
-        return String(found[g])
-    }
 }
 
-private extension Item.UserMessage {
-    /// The message's text parts, joined.
-    var joinedText: String {
-        content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n\n")
-    }
-}

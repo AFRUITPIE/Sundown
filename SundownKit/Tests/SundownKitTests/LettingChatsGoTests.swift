@@ -41,7 +41,6 @@ struct LettingChatsGoTests {
         let thread = ThreadModel(id: threadID)
         thread.loadHistory(items: transcript, turns: [], seq: 60)
         _ = thread.rows(.workedFor)
-        _ = thread.rows
         _ = thread.topLevelItems
         _ = thread.children(of: "agent")
         #expect(thread.itemsHeld > 60)
@@ -192,7 +191,7 @@ struct LettingChatsGoTests {
         connection.leave(thread)
         #expect(thread.items.first?.id == "m15")
         await daemon.script.release("thread/read")
-        await loading.value
+        _ = await loading.value
 
         #expect(thread.items.first?.id == "m15")
         #expect(thread.items.count == 50)

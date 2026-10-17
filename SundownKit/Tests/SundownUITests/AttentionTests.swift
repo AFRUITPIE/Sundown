@@ -62,7 +62,7 @@ struct AttentionTests {
 
     @Test func aFinishedReplyIsSummedUpByItsLastLine() {
         let thread = ThreadModel.sample(status: .idle, items: [
-            .sampleUserMessage("Fix it", secondsAgo: 10),
+            .userMessage(.sample("Fix it", secondsAgo: 10)),
             .agentMessage(.sample("## Done\n\nI fixed the **layout loop**.\nAll tests pass.", secondsAgo: 2)),
         ])
         #expect(AttentionCenter.lastReplyLine(thread) == "All tests pass.")

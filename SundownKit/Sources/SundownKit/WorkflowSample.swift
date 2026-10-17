@@ -55,7 +55,7 @@ enum WorkflowSample {
 
     /// The chat: a prompt, the Workflow call, Claude's word that it's running, and once it has
     /// finished, its result and Claude's reply to it.
-    static func items(now: Double, running: Bool, threadID: String = "") -> [Item] {
+    static func items(now: Double, running: Bool) -> [Item] {
         func ago(_ seconds: Double) -> Double { now - seconds * 1000 }
         var items: [Item] = [
             .userMessage(.init(id: "wf-prompt", createdAt: ago(300),

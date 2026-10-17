@@ -47,34 +47,18 @@ public struct SettingsView: View {
 
 /// The selected pane, persisted. Stores written by older builds named panes this window no longer
 /// has ("chats", "newChats", "appearance", "host:<uuid>"); each one lands on the pane that absorbed it.
-enum SettingsDestination: Hashable {
+enum SettingsDestination: String {
     case general
     case notifications
     case hosts
 
     init(storedValue: String) {
-        switch storedValue {
-        case "hosts": self = .hosts
-        case "notifications": self = .notifications
-        default: self = storedValue.hasPrefix("host:") ? .hosts : .general
-        }
+        self = Self(rawValue: storedValue) ?? (storedValue.hasPrefix("host:") ? .hosts : .general)
     }
 
-    var storedValue: String {
-        switch self {
-        case .general: "general"
-        case .notifications: "notifications"
-        case .hosts: "hosts"
-        }
-    }
+    var storedValue: String { rawValue }
 
-    var title: String {
-        switch self {
-        case .general: "General"
-        case .notifications: "Notifications"
-        case .hosts: "Hosts"
-        }
-    }
+    var title: String { rawValue.capitalized }
 }
 
 #if DEBUG

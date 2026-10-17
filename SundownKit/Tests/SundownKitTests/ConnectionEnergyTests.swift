@@ -6,10 +6,7 @@ import TetherProtocol
 /// A daemon for connection tests: canned answers by method, every call counted, and a switch to
 /// make the next connections fail.
 private actor ScriptedDaemon {
-    enum Reply: Sendable {
-        case result(JSONValue)
-        case error(code: Int, message: String)
-    }
+    typealias Reply = ScriptedReply
 
     private(set) var calls: [String] = []
     private(set) var connects = 0
@@ -20,7 +17,7 @@ private actor ScriptedDaemon {
     var pid = 1
     /// While true, a connection can't be made.
     var refusesConnections = false
-    private var live: [FakeTransport] = []
+    private var live: [ScriptedTransport] = []
 
     init() {
         replies["project/list"] = .result(["projects": []])
@@ -41,13 +38,13 @@ private actor ScriptedDaemon {
     func connect() throws -> any Transport {
         connects += 1
         if refusesConnections { throw TransportError.launchFailed("The fixture refuses connections") }
-        let transport = FakeTransport(daemon: self)
+        let transport = ScriptedTransport { [self] method, params in await reply(method: method, params: params) }
         live.append(transport)
         return transport
     }
 
     /// The current connection, to push notifications down.
-    func latest() -> FakeTransport? { live.last }
+    func latest() -> ScriptedTransport? { live.last }
 
     func reply(method: String, params: JSONValue) -> Reply {
         calls.append(method)
@@ -67,41 +64,6 @@ private actor ScriptedDaemon {
     }
 }
 
-private final class FakeTransport: Transport, @unchecked Sendable {
-    private let daemon: ScriptedDaemon
-    private let stream: AsyncThrowingStream<Data, any Error>
-    private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
-
-    init(daemon: ScriptedDaemon) {
-        self.daemon = daemon
-        var continuation: AsyncThrowingStream<Data, any Error>.Continuation!
-        stream = AsyncThrowingStream { continuation = $0 }
-        self.continuation = continuation
-    }
-
-    func lines() -> AsyncThrowingStream<Data, any Error> { stream }
-
-    func send(_ line: Data) async throws {
-        let message = try JSONDecoder().decode(JSONValue.self, from: line)
-        guard let id = message["id"], let method = message["method"]?.stringValue else { return }
-        let response: JSONValue = switch await daemon.reply(method: method, params: message["params"] ?? [:]) {
-        case .result(let result): ["id": id, "result": result]
-        case .error(let code, let text): ["id": id, "error": ["code": .number(Double(code)), "message": .string(text)]]
-        }
-        continuation.yield(try JSONEncoder().encode(response))
-    }
-
-    func close() async { continuation.finish() }
-
-    func emit(method: String, params: JSONValue) {
-        let notification: JSONValue = ["method": .string(method), "params": params]
-        continuation.yield(try! JSONEncoder().encode(notification))
-    }
-
-    /// The connection drops, as when the daemon or the network goes away.
-    func drop() { continuation.finish(throwing: TransportError.launchFailed("Dropped")) }
-}
-
 private let sshHost = HostConfig(name: "Build box", kind: .ssh(destination: "build-box"))
 
 @MainActor
@@ -113,7 +75,7 @@ private func summary(_ id: String, cwd: String) -> ThreadSummary {
     .init(threadId: id, title: id, cwd: cwd, updatedAt: 1, status: .idle)
 }
 
-private func page(_ texts: [String], hasMore: Bool) -> ScriptedDaemon.Reply {
+private func page(_ texts: [String], hasMore: Bool) -> ScriptedReply {
     .result(encoded(ThreadReadResult(
         items: texts.map { .agentMessage(.init(id: $0, createdAt: 1, text: $0)) },
         turns: [], summary: nil, historySeq: nil, hasMore: hasMore)))
