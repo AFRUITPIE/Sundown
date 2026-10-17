@@ -270,11 +270,6 @@ private actor TransportQueue {
 }
 
 private actor ReattachScript {
-    enum Reply: Sendable {
-        case result(JSONValue)
-        case error(code: Int, message: String)
-    }
-
     private var reads: [ThreadReadResult]
     private var subscriptions: [ThreadSubscribeResult]
     private var afterSequences: [Int?] = []
@@ -289,11 +284,11 @@ private actor ReattachScript {
         self.resume = resume
     }
 
-    func reply(method: String, params: JSONValue) -> Reply {
+    func reply(method: String, params: JSONValue) -> ScriptedReply {
         methods.append(method)
         switch method {
         case "initialize":
-            return .result(json(InitializeResult(
+            return .result(encoded(InitializeResult(
                 serverInfo: .init(name: "tether-server", version: "test"),
                 protocolVersion: tetherProtocolVersion,
                 host: .init(hostname: "claude-box", platform: "linux", arch: "arm64", home: "/home/dev", pid: 1, mode: .daemon),
@@ -301,18 +296,18 @@ private actor ReattachScript {
             )))
         case "thread/read":
             guard !reads.isEmpty else { return .error(code: -1, message: "Unexpected thread/read") }
-            return .result(json(reads.removeFirst()))
+            return .result(encoded(reads.removeFirst()))
         case "thread/subscribe":
             afterSequences.append(params["afterSeq"]?.intValue)
             guard !subscriptions.isEmpty else { return .error(code: -1, message: "Unexpected thread/subscribe") }
-            return .result(json(subscriptions.removeFirst()))
+            return .result(encoded(subscriptions.removeFirst()))
         case "thread/unsubscribe": return .result([:])
         case "thread/resume":
             resumeLimitValues.append(params["limit"]?.intValue)
             resumeParamValues.append(params)
             guard let resume else { return .error(code: -1, message: "Unexpected thread/resume") }
-            return .result(json(resume))
-        case "turn/start": return .result(json(TurnStartResult(turnId: "t", messageId: "m", queued: false)))
+            return .result(encoded(resume))
+        case "turn/start": return .result(encoded(TurnStartResult(turnId: "t", messageId: "m", queued: false)))
         case "project/list": return .result(["projects": []])
         case "model/list": return .result(["models": []])
         case "thread/list": return .result(["threads": []])
@@ -326,43 +321,8 @@ private actor ReattachScript {
     func resumeParams() -> [JSONValue] { resumeParamValues }
 }
 
-private final class ScriptedTransport: Transport, @unchecked Sendable {
-    private let script: ReattachScript
-    private let stream: AsyncThrowingStream<Data, any Error>
-    private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
-
-    init(script: ReattachScript) {
-        self.script = script
-        var continuation: AsyncThrowingStream<Data, any Error>.Continuation!
-        self.stream = AsyncThrowingStream { continuation = $0 }
-        self.continuation = continuation
+private extension ScriptedTransport {
+    convenience init(script: ReattachScript) {
+        self.init { await script.reply(method: $0, params: $1) }
     }
-
-    func lines() -> AsyncThrowingStream<Data, any Error> { stream }
-
-    func send(_ line: Data) async throws {
-        let message = try JSONDecoder().decode(JSONValue.self, from: line)
-        guard let id = message["id"], let method = message["method"]?.stringValue else { return }
-        let response: JSONValue
-        switch await script.reply(method: method, params: message["params"] ?? [:]) {
-        case .result(let result):
-            response = ["id": id, "result": result]
-        case .error(let code, let message):
-            response = ["id": id, "error": ["code": .number(Double(code)), "message": .string(message)]]
-        }
-        continuation.yield(try JSONEncoder().encode(response))
-    }
-
-    func close() async {
-        continuation.finish()
-    }
-
-    func emit(method: String, params: JSONValue) {
-        let notification: JSONValue = ["method": .string(method), "params": params]
-        continuation.yield(try! JSONEncoder().encode(notification))
-    }
-}
-
-private func json<T: Encodable>(_ value: T) -> JSONValue {
-    try! JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
 }
