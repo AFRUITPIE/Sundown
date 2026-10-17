@@ -124,7 +124,6 @@ extension Signposts {
     /// What was ready before the launch began: a window can start on New Chat before
     /// `applicationDidFinishLaunching`.
     @MainActor private static var readyEarly: String?
-    @MainActor private static var launchWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// From `applicationDidFinishLaunching` until the first window's chat is on hand, or at most
     /// `timeLimit`: a host that doesn't connect mustn't leave the launch open.
@@ -143,13 +142,5 @@ extension Signposts {
         launch = nil
         launchEnded = true
         interval.end(how)
-        for waiter in launchWaiters { waiter.resume() }
-        launchWaiters = []
-    }
-
-    /// Returns once the launch has ended, for MetricKit's extended launch.
-    @MainActor public static func launchFinished() async {
-        guard launch != nil else { return }
-        await withCheckedContinuation { launchWaiters.append($0) }
     }
 }
