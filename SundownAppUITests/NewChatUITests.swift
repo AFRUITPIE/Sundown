@@ -100,5 +100,48 @@ final class NewChatUITests: SundownUITestCase {
         chooseMenuItem("Host", "Fixture SSH")
         XCTAssertTrue(waitUntil(5) { window.title.contains("Fixture SSH") }, "the title doesn't name Fixture SSH: \(window.title)")
         XCTAssertTrue(window.title.hasPrefix("New Chat"), "switching host didn't open New Chat: \(window.title)")
+
+        // Choose Directory… on an SSH host browses it (#25). Its home holds no directories, and
+        // choosing there takes the home's real path: "~" went to thread/start as a literal directory.
+        func chooseDirectory() {
+            // Once the host has answered (the branch beside the directory comes from it), the row
+            // stops being redrawn, which closed a menu opened sooner.
+            XCTAssertTrue(app.descendants(matching: .any)["newChat.branch"].appears(timeout: 10), "the SSH host's New Chat row never settled")
+            Thread.sleep(forTimeInterval: 0.5)
+            // The one drawn: New Chat's row is a `ViewThatFits`, which can keep its other version too.
+            let chips = app.descendants(matching: .any).matching(identifier: "newChat.folder")
+            var chip: XCUIElement?
+            XCTAssertTrue(waitUntil(5) { chip = chips.allElementsBoundByIndex.first { $0.isHittable }; return chip != nil },
+                          "no directory menu on the SSH host")
+            // A pointer click on the capsule: pressed through accessibility, the menu under the glass didn't open.
+            chip?.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+            // XCUITest doesn't see this menu's items: Choose Directory… is its last, a key away.
+            Thread.sleep(forTimeInterval: 0.5)
+            app.typeKey(.upArrow, modifierFlags: [])
+            app.typeKey(.enter, modifierFlags: [])
+        }
+        chooseDirectory()
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.staticTexts["No Directories"].appears(timeout: 5), "the host's home isn't shown, or not as empty")
+        sheet.buttons["Choose"].click()
+        XCTAssertTrue(sheet.disappears(timeout: 5))
+        let chips = app.descendants(matching: .any).matching(identifier: "newChat.folder")
+        XCTAssertTrue(waitUntil(5) { chips.allElementsBoundByIndex.contains { $0.value as? String == "/tmp" } }, "choosing the empty home chose \(chips.allElementsBoundByIndex.map { String(describing: $0.value) })")
+        // The path pop-up goes above the home, up to / and no further; a directory that can't be
+        // listed can't be chosen.
+        chooseDirectory()
+        let path = sheet.popUpButtons.firstMatch
+        XCTAssertTrue(path.appears(timeout: 5), "no path pop-up to go above the home")
+        path.click()
+        visibleMenuItem("/").click()
+        let unreadable = sheet.staticTexts["private"]
+        XCTAssertTrue(unreadable.appears(timeout: 5), "/ isn't listed above the home")
+        path.click()
+        XCTAssertEqual(path.menuItems.count, 1, "the path pop-up offers more than / at /: \(path.menuItems.allElementsBoundByIndex.map(\.title))")
+        app.typeKey(.escape, modifierFlags: [])
+        unreadable.doubleClick()
+        XCTAssertTrue(sheet.staticTexts["Can’t Open"].appears(timeout: 5), "a directory that can't be listed doesn't say so")
+        XCTAssertFalse(sheet.buttons["Choose"].isEnabled, "a directory that can't be listed can be chosen")
+        sheet.buttons["Cancel"].click()
     }
 }

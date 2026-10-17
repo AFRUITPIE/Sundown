@@ -306,6 +306,17 @@ private actor FixtureScript {
                 ["name": "status", "description": "Show session status"]
             ]]))
         case "fs/search": return .init(value: .result(["paths": []]))
+        // A host whose home (/tmp) holds no directories, above it a readable / and one that isn't.
+        case "fs/list":
+            let path = params["path"]?.stringValue ?? ""
+            let entries: [FsListResult.Entry]? = switch path {
+            case "/": [.init(name: "private", path: "/private", isDirectory: true, size: 0),
+                       .init(name: "tmp", path: "/tmp", isDirectory: true, size: 0)]
+            case "/tmp": [.init(name: "notes.txt", path: "/tmp/notes.txt", isDirectory: false, size: 12)]
+            default: nil
+            }
+            guard let entries else { return .init(value: .error("Permission denied: \(path)")) }
+            return .init(value: .result(json(FsListResult(entries: entries))))
         case "workflow/read":
             guard params["runId"]?.stringValue == WorkflowSample.runID else { return .init(value: .result(["workflow": .null])) }
             return .init(value: .result(["workflow": WorkflowSample.snapshot(now: TaskTranscript.workflowNow, running: false)]))
