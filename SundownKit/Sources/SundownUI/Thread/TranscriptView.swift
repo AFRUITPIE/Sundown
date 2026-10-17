@@ -129,9 +129,13 @@ struct TranscriptView: View {
                 // From what's visible: the offset and container count the toolbar's inset, so at the
                 // end they said 52 pt short of it, and the reader was never at the end.
                 let toEnd = g.contentSize.height - g.visibleRect.maxY
-                return ScrollPlace(far: toEnd > g.containerSize.height, atEnd: toEnd < 24,
+                let far = toEnd > g.containerSize.height
+                // The whole transcript within the container less its insets, so never while far
+                // from the end.
+                let room = g.containerSize.height - g.contentInsets.top - g.contentInsets.bottom
+                return ScrollPlace(far: far, atEnd: toEnd < 24,
                                    pastContent: g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height,
-                                   fits: g.contentSize.height <= g.visibleRect.height)
+                                   fits: !far && g.contentSize.height <= room)
             } action: { _, place in
                 if farFromEnd != place.far { farFromEnd = place.far }
                 if !onScreen.resizing { onScreen.atEnd = place.atEnd }
@@ -160,12 +164,15 @@ struct TranscriptView: View {
                     .buttonBorderShape(.circle)
                     .controlSize(.large)
                     .help("Jump to Latest")
-                    .padding(.bottom, bottomRoom + 8)
+                    .padding(.bottom, 8)
                     .transition(.moving(.move(edge: .bottom).combined(with: .opacity), reduceMotion: reduceMotion))
                 }
             }
             // Scoped to the button so the transcript's own layout changes don't animate.
             .animation(.snappy, value: farFromEnd && !lastRowOnScreen)
+            // Above the bottom bar, outside the button's transition: inside it, the button slid in
+            // from the bar's height below and was still on its way when clicked.
+            .padding(.bottom, bottomRoom)
     }
 
     #if DEBUG
@@ -415,7 +422,7 @@ private struct TranscriptContent: View {
             // It holds the room under the controls, so going to the end leaves the last row above them.
             VStack(alignment: .leading, spacing: 0) { TranscriptTail(thread: thread) }
                 .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
-                .padding(.bottom, bottomRoom)
+                .padding(.bottom, bottomRoom + 2)
                 .id(Self.endID)
         }
         // Rows are scroll targets by their ids: Previous Prompt and Find scroll to them.
@@ -427,9 +434,10 @@ private struct TranscriptContent: View {
         .accessibilityRotor("Prompts", entries: thread.prompts(folding), entryID: \.id, entryLabel: \.label)
         // The size every row's text starts from; View ▸ Bigger and Smaller change it.
         .scaledFont(.body)
-        // The end row's stack spacing makes up the rest of the bottom margin.
+        // The bottom margin is the end row's own (its room and 2 pt), so going to the end row and
+        // to the bottom edge land in the same place: with these 2 pt here, the edge, gone to last,
+        // moved a chat that had just opened 2 pt more (2026-10-17).
         .padding(.top, 16)
-        .padding(.bottom, 2)
         .readingColumn()
         // Replies parsed off the main thread before their rows ask: the first row changes as a chat
         // opens and as an older page goes in above.
