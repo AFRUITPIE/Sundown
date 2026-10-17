@@ -62,7 +62,7 @@ public enum TranscriptFolding: Sendable, Hashable {
 ///   - a Workflow call, whose run goes on for minutes after its call has come back, and whose row
 ///     says how far it has got
 /// A finished subagent folds like any call ("Ran 3 agents"); its row in the opened run still opens
-/// it in the inspector.
+/// it in Tasks.
 /// A single ungroupable-adjacent completed call is left as a plain `.item`, not a one-call group.
 ///
 /// A background task settling between two calls ("Background command … completed") doesn't break
@@ -198,10 +198,6 @@ private extension Item {
     var isTaskSettled: Bool {
         if case .notice(let n) = self { n.kind == "taskNotification" } else { false }
     }
-
-    var isWorkflowCall: Bool {
-        if case .toolCall(let call) = self { call.isWorkflow } else { false }
-    }
 }
 
 /// Folded rows with what goes between turns: a date above each prompt in `dates` (by prompt id,
@@ -218,8 +214,7 @@ public func decorateTranscriptRows(_ rows: [TranscriptRow], dates: [String: Doub
         // lines in a row ("Ran a command", "Edited 3 files") read as two kinds of thing.
         switch out.last {
         case .toolGroup(let calls, nil)?: out[out.count - 1] = .toolGroup(calls, edits: e)
-        case .item(.toolCall(let call))? where call.status != .running && call.status != .pending
-            && call.kind != .todoWrite && !call.isWorkflow: out[out.count - 1] = .toolGroup([call], edits: e)
+        case .item(.toolCall(let call))? where isGroupable(call): out[out.count - 1] = .toolGroup([call], edits: e)
         default: out.append(.turnEdits(e))
         }
     }
@@ -310,18 +305,12 @@ public struct TranscriptPrompt: Identifiable, Sendable, Equatable {
     public let id: String
     public let label: String
 
-    public init(id: String, label: String) {
-        self.id = id
-        self.label = label
-    }
-
     /// The reader's own prompts among `rows`, each with the first words of its first text, not
     /// the whole prompt joined: a pasted log is long.
     public static func list(in rows: some Sequence<TranscriptRow>) -> [TranscriptPrompt] {
         rows.compactMap { row in
             guard case .item(.userMessage(let m)) = row, m.synthetic != true else { return nil }
-            let first = m.content.lazy.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.first ?? ""
-            return TranscriptPrompt(id: row.id, label: String(first.prefix(80)))
+            return TranscriptPrompt(id: row.id, label: String((m.texts.first ?? "").prefix(80)))
         }
     }
 }
@@ -399,11 +388,21 @@ extension TranscriptRow {
     }
 }
 
+extension Item.UserMessage {
+    /// The message's text parts, in order.
+    public var texts: [String] {
+        content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }
+    }
+
+    /// The text parts, as the message would be pasted.
+    public var plainText: String { texts.joined(separator: "\n\n") }
+}
+
 extension Item {
     var searchText: String {
         switch self {
         case .userMessage(let m):
-            return m.content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n")
+            return m.texts.joined(separator: "\n")
         case .agentMessage(let m): return m.text
         // A workflow's row shows its name, not its script or launch receipt: the name the call
         // gives, or its script's as already read, never reading the script here.
