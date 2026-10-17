@@ -21,6 +21,20 @@ struct ChatListTests {
         return connection
     }
 
+    /// A chat this client doesn't follow that has background work has the list asked for again in a
+    /// while: nothing streams here to say when that work ends (#106).
+    @Test func aChatWithBackgroundWorkHasTheListReadAgain() async throws {
+        let daemon = FakeDaemon()
+        await daemon.script.queue("thread/list", list(.init(threadId: "a", title: "A", cwd: "/repo", updatedAt: 1,
+                                                            status: .idle, backgroundTasks: 2)))
+        let connection = daemon.connection()
+        connection.backgroundRefreshInterval = .milliseconds(50)
+        await connection.connect()
+        let first = await daemon.script.params(of: "thread/list").count
+        try await eventually { await daemon.script.params(of: "thread/list").count > first }
+        await connection.disconnect()
+    }
+
     @Test func aListThatHasntChangedChangesNothing() async throws {
         let daemon = FakeDaemon()
         await daemon.script.queue("thread/list", list(summary("a", "A", updated: 3), summary("b", "B", updated: 2)))

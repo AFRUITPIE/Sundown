@@ -70,6 +70,18 @@ struct SidebarFilterTests {
         #expect(SidebarFilter.waiting.includes(waiting))
         #expect(!SidebarFilter.waiting.includes(idle))
     }
+
+    /// The filter's menu and its empty list, and Group By, say words, never a raw value or
+    /// "No Waiting on You Chats" (#82).
+    @Test func filtersAndGroupingsReadAsWords() {
+        #expect(SidebarFilter.allCases.map(\.label) == ["All Chats", "Working", "Waiting on You", "Archived"])
+        #expect(SidebarFilter.allCases.map(\.emptyTitle) == ["No Chats", "No Working Chats", "No Chats Waiting on You", "No Archived Chats"])
+        #expect(SidebarGrouping.allCases.map(\.label) == ["Date", "Directory"])
+        let raw = SidebarFilter.allCases.map(\.rawValue) + SidebarGrouping.allCases.map(\.rawValue)
+        for label in SidebarFilter.allCases.map(\.label) + SidebarGrouping.allCases.map(\.label) {
+            #expect(!raw.contains(label), "\(label) is a raw value")
+        }
+    }
 }
 
 @MainActor

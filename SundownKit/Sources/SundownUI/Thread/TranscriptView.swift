@@ -710,6 +710,7 @@ struct TranscriptLoading: View {
         if !thread.historyLoaded, TranscriptUnavailable.failure(thread, connection) == nil {
             ProgressView("Loading Chat")
                 .labelsHidden()
+                .accessibilityIdentifier("transcript.loading")
         }
     }
 }
@@ -788,7 +789,7 @@ struct TranscriptTail: View {
             }
             // A turn that finished normally says nothing; its cost and time are in the Session pane.
             if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
-                TurnOutcome(status: turn.status, error: turn.result?.errors?.first)
+                TurnOutcome(turn: turn)
             }
         }
     }
@@ -841,12 +842,26 @@ struct TurnOutcome: View {
     let status: TurnStatus
     let error: String?
 
+    init(status: TurnStatus, error: String?) {
+        self.status = status
+        self.error = error
+    }
+
+    /// Why the turn stopped, from its result's errors: never the result's subtype, a wire value
+    /// such as `error_during_execution` (#50).
+    init(turn: Turn) {
+        self.init(status: turn.status, error: turn.result?.errors?.first)
+    }
+
+    /// What the line says.
+    var words: String { status == .interrupted ? "Interrupted" : error ?? "The turn failed" }
+
     var body: some View {
         Group {
             if status == .interrupted {
-                Label("Interrupted", systemImage: "stop.circle").foregroundStyle(.tertiary)
+                Label(words, systemImage: "stop.circle").foregroundStyle(.tertiary)
             } else {
-                Label(error ?? "The turn failed", systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
+                Label(words, systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
         }
