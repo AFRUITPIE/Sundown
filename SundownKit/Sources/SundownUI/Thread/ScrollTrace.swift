@@ -22,17 +22,24 @@ struct ScrollTrace: ViewModifier {
         var visibleMaxY: CGFloat = 0
     }
 
+    private static func geometry(_ g: ScrollGeometry) -> Geometry {
+        Geometry(offset: g.contentOffset.y.rounded(), content: g.contentSize.height.rounded(),
+                 container: g.containerSize.height.rounded(),
+                 top: g.contentInsets.top.rounded(), bottom: g.contentInsets.bottom.rounded(), visibleMaxY: g.visibleRect.maxY.rounded())
+    }
+
+    /// What the stress driver's relative scrolls (`scroll frac`, `scroll by`) work from.
+    @MainActor private static func feedStress(_ geometry: Geometry) {
+        StressState.offset = geometry.offset
+        StressState.content = geometry.content
+        StressState.container = geometry.container
+    }
+
     func body(content: Content) -> some View {
         if Self.enabled {
             content
-                .onScrollGeometryChange(for: Geometry.self) { g in
-                    Geometry(offset: g.contentOffset.y.rounded(), content: g.contentSize.height.rounded(),
-                             container: g.containerSize.height.rounded(),
-                             top: g.contentInsets.top.rounded(), bottom: g.contentInsets.bottom.rounded(), visibleMaxY: g.visibleRect.maxY.rounded())
-                } action: { old, new in
-                    StressState.offset = new.offset
-                    StressState.content = new.content
-                    StressState.container = new.container
+                .onScrollGeometryChange(for: Geometry.self, of: Self.geometry) { old, new in
+                    Self.feedStress(new)
                     let fromEnd = new.content - new.offset - new.container
                     // Scrolled past what there is: a lazy stack there has no rows to show.
                     if new.offset > new.content - new.container + new.bottom + 120 || new.offset < -new.top - 120 {
@@ -55,6 +62,9 @@ struct ScrollTrace: ViewModifier {
                 .onChange(of: thread.items.count) { old, new in
                     Self.log.debug("items \(old) -> \(new) hasMore=\(thread.hasMoreHistory)")
                 }
+        } else if StressDriver.path != nil {
+            // The driver's scrolls need the geometry even when nothing is traced.
+            content.onScrollGeometryChange(for: Geometry.self, of: Self.geometry) { _, new in Self.feedStress(new) }
         } else {
             content
         }
@@ -97,7 +107,7 @@ struct BlankSampler: ViewModifier {
     /// How much of the transcript's column is drawn: the share of sampled pixels that differ from
     /// the background, in the middle of the window's right two thirds. Near zero is a blank.
     @MainActor static func ink() -> Double? {
-        guard let view = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })?.contentView,
+        guard let view = NSApp.contentWindow?.contentView,
               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         view.cacheDisplay(in: view.bounds, to: rep)
         let w = rep.pixelsWide, h = rep.pixelsHigh
@@ -116,7 +126,7 @@ struct BlankSampler: ViewModifier {
     /// The key window as drawn, to SUNDOWN_SNAPSHOT_DIR, so a blank can be looked at afterwards.
     @MainActor static func snapshot() {
         guard let dir = ProcessInfo.processInfo.environment["SUNDOWN_SNAPSHOT_DIR"],
-              let view = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })?.contentView,
+              let view = NSApp.contentWindow?.contentView,
               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
         view.cacheDisplay(in: view.bounds, to: rep)
         let name = "\(dir)/blank-\(ProcessInfo.processInfo.processIdentifier)-\(Int(Date().timeIntervalSince1970 * 1000)).png"
