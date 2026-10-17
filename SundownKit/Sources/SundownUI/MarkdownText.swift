@@ -382,27 +382,34 @@ enum MarkdownBuilder {
         }
         let spacingBefore = spacing * theme.scale
         let start = out.length
+        // What's inside a list item lines up with the item's text.
+        let inset = rendered.block.listDepth.map {
+            ListGeometry(depth: $0 - 1, widest: widestMarker ?? "•", theme: theme).textStart
+        } ?? 0
         switch rendered.block {
-        case .paragraph:
-            out.append(inline(rendered.inline.first, font: theme.body, color: theme.text, theme: theme))
-            setParagraph(out, from: start, style(theme, before: spacingBefore))
-        case .heading(let level, _):
-            out.append(inline(rendered.inline.first, font: theme.heading(level), color: theme.text, theme: theme))
+        case .paragraph(let text, _):
+            out.append(inline(text, font: theme.body, color: theme.text, theme: theme))
+            let p = style(theme, before: spacingBefore)
+            p.headIndent = inset
+            p.firstLineHeadIndent = inset
+            setParagraph(out, from: start, p)
+        case .heading(let level, let text):
+            out.append(inline(text, font: theme.heading(level), color: theme.text, theme: theme))
             setParagraph(out, from: start, style(theme, before: spacingBefore))
             out.addAttribute(.markdownHeading, value: level, range: NSRange(location: start, length: out.length - start))
-        case .bullet(let indent, let marker, let text):
-            appendListItem(out, indent: indent, marker: marker, text: text, inline: rendered.inline.first,
+        case .bullet(let indent, let marker, let task, let text):
+            appendListItem(out, indent: indent, marker: marker, task: task, text: text,
                            widest: widestMarker ?? marker, before: spacingBefore, theme: theme)
-        case .quote:
-            out.append(inline(rendered.inline.first, font: theme.body, color: theme.secondary, theme: theme))
+        case .quote(let text, _):
+            out.append(inline(text, font: theme.body, color: theme.secondary, theme: theme))
             let p = style(theme, before: spacingBefore)
-            p.headIndent = theme.quoteIndent
-            p.firstLineHeadIndent = theme.quoteIndent
+            p.headIndent = inset + theme.quoteIndent
+            p.firstLineHeadIndent = inset + theme.quoteIndent
             setParagraph(out, from: start, p)
             out.addAttribute(.markdownDecoration, value: MarkdownDecoration(.quote),
                              range: NSRange(location: start, length: out.length - start))
-        case .code(let lang, let body):
-            appendCode(out, language: lang, body: body, before: spacingBefore, theme: theme)
+        case .code(let lang, let body, _):
+            appendCode(out, language: lang, body: body, inset: inset, before: spacingBefore, theme: theme)
         case .rule:
             // A paragraph the line is drawn across; copied as nothing.
             out.append(NSAttributedString(string: " ", attributes: [
@@ -410,8 +417,8 @@ enum MarkdownBuilder {
                 .markdownDecoration: MarkdownDecoration(.rule),
             ]))
             setParagraph(out, from: start, style(theme, before: spacingBefore))
-        case .table(let rows):
-            appendTable(out, rows: rows, inline: rendered.inline, before: spacingBefore, theme: theme)
+        case .table(let rows, let alignments):
+            appendTable(out, rows: rows, alignments: alignments, before: spacingBefore, theme: theme)
         }
         if out.length > start {
             out.addAttribute(.markdownBlockEnd, value: true, range: NSRange(location: out.length - 1, length: 1))
@@ -438,25 +445,25 @@ enum MarkdownBuilder {
         out.addAttribute(.paragraphStyle, value: rest, range: NSRange(location: from, length: out.length - from))
     }
 
-    private static func appendListItem(_ out: NSMutableAttributedString, indent: Int, marker: String, text: String,
-                                       inline parsed: AttributedString?, widest: String, before: CGFloat,
-                                       theme: MarkdownTheme) {
-        let start = out.length
-        var parsed = parsed
-        // A task list's box, checked or not, in place of its bullet.
-        var task: Bool?
-        if marker == "•", let first = parsed.map({ String($0.characters.prefix(4)) }) {
-            if first == "[ ] " { task = false } else if first.lowercased() == "[x] " { task = true }
-            if task != nil, var p = parsed {
-                p.removeSubrange(p.startIndex..<p.characters.index(p.startIndex, offsetBy: 4))
-                parsed = p
-            }
+    /// Where a list item at a depth draws: its marker right-aligned to the list's widest, then its text.
+    struct ListGeometry {
+        let lead: CGFloat
+        let markerEnd: CGFloat
+        let textStart: CGFloat
+
+        init(depth: Int, widest: String, theme: MarkdownTheme) {
+            lead = (6 + CGFloat(depth) * 18) * theme.scale
+            let widestWidth = NSAttributedString(string: widest, attributes: [.font: theme.body.withMonospacedDigits]).size().width
+            markerEnd = lead + max(widestWidth, 12 * theme.scale)
+            textStart = markerEnd + 8 * theme.scale
         }
+    }
+
+    private static func appendListItem(_ out: NSMutableAttributedString, indent: Int, marker: String, task: Bool?,
+                                       text: AttributedString, widest: String, before: CGFloat, theme: MarkdownTheme) {
+        let start = out.length
         let markerFont = theme.body.withMonospacedDigits
-        let lead = (6 + CGFloat(indent) * 18) * theme.scale
-        let widestWidth = NSAttributedString(string: widest, attributes: [.font: markerFont]).size().width
-        let markerEnd = lead + max(widestWidth, 12 * theme.scale)
-        let textStart = markerEnd + 8 * theme.scale
+        let geometry = ListGeometry(depth: indent, widest: widest, theme: theme)
 
         let markerAttributes: [NSAttributedString.Key: Any] = [.font: markerFont, .foregroundColor: theme.secondary]
         out.append(NSAttributedString(string: "\t", attributes: markerAttributes))
@@ -477,17 +484,19 @@ enum MarkdownBuilder {
         let copyMarker = task.map { $0 ? "[x] " : "[ ] " } ?? (marker == "•" ? "• " : marker + " ")
         out.addAttribute(.markdownCopyAs, value: String(repeating: "  ", count: indent) + copyMarker,
                          range: NSRange(location: start, length: out.length - start))
-        out.append(inline(parsed, fallback: text, font: theme.body, color: theme.text, theme: theme))
+        out.append(inline(text, font: theme.body, color: theme.text, theme: theme))
 
         let p = style(theme, before: before)
-        p.firstLineHeadIndent = lead
-        p.headIndent = textStart
-        p.tabStops = [NSTextTab(textAlignment: .right, location: markerEnd), NSTextTab(textAlignment: .left, location: textStart)]
+        p.firstLineHeadIndent = geometry.lead
+        p.headIndent = geometry.textStart
+        p.tabStops = [NSTextTab(textAlignment: .right, location: geometry.markerEnd),
+                      NSTextTab(textAlignment: .left, location: geometry.textStart)]
         setParagraph(out, from: start, p)
     }
 
-    private static func appendCode(_ out: NSMutableAttributedString, language: String, body: String, before: CGFloat,
-                                   theme: MarkdownTheme) {
+    /// `inset`: where the box starts, in a list item; the code is inset within it.
+    private static func appendCode(_ out: NSMutableAttributedString, language: String, body: String, inset: CGFloat,
+                                   before: CGFloat, theme: MarkdownTheme) {
         let start = out.length
         let code = body.isEmpty ? " " : body
         let colored = NSMutableAttributedString(string: code, attributes: [.font: theme.code, .foregroundColor: theme.text])
@@ -496,8 +505,8 @@ enum MarkdownBuilder {
         let range = NSRange(location: start, length: out.length - start)
         let p = NSMutableParagraphStyle()
         p.lineSpacing = 2 * theme.scale
-        p.headIndent = theme.codeInset
-        p.firstLineHeadIndent = theme.codeInset
+        p.headIndent = inset + theme.codeInset
+        p.firstLineHeadIndent = inset + theme.codeInset
         p.tailIndent = -theme.codeInset
         out.addAttribute(.paragraphStyle, value: p, range: range)
         // The first line leaves room for the box's header, the last for its foot.
@@ -533,8 +542,8 @@ enum MarkdownBuilder {
         }
     }
 
-    private static func appendTable(_ out: NSMutableAttributedString, rows: [[String]], inline: [AttributedString],
-                                    before: CGFloat, theme: MarkdownTheme) {
+    private static func appendTable(_ out: NSMutableAttributedString, rows: [[AttributedString]],
+                                    alignments: [MarkdownView.ColumnAlignment], before: CGFloat, theme: MarkdownTheme) {
         let columns = rows.first?.count ?? 0
         guard columns > 0 else { return }
         let start = out.length
@@ -554,9 +563,8 @@ enum MarkdownBuilder {
                     block.setBorderColor(theme.rule, for: .maxY)
                     block.setWidth(1, type: .absoluteValueType, for: .border, edge: .maxY)
                 }
-                let index = r * columns + c
                 let cellStart = out.length
-                let text = index < inline.count ? inline[index] : AttributedString(c < row.count ? row[c] : "")
+                let text = c < row.count ? row[c] : AttributedString()
                 out.append(Self.inline(text, font: r == 0 ? theme.body.bold : theme.body, color: theme.text, theme: theme))
                 // A tab between cells and a line between rows when copied, as a spreadsheet takes them.
                 out.append(NSAttributedString(string: "\n", attributes: [
@@ -565,6 +573,12 @@ enum MarkdownBuilder {
                 let p = NSMutableParagraphStyle()
                 p.textBlocks = [block]
                 p.lineSpacing = theme.lineSpacing
+                p.alignment = switch c < alignments.count ? alignments[c] : .natural {
+                case .natural: .natural
+                case .left: .left
+                case .center: .center
+                case .right: .right
+                }
                 out.addAttribute(.paragraphStyle, value: p, range: NSRange(location: cellStart, length: out.length - cellStart))
             }
         }
@@ -574,9 +588,7 @@ enum MarkdownBuilder {
     }
 
     /// Inline Markdown with fonts and colors: emphasis, strong, code, strikethrough and links.
-    static func inline(_ parsed: AttributedString?, fallback: String = "", font: NSFont, color: NSColor,
-                       theme: MarkdownTheme) -> NSAttributedString {
-        guard let parsed else { return NSAttributedString(string: fallback, attributes: [.font: font, .foregroundColor: color]) }
+    static func inline(_ parsed: AttributedString, font: NSFont, color: NSColor, theme: MarkdownTheme) -> NSAttributedString {
         let out = NSMutableAttributedString()
         for run in parsed.runs {
             let string = String(parsed[run.range].characters)
@@ -931,8 +943,16 @@ final class MarkdownLayoutManager: NSLayoutManager {
 
     private func codeRect(for range: NSRange, in container: NSTextContainer, theme: MarkdownTheme) -> NSRect {
         let lines = rect(for: range, in: container)
-        return NSRect(x: 0, y: lines.minY - theme.codeHeader, width: container.size.width,
+        // Inside a list item, the box starts where the item's text does.
+        let x = max(0, headIndent(at: range.location) - theme.codeInset)
+        return NSRect(x: x, y: lines.minY - theme.codeHeader, width: container.size.width - x,
                       height: lines.height + theme.codeHeader + theme.codeBottom)
+    }
+
+    /// The indent of the paragraph holding a character.
+    private func headIndent(at index: Int) -> CGFloat {
+        guard let storage = textStorage, index < storage.length else { return 0 }
+        return (storage.attribute(.paragraphStyle, at: index, effectiveRange: nil) as? NSParagraphStyle)?.headIndent ?? 0
     }
 
     /// Drawn by the view under the text and its selection, rather than in the layout manager's
@@ -958,7 +978,8 @@ final class MarkdownLayoutManager: NSLayoutManager {
             case .quote:
                 let lines = rect(for: range, in: container).offsetBy(dx: origin.x, dy: origin.y)
                 theme.quoteBar.setFill()
-                NSBezierPath(roundedRect: NSRect(x: origin.x, y: lines.minY, width: 3 * theme.scale, height: lines.height),
+                let x = origin.x + max(0, headIndent(at: range.location) - theme.quoteIndent)
+                NSBezierPath(roundedRect: NSRect(x: x, y: lines.minY, width: 3 * theme.scale, height: lines.height),
                              xRadius: 1.5, yRadius: 1.5).fill()
             case .rule:
                 let lines = rect(for: range, in: container).offsetBy(dx: origin.x, dy: origin.y)

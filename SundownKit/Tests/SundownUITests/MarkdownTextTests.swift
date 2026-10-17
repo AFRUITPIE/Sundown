@@ -69,7 +69,7 @@ struct MarkdownTextTests {
         ]
         let text = NSMutableAttributedString()
         for (i, block) in blocks.enumerated() {
-            let rendered = MarkdownView.Rendered(id: i, block: block, inline: block.inlineText.map { AttributedString($0) })
+            let rendered = MarkdownView.Rendered(id: i, block: block)
             let spacing = i == 0 ? 0 : MarkdownBuilder.spacing(after: blocks[i - 1], before: block)
             text.append(MarkdownBuilder.build(rendered, leading: i > 0, spacing: spacing, widestMarker: nil, theme: theme))
         }
@@ -80,7 +80,7 @@ struct MarkdownTextTests {
     @Test func emptyTableCellsKeepTheirColumns() {
         let theme = MarkdownTheme.standard
         let block = MarkdownView.Block.table([["A", "B", "C"], ["a", "", ""]])
-        let text = MarkdownBuilder.build(MarkdownView.Rendered(id: 0, block: block, inline: block.inlineText.map { AttributedString($0) }),
+        let text = MarkdownBuilder.build(MarkdownView.Rendered(id: 0, block: block),
                                          leading: false, spacing: 0, widestMarker: nil, theme: theme)
         #expect(MarkdownNSTextView.plain(text, in: NSRange(location: 0, length: text.length)) == "A\tB\tC\na\t\t")
     }

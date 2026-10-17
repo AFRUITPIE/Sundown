@@ -21,10 +21,12 @@ let package = Package(
         useSiblingServer
             ? .package(path: "../../tether-server")
             : .package(url: "https://github.com/AFRUITPIE/tether-server.git", from: "0.1.0"),
+        // Messages' Markdown: CommonMark and GitHub's extensions, parsed by cmark-gfm.
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.9.0"),
     ],
     targets: [
         .target(name: "SundownKit", dependencies: [.product(name: "TetherProtocol", package: "tether-server")]),
-        .target(name: "SundownUI", dependencies: ["SundownKit"]),
+        .target(name: "SundownUI", dependencies: ["SundownKit", .product(name: "Markdown", package: "swift-markdown")]),
         .testTarget(name: "SundownKitTests", dependencies: ["SundownKit"], resources: [.copy("Fixtures")]),
         .testTarget(name: "SundownUITests", dependencies: [
             "SundownUI", "SundownKit", .product(name: "TetherProtocol", package: "tether-server"),
