@@ -358,18 +358,23 @@ extension TranscriptView {
     /// - the bottom edge, once the rows there are built and the edge is where they are: a position
     ///   held by a row's id keeps that row still, so streamed text grew below the window; held by
     ///   the edge, it follows the end.
+    /// The whole transcript is on screen, so there's no end to go to.
+    private var fitsOnScreen: Bool { onScreen.fits && !onScreen.ids.isEmpty }
+
     private func scrollToEnd() {
         // A transcript that fits sits at the top (the alignment anchor), and has no end to go to:
         // going to a row's bottom there put it a toolbar's height too low, and the alignment took it
         // back, each step, so a chat switched to jumped up and down for a moment (2026-10-16).
-        if !onScreen.fits { position.scrollTo(id: TranscriptContent.endID, anchor: .bottom) }
+        // Only while rows are on screen: a transcript left blank (a reload under a scrolled reader)
+        // could measure as fitting for a moment, and going nowhere left it blank for seconds.
+        if !fitsOnScreen { position.scrollTo(id: TranscriptContent.endID, anchor: .bottom) }
         onScreen.settling &+= 1
         let request = onScreen.settling
         Task {
             for step in 0..<3 {
                 try? await Task.sleep(for: .milliseconds(step == 0 ? 60 : 120))
                 guard onScreen.settling == request else { return }
-                if onScreen.fits { continue }
+                if fitsOnScreen { continue }
                 position.scrollTo(id: TranscriptContent.endID, anchor: .bottom)
                 if step == 2 { position.scrollTo(edge: .bottom) }
             }
