@@ -6,7 +6,7 @@ Sundown is a native macOS SwiftUI client for Claude Code. It is intentionally a 
 
 This repository builds on its own. Clone it, open `Sundown.xcodeproj`, and build:
 
-- `SundownKit/Package.swift` depends on the `TetherProtocol` package published by `AFRUITPIE/tether-server`, pinned by version. The generated sources are committed there, so nothing has to be generated to consume them.
+- `SundownKit/Package.swift` depends on the `TetherProtocol` package published by `AFRUITPIE/tether-server`, pinned by version. The generated sources are committed there, so nothing has to be generated to consume them. Its only other dependency is Apple's `swiftlang/swift-subprocess` (`Subprocess`), which runs every process the app starts.
 - The app carries no server and installs nothing. Every host has Node.js 18 or later, and runs tether-server's npm package with the first `npx` on its login shell's PATH: `npx --yes tether-server@<version> connect`, at the version this app pins. A host without it fails to connect, with the shell's own error.
 - `ServerRelease.version` (`Bootstrap.swift`) is the server this app runs, the release its protocol package is pinned to. Bump both together, after that version has been published.
 
@@ -31,8 +31,8 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
 - `Sundown/SundownIntents.swift`: the Start a Chat shortcut (App Intents live in the app target), which opens a `sundown://` link (`OpenURLIntent`).
 - `Sundown/Info.plist`: the `sundown` URL scheme.
 - `SundownKit/Sources/SundownKit`: transport and state layer.
-  - `Bootstrap.swift`: `ServerRelease` (the pinned version) and `HostBootstrapper`, which reads the host's interactive PATH and builds the connect command: `npx` under the login shell with that PATH, locally or through system `ssh`, or a host's Server Command as it is.
-  - `Transport.swift`: process-backed JSONL byte transport (`LineSplitter`: each byte looked at once, a long line's buffer let go).
+  - `Bootstrap.swift`: `ServerRelease` (the pinned version) and `HostBootstrapper`, which reads the host's interactive PATH and builds the connect command: `npx` under the login shell with that PATH, locally or through system `ssh`, or a host's Server Command as it is. `ShellRun` runs the PATH probe with Subprocess: its stdin empty, its output read until it exits, `done` says it has said enough (a child the shell started can hold the pipe open), or the timeout, after which Subprocess stops it (SIGTERM, then SIGKILL a second later).
+  - `Transport.swift`: process-backed JSONL byte transport (`ProcessTransport`, on Subprocess). Subprocess's handles on a process are good only inside its `run`, so one task holds that for the connection's life, and `lines()` (starting it), `send` (each line written in order, its sender told once it is) and `close()` or the reader going away (stopping it: SIGTERM, then SIGKILL after 2 s) reach it through streams, with nothing shared or locked. SIGPIPE is ignored app-wide, since Subprocess's pipes don't set `F_SETNOSIGPIPE` as Foundation's did; children start with every signal at its default. `LineSplitter` splits stdout's raw bytes (each byte looked at once, a long line's buffer let go).
   - `RPCClient.swift`: actor that correlates JSON-RPC calls, finds each message's members without decoding it (`WireMessage`, then one typed decode), delivers notifications in order in batches of up to a frame, and answers server-to-client requests.
   - `HostConnection.swift`: one host connection, reconnect/replay behavior, catalogs, thread operations, and server-request routing.
   - `PendingStart.swift`: a chat New Chat is starting, from Send until its window moves to the host's chat: the stand-in it shows meanwhile, and how the start came out.
