@@ -55,22 +55,19 @@ struct ToolCallView: View {
             // opens in place.
             VStack(alignment: .leading, spacing: 2) {
                 Button { inspectSubagent(call.id) } label: {
-                    HStack(spacing: 6) {
-                        header
-                        DisclosureIndicator(expanded: false)
-                    }
-                    .padding(.vertical, 4)
-                    .contentShape(Rectangle())
+                    DisclosureRowLabel(expanded: false) { header }
                 }
                 .help("Show in Tasks")
                 .buttonStyle(.plain)
                 .accessibilityValue(statusDescription)
                 .accessibilityIdentifier("transcript.toolCall")
-                reasonLine
+                if let reason = ToolCallText.reason(call) { RowNote(reason) }
             }
         } else {
             DisclosureGroup(isExpanded: $expanded) {
-                detailBox
+                detail
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
             } label: {
                 header
             }
@@ -78,22 +75,6 @@ struct ToolCallView: View {
                                                             note: ToolCallText.reason(call)))
             .onChange(of: expandDetails, initial: true) { _, open in expanded = open }
         }
-    }
-
-    @ViewBuilder private var reasonLine: some View {
-        if let reason = ToolCallText.reason(call) {
-            Text(reason)
-                .scaledFont(.caption)
-                .foregroundStyle(.tertiary)
-                .lineLimit(2)
-                .textSelection(.enabled)
-        }
-    }
-
-    private var detailBox: some View {
-        detail
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 8)
     }
 
     /// Words first, then the status, then the disclosure's chevron. A finished call has no status
@@ -129,9 +110,9 @@ struct ToolCallView: View {
     /// value says "Running" for VoiceOver.
     @ViewBuilder private var status: some View {
         switch call.status {
-        case .failed: Image(systemName: "exclamationmark.circle").foregroundStyle(.tertiary).scaledFont(.caption)
-        case .denied: Image(systemName: "hand.raised").foregroundStyle(.tertiary).scaledFont(.caption)
-        case .interrupted: Image(systemName: "stop.circle").foregroundStyle(.tertiary).scaledFont(.caption)
+        case .failed: StatusGlyph("exclamationmark.circle")
+        case .denied: StatusGlyph("hand.raised")
+        case .interrupted: StatusGlyph("stop.circle")
         default: EmptyView()
         }
     }
@@ -189,8 +170,6 @@ struct ToolCallView: View {
             CodeBlock(code: input.string("content") ?? "", language: (input.string("file_path") ?? "").lastPathComponent, lineLimit: 16)
         case .todoWrite:
             TodoListView(todos: input["todos"]?.arrayValue ?? [])
-        case .subagent:
-            EmptyView() // Subagent transcripts belong in the Tasks inspector.
         case .skill:
             // What the skill told Claude, which Claude Code put in the chat as a message of its own.
             if let body = thread.skillBodies[call.id], !body.isEmpty {
@@ -303,14 +282,7 @@ struct TranscriptDisclosureStyle: DisclosureGroupStyle {
                 Button {
                     withAnimation(reduceMotion ? nil : .snappy(duration: 0.15)) { configuration.isExpanded.toggle() }
                 } label: {
-                    // The words, then the chevron right after them.
-                    HStack(spacing: 6) {
-                        configuration.label
-                        DisclosureIndicator(expanded: configuration.isExpanded)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.vertical, 4)
-                    .contentShape(Rectangle())
+                    DisclosureRowLabel(expanded: configuration.isExpanded, fillsRow: true) { configuration.label }
                 }
                 .buttonStyle(.plain)
                 // After the row's words: a disclosure triangle's value is whether it's open, so a
@@ -320,13 +292,7 @@ struct TranscriptDisclosureStyle: DisclosureGroupStyle {
                     if let value, !value.isEmpty { Text(value) }
                 }
                 .accessibilityIdentifier(identifier)
-                if let note {
-                    Text(note)
-                        .scaledFont(.caption)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(2)
-                        .textSelection(.enabled)
-                }
+                if let note { RowNote(note) }
             }
             if configuration.isExpanded {
                 configuration.content
@@ -350,6 +316,56 @@ struct DisclosureIndicator: View {
     }
 }
 
+/// A row that opens: its words, then the chevron right after them. Filling the row also makes the
+/// space after the chevron part of what a click opens.
+struct DisclosureRowLabel<Words: View>: View {
+    let expanded: Bool
+    var fillsRow = false
+    let words: Words
+
+    init(expanded: Bool, fillsRow: Bool = false, @ViewBuilder words: () -> Words) {
+        self.expanded = expanded
+        self.fillsRow = fillsRow
+        self.words = words()
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            words
+            DisclosureIndicator(expanded: expanded)
+            if fillsRow { Spacer(minLength: 0) }
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+    }
+}
+
+/// The quiet gray line under a row, in the caption size: why a call failed or stopped.
+struct RowNote: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .scaledFont(.caption)
+            .foregroundStyle(.tertiary)
+            .lineLimit(2)
+            .textSelection(.enabled)
+    }
+}
+
+/// A call's or a run's status when it went wrong, as a small gray glyph after its words.
+struct StatusGlyph: View {
+    let symbol: String
+
+    init(_ symbol: String) { self.symbol = symbol }
+
+    var body: some View {
+        Image(systemName: symbol).foregroundStyle(.tertiary).scaledFont(.caption)
+    }
+}
+
 /// A folded run of finished tool calls (see `foldTranscriptRows`) as one line that says what they
 /// did: "Read 3 files, searched code, and ran 2 commands". Open, its calls are listed beneath at
 /// the same leading edge, each a line of its own; a failed one has its own gray glyph.
@@ -361,7 +377,7 @@ struct ToolCallGroupView: View {
     let thread: ThreadModel
     /// The transcript row's id, so Find in Chat opens the group when it's the current match.
     var rowID: String?
-    @State private var expanded: Bool
+    @State private var expanded = false
     @State private var expandAll = false
 
     /// While the run is the turn's work in progress, what it's doing now: the running call's words,
@@ -380,14 +396,6 @@ struct ToolCallGroupView: View {
     private var saysWhatsHappening: Bool {
         guard liveTitle != nil, let last = calls.last, last.id == thread.lastShownItem?.id else { return false }
         return calls.contains { $0.status == .running || $0.status == .pending } || (last.kind != .subagent && last.kind != .todoWrite)
-    }
-
-    init(calls: [Item.ToolCall], edits: TurnEdits? = nil, thread: ThreadModel, rowID: String? = nil, initiallyExpanded: Bool = false) {
-        self.calls = calls
-        self.edits = edits
-        self.thread = thread
-        self.rowID = rowID
-        self._expanded = State(initialValue: initiallyExpanded)
     }
 
     var body: some View {
@@ -718,7 +726,7 @@ enum PrettyInput {
         ["content": "Add PreviewSupport.swift", "activeForm": "Adding PreviewSupport.swift", "status": "completed"],
         ["content": "Add #Preview blocks to every SundownUI view", "activeForm": "Adding #Preview blocks", "status": "in_progress"],
         ["content": "Render every preview in Xcode and fix issues", "activeForm": "Rendering previews", "status": "pending"],
-    ]], status: .completed, secondsAgo: 30), thread: .sampleIdleChat())
+    ]], status: .completed, secondsAgo: 30), thread: .sampleIdleChat(), expandDetails: true)
         .padding(20)
         .frame(width: 560)
 }
@@ -778,18 +786,6 @@ private func sampleFinishedRun() -> [Item.ToolCall] {
     ]
 }
 
-#Preview("Tool group (collapsed)") {
-    ToolCallGroupView(calls: sampleFinishedRun(), thread: .sampleIdleChat())
-        .padding(20)
-        .frame(width: 560)
-}
-
-#Preview("Tool group (expanded)") {
-    ToolCallGroupView(calls: sampleFinishedRun(), thread: .sampleIdleChat(), initiallyExpanded: true)
-        .padding(20)
-        .frame(width: 560)
-}
-
 #Preview("Tool calls") {
     VStack(alignment: .leading, spacing: 10) {
         ToolCallGroupView(calls: sampleFinishedRun(), thread: .sampleIdleChat())
@@ -799,16 +795,6 @@ private func sampleFinishedRun() -> [Item.ToolCall] {
                                     status: .failed, outputText: "String to replace not found in file.", secondsAgo: 2), thread: .sampleIdleChat())
         ToolCallView(call: .sample(name: "Read", kind: .fileRead, input: ["file_path": "/tmp/b.swift"], status: .completed, secondsAgo: 1),
                      thread: .sampleIdleChat())
-    }
-    .padding(20)
-    .frame(width: 560)
-}
-
-#Preview("Running call beside a finished group") {
-    VStack(alignment: .leading, spacing: 10) {
-        ToolCallGroupView(calls: sampleFinishedRun(), thread: .sampleIdleChat())
-        ToolCallView(call: .sample(name: "Bash", kind: .bash, input: ["command": "swift test", "description": "Run the test suite"],
-                                    status: .running, elapsedSeconds: 4, secondsAgo: 4), thread: .sampleIdleChat())
     }
     .padding(20)
     .frame(width: 560)
@@ -842,16 +828,6 @@ private struct FindOpensWorkPreview: View {
     }
 }
 
-#Preview("Todo list (standalone)") {
-    TodoListView(todos: [
-        ["content": "Add PreviewSupport.swift", "status": "completed"],
-        ["content": "Add #Preview blocks", "activeForm": "Adding #Preview blocks", "status": "in_progress"],
-        ["content": "Render every preview", "status": "pending"],
-    ])
-    .padding(20)
-    .frame(width: 420)
-}
-
 #Preview("Diff") {
     DiffView(old: "func title() -> String {\n    return name\n}", new: "func title() -> String {\n    guard !name.isEmpty else { return \"Untitled\" }\n    return name\n}")
         .padding(20)
@@ -860,19 +836,15 @@ private struct FindOpensWorkPreview: View {
 
 #endif
 
-/// A line of words that says what's happening: shimmering while it's live, and turning into its
-/// next words by blurring up and away as they rise in from below. Settled, it's plain secondary text.
-/// Text that turns into its next value the way the running turn's words do: the old blurs up and
-/// away as the new blurs in, on a gentle spring. A chat's title as Claude names it.
-struct ReplacingText: View {
+/// Turns into its next value the way the running turn's words do: the old blurs up and away as the
+/// new blurs in, on a gentle spring.
+private struct ReplacesWhenChanged: ViewModifier {
     let text: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(_ text: String) { self.text = text }
-
-    var body: some View {
+    func body(content: Content) -> some View {
         ZStack(alignment: .leading) {
-            Text(text)
+            content
                 .id(text)
                 .transition(.moving(AnyTransition(BlurReplaceTransition(configuration: .upUp)), reduceMotion: reduceMotion))
         }
@@ -880,19 +852,29 @@ struct ReplacingText: View {
     }
 }
 
+/// Text that turns into its next value the way the running turn's words do. A chat's title as
+/// Claude names it.
+struct ReplacingText: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text).modifier(ReplacesWhenChanged(text: text))
+    }
+}
+
+/// A line of words that says what's happening: shimmering while it's live, and turning into its
+/// next words by blurring up and away as they rise in from below. Settled, it's plain secondary text.
 struct ActivityLabel: View {
     let text: String
     let live: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            words
-                .id(text)
-                .transition(.moving(AnyTransition(BlurReplaceTransition(configuration: .upUp)), reduceMotion: reduceMotion))
-        }
-        .lineLimit(1)
-        .animation(reduceMotion ? .default : .spring(duration: 0.45, bounce: 0.25), value: text)
+        words
+            .modifier(ReplacesWhenChanged(text: text))
+            .lineLimit(1)
     }
 
     @ViewBuilder private var words: some View {
