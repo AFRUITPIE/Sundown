@@ -96,7 +96,7 @@ private struct WorkChatPreview: View {
 #Preview("Thinking (nothing to show yet)") {
     NavigationStack {
         ThreadView(thread: .sample(status: .running, items: [
-            .sampleUserMessage("Why does opening a chat with the inspector open throw a constraints exception?", secondsAgo: 3),
+            .userMessage(.sample("Why does opening a chat with the inspector open throw a constraints exception?", secondsAgo: 3)),
         ]), connection: .sample())
     }
     .frame(width: 900, height: 400)
@@ -105,12 +105,12 @@ private struct WorkChatPreview: View {
 /// A background command settling between calls: one run of calls, the notice after it.
 #Preview("Task settles mid-run") {
     let items: [Item] = [
-        .sampleUserMessage("Run the tests in the background and keep going.", secondsAgo: 60),
-        .sampleToolCall(name: "Bash", kind: .bash, input: ["command": .string("swift test")], status: .completed, secondsAgo: 55),
-        .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string("/tmp/App.swift")], status: .completed, secondsAgo: 50),
+        .userMessage(.sample("Run the tests in the background and keep going.", secondsAgo: 60)),
+        .toolCall(.sample(name: "Bash", kind: .bash, input: ["command": .string("swift test")], status: .completed, secondsAgo: 55)),
+        .toolCall(.sample(name: "Read", kind: .fileRead, input: ["file_path": .string("/tmp/App.swift")], status: .completed, secondsAgo: 50)),
         .notice(.sample("Background command \"Run the package tests\" completed (exit code 0)", kind: "taskNotification", secondsAgo: 45)),
-        .sampleToolCall(name: "Bash", kind: .bash, input: ["command": .string("git status")], status: .completed, secondsAgo: 40),
-        .sampleAgentMessage("The tests pass and the tree is clean.", secondsAgo: 30),
+        .toolCall(.sample(name: "Bash", kind: .bash, input: ["command": .string("git status")], status: .completed, secondsAgo: 40)),
+        .agentMessage(.sample("The tests pass and the tree is clean.", secondsAgo: 30)),
     ]
     NavigationStack {
         ThreadView(thread: .sample(title: "Task settles mid-run", items: items, turns: [.sample()]), connection: .sample())
@@ -138,12 +138,12 @@ private struct WorkChatPreview: View {
 /// in the chat right after the call, are the call's (opened), not a message from Claude Code.
 #Preview("Skill") {
     let items: [Item] = [
-        .sampleUserMessage("Run the Sundown demo skill.", secondsAgo: 30),
+        .userMessage(.sample("Run the Sundown demo skill.", secondsAgo: 30)),
         .toolCall(.sample(name: "Skill", kind: .skill, input: ["skill": "sundown-demo"], status: .completed,
                           outputText: "Launching skill: sundown-demo", secondsAgo: 28)),
-        .sampleUserMessage("Base directory for this skill: /tmp/skilldemo/.claude/skills/sundown-demo\n\n# Sundown demo skill\n\nWhen this skill is used, reply with exactly one line.",
-                           secondsAgo: 28, synthetic: true),
-        .sampleAgentMessage("The Sundown demo skill ran.", secondsAgo: 26),
+        .userMessage(.sample("Base directory for this skill: /tmp/skilldemo/.claude/skills/sundown-demo\n\n# Sundown demo skill\n\nWhen this skill is used, reply with exactly one line.",
+                           secondsAgo: 28, synthetic: true)),
+        .agentMessage(.sample("The Sundown demo skill ran.", secondsAgo: 26)),
     ]
     NavigationStack {
         ThreadView(thread: .sample(title: "Skill", items: items, turns: [.sample()]), connection: .sample())
@@ -161,7 +161,7 @@ private struct WorkChatPreview: View {
     }
     let command = Item.toolCall(.sample(id: "wc", name: "Bash", kind: .bash, input: ["command": "wc -l poem.md"],
                                         status: commandDone ? .completed : .running, secondsAgo: 2))
-    let items: [Item] = [.sampleUserMessage("Delegate ls to 3 background agents, then count the poem's lines.", secondsAgo: 30)] + agents + [command]
+    let items: [Item] = [.userMessage(.sample("Delegate ls to 3 background agents, then count the poem's lines.", secondsAgo: 30))] + agents + [command]
     VStack(spacing: 0) {
         Toggle("Command done", isOn: $commandDone).padding(8)
         NavigationStack {

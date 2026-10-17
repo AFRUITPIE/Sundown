@@ -12,7 +12,7 @@ struct ToolCallView: View {
     @State private var expanded = false
     /// A group-level action can open every call without repeated disclosure clicks.
     var expandDetails = false
-    @Environment(\.inspectSubagent) private var inspectSubagent
+    @Environment(\.windowRef) private var windowRef
     @Environment(\.hostIsLocal) private var hostIsLocal
     @Environment(\.openFilesWith) private var editor
 
@@ -54,7 +54,7 @@ struct ToolCallView: View {
             // A subagent opens in the Tasks tab instead of here, behind the same chevron as a row that
             // opens in place.
             VStack(alignment: .leading, spacing: 2) {
-                Button { inspectSubagent(call.id) } label: {
+                Button { windowRef.window?.inspectSubagent(call.id) } label: {
                     DisclosureRowLabel(expanded: false) { header }
                 }
                 .help("Show in Tasks")
@@ -194,41 +194,7 @@ struct ToolCallView: View {
     }
 }
 
-/// Shows a subagent's call in the window's Tasks pane. Holds the window, not a closure, so it's
-/// equal whenever it's the same window and the shell's updates don't redraw every tool call.
-struct InspectSubagentAction: Equatable {
-    weak var window: WindowModel?
-
-    @MainActor func callAsFunction(_ toolUseId: String) { window?.inspectSubagent(toolUseId) }
-
-    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
-}
-
-/// Stops one of the shown chat's background tasks (a workflow, from its row). Holds the window, as
-/// `InspectSubagentAction` does.
-struct StopTaskAction: Equatable {
-    weak var window: WindowModel?
-
-    @MainActor func callAsFunction(_ taskId: String) { window?.stopTask(taskId) }
-
-    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
-}
-
-/// Shows the chat's tasks: the Tasks tab, from the transcript's count of running ones. Holds the
-/// window, as `InspectSubagentAction` does.
-struct ShowTasksAction: Equatable {
-    weak var window: WindowModel?
-
-    @MainActor func callAsFunction() { window?.tab = .tasks }
-
-    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
-}
-
 extension EnvironmentValues {
-    @Entry var showTasks = ShowTasksAction()
-    @Entry var inspectSubagent = InspectSubagentAction()
-    @Entry var stopTask = StopTaskAction()
-
     /// The row id of the turn's work a row is shown inside, for Find in Chat.
     @Entry var findFold: String?
 }

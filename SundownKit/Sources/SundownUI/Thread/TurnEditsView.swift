@@ -43,7 +43,7 @@ struct TurnEditsList: View {
     let edits: TurnEdits
     let cwd: String?
     @State private var openFiles: Set<String>
-    @Environment(\.restoreCode) private var restoreCode
+    @Environment(\.windowRef) private var windowRef
 
     init(edits: TurnEdits, cwd: String?, openFiles: Set<String> = []) {
         self.edits = edits
@@ -58,7 +58,7 @@ struct TurnEditsList: View {
                     get: { openFiles.contains(file.path) },
                     set: { open in if open { openFiles.insert(file.path) } else { openFiles.remove(file.path) } }))
             }
-            Button("Restore Files…") { restoreCode(edits.promptID) }
+            Button("Restore Files…") { windowRef.window?.restoreCode(before: edits.promptID) }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
                 .scaledFont(.callout)

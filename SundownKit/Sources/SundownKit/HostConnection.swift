@@ -417,7 +417,7 @@ public final class HostConnection: Identifiable {
             subscribed.insert(model.id)
         } catch let e as RPCError where e.code == RPCError.threadNotLoaded {
             // Thread was unloaded (idle eviction / daemon restart); it resumes on next send.
-            model.setError(nil)
+            model.lastError = nil
         } catch {
             appendLog("Resubscribe \(model.id) failed: \(error.localizedDescription)")
         }
@@ -606,9 +606,9 @@ public final class HostConnection: Identifiable {
         do {
             // A chat let go shows the page it kept until this reads it afresh.
             try await loadHistory(model, force: letGo.contains(model.id))
-            model.setError(nil) // clear a stale "Not connected" from an earlier attempt
+            model.lastError = nil // clear a stale "Not connected" from an earlier attempt
         } catch {
-            model.setError(error.localizedDescription)
+            model.lastError = error.localizedDescription
         }
         Signposts.chatReady(model.id)
     }
@@ -809,29 +809,29 @@ public final class HostConnection: Identifiable {
     /// the terminal. The CLI only knows a foreground command as a task a few seconds in.
     public func moveToBackground(_ model: ThreadModel, toolUseId: String) async {
         let moved = await perform(model) { try await $0.call(Methods.TaskBackground.self, .init(threadId: model.id, toolUseId: toolUseId)) }
-        if let moved, !moved.backgrounded { model.setError("Claude Code couldn’t move that task to the background.") }
+        if let moved, !moved.backgrounded { model.lastError = "Claude Code couldn’t move that task to the background." }
     }
 
     // Settings for a thread the daemon hasn't loaded are held until it resumes, rather than
     // failing with "not loaded": there is nothing there to change yet.
 
     public func setModel(_ model: ThreadModel, _ value: String?) async {
-        guard isLoaded(model) else { return model.editPendingSettings { $0.model = .some(value) } }
+        guard isLoaded(model) else { model.pendingSettings.model = .some(value); return }
         await perform(model) { try await $0.call(Methods.ThreadSetModel.self, .init(threadId: model.id, model: value)) }
     }
 
     public func setEffort(_ model: ThreadModel, _ value: EffortLevel?) async {
-        guard isLoaded(model) else { return model.editPendingSettings { $0.effort = .some(value) } }
+        guard isLoaded(model) else { model.pendingSettings.effort = .some(value); return }
         await perform(model) { try await $0.call(Methods.ThreadSetEffort.self, .init(threadId: model.id, effort: value)) }
     }
 
     public func setPermissionMode(_ model: ThreadModel, _ value: PermissionMode) async {
-        guard isLoaded(model) else { return model.editPendingSettings { $0.permissionMode = value } }
+        guard isLoaded(model) else { model.pendingSettings.permissionMode = value; return }
         await perform(model) { try await $0.call(Methods.ThreadSetPermissionMode.self, .init(threadId: model.id, mode: value)) }
     }
 
     public func setFastMode(_ model: ThreadModel, _ on: Bool) async {
-        guard isLoaded(model) else { return model.editPendingSettings { $0.fastMode = on } }
+        guard isLoaded(model) else { model.pendingSettings.fastMode = on; return }
         await perform(model) { try await $0.call(Methods.ThreadSetFastMode.self, .init(threadId: model.id, enabled: on)) }
     }
 
@@ -1158,13 +1158,13 @@ public final class HostConnection: Identifiable {
     /// run. Nil when it didn’t.
     @discardableResult
     private func perform<T>(_ model: ThreadModel, _ f: (RPCClient) async throws -> T) async -> T? {
-        guard let client else { model.setError(RPCError.notConnected.message); return nil }
+        guard let client else { model.lastError = RPCError.notConnected.message; return nil }
         do {
             let result = try await f(client)
-            model.setError(nil)
+            model.lastError = nil
             return result
         } catch {
-            model.setError(error.localizedDescription)
+            model.lastError = error.localizedDescription
             return nil
         }
     }
@@ -1314,9 +1314,9 @@ extension HostConnection {
 
     /// The chat failing to open for a moment, then opening.
     public func stressErrorFlash(_ model: ThreadModel) async {
-        model.setError("Stress: simulated failure")
+        model.lastError = "Stress: simulated failure"
         try? await Task.sleep(for: .milliseconds(500))
-        model.setError(nil)
+        model.lastError = nil
     }
 }
 #endif

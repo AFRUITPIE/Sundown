@@ -8,45 +8,14 @@ import TetherProtocol
 /// must return what folding and decorating every item at once returns, at every step of a chat.
 @MainActor
 @Suite
-struct IncrementalRowsTests {
+struct IncrementalRowsTests: TimedItems {
     private let threadID = "incremental"
-    /// A Monday morning, in ms, so the script's gaps and day changes are the date separators' own.
-    private let t0: Double = 1_790_000_000_000
 
     // MARK: items
-
-    private func at(_ minutes: Double) -> Double { t0 + minutes * 60_000 }
-
-    private func prompt(_ id: String, _ minutes: Double, synthetic: Bool? = nil) -> Item {
-        .userMessage(.init(id: id, createdAt: at(minutes), content: [.text(.init(text: "Prompt \(id), with more words after it"))],
-                           synthetic: synthetic))
-    }
-
-    private func reply(_ id: String, _ minutes: Double, text: String = "Done.", parent: String? = nil) -> Item {
-        .agentMessage(.init(id: id, parentToolUseId: parent, createdAt: at(minutes), text: text))
-    }
-
-    private func call(_ id: String, _ minutes: Double, kind: ToolKind = .bash, status: ToolStatus = .completed,
-                      parent: String? = nil) -> Item {
-        .toolCall(.init(id: id, parentToolUseId: parent, createdAt: at(minutes), name: "Bash", kind: kind,
-                        input: ["command": .string("echo \(id)")], status: status))
-    }
-
-    private func edit(_ id: String, _ minutes: Double, path: String = "/repo/a.swift", status: ToolStatus = .completed,
-                      parent: String? = nil) -> Item {
-        .toolCall(.init(id: id, parentToolUseId: parent, createdAt: at(minutes), name: "Edit", kind: .fileEdit,
-                        input: ["file_path": .string(path), "old_string": "one\ntwo\nthree", "new_string": .string("one\n\(id)\nthree\nfour")],
-                        status: status))
-    }
 
     private func write(_ id: String, _ minutes: Double, parent: String? = nil) -> Item {
         .toolCall(.init(id: id, parentToolUseId: parent, createdAt: at(minutes), name: "Write", kind: .fileWrite,
                         input: ["file_path": .string("/repo/\(id).swift"), "content": "a\nb\n"], status: .completed))
-    }
-
-    private func subagent(_ id: String, _ minutes: Double, status: ToolStatus) -> Item {
-        .toolCall(.init(id: id, createdAt: at(minutes), name: "Task", kind: .subagent,
-                        input: ["description": "Look around"], status: status))
     }
 
     private func reasoning(_ id: String, _ minutes: Double) -> Item {
