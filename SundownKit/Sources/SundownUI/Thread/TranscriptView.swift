@@ -710,6 +710,7 @@ struct TranscriptLoading: View {
         if !thread.historyLoaded, TranscriptUnavailable.failure(thread, connection) == nil {
             ProgressView("Loading Chat")
                 .labelsHidden()
+                .accessibilityIdentifier("transcript.loading")
         }
     }
 }
