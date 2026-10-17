@@ -21,6 +21,16 @@ final class SundownPerformanceUITests: XCTestCase {
         await app?.terminate()
     }
 
+    /// The app set up for the fixture's performance scenario, not yet launched.
+    @MainActor
+    private func performanceApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["SUNDOWN_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["SUNDOWN_UI_TEST_SCENARIO"] = "performance"
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+        return app
+    }
+
     /// The long chat, open and settled, at a fixed window size.
     /// With SUNDOWN_PERF_ATTACH set to a bundle identifier or an app's path in the runner's environment
     /// (TEST_RUNNER_SUNDOWN_PERF_ATTACH for xcodebuild), the test drives that app instead, launched
@@ -33,12 +43,9 @@ final class SundownPerformanceUITests: XCTestCase {
             app = bundleID.hasPrefix("/") ? XCUIApplication(url: URL(fileURLWithPath: bundleID)) : XCUIApplication(bundleIdentifier: bundleID)
             app.activate()
         } else {
-            app = XCUIApplication()
-            app.launchEnvironment["SUNDOWN_UI_TEST_MODE"] = "1"
-            app.launchEnvironment["SUNDOWN_UI_TEST_SCENARIO"] = "performance"
+            app = performanceApp()
             if longTurn { app.launchEnvironment["SUNDOWN_PERF_LONG_TURN"] = "1" }
             if let replySections { app.launchEnvironment["SUNDOWN_PERF_REPLY_SECTIONS"] = String(replySections) }
-            app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
             app.launch()
         }
         self.app = app
@@ -236,10 +243,7 @@ final class SundownPerformanceUITests: XCTestCase {
     /// signpost), onto the long chat.
     @MainActor
     func testLaunch() {
-        let app = XCUIApplication()
-        app.launchEnvironment["SUNDOWN_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["SUNDOWN_UI_TEST_SCENARIO"] = "performance"
-        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES"]
+        let app = performanceApp()
         self.app = app
         let options = XCTMeasureOptions()
         options.iterationCount = 5

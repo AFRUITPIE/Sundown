@@ -84,8 +84,7 @@ final class ChatListUITests: SundownUITestCase {
         let before = copies.count
         row("Renamed Chat").rightClick()
         visibleMenuItem("Duplicate").click()
-        let duplicated = Date().addingTimeInterval(5)
-        while copies.count == before && Date() < duplicated { Thread.sleep(forTimeInterval: 0.2) }
+        waitUntil(5) { copies.count != before }
         XCTAssertEqual(copies.count, before + 1, "Duplicate made no copy")
 
         // Delete asks first; Cancel keeps the chat.

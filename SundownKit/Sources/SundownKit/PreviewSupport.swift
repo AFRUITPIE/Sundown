@@ -332,50 +332,12 @@ extension ThreadModel {
     /// One of each kind of task, as the SDK reports them: a workflow, an agent that started an agent
     /// and a background command of its own, a monitor and an MCP tool, running and finished.
     public static func sampleWithTaskKinds() -> ThreadModel {
-        let root = "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownUI/"
-        func started(_ seq: Int, _ id: String, _ type: String, _ description: String, toolUseId: String? = nil,
-                     extra: [String: JSONValue] = [:]) -> TaskEventNotification {
-            var data: [String: JSONValue] = ["task_type": .string(type)]
-            for (k, v) in extra { data[k] = v }
-            return .init(threadId: "preview-thread", seq: seq, event: "started", taskId: id, toolUseId: toolUseId,
-                         description: description, status: "running", data: .object(data))
-        }
-        return sample(
+        sample(
             title: "Review the Markdown changes",
             status: .running,
-            items: [
-                .sampleUserMessage("Review the Markdown changes before I merge, and find which views read thread.items.", secondsAgo: 400),
-                WorkflowSample.items(now: preview(secondsAgo: 80), running: true)[1],
-                .sampleToolCall(id: "agent-1", name: "Task", kind: .subagent, input: [
-                    "subagent_type": "Explore", "description": "Find every SwiftUI view in SundownUI",
-                    "prompt": "Find every SwiftUI view in SundownUI and list which read `thread.items`.",
-                ], status: .running, secondsAgo: 100),
-                .sampleToolCall(name: "Grep", kind: .grep, input: ["pattern": "thread\\.items", "path": .string(root)],
-                                outputText: "Thread/TranscriptFind.swift:88\nThread/ThreadView.swift:41", parentToolUseId: "agent-1", secondsAgo: 95),
-                .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptFind.swift")],
-                                parentToolUseId: "agent-1", secondsAgo: 90),
-                .sampleAgentMessage("Most views read `rows`, not `items`. Two exceptions so far:\n\n- `TranscriptFind` builds its search text from items.\n- `ThreadView` reads the last item for the Thinking line.",
-                                    secondsAgo: 80, parentToolUseId: "agent-1"),
-                .sampleToolCall(id: "bg-call", name: "Bash", kind: .bash, input: [
-                    "command": "swift test --package-path SundownKit", "description": "Run the package tests", "run_in_background": true,
-                ], status: .completed, outputText: "Command running in background", parentToolUseId: "agent-1", secondsAgo: 70),
-                .sampleToolCall(id: "agent-2", name: "Task", kind: .subagent, input: [
-                    "description": "Check how TranscriptFind reads items",
-                    "prompt": "Read TranscriptFind.swift and say exactly how it builds its search text.",
-                ], status: .running, parentToolUseId: "agent-1", secondsAgo: 34),
-                .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptFind.swift")],
-                                status: .running, parentToolUseId: "agent-2", secondsAgo: 5),
-            ],
+            items: TaskTranscript.items(),
             turns: [.sample(status: .inProgress, secondsAgo: 400)],
-            tasks: [
-                started(2, "agent-task-1", "local_agent", "Find every SwiftUI view in SundownUI", toolUseId: "agent-1"),
-                started(3, "bg-tests", "local_bash", "swift test --package-path SundownKit", toolUseId: "bg-call"),
-                started(4, "agent-task-2", "local_agent", "Check how TranscriptFind reads items", toolUseId: "agent-2"),
-                started(5, "monitor-1", "monitor", "Watch CI on the pull request"),
-                .init(threadId: "preview-thread", seq: 6, event: "notification", taskId: "mcp-1",
-                      description: "Run all tests in Xcode", status: "completed", summary: "412 tests passed, 3 skipped.",
-                      data: ["task_type": "mcp_task", "usage": ["duration_ms": 243_000, "total_tokens": 0, "tool_uses": 1]]),
-            ] + WorkflowSample.events(threadID: "preview-thread", firstSeq: 10, now: preview(secondsAgo: 0), running: true))
+            tasks: TaskTranscript.events(threadID: "preview-thread", firstSeq: 1))
     }
 
     /// A /loop and a /goal as Claude Code 2.1.291 ran them (the loop-goal capture): the loop's job
@@ -631,25 +593,11 @@ extension ThreadModel {
         ], pending: [.samplePermission()])
     }
 
-    /// A thread waiting on an AskUserQuestion answer.
-    public static func samplePendingQuestion() -> ThreadModel {
-        sample(title: "New Xcode target", status: .requiresAction, items: [
-            .sampleUserMessage("Add a new target for the CLI.", secondsAgo: 20),
-        ], pending: [.sampleQuestion()])
-    }
-
     /// A thread waiting on plan approval (plan mode).
     public static func samplePendingPlan() -> ThreadModel {
         sample(title: "Previews for SundownUI", status: .requiresAction, permissionMode: .plan, items: [
             .sampleUserMessage("Plan out how to add previews before touching any code.", secondsAgo: 60),
         ], pending: [.samplePlan()])
-    }
-
-    /// A thread waiting on an MCP elicitation.
-    public static func samplePendingElicitation() -> ThreadModel {
-        sample(title: "Deploy", status: .requiresAction, items: [
-            .sampleUserMessage("Deploy the latest build.", secondsAgo: 20),
-        ], pending: [.sampleElicitation()])
     }
 
     /// A turn that failed, with `thread.lastError` also set — exercises TurnOutcome and StatusStrip.
@@ -663,16 +611,6 @@ extension ThreadModel {
                     result: .sample(subtype: "error_during_execution", isError: true,
                                     errors: ["SSH connection to deploy-01 timed out"], durationSeconds: 25, totalCostUsd: 0.09)),
         ], lastError: "Not connected")
-    }
-
-    /// A turn the user interrupted mid-stream.
-    public static func sampleInterruptedTurn() -> ThreadModel {
-        sample(title: "Refactor HostConnection", status: .interrupted, items: [
-            .sampleUserMessage("Refactor HostConnection to split the reconnect logic out.", secondsAgo: 50),
-            .sampleAgentMessage("Starting by pulling scheduleReconnect into its own type…", secondsAgo: 40),
-        ], turns: [
-            .sample(status: .interrupted, secondsAgo: 38, result: .sample(durationSeconds: 12, totalCostUsd: 0.03)),
-        ])
     }
 
     /// A finished chat whose plan limit is `status` (`allowed_warning`, `rejected`), resetting

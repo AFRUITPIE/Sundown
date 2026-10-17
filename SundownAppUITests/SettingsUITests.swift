@@ -61,11 +61,7 @@ final class SettingsUITests: SundownUITestCase {
     /// its rows out again after a choice, and an element found before reads the old row.
     @MainActor
     private func waitForValue(_ value: String, of label: String) -> Bool {
-        let deadline = Date().addingTimeInterval(5)
-        repeat {
-            if popUp(label).value as? String == value { return true }
-            Thread.sleep(forTimeInterval: 0.3)
-        } while Date() < deadline
+        if waitUntil(5, { popUp(label).value as? String == value }) { return true }
         print("\(label) reads \(String(describing: popUp(label).value))")
         return false
     }
