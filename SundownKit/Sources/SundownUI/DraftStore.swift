@@ -11,11 +11,6 @@ protocol DraftStore: Sendable {
 
 extension DraftStore {
     func read() -> [String: String] { DraftQueue.decode(readData()) }
-
-    @discardableResult func write(_ drafts: [String: String]) -> Bool {
-        guard let data = DraftQueue.encode(drafts) else { return false }
-        return write(data)
-    }
 }
 
 /// `Drafts.json` in the app's Application Support directory.

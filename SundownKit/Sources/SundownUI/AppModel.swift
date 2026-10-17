@@ -46,7 +46,7 @@ public enum SidebarFilter: String, CaseIterable, Sendable {
         switch self {
         case .all: !thread.isArchived
         case .working: !thread.isArchived && thread.isRunning
-        case .waiting: !thread.isArchived && (!thread.pending.isEmpty || thread.status == .requiresAction)
+        case .waiting: !thread.isArchived && thread.isWaitingOnYou
         case .archived: thread.isArchived
         }
     }
@@ -132,16 +132,16 @@ public final class AppModel {
             if appearance.sessionTools != oldValue.sessionTools {
                 for c in connections.values { c.offersSessionTools = appearance.sessionTools }
             }
-            guard !isLoading, appearance != oldValue, let data = try? JSONEncoder().encode(appearance) else { return }
-            defaults.set(data, forKey: Self.appearanceKey)
+            guard !isLoading, appearance != oldValue else { return }
+            write(try? Self.encoder.encode(appearance), forKey: Self.appearanceKey)
         }
     }
 
     /// Settings ▸ Notifications (persisted under a key of its own).
     public var alerts = AlertPreferences() {
         didSet {
-            guard !isLoading, alerts != oldValue, let data = try? JSONEncoder().encode(alerts) else { return }
-            defaults.set(data, forKey: Self.alertsKey)
+            guard !isLoading, alerts != oldValue else { return }
+            write(try? Self.encoder.encode(alerts), forKey: Self.alertsKey)
         }
     }
 
@@ -521,12 +521,8 @@ public final class AppModel {
     // Everything but `hosts` is optional, so a store written by an older build still decodes.
     private struct Stored: Codable {
         var hosts: [HostConfig]
-        /// Once the app's own permission mode for new chats; the host's Claude Code decides now.
-        var defaultPermissionMode: String?
         var transcriptWidth: String?
         /// Where the last window was: in `LastWindow` now, read from here once.
-        var showInspector: Bool?
-        var inspectorPane: String?
         var hostID: UUID?
         var sidebarGrouping: String?
         var threadID: String?
@@ -570,8 +566,12 @@ public final class AppModel {
         for host in hosts where host.env.isEmpty && withValues?.contains(host.id) != false {
             unreadEnvironment.insert(host.id)
         }
-        appearance = defaults.data(forKey: Self.appearanceKey).flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
-        alerts = defaults.data(forKey: Self.alertsKey).flatMap { try? JSONDecoder().decode(AlertPreferences.self, from: $0) } ?? AlertPreferences()
+        let appearanceData = defaults.data(forKey: Self.appearanceKey)
+        written[Self.appearanceKey] = appearanceData
+        appearance = appearanceData.flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
+        let alertsData = defaults.data(forKey: Self.alertsKey)
+        written[Self.alertsKey] = alertsData
+        alerts = alertsData.flatMap { try? JSONDecoder().decode(AlertPreferences.self, from: $0) } ?? AlertPreferences()
         if let s = stored {
             transcriptWidth = s.transcriptWidth.flatMap(TranscriptWidth.init(rawValue:)) ?? .narrow
             sidebarGrouping = s.sidebarGrouping.flatMap(SidebarGrouping.init(rawValue:)) ?? .date

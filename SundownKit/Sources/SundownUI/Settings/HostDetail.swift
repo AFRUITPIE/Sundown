@@ -13,17 +13,13 @@ struct HostDetail: View {
         Form {
             Section {
                 CommittingTextField("Name", value: host.name) { name in
-                    var updated = host
-                    updated.name = name
-                    update(updated)
+                    edit { $0.name = name }
                 }
                 // Nothing stands in for this on the local host: its name is the only field, and
                 // the machine it runs on is named under Connection.
                 if let destination = host.sshDestination {
                     CommittingTextField("Destination", value: destination, prompt: "Alias or user@host") { value in
-                        var updated = host
-                        updated.kind = .ssh(destination: value)
-                        update(updated)
+                        edit { $0.kind = .ssh(destination: value) }
                     }
                     .autocorrectionDisabled()
                 }
@@ -34,11 +30,16 @@ struct HostDetail: View {
         .formStyle(.grouped)
         .sheet(isPresented: $editingEnvironment) {
             EnvironmentVariablesSheet(environment: host.env) { environment in
-                var updated = host
-                updated.env = environment
-                update(updated)
+                edit { $0.env = environment }
             }
         }
+    }
+
+    /// Applies `change` to the host and hands the result to `update`.
+    private func edit(_ change: (inout HostConfig) -> Void) {
+        var updated = host
+        change(&updated)
+        update(updated)
     }
 
     // MARK: sections
@@ -79,17 +80,13 @@ struct HostDetail: View {
     private var advancedSection: some View {
         Section {
             Toggle("Name Chats With Claude", isOn: Binding(get: { host.namesChats }, set: { names in
-                var updated = host
-                updated.namesChats = names
-                update(updated)
+                edit { $0.namesChats = names }
             }))
             // The field is monospaced, the label isn't: a command is code, its name is not.
             LabeledContent("Server Command") {
                 CommittingTextField("Server Command", value: host.serverCommand ?? "",
                                     prompt: "Automatic", allowsEmpty: true) { command in
-                    var updated = host
-                    updated.serverCommand = command.isEmpty ? nil : command
-                    update(updated)
+                    edit { $0.serverCommand = command.isEmpty ? nil : command }
                 }
                 .labelsHidden()
                 .font(.body.monospaced())
@@ -194,15 +191,4 @@ enum HostField {
         .frame(width: 472, height: 440)
 }
 
-#Preview("Host Detail (SSH)") {
-    let connection = HostConnection.sampleConnectedSSH()
-    return HostDetail(host: connection.host, connection: connection) { _ in }
-        .frame(width: 472, height: 440)
-}
-
-#Preview("Host Detail (failed)") {
-    let connection = HostConnection.sampleFailed()
-    return HostDetail(host: connection.host, connection: connection) { _ in }
-        .frame(width: 472, height: 440)
-}
 #endif

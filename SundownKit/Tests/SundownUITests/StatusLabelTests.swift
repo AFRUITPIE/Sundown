@@ -2,16 +2,16 @@ import Testing
 import TetherProtocol
 @testable import SundownUI
 
-/// The inspector shows server states as words. Raw wire values reaching the user is the bug these
-/// guard against, including for a status this build has never heard of.
+/// Server states are shown as words. Raw wire values reaching the user is the bug these guard
+/// against, including for a status this build has never heard of.
 @Suite
 struct StatusLabelTests {
     @Test func threadStatusesReadAsWords() {
-        #expect(ThreadStatus.notLoaded.label == "Not Loaded")
-        #expect(ThreadStatus.requiresAction.label == "Requires Action")
-        #expect(ThreadStatus.idle.label == "Idle")
+        #expect(ThreadStatus.notLoaded.rawValue.humanized == "Not Loaded")
+        #expect(ThreadStatus.requiresAction.rawValue.humanized == "Requires Action")
+        #expect(ThreadStatus.idle.rawValue.humanized == "Idle")
         // Forward compatibility: unions keep unknown variants, so they have to display too.
-        #expect(ThreadStatus(rawValue: "awaitingReview").label == "Awaiting Review")
+        #expect(ThreadStatus(rawValue: "awaitingReview").rawValue.humanized == "Awaiting Review")
     }
 
     @Test func serverVocabularyBecomesTitleCase() {

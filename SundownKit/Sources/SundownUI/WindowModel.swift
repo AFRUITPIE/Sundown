@@ -35,8 +35,8 @@ public struct WindowTarget: Codable, Hashable, Sendable {
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
-/// One window's state: its host, the chat on screen (or New Chat and its draft), its inspector,
-/// and the chat a sheet or alert is acting on. App-wide state — hosts, connections, preferences —
+/// One window's state: its host, the chat on screen (or New Chat and its draft), its tab, and
+/// the chat a sheet or alert is acting on. App-wide state — hosts, connections, preferences —
 /// is on `app`. Each change is also remembered there, so a new window or the next launch opens
 /// where the most recently used window left off.
 @MainActor
@@ -49,9 +49,7 @@ public final class WindowModel {
         didSet {
             guard hostID != oldValue else { return }
             // A remembered host can disappear between launches; this Mac is always configured.
-            if app.connections[hostID] == nil && !app.hosts.contains(where: { $0.id == hostID }) {
-                hostID = HostConfig.local.id
-            }
+            if !isConfigured(hostID) { hostID = HostConfig.local.id }
             leaveNewChat()
             threadID = nil
             seedDraft()
@@ -86,7 +84,7 @@ public final class WindowModel {
     /// Someone asked for New Chat (File ▸ New Chat, New Chat Here, a link): its message field takes
     /// focus, even from the sidebar, since they're about to type. Cleared once it has.
     var composerFocusRequested = false
-    /// Where a prompt sent from this window flies from and to, one per window.
+    /// What this window's sends do to its chat, one per window.
     let sendGeometry = MessageSendGeometry()
     /// Whether this is the key window, for deciding whether a chat is in front of you. Unobserved:
     /// nothing on screen depends on it.
@@ -137,14 +135,13 @@ public final class WindowModel {
     public var deleting: ThreadModel?
     /// The chat whose sidebar row is being renamed in place (its context menu's Rename).
     var renamingInPlace: ThreadModel?
-    /// Starts a task Claude suggested in `thread` as a new chat, where it said, or in `thread`'s folder.
     /// Opens a task Claude suggested as New Chat, in the folder it named (or `thread`'s), with its
     /// prompt as a draft to read and edit before sending: Claude wrote it, so it isn't sent unseen.
     func startSuggestedTask(_ task: SuggestedTask, from thread: ThreadModel) {
         thread.dismissSuggestedTask(task.id)
         newChat()
         draftDirectory = task.cwd ?? thread.cwd
-        app.deliverDraft(task.prompt, for: "new-chat:\(hostID)")
+        app.deliverDraft(task.prompt, for: Self.newChatDraftKey(hostID))
     }
 
     /// The chat Chat ▸ Ask a Side Question… (⌥⌘;) is asking about, while its sheet is up.
@@ -236,9 +233,7 @@ public final class WindowModel {
             threadID = chat.thread
         }
         // A remembered host can disappear between launches; this Mac is always configured.
-        if app.connections[hostID] == nil && !app.hosts.contains(where: { $0.id == hostID }) {
-            hostID = HostConfig.local.id
-        }
+        if !isConfigured(hostID) { hostID = HostConfig.local.id }
         if let tab { self.tab = tab }
         started = true
         app.register(self)
@@ -268,12 +263,12 @@ public final class WindowModel {
     /// What the window shows, as its scene value: `id` keeps a window on New Chat itself.
     public func target(keeping id: UUID) -> WindowTarget { WindowTarget(hostID: hostID, threadID: threadID, id: id) }
 
-    /// The window's subtitle: the chat's folder name, or the New Chat folder's; the full path is in
-    /// the Session pane, or the folder pop-up on New Chat. Prefixed with the host when there is
+    /// The window's subtitle: the chat's directory name, or the New Chat draft's; the full path is in
+    /// the directory menu on New Chat. Prefixed with the host when there is
     /// more than one, since nothing else in the window names it.
     public var subtitle: String {
-        let folder = selectedThread.map { $0.cwd } ?? draftDirectory
-        let name = folder.map { ($0 as NSString).lastPathComponent } ?? ""
+        let directory = selectedThread.map { $0.cwd } ?? draftDirectory
+        let name = directory.map { ($0 as NSString).lastPathComponent } ?? ""
         guard app.hosts.count > 1, let host = host?.name else { return name }
         return name.isEmpty ? host : "\(host) · \(name)"
     }
@@ -344,7 +339,6 @@ public final class WindowModel {
             if let folder, !folder.isEmpty { draftDirectory = (folder as NSString).expandingTildeInPath }
             let text = prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !text.isEmpty else { return }
-            let key = "new-chat:\(hostID)"
             let sends = SundownLink.redeem(sendToken)
             // Sent once the host is connected, which it may not be yet on a launch.
             if sends, draftDirectory != nil, await connection?.connected() == true,
@@ -353,10 +347,27 @@ public final class WindowModel {
             }
             // Otherwise it waits in the field. A link from anywhere but Shortcuts never replaces
             // a draft that's already there.
-            if sends || app.draft(for: key).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                app.deliverDraft(text, for: key)
+            if sends {
+                app.deliverDraft(text, for: Self.newChatDraftKey(hostID))
+            } else {
+                offerToNewChat(text, host: hostID)
             }
         }
+    }
+
+    /// Where New Chat's unsent text is kept, per host.
+    static func newChatDraftKey(_ host: UUID) -> String { "new-chat:\(host)" }
+
+    /// Puts `text` in New Chat's draft on `host`, unless something is there already.
+    private func offerToNewChat(_ text: String, host: UUID) {
+        let key = Self.newChatDraftKey(host)
+        guard !text.isEmpty, app.draft(for: key).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        app.deliverDraft(text, for: key)
+    }
+
+    /// Whether the app has a host with this id.
+    private func isConfigured(_ id: UUID) -> Bool {
+        app.connections[id] != nil || app.hosts.contains { $0.id == id }
     }
 
     /// A host this window shows was removed: fall back to this Mac.
@@ -404,7 +415,7 @@ extension WindowModel {
     /// Sends New Chat's message: starts the draft as a chat with `input` as its first message, or,
     /// while a chat this window started is still starting, sends it to that chat once it has.
     ///
-    /// The window shows the start at once (`starting`): the prompt flies up and "Starting session"
+    /// The window shows the start at once (`starting`): the prompt pushes in and "Starting session"
     /// waits under it. Once the host has started the chat, its prompt's echo is in and the prompt
     /// here has landed, the window moves to the chat, unless it has gone elsewhere meanwhile; New
     /// Chat's menus changed meanwhile apply to the chat. A start that fails leaves the window on
@@ -439,11 +450,8 @@ extension WindowModel {
                 draftError = Self.startFailure(error)
                 return false
             }
-            let key = "new-chat:\(connection.id)"
             let text = input.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n")
-            if !text.isEmpty, app.draft(for: key).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                app.deliverDraft(text, for: key)
-            }
+            offerToNewChat(text, host: connection.id)
             return true
         }
         // The menus' changes so far, while the prompt lands and the echo arrives.
@@ -496,10 +504,10 @@ extension WindowModel {
     }
 
     /// From the start to its chat: one move, keeping the window (`WindowTarget.id`), with what was
-    /// typed meanwhile as the chat's draft, and the prompt that flew here not arriving again.
+    /// typed meanwhile as the chat's draft, and the prompt shown here not arriving again.
     private func handOff(_ op: PendingStart, to thread: ThreadModel) {
         starting = nil
-        let key = "new-chat:\(op.hostID)"
+        let key = Self.newChatDraftKey(op.hostID)
         let typed = app.draft(for: key)
         if !typed.isEmpty, app.draft(for: thread.id).isEmpty {
             app.setDraft(typed, for: thread.id)

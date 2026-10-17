@@ -39,7 +39,7 @@ struct SidebarView: View {
                 // New Chat Here, shown on hover over a directory's section, as the system shows a
                 // section's actions.
                 .sectionActions {
-                    if let folder = section.folder {
+                    if let folder = section.source.folder {
                         Button("New Chat Here", systemImage: "square.and.pencil") { newChat(in: folder) }
                     }
                 }
@@ -73,11 +73,9 @@ struct SidebarView: View {
     }
 
     private struct ResolvedSection: Identifiable {
-        let id: String
-        let title: String
-        let help: String?
-        let folder: String?
+        let source: SidebarSection
         let rows: [ResolvedRow]
+        var id: String { source.id }
     }
 
     /// Chats paired with their live models before the `ForEach`, so neither a row nor a section
@@ -88,7 +86,7 @@ struct SidebarView: View {
                 byID[chat.id].map { ResolvedRow(id: chat.id, thread: $0) }
             }
             guard !rows.isEmpty else { return nil }
-            return ResolvedSection(id: section.id, title: section.title, help: section.help, folder: section.folder, rows: rows)
+            return ResolvedSection(source: section, rows: rows)
         }
     }
 
@@ -96,13 +94,9 @@ struct SidebarView: View {
         if window.renamingInPlace === row.thread {
             ChatRenameField(window: window, thread: row.thread)
         } else {
-            chatRow(row, in: section)
+            // Pinned names no folder, so its rows do, as a date section's rows do.
+            ChatRow(thread: row.thread, grouping: section.id == SidebarSection.pinnedID ? .date : app.sidebarGrouping)
         }
-    }
-
-    @ViewBuilder private func chatRow(_ row: ResolvedRow, in section: ResolvedSection) -> some View {
-        // Pinned names no folder, so its rows do, as a date section's rows do.
-        ChatRow(thread: row.thread, grouping: section.id == SidebarSection.pinnedID ? .date : app.sidebarGrouping)
     }
 
     /// Swiped from the trailing edge, as in Mail.
@@ -117,14 +111,15 @@ struct SidebarView: View {
     }
 
     @ViewBuilder private func header(_ section: ResolvedSection) -> some View {
-        if let folder = section.folder {
-            Text(section.title)
-                .help(section.help ?? "")
+        let source = section.source
+        if let folder = source.folder {
+            Text(source.title)
+                .help(source.help ?? "")
                 .contextMenu { folderMenu(folder, section) }
-        } else if let help = section.help {
-            Text(section.title).help(help)
+        } else if let help = source.help {
+            Text(source.title).help(help)
         } else {
-            Text(section.title)
+            Text(source.title)
         }
     }
 
@@ -165,12 +160,7 @@ struct SidebarView: View {
         if let id = ids.first, let thread = byID[id] {
             ChatActionItems(window: window, thread: thread, hidesUnavailable: true)
         } else {
-            Picker("Group By", selection: Bindable(app).sidebarGrouping) {
-                ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
-            Picker("Show", selection: Bindable(app).sidebarFilter) {
-                ForEach(SidebarFilter.allCases, id: \.self) { Text($0.label).tag($0) }
-            }
+            SidebarListPickers(app: app)
             Divider()
             hostActions
         }
@@ -200,6 +190,21 @@ struct SidebarView: View {
                     ContentUnavailableView.search(text: search)
                 }
             }
+        }
+    }
+}
+
+/// How the sidebar's list is grouped and which chats it shows: the View menu's items, and the
+/// list's own context menu's.
+struct SidebarListPickers: View {
+    @Bindable var app: AppModel
+
+    var body: some View {
+        Picker("Group By", selection: $app.sidebarGrouping) {
+            ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
+        }
+        Picker("Show", selection: $app.sidebarFilter) {
+            ForEach(SidebarFilter.allCases, id: \.self) { Text($0.label).tag($0) }
         }
     }
 }
@@ -304,25 +309,6 @@ private func pinningSample(_ app: AppModel = .sample()) -> AppModel {
     let app = pinningSample()
     app.sidebarGrouping = .directory
     return sidebarPreview(app)
-}
-
-/// New Chat Here is a section action: the system shows it while the pointer is over the section,
-/// which a preview can't do.
-#Preview("Directory sections") {
-    List {
-        Section {
-            ChatRow(thread: .sampleIdleChat(), grouping: .directory)
-        } header: {
-            Text("tether-app")
-        }
-        .sectionActions { Button("New Chat Here", systemImage: "square.and.pencil") {} }
-    }
-    .listStyle(.sidebar)
-    .frame(width: 280, height: 120)
-}
-
-#Preview("Sidebar (two hosts)") {
-    sidebarPreview(.sample(connections: [.sample(), .sampleConnecting()]))
 }
 
 #Preview("Sidebar (host failed)") {

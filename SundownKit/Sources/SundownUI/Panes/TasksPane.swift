@@ -39,7 +39,7 @@ struct TasksPane: View {
                             .frame(width: width(index))
                         ColumnDivider(width: Binding(get: { width(index) }, set: { widths[index] = $0 }))
                     }
-                    detail(selected(in: tree))
+                    detail(node(at: path.count - 1, in: tree))
                         .containerRelativeFrame(.horizontal) { width, _ in
                             max(Self.detailMinimum, width - columnsWidth - CGFloat(columns.count))
                         }
@@ -93,7 +93,7 @@ struct TasksPane: View {
         return result
     }
 
-    /// The task selected in column `index`.
+    /// The task selected in column `index`; nil when there is none, as for `-1` before any is chosen.
     private func node(at index: Int, in tree: [TaskNode]) -> TaskNode? {
         var nodes = tree
         var found: TaskNode?
@@ -103,10 +103,6 @@ struct TasksPane: View {
             nodes = node.children
         }
         return found
-    }
-
-    private func selected(in tree: [TaskNode]) -> TaskNode? {
-        path.isEmpty ? nil : node(at: path.count - 1, in: tree)
     }
 
     private func column(_ nodes: [TaskNode], index: Int, of parent: TaskNode?) -> some View {
@@ -227,12 +223,11 @@ struct TaskStateDot: View {
         ZStack {
             switch state {
             case .running:
-                Image(systemName: "circle.fill").resizable().foregroundStyle(.blue)
+                Image(systemName: "circle.fill").resizable().foregroundStyle(state.style)
                     .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
-            case .failed: Circle().fill(.red)
+            // A ring, in the secondary gray rather than the bar's segment gray.
             case .stopped: Circle().strokeBorder(.secondary, lineWidth: 1.5)
-            case .done: Circle().fill(.green)
-            case .waiting: Circle().fill(.quaternary)
+            case .failed, .done, .waiting: Circle().fill(state.style)
             }
         }
         .frame(width: ChatStatusDot.size, height: ChatStatusDot.size)

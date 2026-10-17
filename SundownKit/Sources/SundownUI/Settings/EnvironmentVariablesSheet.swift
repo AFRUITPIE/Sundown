@@ -37,14 +37,14 @@ struct EnvironmentVariablesSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Table(rows, selection: $selection) {
-                TableColumn("Name") { row in
-                    TextField("", text: binding(row.id, \.name))
+            Table($rows, selection: $selection) {
+                TableColumn("Name") { $row in
+                    TextField("", text: $row.name)
                         .font(.body.monospaced())
                         .accessibilityLabel("Name")
                 }
-                TableColumn("Value") { row in
-                    TextField("", text: binding(row.id, \.value))
+                TableColumn("Value") { $row in
+                    TextField("", text: $row.value)
                         .font(.body.monospaced())
                         .accessibilityLabel("Value")
                 }
@@ -87,16 +87,6 @@ struct EnvironmentVariablesSheet: View {
     private func removeSelected() {
         rows.removeAll { selection.contains($0.id) }
         selection = []
-    }
-
-    private func binding(_ id: UUID, _ field: WritableKeyPath<EnvVariable, String>) -> Binding<String> {
-        Binding(
-            get: { rows.first { $0.id == id }?[keyPath: field] ?? "" },
-            set: { new in
-                guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
-                rows[index][keyPath: field] = new
-            }
-        )
     }
 }
 

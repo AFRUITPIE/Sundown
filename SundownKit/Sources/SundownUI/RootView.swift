@@ -191,7 +191,6 @@ public struct RootView: View {
 /// say. One container, so the detail column is never torn down.
 struct DetailView: View {
     @Bindable var window: WindowModel
-    @Environment(\.previewChanges) private var previewChanges
 
     var body: some View {
         ZStack {
@@ -210,7 +209,7 @@ struct DetailView: View {
                 }
             case .diff:
                 if let thread = window.selectedThread, let connection = window.connection {
-                    ChangesPane(thread: thread, connection: connection, changes: previewChanges)
+                    ChangesPane(thread: thread, connection: connection)
                 } else {
                     PaneEmptyState("No Chat", symbol: WindowTab.diff.symbol)
                 }
@@ -347,12 +346,7 @@ public struct ShellViewCommands: View {
     }
 
     public var body: some View {
-        Picker("Group By", selection: $app.sidebarGrouping) {
-            ForEach(SidebarGrouping.allCases, id: \.self) { Text($0.label).tag($0) }
-        }
-        Picker("Show", selection: $app.sidebarFilter) {
-            ForEach(SidebarFilter.allCases, id: \.self) { Text($0.label).tag($0) }
-        }
+        SidebarListPickers(app: app)
         Divider()
         Picker("Tool Calls", selection: $app.appearance.toolCalls) {
             ForEach(Appearance.ToolCallDisplay.allCases) { Text($0.label).tag($0) }
@@ -403,21 +397,24 @@ private func rootPreviewWindow() -> WindowModel {
         .frame(width: 1100, height: 760)
 }
 
-#Preview("RootView (wide transcript)") {
+/// The root with one app setting changed, which a preview's canvas can't change itself.
+@MainActor
+private func rootPreview(width: CGFloat = 1100, _ configure: (AppModel) -> Void) -> some View {
     let window = rootPreviewWindow()
-    window.app.transcriptWidth = .wide
+    configure(window.app)
     return RootPreview(window: window)
-        .frame(width: 1400, height: 760)
+        .frame(width: width, height: 760)
+}
+
+#Preview("RootView (wide transcript)") {
+    rootPreview(width: 1400) { $0.transcriptWidth = .wide }
 }
 
 #Preview("RootView (bigger text)") {
-    let window = rootPreviewWindow()
-    window.app.textScale = 1.5
-    return RootPreview(window: window)
-        .frame(width: 1100, height: 760)
+    rootPreview { $0.textScale = 1.5 }
 }
 
-// The narrowest window without the inspector: every toolbar item must still fit.
+// The narrowest window: every toolbar item must still fit.
 #Preview("RootView (narrow window)") {
     RootPreview(window: rootPreviewWindow())
         .frame(width: 800, height: 600)
