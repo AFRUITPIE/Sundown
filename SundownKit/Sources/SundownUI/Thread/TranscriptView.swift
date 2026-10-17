@@ -48,6 +48,8 @@ struct TranscriptView: View {
         .modifier(BlankSampler(thread: thread))
         .onReceive(NotificationCenter.default.publisher(for: .stressScroll), perform: stressScroll)
         #endif
+        // Loading, in the middle of the page above the bottom bar rather than a row at the top.
+        .overlay { TranscriptLoading(thread: thread, connection: connection).padding(.bottom, bottomRoom) }
         .overlay(alignment: .bottom) { jumpToLatest }
     }
 
@@ -683,16 +685,31 @@ struct TranscriptUnavailable: View {
     let thread: ThreadModel
     var connection: HostConnection?
 
+    /// Why the chat couldn't be opened, once its host is there to try again; until then it's loading.
+    static func failure(_ thread: ThreadModel, _ connection: HostConnection?) -> String? {
+        guard let error = thread.lastError, connection?.state == .connected || connection == nil else { return nil }
+        return error
+    }
+
     var body: some View {
-        if let error = thread.lastError, connection?.state == .connected || connection == nil {
+        // Loading is `TranscriptLoading`, over the transcript's middle.
+        if let error = Self.failure(thread, connection) {
             TranscriptPlaceholder("Couldn\u{2019}t Open This Chat", symbol: "exclamationmark.triangle", detail: error) {
                 if let connection { Button("Try Again") { Task { await connection.open(thread) } } }
             }
-        } else {
+        }
+    }
+}
+
+/// The spinner while a chat's history loads, centred where the transcript will be.
+struct TranscriptLoading: View {
+    let thread: ThreadModel
+    var connection: HostConnection?
+
+    var body: some View {
+        if !thread.historyLoaded, TranscriptUnavailable.failure(thread, connection) == nil {
             ProgressView("Loading Chat")
                 .labelsHidden()
-                .frame(maxWidth: .infinity)
-                .padding(40)
         }
     }
 }
@@ -867,6 +884,11 @@ struct TurnOutcome: View {
 
 /// What stands in for a transcript that couldn't be opened. A host that's down is said by the
 /// status card instead ("Status card (chat not loaded)").
+#Preview("TranscriptView (loading)") {
+    TranscriptView(thread: .sampleUnloaded(), connection: .sample())
+        .frame(width: 900, height: 420)
+}
+
 #Preview("TranscriptView (open failed)") {
     TranscriptView(thread: .sampleUnloaded(lastError: "thread/read failed: no thread with that id"),
                    connection: .sample())
