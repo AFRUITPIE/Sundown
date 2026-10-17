@@ -8,6 +8,8 @@ import TetherProtocol
 struct TranscriptView: View {
     let thread: ThreadModel
     var connection: HostConnection?
+    /// Room after the end for the controls floating over it (`ThreadView`'s bottom bar).
+    var bottomRoom: CGFloat = 0
     @State private var position = ScrollPosition(edge: .bottom)
     /// More than a screen from the end: Jump to Latest is offered only then.
     @State private var farFromEnd = false
@@ -51,7 +53,7 @@ struct TranscriptView: View {
 
     private var scrollView: some View {
         ScrollView {
-            TranscriptContent(thread: thread, connection: connection, position: $position)
+            TranscriptContent(thread: thread, connection: connection, position: $position, bottomRoom: bottomRoom)
                 .environment(\.builtRows, built)
                 // A different Tool Calls folding is a different list of rows, made new: the lazy
                 // stack kept the rows it had built for the old one, and once the content had shrunk
@@ -128,10 +130,12 @@ struct TranscriptView: View {
                 // end they said 52 pt short of it, and the reader was never at the end.
                 let toEnd = g.contentSize.height - g.visibleRect.maxY
                 return ScrollPlace(far: toEnd > g.containerSize.height, atEnd: toEnd < 24,
-                                   pastContent: g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height)
+                                   pastContent: g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height,
+                                   fits: g.contentSize.height <= g.visibleRect.height)
             } action: { _, place in
                 if farFromEnd != place.far { farFromEnd = place.far }
                 if !onScreen.resizing { onScreen.atEnd = place.atEnd }
+                onScreen.fits = place.fits
                 if place.pastContent { checkShowingNothing("scrolled past the end of the content") }
             }
             // A new width lays every row's text out again, and the lazy stack places what it hasn't
@@ -156,7 +160,7 @@ struct TranscriptView: View {
                     .buttonBorderShape(.circle)
                     .controlSize(.large)
                     .help("Jump to Latest")
-                    .padding(.bottom, 8)
+                    .padding(.bottom, bottomRoom + 8)
                     .transition(.moving(.move(edge: .bottom).combined(with: .opacity), reduceMotion: reduceMotion))
                 }
             }
@@ -193,6 +197,8 @@ extension TranscriptView {
         var checking = false
         /// Counts requests to go to the end; a new one, or the reader scrolling, ends the last.
         var settling = 0
+        /// The whole transcript fits on screen: there's no end to go to.
+        var fits = true
         /// The width is changing: `atEnd` and `topRow` keep what they were before it began.
         var resizing = false
         var resizes = 0
@@ -275,6 +281,7 @@ extension TranscriptView {
         let far: Bool
         let atEnd: Bool
         let pastContent: Bool
+        let fits: Bool
     }
 
     /// The chat has rows but none is on screen: the view was left past the content, as when a
@@ -336,25 +343,28 @@ extension TranscriptView {
     ///   it hasn't built, which for replies from a line to thousands of points tall was far off: it
     ///   put the reader past every row it had built, and the transcript stayed blank until they
     ///   scrolled, for minutes (2026-10-09). A row asked for by id is built and placed where it is.
-    /// - the last message's own row, twice as the rows near it are built: a stack already stuck
-    ///   past its rows (a chat opening, or shown again from Tasks) got out only that way.
+    /// - the end row again, twice, as the rows near it are built: a stack already stuck past its
+    ///   rows (a chat opening, or shown again from Tasks) got out only that way. It was the last
+    ///   message's row while the end row was a point tall; holding the room under the bottom bar,
+    ///   the end row is a row's height of its own, and the last row's bottom is that far above the
+    ///   end, so going to it put the last row under the bar and the next step took it back up.
     /// - the bottom edge, once the rows there are built and the edge is where they are: a position
     ///   held by a row's id keeps that row still, so streamed text grew below the window; held by
     ///   the edge, it follows the end.
     private func scrollToEnd() {
-        position.scrollTo(id: TranscriptContent.endID, anchor: .bottom)
+        // A transcript that fits sits at the top (the alignment anchor), and has no end to go to:
+        // going to a row's bottom there put it a toolbar's height too low, and the alignment took it
+        // back, each step, so a chat switched to jumped up and down for a moment (2026-10-16).
+        if !onScreen.fits { position.scrollTo(id: TranscriptContent.endID, anchor: .bottom) }
         onScreen.settling &+= 1
         let request = onScreen.settling
         Task {
             for step in 0..<3 {
                 try? await Task.sleep(for: .milliseconds(step == 0 ? 60 : 120))
                 guard onScreen.settling == request else { return }
-                if step < 2, let last = thread.rows(appearance.toolCalls.folding).last?.id {
-                    position.scrollTo(id: last, anchor: .bottom)
-                } else {
-                    position.scrollTo(id: TranscriptContent.endID, anchor: .bottom)
-                    position.scrollTo(edge: .bottom)
-                }
+                if onScreen.fits { continue }
+                position.scrollTo(id: TranscriptContent.endID, anchor: .bottom)
+                if step == 2 { position.scrollTo(edge: .bottom) }
             }
         }
     }
@@ -378,6 +388,8 @@ private struct TranscriptContent: View {
     let connection: HostConnection?
     /// For the older-history row, which keeps the reader's place as a page goes in.
     @Binding var position: ScrollPosition
+    /// Room after the end, under the controls floating over it.
+    var bottomRoom: CGFloat = 0
     @Environment(\.appearance) private var appearance
     @State private var turnHover = TurnHover()
 
@@ -400,8 +412,10 @@ private struct TranscriptContent: View {
             // The end, which going to the latest scrolls to: always there, and never empty — a row
             // with no height is no place to scroll to: the lazy stack left the transcript blank
             // (2026-10-09). Leading, as Claude's column is: centered, the Thinking line sat mid-column.
+            // It holds the room under the controls, so going to the end leaves the last row above them.
             VStack(alignment: .leading, spacing: 0) { TranscriptTail(thread: thread) }
                 .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
+                .padding(.bottom, bottomRoom)
                 .id(Self.endID)
         }
         // Rows are scroll targets by their ids: Previous Prompt and Find scroll to them.
