@@ -1,6 +1,24 @@
 {
-  "originHash" : "dab9e0e2baf492ea5483f311eeee382a929c27e96f1c491c933b05e3d4c6b026",
+  "originHash" : "26a9e5f35f0a5938886f2804b63ed4da681985a74f08d7f54932d911df4268a7",
   "pins" : [
+    {
+      "identity" : "swift-subprocess",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-subprocess.git",
+      "state" : {
+        "revision" : "dbe21bd7dfd4ffef8c32588918542a8abfa1b54c",
+        "version" : "1.0.2"
+      }
+    },
+    {
+      "identity" : "swift-system",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-system",
+      "state" : {
+        "revision" : "869129b7bf4ecc57b97d0193ad29690ca2134750",
+        "version" : "1.8.1"
+      }
+    },
     {
       "identity" : "tether-server",
       "kind" : "remoteSourceControl",

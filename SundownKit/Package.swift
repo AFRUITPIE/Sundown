@@ -21,9 +21,13 @@ let package = Package(
         useSiblingServer
             ? .package(path: "../../tether-server")
             : .package(url: "https://github.com/AFRUITPIE/tether-server.git", from: "0.1.0"),
+        .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "1.0.2"),
     ],
     targets: [
-        .target(name: "SundownKit", dependencies: [.product(name: "TetherProtocol", package: "tether-server")]),
+        .target(name: "SundownKit", dependencies: [
+            .product(name: "TetherProtocol", package: "tether-server"),
+            .product(name: "Subprocess", package: "swift-subprocess"),
+        ]),
         .target(name: "SundownUI", dependencies: ["SundownKit"]),
         .testTarget(name: "SundownKitTests", dependencies: ["SundownKit"], resources: [.copy("Fixtures")]),
         .testTarget(name: "SundownUITests", dependencies: [

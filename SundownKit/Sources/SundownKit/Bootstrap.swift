@@ -1,4 +1,6 @@
 import Foundation
+import Subprocess
+import System
 
 /// The Sundown server this build of the app runs: tether-server's npm package, at the version its
 /// protocol package is pinned to. Every host has Node.js 18 or later, and runs it with `npx`, so
@@ -119,74 +121,98 @@ public struct HostBootstrapper: Sendable {
     }
 }
 
-/// One short command, its output gathered until it has exited and closed its output, `done` says
-/// it has said enough (a shell can leave a child holding its output open), or the timeout.
-final class ShellRun: @unchecked Sendable {
-    private let process = Process()
-    private let lock = NSLock()
-    private var out = Data()
-    private var err = Data()
-    private var continuation: CheckedContinuation<Void, Never>?
-    private var finished = false
-    private var closed = false
-    private var status: Int32?
+/// One short command, its output gathered until it has exited, `done` says it has said enough (a
+/// shell can leave a child holding its output open), or the timeout; then it's stopped.
+struct ShellRun: Sendable {
+    private let configuration: Configuration
 
     init(executable: String, arguments: [String], environment: [String: String]? = nil) {
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        if let environment { process.environment = environment }
-        process.standardInput = FileHandle.nullDevice
+        var options = PlatformOptions()
+        // Asked to stop, then made to.
+        options.teardownSequence = [.gracefulShutDown(allowedDurationToNextStep: .seconds(1))]
+        configuration = Configuration(executable: .path(FilePath(executable)), arguments: Arguments(arguments),
+                                      environment: environment.map(Environment.exactly) ?? .inherit,
+                                      platformOptions: options)
     }
 
     /// `status` is nil when it hadn't exited, or never started.
     func result(timeout: Duration, done: @escaping @Sendable (String) -> Bool) async -> (status: Int32?, output: String, errors: String) {
-        let stdout = Pipe(), stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        stderr.fileHandleForReading.readabilityHandler = { [weak self] h in
-            let d = h.availableData
-            guard let self, !d.isEmpty else { h.readabilityHandler = nil; return }
-            self.lock.withLock { if self.err.count < 64_000 { self.err.append(d) } }
-        }
-        stdout.fileHandleForReading.readabilityHandler = { [weak self] h in
-            let d = h.availableData
-            guard let self else { return }
-            guard !d.isEmpty else {
-                h.readabilityHandler = nil
-                self.finish { $0.closed = true }
-                return
-            }
-            let text = self.lock.withLock { () -> String? in
-                guard self.out.count < 1_000_000 else { return nil }
-                self.out.append(d)
-                return String(decoding: self.out, as: UTF8.self)
-            }
-            if let text, done(text) { self.finish { $0.finished = true } }
-        }
-        process.terminationHandler = { [weak self] p in self?.finish { $0.status = p.terminationStatus } }
-        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            lock.withLock { continuation = c }
-            do { try process.run() } catch { finish { $0.finished = true }; return }
-            Task { [weak self] in
+        let gathered = await withTaskGroup(of: Ending.self, returning: Gathered?.self) { group in
+            group.addTask { .ran(await gather(done)) }
+            group.addTask {
+                // Cancelled once the command has finished; at the deadline, the command is.
                 try? await Task.sleep(for: timeout)
-                self?.finish { $0.finished = true }
+                return .deadline
             }
+            let first = await group.next()!
+            group.cancelAll()
+            guard case .ran(let gathered) = first else {
+                // Cancelling the run stopped the command, which leaves what it had said by then.
+                guard case .ran(var gathered?) = await group.next()! else { return nil }
+                gathered.status = nil
+                return gathered
+            }
+            return gathered
         }
-        stdout.fileHandleForReading.readabilityHandler = nil
-        stderr.fileHandleForReading.readabilityHandler = nil
-        if process.isRunning { process.terminate() }
-        return lock.withLock { (status, String(decoding: out, as: UTF8.self), String(decoding: err, as: UTF8.self)) }
+        return (gathered?.status, String(decoding: gathered?.output ?? Data(), as: UTF8.self),
+                String(decoding: gathered?.errors ?? Data(), as: UTF8.self))
     }
 
-    /// Records what happened, and resumes once it's done: `finished`, or exited with its output closed.
-    private func finish(_ change: (ShellRun) -> Void) {
-        let c = lock.withLock { () -> CheckedContinuation<Void, Never>? in
-            change(self)
-            guard finished || (closed && status != nil), let c = continuation else { return nil }
-            continuation = nil
-            finished = true
-            return c
+    private enum Ending: Sendable {
+        case ran(Gathered?)
+        case deadline
+    }
+
+    private struct Gathered: Sendable {
+        var status: Int32?
+        var output: Data
+        var errors: Data
+    }
+
+    /// Runs the command to the end of its output, or until `done`; nil when it couldn't start.
+    private func gather(_ done: @escaping @Sendable (String) -> Bool) async -> Gathered? {
+        let result = try? await run(configuration, input: .none, output: .sequence, error: .sequence) { execution in
+            async let errors = Self.read(execution.standardError, upTo: 64_000)
+            var output = Data()
+            var saidEnough = false
+            do {
+                for try await chunk in execution.standardOutput where output.count < 1_000_000 {
+                    chunk.withUnsafeBytes { output.append($0.assumingMemoryBound(to: UInt8.self)) }
+                    if done(String(decoding: output, as: UTF8.self)) { saidEnough = true; break }
+                }
+            } catch {}
+            if saidEnough { await execution.teardown(using: configuration.platformOptions.teardownSequence) }
+            return (output, await errors, saidEnough)
         }
-        c?.resume()
+        guard let result else { return nil }
+        let (output, errors, saidEnough) = result.closureResult
+        return Gathered(status: saidEnough ? nil : result.terminationStatus.code, output: output, errors: errors)
+    }
+
+    /// Everything the stream says, keeping at most `limit` bytes.
+    private static func read(_ stream: SubprocessOutputSequence, upTo limit: Int) async -> Data {
+        var data = Data()
+        do {
+            for try await chunk in stream where data.count < limit {
+                chunk.withUnsafeBytes { data.append($0.assumingMemoryBound(to: UInt8.self)) }
+            }
+        } catch {}
+        return data
+    }
+}
+
+extension Environment {
+    /// This environment and nothing else.
+    static func exactly(_ variables: [String: String]) -> Environment {
+        .custom(Dictionary(uniqueKeysWithValues: variables.compactMap { name, value in Key(rawValue: name).map { ($0, value) } }))
+    }
+}
+
+extension TerminationStatus {
+    /// The exit status, or the signal that ended it, as `Process.terminationStatus` says it.
+    var code: Int32 {
+        switch self {
+        case .exited(let code), .signaled(let code): code
+        }
     }
 }
