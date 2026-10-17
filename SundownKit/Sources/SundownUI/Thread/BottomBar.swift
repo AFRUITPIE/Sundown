@@ -177,16 +177,6 @@ struct AuthStatusView: View {
     .frame(width: 900, height: 260)
 }
 
-#Preview("BottomBar (pending request)") {
-    let connection = HostConnection.sample()
-    let thread = ThreadModel.samplePendingPermission()
-    VStack {
-        Spacer()
-        BottomBar(thread: thread, connection: connection)
-    }
-    .frame(width: 900, height: 380)
-}
-
 /// Issue #3: the draft has to still be there under the prompt, with Send disabled until it is answered.
 #Preview("BottomBar (pending request + draft)") {
     let connection = HostConnection.sample()

@@ -20,12 +20,7 @@ struct WorkflowCallView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Button { inspectSubagent(call.id) } label: {
-                HStack(spacing: 6) {
-                    header
-                    DisclosureIndicator(expanded: false)
-                }
-                .padding(.vertical, 4)
-                .contentShape(Rectangle())
+                DisclosureRowLabel(expanded: false) { header }
             }
             .help(run?.description ?? "Show in Tasks")
             .buttonStyle(.plain)
@@ -36,14 +31,7 @@ struct WorkflowCallView: View {
             .accessibilityHint("Shows the workflow in Tasks")
             .accessibilityIdentifier("transcript.toolCall")
             .contextMenu { menu }
-            if let caption {
-                Text(caption)
-                    .scaledFont(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
-                    .monospacedDigit()
-                    .textSelection(.enabled)
-            }
+            if let caption { RowNote(caption).monospacedDigit() }
         }
     }
 
@@ -61,8 +49,8 @@ struct WorkflowCallView: View {
                     Text(object).lineLimit(1).truncationMode(.middle)
                 }
                 switch run?.status {
-                case .failed: Image(systemName: "exclamationmark.circle").foregroundStyle(.tertiary).scaledFont(.caption)
-                case .stopped: Image(systemName: "stop.circle").foregroundStyle(.tertiary).scaledFont(.caption)
+                case .failed: StatusGlyph("exclamationmark.circle")
+                case .stopped: StatusGlyph("stop.circle")
                 default: EmptyView()
                 }
             }
@@ -314,21 +302,13 @@ struct WorkflowAgentTranscript: View {
 }
 
 #if DEBUG
-#Preview("Workflow row (running)") {
-    let thread = ThreadModel.sampleWorkflow(running: true)
-    let call = thread.call("workflow-call")!
-    VStack(alignment: .leading) {
-        WorkflowCallView(call: call, run: thread.workflowRuns[call.id])
-    }
-    .padding()
-    .frame(width: 560)
-}
-
-#Preview("Workflow row (finished)") {
-    let thread = ThreadModel.sampleWorkflow(running: false)
-    let call = thread.call("workflow-call")!
-    VStack(alignment: .leading) {
-        WorkflowCallView(call: call, run: thread.workflowRuns[call.id])
+#Preview("Workflow rows (running, finished)") {
+    VStack(alignment: .leading, spacing: 12) {
+        ForEach([true, false], id: \.self) { running in
+            let thread = ThreadModel.sampleWorkflow(running: running)
+            let call = thread.call("workflow-call")!
+            WorkflowCallView(call: call, run: thread.workflowRuns[call.id])
+        }
     }
     .padding()
     .frame(width: 560)

@@ -52,8 +52,7 @@ enum ComposerMarkdown {
         while i + hashes < chars.count, chars[i + hashes] == "#" { hashes += 1 }
         if (1...6).contains(hashes), i + hashes < chars.count, chars[i + hashes] == " " {
             for k in i..<(i + hashes + 1) { styles[k].tone = .syntax }
-            for k in (i + hashes + 1)..<chars.count { styles[k].heading = hashes }
-            for k in i..<(i + hashes + 1) { styles[k].heading = hashes }
+            for k in i..<chars.count { styles[k].heading = hashes }
             contentStart = i + hashes + 1
         } else if i < chars.count, chars[i] == ">" {
             styles[i].tone = .syntax
@@ -234,8 +233,7 @@ enum ComposerMarkdown {
         var attributes: [NSAttributedString.Key: Any] = [.font: font]
         switch style.tone {
         case .normal: attributes[.foregroundColor] = NSColor.labelColor
-        case .syntax: attributes[.foregroundColor] = NSColor.secondaryLabelColor
-        case .secondary: attributes[.foregroundColor] = NSColor.secondaryLabelColor
+        case .syntax, .secondary: attributes[.foregroundColor] = NSColor.secondaryLabelColor
         case .accent: attributes[.foregroundColor] = NSColor.controlAccentColor
         }
         if style.strike { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
