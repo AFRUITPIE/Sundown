@@ -99,6 +99,29 @@ struct StartChatTests {
         await connection.disconnect()
     }
 
+    /// A host set to name its chats asks for it when a chat it isn't running is resumed too, so an
+    /// older unnamed chat is named when it's opened (#103); any other host leaves it to Claude Code.
+    @Test func aHostThatNamesChatsAsksForATitleOnResume() async throws {
+        let daemon = FakeDaemon()
+        let connection = await connected(daemon)
+        func resumed(_ id: String) -> ThreadResumeResult {
+            .init(thread: .init(threadId: id, status: .idle, cwd: "/repo", lastSeq: 3), items: [], turns: [], historySeq: 3)
+        }
+        await daemon.script.queue("thread/resume", resumed("plain-chat"), resumed("named-chat"))
+        await daemon.script.queue("thread/sideQuestion", ThreadSideQuestionResult(answer: "Nothing yet."))
+        _ = try await connection.sideQuestion(connection.thread("plain-chat"), "What changed?")
+        var host = connection.host
+        host.namesChats = true
+        connection.update(host: host)
+        _ = try await connection.sideQuestion(connection.thread("named-chat"), "What changed?")
+
+        let params = await daemon.script.params(of: "thread/resume")
+        #expect(params.map { $0["threadId"]?.stringValue } == ["plain-chat", "named-chat"])
+        #expect(params.first?["generateTitle"] == nil)
+        #expect(params.last?["generateTitle"] == .bool(true), "thread/resume didn't ask for a title")
+        await connection.disconnect()
+    }
+
     /// A host saved before the setting existed still loads, not naming its chats.
     @Test func aHostSavedBeforeNamingLoads() throws {
         let saved = #"{"id":"00000000-0000-0000-0000-000000000002","name":"Work","kind":{"ssh":{"destination":"work"}},"env":{}}"#

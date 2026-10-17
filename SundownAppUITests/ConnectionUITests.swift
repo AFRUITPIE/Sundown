@@ -12,6 +12,13 @@ final class ConnectionUITests: SundownUITestCase {
         // The fixture fails twice, retrying on its own in between, so the card says so for a few
         // seconds with Reconnect on it.
         XCTAssertTrue(card.staticTexts["Couldn’t Connect"].appears(timeout: 5), "the card doesn't say it couldn't connect")
+        // The chat, not loaded yet, says it's loading while the host is down (#113), in the middle of
+        // the space above the field (#122), not as a row under the toolbar.
+        let loading = app.descendants(matching: .any)["transcript.loading"]
+        XCTAssertTrue(loading.exists, "nothing says the chat is loading while the host is down")
+        let transcript = app.scrollViews["Transcript"].frame
+        XCTAssertEqual(loading.frame.midY, (transcript.minY + card.frame.minY) / 2, accuracy: 60,
+                       "the loading spinner isn't in the middle of the transcript: \(loading.frame) in \(transcript)")
         let reconnect = card.buttons["composer.reconnect"]
         XCTAssertTrue(reconnect.exists, "the card has no Reconnect")
         reconnect.click()

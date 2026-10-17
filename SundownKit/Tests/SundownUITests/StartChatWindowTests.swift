@@ -77,6 +77,24 @@ struct StartChatWindowTests {
         await connection.disconnect()
     }
 
+    /// Nothing picked, nothing sent: the host's Claude Code starts the chat with its own model,
+    /// effort and permission mode, even while New Chat's menus show them (#58, #71).
+    @Test func aChatStartsWithClaudeCodesOwnSettings() async throws {
+        let host = StartingHost()
+        let (window, connection) = await setUp(host)
+        window.newChat()
+        window.draftDirectory = "/repo"
+        window.draftDefaults = .init(model: "sonnet", effort: .medium, permissionMode: .auto)
+
+        #expect(await window.startDraftChat(prompt))
+
+        let params = try #require(host.calls(of: "thread/start").first)
+        for key in ["model", "effort", "permissionMode"] {
+            #expect(params[key] == nil || params[key] == .null, "thread/start sent \(key) though nobody picked one: \(params[key]!)")
+        }
+        await connection.disconnect()
+    }
+
     /// The menus changed while it starts are the chat's settings once it has.
     @Test func settingsChangedDuringTheStartApplyToTheChat() async throws {
         let host = StartingHost(holdsStart: true)

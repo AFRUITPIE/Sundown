@@ -7,16 +7,20 @@ import TetherProtocol
 struct ThreadView: View {
     let thread: ThreadModel
     let connection: HostConnection
+    /// The controls' height, which the transcript leaves as room after its end.
+    @State private var barHeight: CGFloat = 0
 
     var body: some View {
-        // The controls go below the transcript, not over it in a `safeAreaBar`: with their height as
-        // the scroll view's bottom inset, the bottom anchor and a bottom-edge scroll position put the
-        // end 55 pt apart, and they took turns on every streamed delta, so the end bounced
-        // (macOS 27, 2026-10-09).
-        VStack(spacing: 0) {
-            TranscriptView(thread: thread, connection: connection)
-            BottomBar(thread: thread, connection: connection)
-        }
+        // The controls float over the transcript, so it passes under their glass, and the transcript
+        // ends with room of their height: content, not a `safeAreaBar` or an inset. With their height
+        // as the scroll view's bottom inset, the bottom anchor and a bottom-edge scroll position put
+        // the end 55 pt apart, and they took turns on every streamed delta, so the end bounced
+        // (macOS 27, 2026-10-09). Below the transcript in a stack, the glass had nothing under it.
+        TranscriptView(thread: thread, connection: connection, bottomRoom: barHeight)
+            .overlay(alignment: .bottom) {
+                BottomBar(thread: thread, connection: connection)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height.rounded() } action: { barHeight = $0 }
+            }
             // Find in Chat's bar, above the transcript while it's open. An inset, not a `safeAreaBar`:
             // a top bar, even empty while Find is closed, took the toolbar's scroll edge effect, and
             // text scrolled up under the title and tabs unblurred.

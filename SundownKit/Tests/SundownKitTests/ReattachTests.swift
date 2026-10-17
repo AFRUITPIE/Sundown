@@ -161,6 +161,36 @@ struct ReattachTests {
         await connection.disconnect()
     }
 
+    /// A close from a stream already replaced (its seq behind the chat's) is ignored: the chat
+    /// neither reads as closed nor resumes on the next send, which would reload it under a live
+    /// turn (#35).
+    @Test func aStaleStreamsCloseChangesNothing() async throws {
+        let script = ReattachScript(
+            reads: [readResult(text: "before", sequence: 40)],
+            subscriptions: [subscribeResult(lastSequence: 40, status: .idle)]
+        )
+        let transport = ScriptedTransport(script: script)
+        let connection = makeConnection(transports: [transport])
+        await connection.connect()
+        let thread = connection.thread(threadID)
+        await connection.open(thread)
+        transport.emit(method: "thread/closed", params: ["threadId": .string(threadID), "seq": 12])
+        // Something after it on the live stream that leaves the status alone, so the close has
+        // surely been read.
+        transport.emit(method: "thread/promptSuggestion", params: [
+            "threadId": .string(threadID), "seq": 41, "suggestion": "Run the tests",
+        ])
+        try await eventually { thread.lastSeq == 41 }
+        #expect(thread.status == .idle, "A stale stream's close changed the chat's status")
+
+        await connection.send(thread, input: [.text(.init(text: "again"))])
+
+        let calls = await script.calls()
+        #expect(!calls.contains("thread/resume"), "A stale stream's close made the next send resume the chat")
+        #expect(calls.contains("turn/start"))
+        await connection.disconnect()
+    }
+
     @Test func settingsChosenForAnUnloadedThreadApplyWhenItResumes() async throws {
         let script = ReattachScript(
             reads: [readResult(text: "watched", sequence: 7)],

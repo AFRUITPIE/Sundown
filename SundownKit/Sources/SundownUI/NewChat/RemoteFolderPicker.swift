@@ -3,8 +3,10 @@ import SundownKit
 import TetherProtocol
 
 /// Browses a remote host's directories (`fs/list`), one level per page of a navigation stack:
-/// double-click or Return opens a directory, Back returns, and Choose takes the selected
-/// directory, or the one being shown when nothing is selected.
+/// double-click or Return opens a directory, the path pop-up above the list goes to any directory
+/// above it (as the open panel's does), and Choose takes the selected directory, or the one being
+/// shown when nothing is selected. Not toolbar items: a sheet's header draws none on macOS 27, so
+/// Enclosing Directory and the stack's Back were never there (2026-10-17).
 struct RemoteFolderPicker: View {
     let connection: HostConnection
     let done: (String) -> Void
@@ -18,6 +20,14 @@ struct RemoteFolderPicker: View {
     @State private var unreadable: Set<String> = []
 
     private var current: String { opened.last ?? root }
+
+    /// Browses from `path`, one of the directories above the one shown.
+    private func go(to path: String) {
+        guard path != current else { return }
+        root = path
+        opened = []
+        selection = nil
+    }
 
     var body: some View {
         NavigationStack(path: $opened) {
@@ -39,18 +49,31 @@ struct RemoteFolderPicker: View {
         }
     }
 
+    /// The directory shown and every one above it, up to `/`.
+    private var ancestors: [String] {
+        var paths = [current]
+        while let last = paths.last, last != "/", !last.isEmpty {
+            paths.append((last as NSString).deletingLastPathComponent)
+        }
+        return paths
+    }
+
     private func level(_ path: String) -> some View {
         DirectoryLevel(connection: connection, path: path, selection: $selection,
                        failed: { unreadable.insert($0) }) { opened.append($0) }
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    // Above where browsing started; Back covers the rest.
-                    Button("Enclosing Directory", systemImage: "chevron.up") {
-                        root = (root as NSString).deletingLastPathComponent
-                        selection = nil
+            .safeAreaInset(edge: .top, spacing: 0) {
+                Picker("Directory", selection: Binding(get: { current }, set: { go(to: $0) })) {
+                    ForEach(ancestors, id: \.self) { path in
+                        Label(path == "/" ? "/" : (path as NSString).lastPathComponent, systemImage: "folder").tag(path)
                     }
-                    .disabled(!opened.isEmpty || root == "/")
                 }
+                .labelsHidden()
+                .fixedSize()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+            }
+            .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Choose") {

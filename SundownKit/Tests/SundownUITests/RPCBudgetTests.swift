@@ -59,6 +59,34 @@ struct RPCBudgetTests {
         await connection.disconnect()
     }
 
+    /// A run read as unknown (history with nothing to say) or paused may be going on still, so
+    /// reopening its chat reads it again rather than showing what was read before (#108).
+    @Test(arguments: ["unknown", "paused"])
+    func aWorkflowsRunIsReadAgainWhileItMayGoOn(status: String) async throws {
+        let host = CountingHost(workflowStatus: status)
+        let connection = HostConnection(host: HostConfig(name: "Budget", kind: .ssh(destination: "budget.invalid")),
+                                        transportProvider: { _ in host })
+        await connection.connect()
+        let window = WindowModel(app: .sample(connections: [connection]), target: WindowTarget(hostID: connection.id))
+        window.start()
+        _ = host.take()
+
+        func show(_ id: String) async throws -> [String] {
+            window.threadID = id
+            let thread = try #require(window.selectedThread)
+            await connection.open(thread) // ThreadView's task
+            try await Task.sleep(for: .milliseconds(50))
+            return host.take()
+        }
+
+        let open = try await show("chat-w")
+        #expect(open.contains("workflow/read"))
+        _ = try await show("chat-a")
+        let back = try await show("chat-w")
+        #expect(back.contains("workflow/read"), "a \(status) run wasn't read again on reopening: \(back)")
+        await connection.disconnect()
+    }
+
     @Test func openingAndSwitchingChatsStayWithinBudget() async throws {
         let host = CountingHost()
         let connection = HostConnection(host: HostConfig(name: "Budget", kind: .ssh(destination: "budget.invalid")),
@@ -116,9 +144,12 @@ private final class CountingHost: Transport, @unchecked Sendable {
     private var methods: [String] = []
     private let stream: AsyncThrowingStream<Data, any Error>
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
+    /// What `workflow/read` says of the run, in place of the sample's own (completed).
+    private let workflowStatus: String?
 
-    init() {
+    init(workflowStatus: String? = nil) {
         (stream, continuation) = AsyncThrowingStream.makeStream()
+        self.workflowStatus = workflowStatus
     }
 
     /// The requests since the last call.
@@ -143,7 +174,13 @@ private final class CountingHost: Transport, @unchecked Sendable {
                 continuation.yield(try JSONEncoder().encode(["method": .string(name), "params": body] as JSONValue))
             }
         }
-        let reply: JSONValue = if let result = Self.result(method, message["params"] ?? [:]) {
+        var result = Self.result(method, message["params"] ?? [:])
+        if method == "workflow/read", let workflowStatus, case .object(var r)? = result, case .object(var run)? = r["workflow"] {
+            run["status"] = .string(workflowStatus)
+            r["workflow"] = .object(run)
+            result = .object(r)
+        }
+        let reply: JSONValue = if let result {
             ["id": id, "result": result]
         } else {
             ["id": id, "error": ["code": -32601, "message": .string("Not in the budget host: \(method)")]]

@@ -46,6 +46,21 @@ struct ThreadModelTests {
         #expect(other.items.count == 2)
     }
 
+    /// The same in an older page: a skill call and its instructions arriving together above the
+    /// reader go to the call, not a "Message from Claude Code" of their own (#107).
+    @Test func aSkillsInstructionsInAnOlderPageGoToItsCall() {
+        let skill = Item.toolCall(.init(id: "skill-1", createdAt: 1, name: "Skill", kind: .skill,
+                                        input: ["skill": "shadcn"], status: .completed, outputText: "Launching skill: shadcn"))
+        let body = userMessage("Base directory for this skill: /x\n\n# shadcn/ui", id: "u2", synthetic: true)
+        let thread = ThreadModel(id: threadID)
+        thread.loadHistory(items: [userMessage("Thanks", id: "u3")], turns: [], seq: 4, hasMore: true)
+
+        thread.prependHistory(items: [userMessage("Use shadcn"), skill, body], hasMore: false)
+
+        #expect(thread.items.map(\.id) == ["u1", "skill-1", "u3"], "the instructions were left in the transcript")
+        #expect(thread.skillBodies["skill-1"]?.hasPrefix("Base directory for this skill") == true)
+    }
+
     /// Only `started` says what a task is, and a later `updated` patch can leave out its tool call.
     @Test func laterTaskEventsKeepWhatEarlierOnesSaid() {
         let thread = ThreadModel(id: threadID)
