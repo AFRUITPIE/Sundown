@@ -62,9 +62,9 @@ public final class ThreadModel: Identifiable {
     /// How full the context window was when last asked (0–1), for the toolbar's gauge. Set by
     /// whoever asks (`thread/contextUsage`), after a turn ends or when the breakdown is opened.
     public var contextFill: Double?
-    public private(set) var lastError: String?
+    public internal(set) var lastError: String?
     /// Settings chosen while the daemon hasn't loaded the thread, applied when it resumes.
-    public private(set) var pendingSettings = PendingSettings()
+    public internal(set) var pendingSettings = PendingSettings()
     private var index: [String: Int] = [:]
     /// Bumped by every structural change to the chat's own items, and by a subagent's edit, which
     /// counts in its turn's edits; the rows cache against it. A streamed delta doesn't bump it (the
@@ -503,17 +503,9 @@ public final class ThreadModel: Identifiable {
         pending.removeAll()
     }
 
-    func editPendingSettings(_ edit: (inout PendingSettings) -> Void) {
-        edit(&pendingSettings)
-    }
-
     func takePendingSettings() -> PendingSettings {
         defer { pendingSettings = PendingSettings() }
         return pendingSettings
-    }
-
-    func setError(_ message: String?) {
-        lastError = message
     }
 
     // MARK: helpers

@@ -35,6 +35,20 @@ public struct WindowTarget: Codable, Hashable, Sendable {
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
+/// The window a view belongs to, for the views that act on it (inspect a subagent, stop a task, fork a
+/// chat…). Held weakly and equal whenever it's the same window, so the shell's updates redraw nothing
+/// that reads it; a view calls the window's method (`windowRef.window?.fork(at:)`). No closure goes
+/// in the environment.
+struct WindowRef: Equatable {
+    weak var window: WindowModel?
+
+    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
+}
+
+extension EnvironmentValues {
+    @Entry var windowRef = WindowRef()
+}
+
 /// One window's state: its host, the chat on screen (or New Chat and its draft), its tab, and
 /// the chat a sheet or alert is acting on. App-wide state — hosts, connections, preferences —
 /// is on `app`. Each change is also remembered there, so a new window or the next launch opens

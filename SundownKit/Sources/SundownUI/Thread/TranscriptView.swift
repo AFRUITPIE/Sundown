@@ -775,7 +775,7 @@ struct TranscriptTail: View {
             RunningTasksLink(count: thread.backgroundTaskCount)
                 .transcriptLine()
         }
-        // A turn that finished normally says nothing; its cost and time are in the Session pane.
+        // A turn that finished normally says nothing.
         if let turn = thread.turns.last, turn.status == .interrupted || turn.status == .failed {
             TurnOutcome(turn: turn)
         }
@@ -799,10 +799,10 @@ struct RunningTasksCount: View {
 /// How many of the chat's tasks are still running, as a link to them in the Tasks tab.
 struct RunningTasksLink: View {
     let count: Int
-    @Environment(\.showTasks) private var showTasks
+    @Environment(\.windowRef) private var windowRef
 
     var body: some View {
-        Button { showTasks() } label: {
+        Button { windowRef.window?.tab = .tasks } label: {
             Text("^[\(count) running task](inflect: true)")
         }
         .buttonStyle(.plain)
@@ -861,15 +861,15 @@ extension TurnOutcome {
 }
 
 #Preview("TranscriptView (long settled turn)") {
-    var items: [Item] = [.sampleUserMessage("Check each part of the renderer.", secondsAgo: 100)]
+    var items: [Item] = [.userMessage(.sample("Check each part of the renderer.", secondsAgo: 100))]
     for index in 0..<40 {
         let ago = Double(90 - index * 2)
-        items.append(.sampleToolCall(name: "Read", kind: .fileRead,
+        items.append(.toolCall(.sample(name: "Read", kind: .fileRead,
                                     input: ["file_path": .string("/tmp/Renderer\(index).swift")],
-                                    status: .completed, secondsAgo: ago))
-        items.append(.sampleAgentMessage("Checked renderer \(index). Continuing with the next part.", secondsAgo: ago - 1))
+                                    status: .completed, secondsAgo: ago)))
+        items.append(.agentMessage(.sample("Checked renderer \(index). Continuing with the next part.", secondsAgo: ago - 1)))
     }
-    items.append(.sampleAgentMessage("## Finished\n\nThe renderer's checks are complete.", secondsAgo: 4))
+    items.append(.agentMessage(.sample("## Finished\n\nThe renderer's checks are complete.", secondsAgo: 4)))
     return TranscriptView(thread: .sample(title: "Long settled turn", items: items, turns: [.sample()]))
         .frame(width: 900, height: 760)
 }

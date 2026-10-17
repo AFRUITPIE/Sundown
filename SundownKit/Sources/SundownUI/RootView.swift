@@ -63,14 +63,7 @@ public struct RootView: View {
 
     public var body: some View {
         splitView
-        .environment(\.inspectSubagent, InspectSubagentAction(window: window))
-        .environment(\.showTasks, ShowTasksAction(window: window))
-        .environment(\.composerWindow, ComposerWindow(window: window))
-        .environment(\.stopTask, StopTaskAction(window: window))
-        .environment(\.restoreCode, RestoreCodeAction(window: window))
-        .environment(\.startSuggestedTask, StartSuggestedTaskAction(window: window))
-        .environment(\.openChat, OpenChatAction(window: window))
-        .environment(\.forkChat, ForkChatAction(window: window))
+        .environment(\.windowRef, WindowRef(window: window))
         .environment(\.hostIsLocal, window.connection?.host.isLocal == true)
         .environment(\.transcriptFind, window.find)
         .environment(\.promptNavigator, window.prompts)

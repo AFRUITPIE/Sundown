@@ -59,3 +59,51 @@ extension HostConnection.State {
 final class Changed: @unchecked Sendable {
     var happened = false
 }
+
+// MARK: Item builders
+
+/// A prompt and a reply at `ms`, for tests that fold or place items by time.
+func prompt(_ id: String, at ms: Double = 1_000) -> Item {
+    .userMessage(.init(id: id, createdAt: ms, content: [.text(.init(text: "go"))]))
+}
+
+func reply(_ id: String, at ms: Double = 2_000) -> Item {
+    .agentMessage(.init(id: id, createdAt: ms, text: "done"))
+}
+
+/// Items placed in minutes from a Monday morning, so a script's gaps and day changes are the date
+/// separators' own: prompts, replies, commands, edits and subagents.
+protocol TimedItems {}
+
+extension TimedItems {
+    var t0: Double { 1_790_000_000_000 }
+
+    func at(_ minutes: Double) -> Double { t0 + minutes * 60_000 }
+
+    func prompt(_ id: String, _ minutes: Double, synthetic: Bool? = nil) -> Item {
+        .userMessage(.init(id: id, createdAt: at(minutes), content: [.text(.init(text: "Prompt \(id), with more words after it"))],
+                           synthetic: synthetic))
+    }
+
+    func reply(_ id: String, _ minutes: Double, text: String = "Done.", parent: String? = nil) -> Item {
+        .agentMessage(.init(id: id, parentToolUseId: parent, createdAt: at(minutes), text: text))
+    }
+
+    func call(_ id: String, _ minutes: Double, kind: ToolKind = .bash, status: ToolStatus = .completed,
+              parent: String? = nil) -> Item {
+        .toolCall(.init(id: id, parentToolUseId: parent, createdAt: at(minutes), name: "Bash", kind: kind,
+                        input: ["command": .string("echo \(id)")], status: status))
+    }
+
+    func edit(_ id: String, _ minutes: Double, path: String = "/repo/a.swift", status: ToolStatus = .completed,
+              parent: String? = nil) -> Item {
+        .toolCall(.init(id: id, parentToolUseId: parent, createdAt: at(minutes), name: "Edit", kind: .fileEdit,
+                        input: ["file_path": .string(path), "old_string": "one\ntwo\nthree", "new_string": .string("one\n\(id)\nthree\nfour")],
+                        status: status))
+    }
+
+    func subagent(_ id: String, _ minutes: Double, status: ToolStatus) -> Item {
+        .toolCall(.init(id: id, createdAt: at(minutes), name: "Task", kind: .subagent,
+                        input: ["description": "Look around"], status: status))
+    }
+}

@@ -251,11 +251,6 @@ struct WorkflowRunTests {
 
     // MARK: folding
 
-    private func prompt(_ id: String, at ms: Double) -> Item {
-        .userMessage(.init(id: id, createdAt: ms, content: [.text(.init(text: id))]))
-    }
-
-    private func reply(_ id: String, at ms: Double) -> Item { .agentMessage(.init(id: id, createdAt: ms, text: id)) }
 
     private func bash(_ id: String, at ms: Double) -> Item {
         .toolCall(.init(id: id, createdAt: ms, name: "Bash", kind: .bash, input: [:], status: .completed))

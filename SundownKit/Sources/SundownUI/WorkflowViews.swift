@@ -12,14 +12,13 @@ struct WorkflowCallView: View {
     /// The thread's run for the call (`ThreadModel.workflowRuns`). Nil only for a call the thread
     /// doesn't hold, which reads as its call says, never building a run (or reading its script) here.
     let run: WorkflowRun?
-    @Environment(\.inspectSubagent) private var inspectSubagent
-    @Environment(\.stopTask) private var stopTask
+    @Environment(\.windowRef) private var windowRef
 
     private var isRunning: Bool { run?.isRunning ?? (call.status == .running || call.status == .pending) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Button { inspectSubagent(call.id) } label: {
+            Button { windowRef.window?.inspectSubagent(call.id) } label: {
                 DisclosureRowLabel(expanded: false) { header }
             }
             .help(run?.description ?? "Show in Tasks")
@@ -85,13 +84,13 @@ struct WorkflowCallView: View {
     /// Also the workflow's detail's controls in Tasks (Copy Script, Stop): a menu is never the only
     /// way to a command.
     @ViewBuilder private var menu: some View {
-        Button("Show in Tasks") { inspectSubagent(call.id) }
+        Button("Show in Tasks") { windowRef.window?.inspectSubagent(call.id) }
         if let script = call.workflowScript {
             Button("Copy Script") { Clipboard.copy(script) }
         }
         if let run, run.isRunning, let taskId = run.taskId {
             Divider()
-            Button("Stop Workflow") { stopTask(taskId) }
+            Button("Stop Workflow") { windowRef.window?.stopTask(taskId) }
         }
     }
 }

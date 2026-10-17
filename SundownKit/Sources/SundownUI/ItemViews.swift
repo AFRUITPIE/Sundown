@@ -76,8 +76,7 @@ private struct MessageMenu: ViewModifier {
     @State private var hovering = false
     @Environment(\.turnPlace) private var place
     @Environment(\.turnHover) private var turnHover
-    @Environment(\.forkChat) private var forkChat
-    @Environment(\.restoreCode) private var restoreCode
+    @Environment(\.windowRef) private var windowRef
     @Environment(\.offersChatActions) private var offersChatActions
 
     /// A prompt's bubble sits at the trailing edge; a reply at the leading one.
@@ -114,8 +113,8 @@ private struct MessageMenu: ViewModifier {
             .accessibilityAction(named: "Copy", copyText)
             .accessibilityActions {
                 if offersChatActions {
-                    Button("Fork from Here") { forkChat(id) }
-                    if !isMarkdown { Button("Restore Code to Here…") { restoreCode(id) } }
+                    Button("Fork from Here") { windowRef.window?.fork(at: id) }
+                    if !isMarkdown { Button("Restore Code to Here…") { windowRef.window?.restoreCode(before: id) } }
                 }
             }
     }
@@ -125,9 +124,9 @@ private struct MessageMenu: ViewModifier {
         if isMarkdown { Button("Copy as Markdown") { Clipboard.copy(text) } }
         if offersChatActions {
             Divider()
-            Button("Fork from Here", systemImage: "arrow.triangle.branch") { forkChat(id) }
+            Button("Fork from Here", systemImage: "arrow.triangle.branch") { windowRef.window?.fork(at: id) }
             if !isMarkdown {
-                Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
+                Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { windowRef.window?.restoreCode(before: id) }
             }
         }
     }
@@ -159,7 +158,7 @@ private struct MessageMenu: ViewModifier {
                 .glassHelp("Copy")
                 .accessibilityIdentifier("message.copy.\(id)")
             if offersChatActions {
-                Button { forkChat(id) } label: {
+                Button { windowRef.window?.fork(at: id) } label: {
                     Label {
                         Text("Fork from Here")
                     } icon: {
@@ -170,7 +169,7 @@ private struct MessageMenu: ViewModifier {
                     .glassHelp("Fork from Here")
                     .accessibilityIdentifier("message.fork.\(id)")
                 if !isMarkdown {
-                    Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { restoreCode(id) }
+                    Button("Restore Code to Here…", systemImage: "clock.arrow.circlepath") { windowRef.window?.restoreCode(before: id) }
                         .glassHelp("Restore Code to Here")
                         .accessibilityIdentifier("message.restore.\(id)")
                 }
@@ -252,48 +251,10 @@ private struct ReplyElement: ViewModifier {
     }
 }
 
-/// Branches the window's chat after a message, keeping everything up to it, and opens the branch.
-/// Holds the window, like `InspectSubagentAction`, so the shell's updates don't redraw every message.
-struct ForkChatAction: Equatable {
-    weak var window: WindowModel?
-
-    @MainActor func callAsFunction(_ messageID: String) { window?.fork(at: messageID) }
-
-    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
-}
-
-/// Restore Code to Here…, for a prompt. Like `ForkChatAction`.
-struct RestoreCodeAction: Equatable {
-    weak var window: WindowModel?
-
-    @MainActor func callAsFunction(_ messageID: String) { window?.restoreCode(before: messageID) }
-
-    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
-}
-
 extension EnvironmentValues {
-    @Entry var forkChat = ForkChatAction()
-    @Entry var restoreCode = RestoreCodeAction()
     /// False where a message isn't in a chat yet (New Chat's stand-in while one starts): Fork from
     /// Here and Restore Code to Here… have nothing to act on.
     @Entry var offersChatActions = true
-    /// Shows a chat by id in the window, for a message that links to the chat it came from.
-    @Entry var openChat = OpenChatAction()
-}
-
-/// Shows a chat in the window by an id a message carries, when it's one of this host's listed chats.
-/// Like `ForkChatAction`.
-struct OpenChatAction: Equatable {
-    weak var window: WindowModel?
-
-    /// The listed chat `id` names, or nil when this host's list doesn't have it.
-    @MainActor func resolve(_ id: String) -> String? { window?.listedChatID(id) }
-
-    @MainActor func callAsFunction(_ id: String) {
-        if let listed = resolve(id) { window?.open(threadID: listed) }
-    }
-
-    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
 }
 
 struct UserMessageView: View {
@@ -432,11 +393,13 @@ extension EnvironmentValues {
 /// listed chats, rather than a link that does nothing.
 private struct PeerSessionLink: View {
     let sessionID: String
-    @Environment(\.openChat) private var openChat
+    @Environment(\.windowRef) private var windowRef
 
     var body: some View {
-        let listed = openChat.resolve(sessionID) != nil
-        Button("Open Sender’s Chat") { openChat(sessionID) }
+        let listed = windowRef.window?.listedChatID(sessionID) != nil
+        Button("Open Sender’s Chat") {
+            if let listed = windowRef.window?.listedChatID(sessionID) { windowRef.window?.open(threadID: listed) }
+        }
             .buttonStyle(.link)
             // The message around it is secondary; a link still reads as one, and dims when it can't go.
             .foregroundStyle(listed ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
@@ -592,13 +555,13 @@ struct WakeupLine: View {
 #if DEBUG
 /// The bubble's blue is the same in both appearances; the canvas's variants show each.
 #Preview("Blue prompts") {
-    ItemView(item: .sampleUserMessage("A clearer blue bubble, with white text and a quick glass handoff.", secondsAgo: 30),
+    ItemView(item: .userMessage(.sample("A clearer blue bubble, with white text and a quick glass handoff.", secondsAgo: 30)),
              thread: .sampleIdleChat())
         .padding(28).frame(width: 640)
 }
 
 #Preview("Prompt with Markdown") {
-    ItemView(item: .sampleUserMessage("""
+    ItemView(item: .userMessage(.sample("""
         Two things in `Composer.swift`:
 
         1. Keep **undo** working after a restyle
@@ -607,14 +570,14 @@ struct WakeupLine: View {
         ```swift
         TextEditor(text: $text, selection: $selection)
         ```
-        """, secondsAgo: 30), thread: .sampleIdleChat())
+        """, secondsAgo: 30)), thread: .sampleIdleChat())
         .padding(28).frame(width: 640)
 }
 
 #Preview("Message controls") {
     ScrollView {
         VStack(spacing: 24) {
-            ItemView(item: .sampleUserMessage("Keep the glass editing surface, with Send beside it.", secondsAgo: 30),
+            ItemView(item: .userMessage(.sample("Keep the glass editing surface, with Send beside it.", secondsAgo: 30)),
                      thread: .sampleIdleChat())
             ItemView(item: .agentMessage(.init(id: "reply-controls", createdAt: 0,
                                               text: "The controls now live below each message. **Copy** is one click; Fork and Restore are in **More**.")),
@@ -636,13 +599,13 @@ struct WakeupLine: View {
     }
     ScrollView {
         VStack(alignment: .leading, spacing: 18) {
-            ItemView(item: .sampleUserMessage("Can you have 3 background subagents set timers for 5, 10 and 15 seconds, then respond \"hello world\"?", secondsAgo: 70), thread: thread)
+            ItemView(item: .userMessage(.sample("Can you have 3 background subagents set timers for 5, 10 and 15 seconds, then respond \"hello world\"?", secondsAgo: 70)), thread: thread)
             ToolCallGroupView(calls: agents, thread: thread)
-            ItemView(item: .sampleAgentMessage("Three background agents are running, with timers of 5, 10 and 15 seconds. I'll report their results as they come in.", secondsAgo: 58), thread: thread)
-            ItemView(item: .sampleUserMessage("<task-notification>The 5-second agent finished: hello world</task-notification>", secondsAgo: 50, synthetic: true, origin: "subagent"), thread: thread)
-            ItemView(item: .sampleAgentMessage("The 5-second agent finished and replied \"hello world\". The 10- and 15-second agents are still running.", secondsAgo: 49), thread: thread)
-            ItemView(item: .sampleUserMessage("<task-notification>The 10-second agent finished: hello world</task-notification>", secondsAgo: 45, synthetic: true, origin: "subagent"), thread: thread)
-            ItemView(item: .sampleAgentMessage("The 10-second agent finished too. Only the 15-second agent is still running.", secondsAgo: 44), thread: thread)
+            ItemView(item: .agentMessage(.sample("Three background agents are running, with timers of 5, 10 and 15 seconds. I'll report their results as they come in.", secondsAgo: 58)), thread: thread)
+            ItemView(item: .userMessage(.sample("<task-notification>The 5-second agent finished: hello world</task-notification>", secondsAgo: 50, synthetic: true, origin: "subagent")), thread: thread)
+            ItemView(item: .agentMessage(.sample("The 5-second agent finished and replied \"hello world\". The 10- and 15-second agents are still running.", secondsAgo: 49)), thread: thread)
+            ItemView(item: .userMessage(.sample("<task-notification>The 10-second agent finished: hello world</task-notification>", secondsAgo: 45, synthetic: true, origin: "subagent")), thread: thread)
+            ItemView(item: .agentMessage(.sample("The 10-second agent finished too. Only the 15-second agent is still running.", secondsAgo: 44)), thread: thread)
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 20)
@@ -653,7 +616,7 @@ struct WakeupLine: View {
 
 #Preview("User message (synthetic)") {
     ScrollView {
-        ItemView(item: .sampleUserMessage("Compacted 3 earlier turns to stay under the context limit.", secondsAgo: 30, synthetic: true, origin: "compaction"), thread: .sampleIdleChat())
+        ItemView(item: .userMessage(.sample("Compacted 3 earlier turns to stay under the context limit.", secondsAgo: 30, synthetic: true, origin: "compaction")), thread: .sampleIdleChat())
             .padding(.horizontal, 28)
             .padding(.vertical, 16)
             .frame(maxWidth: 920)
@@ -706,7 +669,7 @@ private func previewScreenshot() -> String {
         ItemView(item: listed, thread: .sampleIdleChat())
         ItemView(item: unlisted, thread: .sampleIdleChat())
     }
-    .environment(\.openChat, OpenChatAction(window: window))
+    .environment(\.windowRef, WindowRef(window: window))
     .padding(28)
     .frame(width: 640)
 }
@@ -714,11 +677,11 @@ private func previewScreenshot() -> String {
 #Preview("Notice") {
     ScrollView {
         VStack(alignment: .leading, spacing: 10) {
-            ItemView(item: .sampleNotice("Switched to Claude Sonnet 5 after a rate limit on Opus.", kind: "modelFallback", level: .warning, secondsAgo: 5), thread: .sampleIdleChat())
-            ItemView(item: .sampleNotice("Interrupted by user.", kind: "interrupted", level: .info, secondsAgo: 5), thread: .sampleIdleChat())
-            ItemView(item: .sampleNotice("$ swift build --target SundownKit", kind: "localCommandOutput", secondsAgo: 5), thread: .sampleIdleChat())
-            ItemView(item: .sampleNotice("Background command \"Sleep then echo\" completed (exit code 0)", kind: "taskNotification", secondsAgo: 5), thread: .sampleIdleChat())
-            ItemView(item: .sampleNotice("Background command \"Run the migration\" failed with exit code 1", kind: "taskNotification", level: .warning, secondsAgo: 5), thread: .sampleIdleChat())
+            ItemView(item: .notice(.sample("Switched to Claude Sonnet 5 after a rate limit on Opus.", kind: "modelFallback", level: .warning, secondsAgo: 5)), thread: .sampleIdleChat())
+            ItemView(item: .notice(.sample("Interrupted by user.", kind: "interrupted", level: .info, secondsAgo: 5)), thread: .sampleIdleChat())
+            ItemView(item: .notice(.sample("$ swift build --target SundownKit", kind: "localCommandOutput", secondsAgo: 5)), thread: .sampleIdleChat())
+            ItemView(item: .notice(.sample("Background command \"Sleep then echo\" completed (exit code 0)", kind: "taskNotification", secondsAgo: 5)), thread: .sampleIdleChat())
+            ItemView(item: .notice(.sample("Background command \"Run the migration\" failed with exit code 1", kind: "taskNotification", level: .warning, secondsAgo: 5)), thread: .sampleIdleChat())
         }
         .padding(28)
     }

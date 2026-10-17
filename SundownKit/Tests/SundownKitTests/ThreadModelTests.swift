@@ -149,7 +149,7 @@ struct ThreadModelTests {
         #expect(thread.title == "Rebuild the window layout")
 
         let observed = Invalidation()
-        // The Tasks inspector's list, too: streamed text is not a task change.
+        // The Tasks tab's list, too: streamed text is not a task change.
         withObservationTracking { _ = thread.title; _ = thread.taskEntries } onChange: { observed.happened = true }
 
         thread.apply(started(.agentMessage(.init(id: "a1", createdAt: 0, text: "")), seq: 2))
@@ -274,7 +274,7 @@ struct ThreadModelTests {
         #expect(thread.streamingReplyID == nil)
     }
 
-    /// What refreshes after a turn (the Changes pane, the Session pane's context) does so when it ends, not
+    /// What refreshes after a turn (the Changes tab, the Context popover) does so when it ends, not
     /// when the next one starts.
     @Test func theLastFinishedTurnChangesWhenATurnEnds() {
         let thread = ThreadModel(id: threadID)

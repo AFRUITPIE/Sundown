@@ -129,7 +129,7 @@ struct WindowModelTests {
         #expect(w.hostID == HostConfig.local.id)
     }
 
-    /// Two windows are two selections: each shows its own chat and inspector.
+    /// Two windows are two selections: each shows its own chat and tab.
     @Test func windowsKeepTheirOwnSelection() {
         let app = AppModel.sample()
         let a = window(app), b = window(app)
