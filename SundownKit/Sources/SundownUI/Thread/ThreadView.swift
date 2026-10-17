@@ -3,7 +3,7 @@ import SundownKit
 import TetherProtocol
 
 /// One chat: its transcript, with the controls pinned to the bottom edge. Nothing else — the
-/// window's title, subtitle, toolbar and inspector belong to the shell.
+/// window's title, subtitle and toolbar belong to the shell.
 struct ThreadView: View {
     let thread: ThreadModel
     let connection: HostConnection
@@ -32,14 +32,13 @@ struct ThreadView: View {
 
 #if DEBUG
 #Preview("Idle chat") {
-    let connection = HostConnection.sample()
     NavigationStack {
-        ThreadView(thread: .sampleIdleChat(), connection: connection)
+        ThreadView(thread: .sampleIdleChat(), connection: .sample())
     }
     .frame(width: 900, height: 700)
 }
 
-/// View ▸ Tool Calls ▸ Every Call, and code that doesn't wrap.
+/// View ▸ Tool Calls ▸ Every Call.
 #Preview("Idle chat (every call)") {
     var appearance = Appearance()
     appearance.toolCalls = .everyCall
@@ -52,31 +51,22 @@ struct ThreadView: View {
 
 /// View ▸ Tool Calls, each way: runs summarized, each finished turn's work behind
 /// one line, and every call on its own.
-#Preview("Work (summarized)") {
-    NavigationStack {
-        ThreadView(thread: .sampleWorkChat(), connection: .sample())
-    }
-    .frame(width: 900, height: 800)
-}
+#Preview("Work (summarized)") { WorkChatPreview(toolCalls: .summarized) }
+#Preview("Work (worked for)") { WorkChatPreview(toolCalls: .workedFor) }
+#Preview("Work (every call)") { WorkChatPreview(toolCalls: .everyCall) }
 
-#Preview("Work (worked for)") {
-    var appearance = Appearance()
-    appearance.toolCalls = .workedFor
-    return NavigationStack {
-        ThreadView(thread: .sampleWorkChat(), connection: .sample())
-    }
-    .environment(\.appearance, appearance)
-    .frame(width: 900, height: 800)
-}
+private struct WorkChatPreview: View {
+    let toolCalls: Appearance.ToolCallDisplay
 
-#Preview("Work (every call)") {
-    var appearance = Appearance()
-    appearance.toolCalls = .everyCall
-    return NavigationStack {
-        ThreadView(thread: .sampleWorkChat(), connection: .sample())
+    var body: some View {
+        var appearance = Appearance()
+        appearance.toolCalls = toolCalls
+        return NavigationStack {
+            ThreadView(thread: .sampleWorkChat(), connection: .sample())
+        }
+        .environment(\.appearance, appearance)
+        .frame(width: 900, height: 800)
     }
-    .environment(\.appearance, appearance)
-    .frame(width: 900, height: 800)
 }
 
 #Preview("Running turn (code not wrapped)") {
@@ -97,19 +87,17 @@ struct ThreadView: View {
 }
 
 #Preview("Running turn") {
-    let connection = HostConnection.sample()
     NavigationStack {
-        ThreadView(thread: .sampleRunningTurn(), connection: connection)
+        ThreadView(thread: .sampleRunningTurn(), connection: .sample())
     }
     .frame(width: 900, height: 700)
 }
 
 #Preview("Thinking (nothing to show yet)") {
-    let connection = HostConnection.sample()
     NavigationStack {
         ThreadView(thread: .sample(status: .running, items: [
             .sampleUserMessage("Why does opening a chat with the inspector open throw a constraints exception?", secondsAgo: 3),
-        ]), connection: connection)
+        ]), connection: .sample())
     }
     .frame(width: 900, height: 400)
 }
@@ -186,9 +174,8 @@ struct ThreadView: View {
 }
 
 #Preview("Pending permission") {
-    let connection = HostConnection.sample()
     NavigationStack {
-        ThreadView(thread: .samplePendingPermission(), connection: connection)
+        ThreadView(thread: .samplePendingPermission(), connection: .sample())
     }
     .frame(width: 900, height: 700)
 }
@@ -209,7 +196,7 @@ struct ThreadView: View {
     .frame(width: 520, height: 348)
 }
 
-// The transcript alone; the inspector has its own previews in `Inspector/`.
+// The transcript alone; the Tasks and Diff tabs and the toolbar's popovers have their own previews in `Panes/`.
 #Preview("Tool call gallery") {
     NavigationStack {
         ThreadView(thread: .sampleToolCalls(), connection: .sample())

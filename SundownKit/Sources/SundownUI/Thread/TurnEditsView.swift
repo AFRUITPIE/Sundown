@@ -8,7 +8,7 @@ import TetherProtocol
 /// turn's prompt (Restore Code to Here…'s preview and confirmation). Nothing indents.
 struct TurnEditsView: View {
     let edits: TurnEdits
-    /// The chat's folder, which each file's folder is shown relative to.
+    /// The chat's directory, which each file's directory is shown relative to.
     let cwd: String?
     @State private var expanded: Bool
     private let openFiles: Set<String>
@@ -68,7 +68,7 @@ struct TurnEditsList: View {
     }
 }
 
-/// One file a turn edited: its name, the folder it's in, what the turn added and removed, and,
+/// One file a turn edited: its name, the directory it's in, what the turn added and removed, and,
 /// open, the turn's edits to it as diffs.
 private struct EditedFileRow: View {
     let file: TurnEdits.File
@@ -106,8 +106,8 @@ private struct EditedFileRow: View {
                                                         value: LineCounts.description(added: file.added, removed: file.removed)))
     }
 
-    /// The file's folder within the chat's, or from the home folder when it's elsewhere; nothing
-    /// for a file at the top of the chat's folder.
+    /// The file's directory within the chat's, or from the home directory when it's elsewhere; nothing
+    /// for a file at the top of the chat's directory.
     private var folder: String {
         let directory = (file.path as NSString).deletingLastPathComponent
         if let cwd, directory == cwd { return "" }
@@ -139,7 +139,7 @@ struct LineCounts: View {
 
 #if DEBUG
 /// A turn's edits as `ThreadModel` summarizes them: two edits to one file, a new file, and one
-/// elsewhere in the chat's folder.
+/// elsewhere in the chat's directory.
 @MainActor
 private func sampleTurnEdits() -> TurnEdits {
     let thread = ThreadModel.sampleWorkChat()

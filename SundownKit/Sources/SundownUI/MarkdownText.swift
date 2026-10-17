@@ -58,8 +58,7 @@ struct MarkdownTextView: NSViewRepresentable {
         setText(of: nsView, context)
         guard let width = proposal.width, width.isFinite else {
             // Its ideal size: the text unwrapped.
-            let size = nsView.measure(width: 10_000, natural: true)
-            return size
+            return nsView.measure(width: 10_000, natural: true)
         }
         let size = nsView.measure(width: max(width, 1))
         // A prompt's bubble hugs its text; a reply takes the column.
@@ -287,6 +286,9 @@ struct MarkdownTheme: Equatable {
     let increasedContrast: Bool
 
     static let fadeDuration: CFTimeInterval = 0.3
+
+    /// The reply style at the standard size: what a view uses before it is given its theme.
+    static let standard = MarkdownTheme(style: .reply, scale: 1, increasedContrast: false)
 
     var cacheKey: String { "\(style)|\(scale)|\(increasedContrast)" }
 
@@ -632,10 +634,10 @@ private extension NSFont {
 /// A read-only TextKit 1 text view: TextKit 1 for its text tables and its background drawing,
 /// which code blocks, quotes and rules use. Copy puts plain text on the pasteboard.
 final class MarkdownNSTextView: NSTextView {
-    var theme = MarkdownTheme(style: .reply, scale: 1, increasedContrast: false)
+    var theme = MarkdownTheme.standard
     /// Sizes measured, by width: SwiftUI asks about a few, the same ones again and again.
     private var measured: [CGFloat: CGSize] = [:]
-    /// Each code block's Copy button, by where its block starts.
+    /// A Copy button for each code block, in the blocks' order.
     private var copyButtons: [NSHostingView<CodeCopyButton>] = []
     private var copyButtonSize: CGSize?
 
@@ -681,17 +683,12 @@ final class MarkdownNSTextView: NSTextView {
         layout.ensureLayout(for: container)
         let used = layout.usedRect(for: container)
         var height = used.maxY + textContainerInset.height
-        // A code block at the end draws its foot below its last line.
-        if storage.length > 0,
-           let decoration = storage.attribute(.markdownDecoration, at: storage.length - 1, effectiveRange: nil) as? MarkdownDecoration,
-           case .code = decoration.kind {
-            height += theme.codeBottom
-        }
-        // A table's last row draws its padding and border below its text.
-        if storage.length > 0,
-           let decoration = storage.attribute(.markdownDecoration, at: storage.length - 1, effectiveRange: nil) as? MarkdownDecoration,
-           case .table = decoration.kind {
-            height += 6 * theme.scale
+        // A code block at the end draws its foot below its last line, and a table's last row its
+        // padding and border below its text.
+        switch decorationKind(at: storage.length - 1) {
+        case .code: height += theme.codeBottom
+        case .table: height += 6 * theme.scale
+        default: break
         }
         height = ceil(max(height, theme.body.pointSize))
         var size = CGSize(width: width, height: height)
@@ -749,11 +746,14 @@ final class MarkdownNSTextView: NSTextView {
         return found
     }
 
+    /// The kind of block drawn at a character of the text, if any.
+    private func decorationKind(at index: Int) -> MarkdownDecoration.Kind? {
+        guard let storage = textStorage, index >= 0, index < storage.length else { return nil }
+        return (storage.attribute(.markdownDecoration, at: index, effectiveRange: nil) as? MarkdownDecoration)?.kind
+    }
+
     private var startsWithCode: Bool {
-        guard let storage = textStorage, storage.length > 0,
-              let decoration = storage.attribute(.markdownDecoration, at: 0, effectiveRange: nil) as? MarkdownDecoration,
-              case .code = decoration.kind else { return false }
-        return true
+        if case .code? = decorationKind(at: 0) { true } else { false }
     }
 
     override func drawBackground(in rect: NSRect) {
@@ -886,12 +886,11 @@ struct CodeCopyButton: View {
 final class MarkdownLayoutManager: NSLayoutManager {
     struct CodeBlock {
         let rect: NSRect
-        let language: String
         let source: String
     }
 
     private var theme: MarkdownTheme {
-        (firstTextView as? MarkdownNSTextView)?.theme ?? MarkdownTheme(style: .reply, scale: 1, increasedContrast: false)
+        (firstTextView as? MarkdownNSTextView)?.theme ?? .standard
     }
 
     /// The rect of every line of the characters in `range`, joined.
@@ -923,8 +922,8 @@ final class MarkdownLayoutManager: NSLayoutManager {
         let theme = theme
         var blocks: [CodeBlock] = []
         storage.enumerateAttribute(.markdownDecoration, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
-            guard let decoration = value as? MarkdownDecoration, case .code(let language, let source) = decoration.kind else { return }
-            blocks.append(CodeBlock(rect: codeRect(for: range, in: container, theme: theme), language: language, source: source))
+            guard let decoration = value as? MarkdownDecoration, case .code(_, let source) = decoration.kind else { return }
+            blocks.append(CodeBlock(rect: codeRect(for: range, in: container, theme: theme), source: source))
         }
         return blocks
     }
