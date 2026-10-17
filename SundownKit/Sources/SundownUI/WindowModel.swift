@@ -20,14 +20,6 @@ public struct WindowTarget: Codable, Hashable, Sendable {
         self.id = id
     }
 
-    /// A value saved before `id` existed still restores its window.
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        hostID = try c.decode(UUID.self, forKey: .hostID)
-        threadID = try c.decodeIfPresent(String.self, forKey: .threadID)
-        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-    }
-
     /// A window is its own, whatever it shows: Open in New Window opens a second window on a chat
     /// already on screen. Links find the window showing their chat by `handlesExternalEvents`.
     public static func == (a: Self, b: Self) -> Bool { a.id == b.id }

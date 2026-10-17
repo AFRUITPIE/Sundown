@@ -207,19 +207,6 @@ extension PermissionMode {
         selectable.filter { $0 != .bypassPermissions || bypass || current == .bypassPermissions }
     }
 
-    /// One word each: a pop-up button is as wide as its widest item.
-    var label: String {
-        switch self {
-        case .default: return "Ask"
-        case .acceptEdits: return "Accept Edits"
-        case .plan: return "Plan"
-        case .auto: return "Auto"
-        case .dontAsk: return "Deny"
-        case .bypassPermissions: return "Bypass"
-        default: return rawValue.humanized
-        }
-    }
-
     /// Spelled out, for menu rows and Settings. Title Case, like every other macOS menu item.
     var longLabel: String {
         switch self {
