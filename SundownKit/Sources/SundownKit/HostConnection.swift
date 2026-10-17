@@ -49,7 +49,8 @@ public final class HostConnection: Identifiable {
     /// While a chat this client doesn't follow has background work, the list is asked for again
     /// now and then: nothing else would say when that work ends.
     private var backgroundRefreshTask: Task<Void, Never>?
-    static let backgroundRefreshInterval: Duration = .seconds(30)
+    /// How long until then; a test shortens it.
+    @ObservationIgnored var backgroundRefreshInterval: Duration = .seconds(30)
     @ObservationIgnored private let transportProvider: TransportProvider?
 
     /// Reported to the daemon on connect.
@@ -530,8 +531,9 @@ public final class HostConnection: Identifiable {
     private func scheduleBackgroundRefresh() {
         guard backgroundRefreshTask == nil,
               chats.contains(where: { $0.hasBackgroundWork && !subscribed.contains($0.id) }) else { return }
+        let interval = backgroundRefreshInterval
         backgroundRefreshTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.backgroundRefreshInterval)
+            try? await Task.sleep(for: interval)
             guard let self, !Task.isCancelled else { return }
             self.backgroundRefreshTask = nil
             await self.loadChats()
