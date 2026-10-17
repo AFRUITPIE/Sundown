@@ -6,7 +6,7 @@ import XCTest
 /// With replies from a line to thousands of points tall (`SUNDOWN_PERF_VARIED`), the lazy stack's
 /// estimate of the rows it hasn't built is far off, and a scroll to an estimated place left it past
 /// every row it had built: blank until the reader scrolled, for minutes. Uniform rows never showed
-/// it. Each step here drives the app through the debug build's stress driver (`StressCommands.swift`,
+/// it. Each step here drives the app through the debug build's stress driver (`StressDriver.swift`,
 /// commands appended to `SUNDOWN_STRESS_FILE`), then watches the window's pixels: neither the
 /// visibility callback nor rows' reported frames can be trusted after a jump.
 ///
@@ -84,6 +84,30 @@ final class TranscriptBlankUITests: SundownUITestCase {
         let bar = app.scrollViews["Transcript"].scrollBars.element(boundBy: 0)
         let place = try XCTUnwrap((bar.value as? NSNumber)?.doubleValue, "no scroll bar value")
         XCTAssertGreaterThan(place, 0.5, "the reader lost their place as an older page went in: the scroll bar is at \(place)")
+    }
+
+    /// The window tiled back and forth (⌃⌥←, → and ↑), animated and at once, at the end and scrolled
+    /// up: every change of width lays every row out again, and rapid ones left the lazy stack's
+    /// built rows outside the window, or none built at all (2026-10-13), until the reader scrolled.
+    @MainActor
+    func testSnapping() throws {
+        try launchVaried()
+        func snapAround(_ place: String) {
+            for round in 1...6 {
+                let now = round.isMultiple(of: 2) ? " now" : ""
+                for side in ["left", "right", "full"] {
+                    run("snap \(side)\(now)")
+                    assertNeverBlank("snapped \(side)\(now), round \(round), \(place)", seconds: 1.5)
+                }
+            }
+            // All three at once, with nothing between them.
+            run("snap left now", "snap right now", "snap full now", "snap left now", "snap full now")
+            assertNeverBlank("snapped in a burst, \(place)")
+        }
+        snapAround("at the end")
+        run("scroll top", "wait 1500", "scroll frac 0.5", "wait 800")
+        snapAround("scrolled up")
+        run("snap center now")
     }
 
     // MARK: Driving

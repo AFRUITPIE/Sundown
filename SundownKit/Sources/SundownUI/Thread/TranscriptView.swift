@@ -44,8 +44,6 @@ struct TranscriptView: View {
             places.rows[thread.id] = onScreen.atEnd ? nil : onScreen.topRow
         }
         #if DEBUG
-        .modifier(ScrollTrace(thread: thread, visible: onScreen))
-        .modifier(BlankSampler(thread: thread))
         .onReceive(NotificationCenter.default.publisher(for: .stressScroll), perform: stressScroll)
         #endif
         // Loading, in the middle of the page above the bottom bar rather than a row at the top.
@@ -125,6 +123,13 @@ struct TranscriptView: View {
                 if new == .idle { recoverIfCollapsed("after scrolling") }
             }
             .onScrollGeometryChange(for: ScrollPlace.self) { g in
+                #if DEBUG
+                // What the UI tests' stress driver's `scroll frac` works from.
+                if StressDriver.path != nil {
+                    StressState.content = g.contentSize.height
+                    StressState.container = g.containerSize.height
+                }
+                #endif
                 // From what's visible: the offset and container count the toolbar's inset, so at the
                 // end they said 52 pt short of it, and the reader was never at the end.
                 let toEnd = g.contentSize.height - g.visibleRect.maxY
@@ -177,13 +182,11 @@ struct TranscriptView: View {
     }
 
     #if DEBUG
-    /// Debug ▸ Stress's scrolls.
+    /// The UI tests' stress driver's scrolls (`StressDriver`).
     private func stressScroll(_ note: Notification) {
         if let y = note.userInfo?["y"] as? CGFloat { position.scrollTo(y: y) }
         else if note.userInfo?["edge"] as? String == "top" { position.scrollTo(edge: .top) }
         else if note.userInfo?["edge"] as? String == "bottom" { scrollToEnd() }
-        else if note.userInfo?["edge"] as? String == "edgebottom" { position.scrollTo(edge: .bottom) }
-        else if note.userInfo?["edge"] as? String == "lastrow", let id = thread.rows(appearance.toolCalls.folding).last?.id { position.scrollTo(id: id, anchor: .bottom) }
     }
     #endif
 }
@@ -610,9 +613,6 @@ struct TranscriptRowView: View, Equatable {
             }
         }
         .modifier(FindHighlight(id: row.id))
-        #if DEBUG
-        .modifier(TraceRowFrame(id: row.id))
-        #endif
         .transformEnvironment(\.turnPlace) { if let place { $0 = place } }
         // Anywhere in a turn shows its actions, after its last reply.
         .onHover { inside in if let place { turnHover?.pointer(inside, turn: place.turn) } }
