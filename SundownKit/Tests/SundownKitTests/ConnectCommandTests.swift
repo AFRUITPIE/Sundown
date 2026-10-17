@@ -58,6 +58,25 @@ struct ConnectCommandTests {
         #expect(failed.errors == "nope\n")
     }
 
+    /// A shell that doesn't say its PATH in time leaves the login shell's: the probe gives up at its
+    /// timeout with no PATH, rather than an error or a wait for the shell (#73).
+    @Test func thePathProbeGivesUpAtItsTimeout() async throws {
+        let started = ContinuousClock.now
+        let path = try await HostBootstrapper().interactivePath(for: .local, timeout: .milliseconds(1))
+        #expect(path == nil, "the probe waited for the shell, which said \(path ?? "")")
+        #expect(ContinuousClock.now - started < .seconds(2))
+    }
+
+    /// `ssh` that can't reach the host (exit 255) is an error at once, not a PATH or a wait (#73).
+    @Test func thePathProbeThrowsWhenSSHCantReachTheHost() async {
+        let started = ContinuousClock.now
+        let host = HostConfig(name: "Gone", kind: .ssh(destination: "sundown-probe-test.invalid"))
+        await #expect(throws: TransportError.self, "an unreachable host read as having no PATH") {
+            _ = try await HostBootstrapper().interactivePath(for: host, timeout: .seconds(10))
+        }
+        #expect(ContinuousClock.now - started < .seconds(5))
+    }
+
     /// A Claude Code session's variables stay out of the server's environment; the rest go through.
     @Test func serverEnvironmentLeavesOutAClaudeSessions() {
         let env = HostBootstrapper.serverEnvironment([
