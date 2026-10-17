@@ -1,6 +1,4 @@
 import Foundation
-import Subprocess
-import System
 
 /// The Sundown server this build of the app runs: tether-server's npm package, at the version its
 /// protocol package is pinned to. Every host has Node.js 18 or later, and runs it with `npx`, so
@@ -52,7 +50,7 @@ public struct HostBootstrapper: Sendable {
     /// login shell `connectCommand` runs isn't one, since whatever an rc file prints would land in
     /// the JSON-RPC stream. Here it can print what it likes: the PATH is between two markers.
     func shellPathCommand(for host: HostConfig) -> (executable: String, arguments: [String]) {
-        let probe = "printf %s \(Self.pathMarker); printenv PATH; printf %s \(Self.pathMarker)"
+        let probe = "printf %s \(Self.pathMarker); printenv PATH; echo \(Self.pathMarker)"
         switch host.kind {
         case .local: return (Self.loginShell, ["-ilc", probe])
         case .ssh(let dest):
@@ -86,8 +84,8 @@ public struct HostBootstrapper: Sendable {
     /// when `ssh` couldn't reach the host, which connecting would say again after as long a wait.
     func interactivePath(for host: HostConfig, timeout: Duration = .seconds(10)) async throws -> String? {
         let cmd = shellPathCommand(for: host)
-        let run = ShellRun(executable: cmd.executable, arguments: cmd.arguments, environment: Self.serverEnvironment())
-        let result = await run.result(timeout: timeout) { Self.shellPath(in: $0) != nil }
+        let result = await runBriefly(cmd.executable, cmd.arguments, environment: Self.serverEnvironment(),
+                                      timeout: timeout) { Self.shellPath(in: $0) != nil }
         if let path = Self.shellPath(in: result.output) { return path }
         if case .ssh = host.kind, result.status == 255 {
             throw TransportError.closed(exitCode: 255, stderr: result.errors)
@@ -121,98 +119,28 @@ public struct HostBootstrapper: Sendable {
     }
 }
 
-/// One short command, its output gathered until it has exited, `done` says it has said enough (a
-/// shell can leave a child holding its output open), or the timeout; then it's stopped.
-struct ShellRun: Sendable {
-    private let configuration: Configuration
-
-    init(executable: String, arguments: [String], environment: [String: String]? = nil) {
-        var options = PlatformOptions()
-        // Asked to stop, then made to.
-        options.teardownSequence = [.gracefulShutDown(allowedDurationToNextStep: .seconds(1))]
-        configuration = Configuration(executable: .path(FilePath(executable)), arguments: Arguments(arguments),
-                                      environment: environment.map(Environment.exactly) ?? .inherit,
-                                      platformOptions: options)
-    }
-
-    /// `status` is nil when it hadn't exited, or never started.
-    func result(timeout: Duration, done: @escaping @Sendable (String) -> Bool) async -> (status: Int32?, output: String, errors: String) {
-        let gathered = await withTaskGroup(of: Ending.self, returning: Gathered?.self) { group in
-            group.addTask { .ran(await gather(done)) }
-            group.addTask {
-                // Cancelled once the command has finished; at the deadline, the command is.
-                try? await Task.sleep(for: timeout)
-                return .deadline
-            }
-            let first = await group.next()!
-            group.cancelAll()
-            guard case .ran(let gathered) = first else {
-                // Cancelling the run stopped the command, which leaves what it had said by then.
-                guard case .ran(var gathered?) = await group.next()! else { return nil }
-                gathered.status = nil
-                return gathered
-            }
-            return gathered
-        }
-        return (gathered?.status, String(decoding: gathered?.output ?? Data(), as: UTF8.self),
-                String(decoding: gathered?.errors ?? Data(), as: UTF8.self))
-    }
-
-    private enum Ending: Sendable {
-        case ran(Gathered?)
-        case deadline
-    }
-
-    private struct Gathered: Sendable {
-        var status: Int32?
-        var output: Data
-        var errors: Data
-    }
-
-    /// Runs the command to the end of its output, or until `done`; nil when it couldn't start.
-    private func gather(_ done: @escaping @Sendable (String) -> Bool) async -> Gathered? {
-        let result = try? await run(configuration, input: .none, output: .sequence, error: .sequence) { execution in
-            async let errors = Self.read(execution.standardError, upTo: 64_000)
-            var output = Data()
-            var saidEnough = false
-            do {
-                for try await chunk in execution.standardOutput where output.count < 1_000_000 {
-                    chunk.withUnsafeBytes { output.append($0.assumingMemoryBound(to: UInt8.self)) }
-                    if done(String(decoding: output, as: UTF8.self)) { saidEnough = true; break }
-                }
-            } catch {}
-            if saidEnough { await execution.teardown(using: configuration.platformOptions.teardownSequence) }
-            return (output, await errors, saidEnough)
-        }
-        guard let result else { return nil }
-        let (output, errors, saidEnough) = result.closureResult
-        return Gathered(status: saidEnough ? nil : result.terminationStatus.code, output: output, errors: errors)
-    }
-
-    /// Everything the stream says, keeping at most `limit` bytes.
-    private static func read(_ stream: SubprocessOutputSequence, upTo limit: Int) async -> Data {
-        var data = Data()
+/// Runs a short command, its stdin empty, until it exits, `done` says its output is enough (a child
+/// it started can hold the output open), or the timeout, and then stops it. `status` is nil when it
+/// was stopped, or never started; `errors` are said only when it exited.
+func runBriefly(_ executable: String, _ arguments: [String], environment: [String: String]? = nil, timeout: Duration,
+                done: @escaping @Sendable (String) -> Bool) async -> (status: Int32?, output: String, errors: String) {
+    let transport = ProcessTransport(executable: executable, arguments: arguments, environment: environment)
+    transport.endInput()
+    let reading = Task { () -> (status: Int32?, output: String, errors: String) in
+        var output = ""
         do {
-            for try await chunk in stream where data.count < limit {
-                chunk.withUnsafeBytes { data.append($0.assumingMemoryBound(to: UInt8.self)) }
+            for try await line in transport.lines() {
+                if output.utf8.count < 1_000_000 { output += String(decoding: line, as: UTF8.self) + "\n" }
+                if done(output) { break }
             }
+        } catch TransportError.closed(let status, let errors) {
+            return (status, output, errors)
         } catch {}
-        return data
+        // Said enough, out of time (cancelled), or never started.
+        await transport.close()
+        return (nil, output, "")
     }
-}
-
-extension Environment {
-    /// This environment and nothing else.
-    static func exactly(_ variables: [String: String]) -> Environment {
-        .custom(Dictionary(uniqueKeysWithValues: variables.compactMap { name, value in Key(rawValue: name).map { ($0, value) } }))
-    }
-}
-
-extension TerminationStatus {
-    /// The exit status, or the signal that ended it, as `Process.terminationStatus` says it.
-    var code: Int32 {
-        switch self {
-        case .exited(let code), .signaled(let code): code
-        }
-    }
+    let deadline = Task { try await Task.sleep(for: timeout); reading.cancel() }
+    defer { deadline.cancel() }
+    return await reading.value
 }

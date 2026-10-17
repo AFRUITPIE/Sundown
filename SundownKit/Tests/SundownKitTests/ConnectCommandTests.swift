@@ -36,26 +36,7 @@ struct ConnectCommandTests {
         #expect(HostBootstrapper.shellPath(in: "\(m)/a:/b\n") == nil)
         #expect(HostBootstrapper.shellPath(in: "\(m)\n\(m)") == nil)
         let ssh = HostBootstrapper().shellPathCommand(for: HostConfig(name: "box", kind: .ssh(destination: "box")))
-        #expect(ssh.arguments.last == "exec \"$SHELL\" -ilc 'printf %s \(m); printenv PATH; printf %s \(m)'")
-    }
-
-    /// Done once the markers are both there, though a child the shell started still holds its output.
-    @Test func shellRunEndsAtTheMarkers() async {
-        let m = HostBootstrapper.pathMarker
-        let started = ContinuousClock.now
-        let run = ShellRun(executable: "/bin/sh", arguments: ["-c", "sleep 20 & echo hello; printf %s \(m); printf /x:/y; printf %s \(m)"])
-        let result = await run.result(timeout: .seconds(10)) { HostBootstrapper.shellPath(in: $0) != nil }
-        #expect(HostBootstrapper.shellPath(in: result.output) == "/x:/y")
-        #expect(ContinuousClock.now - started < .seconds(5))
-    }
-
-    /// A shell that never says gives up at the timeout; one that exits is done when it does.
-    @Test func shellRunTimesOutAndReportsExit() async {
-        let hung = await ShellRun(executable: "/bin/sleep", arguments: ["20"]).result(timeout: .milliseconds(300)) { _ in false }
-        #expect(hung.status == nil)
-        let failed = await ShellRun(executable: "/bin/sh", arguments: ["-c", "echo nope >&2; exit 255"]).result(timeout: .seconds(10)) { _ in false }
-        #expect(failed.status == 255)
-        #expect(failed.errors == "nope\n")
+        #expect(ssh.arguments.last == "exec \"$SHELL\" -ilc 'printf %s \(m); printenv PATH; echo \(m)'")
     }
 
     /// A shell that doesn't say its PATH in time leaves the login shell's: the probe gives up at its

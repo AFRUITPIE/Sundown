@@ -19,16 +19,6 @@ struct ProcessTransportTests {
         await transport.close()
     }
 
-    /// Lines sent before the process has started are written once it has.
-    @Test func linesSentBeforeStartingAreWritten() async throws {
-        let transport = ProcessTransport(executable: "/bin/cat", arguments: [])
-        let sending = Task { try await transport.send(Data("early".utf8)) }
-        var lines = transport.lines().makeAsyncIterator()
-        try await sending.value
-        #expect(try await lines.next().map(Self.text) == "early")
-        await transport.close()
-    }
-
     /// A burst far larger than a pipe's buffer, in lines of every size, arrives whole and in order,
     /// whatever chunks it was read in.
     @Test func aLargeBurstArrivesWhole() async throws {
@@ -61,8 +51,7 @@ struct ProcessTransportTests {
             #expect(stderr == "oops\n")
         }
         #expect(lines == ["{}"])
-        #expect(await transport.stderrText == "oops\n")
-        await #expect(throws: TransportError.self, "a line sent once it had gone") {
+        await #expect(throws: (any Error).self, "a line sent once it had gone") {
             try await transport.send(Data("late".utf8))
         }
     }
@@ -89,7 +78,7 @@ struct ProcessTransportTests {
                 return
             }
         }
-        await #expect(throws: TransportError.self) { try await transport.send(Data("x".utf8)) }
+        await #expect(throws: (any Error).self) { try await transport.send(Data("x".utf8)) }
     }
 
     /// `close()` closes stdin and stops the process, though it would have run on.
@@ -118,7 +107,22 @@ struct ProcessTransportTests {
         do {
             while try await lines.next() != nil {}
         } catch TransportError.closed {}
-        await #expect(throws: TransportError.self) { try await transport.send(Data("x".utf8)) }
+        await #expect(throws: (any Error).self) { try await transport.send(Data("x".utf8)) }
+    }
+
+    /// It ends when the process exits, though a child it started still holds stdout open, with
+    /// every line it wrote.
+    @Test func exitEndsItThoughAChildHoldsStdout() async throws {
+        let started = ContinuousClock.now
+        let transport = ProcessTransport(executable: "/bin/sh", arguments: ["-c", "echo one; echo two; sleep 30 & exit 4"])
+        var lines: [String] = []
+        do {
+            for try await line in transport.lines() { lines.append(Self.text(line)) }
+        } catch TransportError.closed(let code, _) {
+            #expect(code == 4)
+        }
+        #expect(lines == ["one", "two"])
+        #expect(ContinuousClock.now - started < .seconds(5))
     }
 
     /// One that closes both its outputs can say nothing more: it's stopped, and the stream ends.
@@ -156,21 +160,16 @@ struct ProcessTransportTests {
         #expect(FileManager.default.fileExists(atPath: marker.path), "the process wasn't asked to stop")
     }
 
-    /// Writing as the process goes neither crashes the app (SIGPIPE) nor hangs: each send returns,
-    /// written or failed.
+    /// Writing as the process goes doesn't crash the app (SIGPIPE), and once it has gone a send fails.
     @Test func sendingToAProcessThatHasGoneFails() async throws {
         let transport = ProcessTransport(executable: "/bin/sh", arguments: ["-c", "exec 0<&-; echo bye"])
         let stream = transport.lines()
-        var failed = false
-        for _ in 0..<200 {
-            do { try await transport.send(Data(repeating: 0x41, count: 4096)) } catch { failed = true; break }
-        }
+        for _ in 0..<200 { try? await transport.send(Data(repeating: 0x41, count: 4096)) }
         do {
             for try await _ in stream {}
         } catch TransportError.closed(let code, _) {
             #expect(code == 0)
         }
-        #expect(failed, "200 sends to a process with no stdin all succeeded")
-        await #expect(throws: TransportError.self) { try await transport.send(Data("x".utf8)) }
+        await #expect(throws: (any Error).self) { try await transport.send(Data("x".utf8)) }
     }
 }

@@ -3,6 +3,12 @@ import Testing
 import TetherProtocol
 @testable import SundownKit
 
+extension LineSplitter {
+    mutating func split(_ chunk: Data, _ line: (Data) -> Void) {
+        chunk.withUnsafeBytes { split($0, line) }
+    }
+}
+
 /// Lines from the daemon, as the transport splits them.
 @Suite
 struct LineSplitterTests {
