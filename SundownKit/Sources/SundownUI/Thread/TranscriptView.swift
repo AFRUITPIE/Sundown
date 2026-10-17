@@ -166,6 +166,11 @@ struct TranscriptView: View {
                     .buttonBorderShape(.circle)
                     .controlSize(.large)
                     .help("Jump to Latest")
+                    // Never the key view: with keyboard navigation on, a click focused it, and as it
+                    // went AppKit handed focus to the transcript's first built row, which the scroll
+                    // view then kept in sight, away from the end, and which ⌘F's field couldn't take
+                    // the keyboard back from (CI, 2026-10-17). VoiceOver still presses it.
+                    .focusable(false)
                     .padding(.bottom, 8)
                     .transition(.moving(.move(edge: .bottom).combined(with: .opacity), reduceMotion: reduceMotion))
                 }
