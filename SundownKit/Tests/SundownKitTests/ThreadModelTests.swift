@@ -178,7 +178,7 @@ struct ThreadModelTests {
         #expect(!thread.isThinking)
 
         let transcript = Invalidation()
-        withObservationTracking { _ = thread.rows; _ = thread.items } onChange: { transcript.happened = true }
+        withObservationTracking { _ = thread.rows(.summarized); _ = thread.items } onChange: { transcript.happened = true }
         let row = Invalidation()
         withObservationTracking { _ = box.item } onChange: { row.happened = true }
         for (offset, delta) in ["folds ", "items."].enumerated() {

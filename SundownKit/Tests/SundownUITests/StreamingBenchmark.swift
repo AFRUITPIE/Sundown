@@ -82,7 +82,7 @@ private final class Replay {
 
     func frame(_ n: ServerNotification) {
         thread.apply(n)
-        _ = thread.rows
+        _ = thread.rows(.summarized)
         if case .agentMessage(let m) = thread.box(for: thread.items.last!).item {
             let blocks = markdown.blocks(for: m.text)
             if let last = blocks.last {

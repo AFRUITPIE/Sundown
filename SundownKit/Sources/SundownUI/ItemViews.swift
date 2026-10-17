@@ -252,13 +252,6 @@ private struct ReplyElement: ViewModifier {
     }
 }
 
-extension Item.UserMessage {
-    /// The message's text parts, as it would be pasted.
-    var plainText: String {
-        content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n\n")
-    }
-}
-
 /// Branches the window's chat after a message, keeping everything up to it, and opens the branch.
 /// Holds the window, like `InspectSubagentAction`, so the shell's updates don't redraw every message.
 struct ForkChatAction: Equatable {

@@ -65,18 +65,15 @@ public final class ThreadModel: Identifiable {
     public private(set) var lastError: String?
     /// Settings chosen while the daemon hasn't loaded the thread, applied when it resumes.
     public private(set) var pendingSettings = PendingSettings()
-    public var totalCostUsd: Double { turns.compactMap { $0.result?.totalCostUsd }.reduce(0, +) }
     private var index: [String: Int] = [:]
     /// Bumped by every structural change to the chat's own items, and by a subagent's edit, which
     /// counts in its turn's edits; the rows cache against it. A streamed delta doesn't bump it (the
     /// rows hold the item's value from before the delta, and render its box), except the first one,
     /// which ends `isThinking`.
     public private(set) var itemsVersion = 0
-    /// Bumped when a subagent's item is added or changes: those show only in its card, so the
+    /// Bumped when a subagent's item is added or changes: those show only in Tasks, so the
     /// transcript's rows don't fold again for each step a subagent takes.
     public private(set) var childrenVersion = 0
-    @ObservationIgnored private var cachedTopLevel: (version: Int, items: [Item])?
-    @ObservationIgnored private var cachedRows: (version: Int, rows: [TranscriptRow])?
     /// The rows as the current folding draws them, dates and edits included. Only one folding's:
     /// the Tool Calls setting changes rarely, and each kept another copy of the whole transcript.
     @ObservationIgnored private var folded: FoldedRows?
@@ -136,9 +133,6 @@ public final class ThreadModel: Identifiable {
     /// The latest top-level prompt to arrive live, as the host echoes it: never one that came with
     /// history. The transcript eases in the room it takes. Stored, and changed once a prompt.
     public private(set) var arrivedPrompt: String?
-    /// A turn is starting here and nothing of it has arrived yet: the running status and the turn
-    /// come just before the prompt's echo. Until then, the transcript lays out as it did before.
-    public private(set) var awaitingPrompt = false
     /// A New Chat window's stand-in for a chat it's starting (`PendingStart.placeholder`), before
     /// the host has answered: the transcript says Starting session.
     public private(set) var isStarting = false
@@ -236,7 +230,7 @@ public final class ThreadModel: Identifiable {
 
     private static func firstPrompt(in items: [Item]) -> String? {
         for case .userMessage(let m) in items where m.synthetic != true {
-            for case .text(let t) in m.content { return String(t.text.prefix(80)) }
+            if let t = m.texts.first { return String(t.prefix(80)) }
         }
         return nil
     }
@@ -268,7 +262,6 @@ public final class ThreadModel: Identifiable {
         storage = absorbingSkillBodies(newItems)
         if turns != newTurns { turns = newTurns }
         noteLastTurn()
-        if awaitingPrompt { awaitingPrompt = false }
         reindex()
         if hasMoreHistory != hasMore { hasMoreHistory = hasMore }
         if !historyLoaded { historyLoaded = true }
@@ -391,8 +384,6 @@ public final class ThreadModel: Identifiable {
 
     /// Lets go of what's worked out from the items, all of it made again when it's next asked for.
     private func dropDerived() {
-        cachedTopLevel = nil
-        cachedRows = nil
         folded = nil
         refoldFrom = 0
     }
@@ -415,10 +406,7 @@ public final class ThreadModel: Identifiable {
             if cronsChanged { refreshScheduledWork() }
         case .threadStatusChanged(let e):
             // The sidebar reads the status: only a change of it redraws the rows.
-            if status != e.status {
-                if !isRunning, e.status == .running, currentTurn == nil, !awaitingPrompt { awaitingPrompt = true }
-                status = e.status
-            }
+            if status != e.status { status = e.status }
             if activity != e.activity?.rawValue { activity = e.activity?.rawValue }
             if let count = e.backgroundTasks, count != backgroundTaskCount { backgroundTaskCount = count }
             if e.status == .idle, apiRetry != nil { apiRetry = nil }
@@ -434,11 +422,9 @@ public final class ThreadModel: Identifiable {
             Signposts.replyStarted(in: self)
             upsertTurn(e.turn)
             promptSuggestion = nil
-            if !awaitingPrompt { awaitingPrompt = true }
         case .turnCompleted(let e):
             Signposts.replyEnded(in: self)
             upsertTurn(e.turn)
-            if awaitingPrompt { awaitingPrompt = false }
             setStreamingReply(nil)
             // A firing turn that scheduled no next wakeup ended its loop.
             refreshScheduledWork()
@@ -446,7 +432,6 @@ public final class ThreadModel: Identifiable {
             if index[e.item.id] == nil {
                 noteStarted(e.item.id)
                 if case .userMessage(let m) = e.item, m.parentToolUseId == nil { arrivedPrompt = m.id }
-                if awaitingPrompt { awaitingPrompt = false }
             }
             upsert(e.item)
             if case .agentMessage(let m) = e.item, m.parentToolUseId == nil { setStreamingReply(m.id) }
@@ -501,12 +486,12 @@ public final class ThreadModel: Identifiable {
         pending.append(p)
     }
 
-    /// Answer a prompt. The server broadcasts serverRequest/resolved to every client.
     /// A suggested task started or dismissed.
     public func dismissSuggestedTask(_ id: UUID) {
         suggestedTasks.removeAll { $0.id == id }
     }
 
+    /// Answer a prompt. The server broadcasts serverRequest/resolved to every client.
     public func answer(_ p: PendingRequest, with result: JSONValue) {
         pending.removeAll { $0.id == p.id }
         p.respond(result)
@@ -529,10 +514,6 @@ public final class ThreadModel: Identifiable {
 
     func setError(_ message: String?) {
         lastError = message
-    }
-
-    func dismissAuthStatus() {
-        authStatus = nil
     }
 
     // MARK: helpers
@@ -625,7 +606,7 @@ public final class ThreadModel: Identifiable {
     /// skill call of the same agent, or one already taken as a call's.
     private func skillBody(_ item: Item, after previous: Item?) -> (call: String, text: String)? {
         guard case .userMessage(let m) = item, m.synthetic == true else { return nil }
-        let text = m.content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n\n")
+        let text = m.plainText
         if let call = skillMessages[m.id] { return (call, text) }
         guard case .toolCall(let call)? = previous, call.kind == .skill, call.parentToolUseId == m.parentToolUseId,
               skillBodies[call.id] == nil else { return nil }
@@ -670,7 +651,7 @@ public final class ThreadModel: Identifiable {
         }
         if let box = boxes[id] { box.item = item } else { boxes[id] = ItemBox(item) }
         if let previous, previous.parentToolUseId != item.parentToolUseId || previous.isTaskCall != item.isTaskCall {
-            reindex() // an item moved between cards, which never happens in practice
+            reindex() // an item moved between a subagent and the chat, which never happens in practice
         } else {
             noteChange(of: item, at: i, isNew: previous == nil, was: previous)
         }
@@ -683,7 +664,7 @@ public final class ThreadModel: Identifiable {
     }
 
     /// What an item added or replaced changes: the rows, from its turn on, when it's the chat's own
-    /// or an edit (a subagent's edits count in its turn's); its subagent's card, when it's a
+    /// or an edit (a subagent's edits count in its turn's); its subagent's children, when it's a
     /// subagent's.
     private func noteChange(of item: Item, at i: Int, isNew: Bool, was previous: Item?) {
         if let parent = item.parentToolUseId {
@@ -785,7 +766,7 @@ public final class ThreadModel: Identifiable {
         boxes[item.id] ?? ItemBox(item)
     }
 
-    /// Items belonging to a subagent (Task/Agent tool) — rendered nested in its card. Observes the
+    /// Items belonging to a subagent (Task/Agent tool) — shown in Tasks. Observes the
     /// subagents' items, not the transcript's.
     public func children(of toolUseId: String) -> [Item] {
         _ = childrenVersion
@@ -808,7 +789,7 @@ public final class ThreadModel: Identifiable {
     private func refreshWorkflowRuns() {
         var next: [String: WorkflowRun] = [:]
         for id in taskCallIDs {
-            guard let i = index[id], case .toolCall(let call) = storage[i], call.isWorkflow else { continue }
+            guard let call = call(id), call.isWorkflow else { continue }
             next[id] = workflowRun(of: call)
         }
         if next != workflowRuns { workflowRuns = next }
@@ -889,20 +870,11 @@ public final class ThreadModel: Identifiable {
         }
     }
 
+    /// The chat's own items, without its subagents'. For previews and tests; the transcript draws
+    /// `rows(_:)`.
     public var topLevelItems: [Item] {
-        if let c = cachedTopLevel, c.version == itemsVersion { return c.items }
-        let top = storage.filter { $0.parentToolUseId == nil }
-        cachedTopLevel = (itemsVersion, top)
-        return top
-    }
-
-    /// The top-level items with consecutive finished tool calls folded into one row, before the
-    /// dates and edits go between turns. The transcript draws `rows(_:)`.
-    public var rows: [TranscriptRow] {
-        if let c = cachedRows, c.version == itemsVersion { return c.rows }
-        let rows = foldTranscriptRows(topLevelItems)
-        cachedRows = (itemsVersion, rows)
-        return rows
+        _ = itemsVersion
+        return storage.filter { $0.parentToolUseId == nil }
     }
 
     /// The transcript as it is drawn: the rows folded as View ▸ Tool Calls says, with
@@ -1002,7 +974,7 @@ public final class ThreadModel: Identifiable {
     /// How many items, or things made from them, the thread holds on to, for tests: the transcript,
     /// its boxes, and what's worked out from it.
     var itemsHeld: Int {
-        storage.count + boxes.count + (cachedTopLevel?.items.count ?? 0) + (cachedRows?.rows.count ?? 0)
+        storage.count + boxes.count
             + (folded?.rows.count ?? 0) + childIndexes.values.reduce(0) { $0 + $1.count } + taskCallIDs.count
             + fileChanges.count + started.count
     }
@@ -1017,11 +989,11 @@ public final class ThreadModel: Identifiable {
         return changes
     }
 
-    /// Subagent and workflow runs, as the Tasks inspector lists them: every subagent tool call,
-    /// then the tasks the SDK reported that no call of ours matches.
+    /// What the Tasks tab lists: every subagent and workflow tool call, then the tasks the SDK
+    /// reported that no call of ours matches, then the chat's schedules and goals.
     ///
     /// Stored, and rebuilt only when `tasks`, `backgroundTaskIDs` or a subagent call changes: computed
-    /// from `items` it would make every streamed delta invalidate the Tasks inspector. Assigned only
+    /// from `items` it would make every streamed delta invalidate the Tasks tab. Assigned only
     /// when it changes, so an event that changes nothing shown redraws nothing.
     public private(set) var taskEntries: [InspectorTaskEntry] = []
 
@@ -1071,8 +1043,7 @@ public final class ThreadModel: Identifiable {
                     isBackgrounded: backgroundTaskIDs.contains($0.taskId),
                     // A workflow whose call went with older items is still shown from its task.
                     workflow: $0.data["task_type"]?.stringValue == "local_workflow"
-                        ? WorkflowRun(call: .init(id: $0.toolUseId ?? $0.taskId, createdAt: 0, name: "Workflow", kind: .other,
-                                                  input: [:], status: .completed), task: $0)
+                        ? WorkflowRun(standingInFor: $0.toolUseId ?? $0.taskId, task: $0)
                         : nil
                 )
             }
@@ -1089,19 +1060,19 @@ public final class ThreadModel: Identifiable {
     public func itemIndex(of id: String) -> Int? { index[id] }
 }
 
-private extension Item {
-    var isSubagentCall: Bool {
-        if case .toolCall(let call) = self { return call.kind == .subagent }
-        return false
-    }
-
+extension Item {
     var isWorkflowCall: Bool {
         if case .toolCall(let call) = self { return call.isWorkflow }
         return false
     }
+}
 
+private extension Item {
     /// A call the Tasks tab lists: a subagent's or a workflow's.
-    var isTaskCall: Bool { isSubagentCall || isWorkflowCall }
+    var isTaskCall: Bool {
+        guard case .toolCall(let call) = self else { return false }
+        return call.kind == .subagent || call.isWorkflow
+    }
 
     /// A call that edits files, finished or not: its changes count in its turn's edits.
     var isEditCall: Bool {
@@ -1133,7 +1104,8 @@ private extension Item {
     }
 }
 
-/// One subagent or workflow run: the tool call that started it, its newest lifecycle event, or both.
+/// One row of the Tasks tab: a subagent or workflow run (the tool call that started it, its newest
+/// lifecycle event, or both), a schedule or a goal.
 public struct InspectorTaskEntry: Identifiable, Equatable {
     public let id: String
     public let call: Item.ToolCall?
@@ -1195,19 +1167,6 @@ extension Item {
         }
     }
 
-    public var turnId: String? {
-        switch self {
-        case .userMessage(let v): return v.turnId
-        case .agentMessage(let v): return v.turnId
-        case .reasoning(let v): return v.turnId
-        case .toolCall(let v): return v.turnId
-        case .compaction(let v): return v.turnId
-        case .error(let v): return v.turnId
-        case .notice(let v): return v.turnId
-        case .unknown(let v): return v["turnId"]?.stringValue
-        }
-    }
-
     /// ms since epoch.
     public var createdAt: Double {
         switch self {
@@ -1258,15 +1217,11 @@ public struct RateLimit: Sendable, Equatable {
     }
 
     /// Whether what it says still holds at `now`: a limit that has reset says nothing any more.
-    public func isCurrent(at now: Date) -> Bool {
-        resetsAt.map { $0 > now } ?? true
-    }
-
     /// What the status strip says about the limit at `now`: nothing while requests go through as
     /// usual or once it has reset; otherwise how much is used, or that it's reached, and when it
     /// resets.
     public func warning(now: Date, calendar: Calendar = .current, locale: Locale = .current) -> String? {
-        guard status != .allowed, isCurrent(at: now) else { return nil }
+        guard status != .allowed, resetsAt.map({ $0 > now }) ?? true else { return nil }
         let reset = resetsAt.map { " It resets \(Self.describeReset($0, now: now, calendar: calendar, locale: locale))." } ?? ""
         switch status {
         case .rejected:

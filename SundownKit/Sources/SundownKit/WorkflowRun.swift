@@ -33,7 +33,6 @@ public enum WorkflowScript {
 
         public struct Phase: Equatable, Sendable {
             public var title: String
-            public var detail: String?
         }
 
         /// A script that says nothing of itself.
@@ -47,10 +46,8 @@ public enum WorkflowScript {
         var parser = JSLiteralParser(Array(script[start.upperBound...].unicodeScalars.prefix(50_000)))
         guard case .object(let object)? = parser.value() else { return nil }
         let phases = (object["phases"]?.arrayValue ?? []).compactMap { phase -> Meta.Phase? in
-            if let title = phase["title"]?.stringValue ?? phase["name"]?.stringValue {
-                return Meta.Phase(title: title, detail: phase["detail"]?.stringValue ?? phase["description"]?.stringValue)
-            }
-            return phase.stringValue.map { Meta.Phase(title: $0, detail: nil) }
+            if let title = phase["title"]?.stringValue ?? phase["name"]?.stringValue { return Meta.Phase(title: title) }
+            return phase.stringValue.map { Meta.Phase(title: $0) }
         }
         return Meta(name: object["name"]?.stringValue, description: object["description"]?.stringValue, phases: phases)
     }
@@ -292,7 +289,6 @@ public struct WorkflowRun: Equatable, Sendable {
     public struct Phase: Equatable, Sendable {
         public var index: Int
         public var title: String
-        public var detail: String?
     }
 
     public struct Agent: Equatable, Sendable, Identifiable {
@@ -305,12 +301,9 @@ public struct WorkflowRun: Equatable, Sendable {
         public var phaseIndex: Int?
         public var phaseTitle: String?
         public var agentId: String?
-        public var model: String?
         public var state: State
-        public var queuedAt: Double?
         public var startedAt: Double?
         public var durationMs: Double?
-        public var tokens: Double?
         public var toolCalls: Int?
         public var lastProgressAt: Double?
         public var lastToolName: String?
@@ -389,7 +382,7 @@ public struct WorkflowRun: Equatable, Sendable {
         if let snapshot {
             for p in snapshot["phases"]?.arrayValue ?? [] {
                 guard let index = p["index"]?.doubleValue else { continue }
-                phases.append(Phase(index: Int(index), title: p["title"]?.stringValue ?? "", detail: p["detail"]?.stringValue))
+                phases.append(Phase(index: Int(index), title: p["title"]?.stringValue ?? ""))
             }
             agents = (snapshot["agents"]?.arrayValue ?? []).compactMap(Self.agent)
         } else if let raw = data["workflow_progress"]?.arrayValue {
@@ -397,7 +390,7 @@ public struct WorkflowRun: Equatable, Sendable {
                 switch entry["type"]?.stringValue {
                 case "workflow_phase":
                     guard let index = entry["index"]?.doubleValue else { continue }
-                    phases.append(Phase(index: Int(index), title: entry["title"]?.stringValue ?? "", detail: nil))
+                    phases.append(Phase(index: Int(index), title: entry["title"]?.stringValue ?? ""))
                 case "workflow_agent":
                     if let agent = Self.agent(entry) { agents.append(agent) }
                 default: break
@@ -409,14 +402,11 @@ public struct WorkflowRun: Equatable, Sendable {
         agents = Dictionary(agents.map { ($0.index, $0) }, uniquingKeysWith: { _, b in b }).values.sorted { $0.index < $1.index }
         for i in phases.indices {
             if let better = Self.metaTitle(phases[i].index, phases[i].title, meta) { phases[i].title = better }
-            if phases[i].detail == nil, let m = meta, phases[i].index >= 1, phases[i].index <= m.phases.count {
-                phases[i].detail = m.phases[phases[i].index - 1].detail
-            }
         }
         // Phases named only by their agents, as a phase that's announced late is.
         for agent in agents {
             if let index = agent.phaseIndex, !phases.contains(where: { $0.index == index }) {
-                phases.append(Phase(index: index, title: agent.phaseTitle ?? "", detail: nil))
+                phases.append(Phase(index: index, title: agent.phaseTitle ?? ""))
             }
         }
         phases.sort { $0.index < $1.index }
@@ -440,11 +430,11 @@ public struct WorkflowRun: Equatable, Sendable {
         self.agents = agents
     }
 
-    /// A snapshot read with `workflow/read`, with no call to hand: a reload's, before its call is.
-    public init?(toolUseId: String, snapshot: JSONValue) {
-        guard snapshot.objectValue != nil else { return nil }
+    /// A run with no call to hand (a task whose call went with older items, or a snapshot read with
+    /// `workflow/read` before its call is): it stands in for a finished call of that id.
+    public init(standingInFor toolUseId: String, task: TaskEventNotification? = nil, loaded: JSONValue? = nil) {
         self.init(call: .init(id: toolUseId, createdAt: 0, name: "Workflow", kind: .other, input: [:], status: .completed),
-                  task: nil, loaded: snapshot)
+                  task: task, loaded: loaded)
     }
 
     /// A status as the daemon or the CLI says it. Paused goes on (it's resumed), so it reads as
@@ -474,7 +464,6 @@ public struct WorkflowRun: Equatable, Sendable {
         guard let index = v["index"]?.doubleValue else { return nil }
         let raw = (v["state"]?.stringValue ?? "").lowercased()
         let error = v["error"]?.stringValue
-        let queuedAt = v["queuedAt"]?.doubleValue
         let startedAt = v["startedAt"]?.doubleValue
         // The CLI's own words (start, progress, done, error, skipped, queued…), as a daemon passes
         // them through, or as an older one named them; `skipped` marks one the person skipped,
@@ -490,14 +479,14 @@ public struct WorkflowRun: Equatable, Sendable {
         case "queued", "waiting", "pending": state = .waiting
         default:
             // "start" before it has a slot is waiting, as the CLI counts it.
-            state = raw == "start" && queuedAt != nil && startedAt == nil ? .waiting : .running
+            state = raw == "start" && v["queuedAt"]?.doubleValue != nil && startedAt == nil ? .waiting : .running
         }
         return Agent(
             index: Int(index), label: v["label"]?.stringValue ?? "Agent \(Int(index))",
             phaseIndex: v["phaseIndex"]?.doubleValue.map { Int($0) }, phaseTitle: v["phaseTitle"]?.stringValue,
-            agentId: v["agentId"]?.stringValue, model: v["model"]?.stringValue, state: state,
-            queuedAt: queuedAt, startedAt: startedAt, durationMs: v["durationMs"]?.doubleValue,
-            tokens: v["tokens"]?.doubleValue, toolCalls: v["toolCalls"]?.doubleValue.map { Int($0) },
+            agentId: v["agentId"]?.stringValue, state: state,
+            startedAt: startedAt, durationMs: v["durationMs"]?.doubleValue,
+            toolCalls: v["toolCalls"]?.doubleValue.map { Int($0) },
             lastProgressAt: v["lastProgressAt"]?.doubleValue,
             lastToolName: v["lastToolName"]?.stringValue, lastToolSummary: v["lastToolSummary"]?.stringValue,
             promptPreview: v["promptPreview"]?.stringValue, resultPreview: v["resultPreview"]?.stringValue,
@@ -515,10 +504,7 @@ public struct WorkflowRun: Equatable, Sendable {
     }
 
     private static func firstMatch(_ pattern: String, in text: String?) -> String? {
-        guard let text, let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-              let range = Range(match.range(at: 1), in: text) else { return nil }
-        return String(text[range]).trimmingCharacters(in: CharacterSet(charactersIn: ".,;"))
+        firstCapture(pattern, in: text)?.trimmingCharacters(in: CharacterSet(charactersIn: ".,;"))
     }
 
     // MARK: words
@@ -553,14 +539,6 @@ public struct WorkflowRun: Equatable, Sendable {
         return parts.joined(separator: " · ")
     }
 
-    /// A finished run's caption on its row: how many agents it ran and how long it took.
-    public var finishedCaption: String {
-        var parts: [String] = []
-        if !agents.isEmpty { parts.append(Self.inflected("^[\(agents.count) agent](inflect: true)")) }
-        if let ms = durationMs, ms > 0 { parts.append(Self.duration(ms / 1000)) }
-        return parts.joined(separator: " · ")
-    }
-
     /// "42s", "3m 12s": the two largest units.
     public static func duration(_ seconds: Double) -> String {
         Duration.seconds(seconds.rounded())
@@ -570,6 +548,14 @@ public struct WorkflowRun: Equatable, Sendable {
     private static func inflected(_ text: String.LocalizationValue) -> String {
         String(AttributedString(localized: text).characters)
     }
+}
+
+/// The first group of the pattern's leftmost match in `text`, if there is one.
+func firstCapture(_ pattern: String, in text: String?) -> String? {
+    guard let text, let regex = try? NSRegularExpression(pattern: pattern),
+          let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+          match.numberOfRanges > 1, let range = Range(match.range(at: 1), in: text) else { return nil }
+    return String(text[range])
 }
 
 /// The daemon's workflow methods. Declared here rather than taken from the protocol package, so
