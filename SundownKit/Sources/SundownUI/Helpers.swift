@@ -116,11 +116,6 @@ private struct ReadingColumn: ViewModifier {
 
 /// Numbers as the reader's locale writes them.
 enum Format {
-    /// "$0.42", or four places below a cent, where two would say nothing.
-    static func cost(_ usd: Double) -> String {
-        usd.formatted(.currency(code: "USD").precision(.fractionLength(usd < 0.01 ? 4 : 2)))
-    }
-
     /// "42s", "3m 12s", "1h 5m": the two largest units.
     static func duration(_ seconds: Double) -> String {
         Duration.seconds(seconds.rounded())
@@ -199,13 +194,6 @@ extension EffortLevel {
         let nearest = needles.min { abs(Double($0) - position) < abs(Double($1) - position) } ?? 50
         return "gauge.with.dots.needle.\(nearest)percent"
     }
-}
-
-extension Optional where Wrapped == EffortLevel {
-    /// None chosen: Claude Code sends its own default for the model.
-    var label: String { self?.label ?? "Default" }
-
-    func symbol(in levels: [EffortLevel]) -> String { self?.symbol(in: levels) ?? SessionSymbol.automaticEffort }
 }
 
 extension PermissionMode {
@@ -287,9 +275,9 @@ extension HostConnection.State {
     }
 }
 
-extension ThreadStatus {
-    /// Title case, never the wire value: the inspector shows "Not Loaded", not `notLoaded`.
-    var label: String { rawValue.humanized }
+extension ThreadModel {
+    /// A request is waiting for an answer, or the daemon says the chat needs the person.
+    var isWaitingOnYou: Bool { !pending.isEmpty || status == .requiresAction }
 }
 
 // MARK: text size

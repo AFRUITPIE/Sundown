@@ -15,14 +15,13 @@ public struct ConnectionLogWindow: View {
 
     public var body: some View {
         let connection = hostID.flatMap(app.connection)
-        ConnectionLogView(host: connection?.host.name ?? "Host", lines: connection?.log ?? [])
+        ConnectionLogView(lines: connection?.log ?? [])
             .navigationTitle("Connection Log")
             .navigationSubtitle(connection?.host.name ?? "")
     }
 }
 
 struct ConnectionLogView: View {
-    let host: String
     let lines: [String]
 
     private var text: String { lines.joined(separator: "\n") }
@@ -73,9 +72,8 @@ extension ConnectionLogWindow {
 
 #if DEBUG
 #Preview("Connection Log") {
-    ConnectionLogView(host: "build-box", lines: [
-        "$ ssh build-box ~/.tether/bin/tether-0.4.0-linux-x64 connect",
-        "Installing tether-0.4.0-linux-x64 (4.2 MB)…",
+    ConnectionLogView(lines: [
+        "$ ssh build-box npx --yes tether-server@0.4.0 connect",
         "Connected: build-box.local, claude 2.1.4 at /usr/local/bin/claude",
         "Disconnected: The operation couldn’t be completed. (SundownKit.TransportError error 1.)",
         "Reconnecting in 2s…",
@@ -84,7 +82,7 @@ extension ConnectionLogWindow {
 }
 
 #Preview("Connection Log (empty)") {
-    ConnectionLogView(host: "This Mac", lines: [])
+    ConnectionLogView(lines: [])
         .frame(width: 620, height: 400)
 }
 #endif

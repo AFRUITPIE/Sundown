@@ -60,17 +60,13 @@ struct SessionSettings {
         } else {
             SessionSettings(draft: window, connection: window.connection)
         }
-        return settings.offering(bypass: window.app.appearance.offerBypass)
+        var current = settings
+        current.offersBypass = window.app.appearance.offerBypass
+        return current
     }
 
     /// Settings ▸ General ▸ Offer Bypass Permissions.
     var offersBypass = false
-
-    func offering(bypass: Bool) -> SessionSettings {
-        var settings = self
-        settings.offersBypass = bypass
-        return settings
-    }
 
     var offeredModes: [PermissionMode] {
         PermissionMode.offered(bypass: offersBypass, current: permissionMode.wrappedValue)
@@ -84,6 +80,13 @@ struct SessionSettings {
     var currentModel: ModelInfo? {
         let value = models.concreteValue(for: model.wrappedValue)
         return models.concrete.first { $0.value == value }
+    }
+
+    /// A custom or Bedrock model id the CLI doesn't list, which stays selectable.
+    var unlistedModel: String? {
+        guard let id = model.wrappedValue,
+              !models.contains(where: { $0.value == id || $0.resolvedModel == id }) else { return nil }
+        return id
     }
 
     /// What the model control shows: "Opus 5", or the raw id of an unlisted (Bedrock) model.
@@ -187,21 +190,15 @@ struct ModelEffortForm: View {
 struct ModelRows: View {
     let settings: SessionSettings
 
-    private func row(_ model: ModelInfo, selected: String?) -> some View {
-        ChoiceRow(title: model.displayName, detail: model.description,
-                 isSelected: model.value == selected) {
-            settings.model.wrappedValue = model.value
-        }
-    }
-
     var body: some View {
         let selected = settings.models.concreteValue(for: settings.model.wrappedValue)
         ForEach(settings.models.concrete, id: \.value) { model in
-            row(model, selected: selected)
+            ChoiceRow(title: model.displayName, detail: model.description,
+                      isSelected: model.value == selected) {
+                settings.model.wrappedValue = model.value
+            }
         }
-        // A custom or Bedrock id the CLI doesn't list stays selectable.
-        if let id = settings.model.wrappedValue,
-           !settings.models.contains(where: { $0.value == id || $0.resolvedModel == id }) {
+        if let id = settings.unlistedModel {
             ChoiceRow(title: id, detail: "", isSelected: true) { settings.model.wrappedValue = id }
         }
     }
@@ -365,9 +362,7 @@ struct ModelPicker: View {
             ForEach(settings.models.concrete, id: \.value) { model in
                 Text(model.displayName).tag(Optional(model.value))
             }
-            // A custom or Bedrock id the CLI doesn't list stays selectable.
-            if let id = settings.model.wrappedValue,
-               !settings.models.contains(where: { $0.value == id || $0.resolvedModel == id }) {
+            if let id = settings.unlistedModel {
                 Text(id).tag(Optional(id))
             }
         }
@@ -574,38 +569,42 @@ private struct SessionControlsPreview: View {
         .popoverSize(width: 320)
 }
 
-#Preview("Model and Effort popover") {
-    ModelEffortForm(settings: previewSettings(thread: .sample(model: "sonnet", effort: .medium, fastModeState: .on)))
+/// The Model and Effort popover for a chat on `model` with `effort`. (`#Preview(arguments:)` needs
+/// macOS 27.)
+@MainActor
+private func modelEffortPreview(model: String, effort: EffortLevel?,
+                                fastModeState: ThreadInfo.FastModeState? = nil) -> some View {
+    ModelEffortForm(settings: previewSettings(
+        thread: .sample(model: model, effort: effort, fastModeState: fastModeState)))
         .popoverSize(width: 300)
+}
+
+#Preview("Model and Effort popover") {
+    modelEffortPreview(model: "sonnet", effort: .medium, fastModeState: .on)
 }
 
 /// Fable offers four levels and an explicit choice: no stop is the default's.
 #Preview("Model and Effort popover (old model selected)") {
-    ModelEffortForm(settings: previewSettings(thread: .sample(model: "claude-opus-4-8", effort: .medium)))
-        .popoverSize(width: 300)
+    modelEffortPreview(model: "claude-opus-4-8", effort: .medium)
 }
 
 #Preview("Model and Effort popover (effort chosen)") {
-    ModelEffortForm(settings: previewSettings(thread: .sample(model: "claude-fable-5-1[1m]", effort: .max)))
-        .popoverSize(width: 300)
+    modelEffortPreview(model: "claude-fable-5-1[1m]", effort: .max)
 }
 
 /// No effort chosen: the slider rests on Claude Code's own level, marked as the default.
 #Preview("Model and Effort popover (effort default)") {
-    ModelEffortForm(settings: previewSettings(thread: .sample(model: "opus", effort: nil)))
-        .popoverSize(width: 300)
+    modelEffortPreview(model: "opus", effort: nil)
 }
 
 /// A model Claude Code lists without effort levels: the slider is disabled.
 #Preview("Model and Effort popover (effort unavailable)") {
-    ModelEffortForm(settings: previewSettings(thread: .sample(model: "haiku", effort: nil)))
-        .popoverSize(width: 300)
+    modelEffortPreview(model: "haiku", effort: nil)
 }
 
 /// An id the CLI doesn't list gets a row of its own, with no description.
 #Preview("Model and Effort popover (custom model)") {
-    ModelEffortForm(settings: previewSettings(thread: .sample(model: "us.anthropic.claude-custom-v1", effort: .medium)))
-        .popoverSize(width: 300)
+    modelEffortPreview(model: "us.anthropic.claude-custom-v1", effort: .medium)
 }
 
 #Preview("Session menu contents") {

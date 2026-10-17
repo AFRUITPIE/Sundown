@@ -30,9 +30,9 @@ struct SessionSymbolTests {
     /// doesn't list and Automatic.
     @Test(arguments: (1...EffortLevel.allCases.count).map { Array(EffortLevel.allCases.prefix($0)) })
     func effortSymbolsResolve(levels: [EffortLevel]) {
-        expectResolves(EffortLevel?.none.symbol(in: levels), "Automatic symbol does not exist on this OS")
+        expectResolves(SessionSymbol.automaticEffort, "Automatic symbol does not exist on this OS")
         for level in EffortLevel.allCases {
-            let symbol = Optional(level).symbol(in: levels)
+            let symbol = level.symbol(in: levels)
             expectResolves(symbol, "\(level.rawValue) in \(levels.map(\.rawValue)) → \(symbol) does not exist")
         }
     }
@@ -50,11 +50,9 @@ struct SessionSymbolTests {
 
         // A level this model doesn't offer can't claim a position on its gauge.
         #expect(EffortLevel.xhigh.symbol(in: three) == SessionSymbol.automaticEffort)
-        #expect(EffortLevel?.none.symbol(in: three) == SessionSymbol.automaticEffort)
     }
 
     @Test func effortLabelsReadAsWords() {
-        #expect(EffortLevel?.none.label == "Default")
         #expect(EffortLevel.medium.label == "Medium")
         #expect(EffortLevel.xhigh.label == "Extra High")
     }

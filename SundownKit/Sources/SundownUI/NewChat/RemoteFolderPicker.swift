@@ -11,7 +11,7 @@ struct RemoteFolderPicker: View {
     let connection: HostConnection
     let done: (String) -> Void
     @Environment(\.dismiss) private var dismiss
-    /// Where browsing starts: the host's home, or above it by Enclosing Directory.
+    /// Where browsing starts: the host's home, or a directory above it chosen in the path pop-up.
     @State private var root = ""
     @State private var opened: [String] = []
     /// The selection in the directory being shown; cleared as another is shown.

@@ -159,14 +159,10 @@ private final class RefusingSecrets: SecretStore, @unchecked Sendable {
 
 @Suite
 struct FormatTests {
-    /// Written in the reader's language: "42s", "3h 5m", "12.3K", "$0.42", "$0.0042".
+    /// Written in the reader's language: "42s", "3h 5m", "12.3K".
     @Test func numbersAreFormattedForTheLocale() {
-        let separator = Locale.current.decimalSeparator ?? "."
-        func places(_ s: String) -> Int { s.components(separatedBy: separator).last?.filter(\.isNumber).count ?? 0 }
         #expect(Format.duration(3 * 3600 + 5 * 60 + 9).split(separator: " ").count == 2)
         #expect(Format.tokens(950) == 950.formatted())
         #expect(Format.tokens(12_300) != 12_300.formatted())
-        #expect(places(Format.cost(1.5)) == 2)
-        #expect(places(Format.cost(0.0042)) == 4)
     }
 }

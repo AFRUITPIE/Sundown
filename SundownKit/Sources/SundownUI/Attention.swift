@@ -76,10 +76,8 @@ enum AttentionEvent: Equatable {
 @MainActor
 final class AttentionCenter: NSObject {
     private unowned let app: AppModel
-    /// In UI tests nothing reaches Notification Center; what would have is kept here instead.
+    /// In UI tests nothing reaches Notification Center.
     private let deliversToSystem: Bool
-    private(set) var delivered: [(title: String, body: String)] = []
-    private var authorization: UNAuthorizationStatus?
     private var sightings = RequestSightings()
 
     init(app: AppModel, deliversToSystem: Bool) {
@@ -229,16 +227,16 @@ final class AttentionCenter: NSObject {
         ],
         intentIdentifiers: [])
 
+    /// A `passive` notification is quiet — no sound, no interruption — and goes up without asking
+    /// for permission or checking a request, as a reply to an action on an earlier notification.
     private func post(id: String, title: String, body: String, host: UUID, threadID: String,
-                      requestID: String? = nil, category: String? = nil) {
-        guard deliversToSystem else {
-            delivered.append((title, body))
-            return
-        }
+                      requestID: String? = nil, category: String? = nil, passive: Bool = false) {
+        guard deliversToSystem else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        if app.alerts.sound { content.sound = .default }
+        if app.alerts.sound && !passive { content.sound = .default }
+        if passive { content.interruptionLevel = .passive }
         content.threadIdentifier = threadID
         if let category { content.categoryIdentifier = category }
         var info: [String: String] = ["host": host.uuidString, "thread": threadID]
@@ -246,9 +244,11 @@ final class AttentionCenter: NSObject {
         content.userInfo = info
         let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
         Task {
-            guard await authorize() else { return }
-            // Answered while permission was being asked for: nothing to say any more.
-            if let requestID, !isWaiting(host: host, threadID: threadID, requestID: requestID) { return }
+            if !passive {
+                guard await authorize() else { return }
+                // Answered while permission was being asked for: nothing to say any more.
+                if let requestID, !isWaiting(host: host, threadID: threadID, requestID: requestID) { return }
+            }
             try? await UNUserNotificationCenter.current().add(request)
         }
     }
@@ -256,31 +256,17 @@ final class AttentionCenter: NSObject {
     /// Allow or Deny on a request that was answered elsewhere, or cancelled, since its notification
     /// went up: says so in its place, quietly, rather than doing nothing.
     private func sayAlreadyAnswered(id: String, title: String, threadID: String, host: UUID) {
-        guard deliversToSystem else {
-            delivered.append((title, Self.alreadyAnswered))
-            return
-        }
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = Self.alreadyAnswered
-        content.threadIdentifier = threadID
-        content.interruptionLevel = .passive
-        content.userInfo = ["host": host.uuidString, "thread": threadID]
-        Task { try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) }
+        post(id: id, title: title, body: Self.alreadyAnswered, host: host, threadID: threadID, passive: true)
     }
 
     static let alreadyAnswered = "Already answered."
-
 
     /// Asked the first time there's something to say, not at launch.
     private func authorize() async -> Bool {
         let center = UNUserNotificationCenter.current()
         let status = await center.notificationSettings().authorizationStatus
-        authorization = status
         if status == .notDetermined {
-            let granted = (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
-            authorization = granted ? .authorized : .denied
-            return granted
+            return (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
         }
         return status == .authorized || status == .provisional
     }
@@ -289,11 +275,6 @@ final class AttentionCenter: NSObject {
     func systemDenied() async -> Bool {
         guard deliversToSystem else { return false }
         return await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .denied
-    }
-
-    /// Opens the chat a notification is about.
-    func open(host: UUID, threadID: String) {
-        app.open(.chat(host: host, thread: threadID))
     }
 
     // MARK: Dock
@@ -313,7 +294,7 @@ final class AttentionCenter: NSObject {
 
     private func trackBadge() {
         let count = withObservationTracking {
-            Self.badgeCount(allChats.map { ($0.isRunning, !$0.pending.isEmpty || $0.status == .requiresAction) },
+            Self.badgeCount(allChats.map { ($0.isRunning, $0.isWaitingOnYou) },
                             badge: app.alerts.dockBadge)
         } onChange: { [weak self] in
             Task { @MainActor in self?.trackBadge() }
@@ -337,8 +318,8 @@ private struct DockMenu: View {
 
     var body: some View {
         let chats = app.connections.values.flatMap { c in c.chats.map { (connection: c, thread: $0) } }
-        let waiting = chats.filter { !$0.thread.pending.isEmpty || $0.thread.status == .requiresAction }
-        let working = chats.filter { $0.thread.isRunning && $0.thread.pending.isEmpty && $0.thread.status != .requiresAction }
+        let waiting = chats.filter { $0.thread.isWaitingOnYou }
+        let working = chats.filter { $0.thread.isRunning && !$0.thread.isWaitingOnYou }
         section("Waiting on You", waiting)
         section("Working", working)
         Button("New Chat") { app.open(.newChat()) }
@@ -383,7 +364,7 @@ extension AttentionCenter: UNUserNotificationCenterDelegate {
                     ? ["decision": "allow", "scope": "once"]
                     : ["decision": "deny", "message": "The user denied this action."])
             default:
-                open(host: host, threadID: threadID)
+                app.open(.chat(host: host, thread: threadID))
             }
         }
     }

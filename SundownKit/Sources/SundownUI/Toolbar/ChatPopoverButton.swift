@@ -49,14 +49,7 @@ struct ContextGauge: View {
 
     var body: some View {
         let fill = window.selectedThread?.contextFill
-        Image(systemName: "circle", variableValue: fill ?? 0)
-            // Much heavier than the toolbar's other symbols, so the arc reads at a glance.
-            .fontWeight(.black)
-            // Drawn as far round as the value, not dimmed in layers.
-            .symbolVariableValueMode(.draw)
-            // Shaded as the SF Symbols app's Gradients option shades it.
-            .symbolColorRenderingMode(.gradient)
-            .foregroundStyle(Self.color(fill).map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
+        ContextSymbol(fill: fill)
             .accessibilityValue(fill.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? "Unknown")
             .task(id: Key(thread: window.selectedThread?.id, turn: window.selectedThread?.lastFinishedTurn)) {
                 guard let thread = window.selectedThread, let connection = window.connection,
@@ -70,6 +63,23 @@ struct ContextGauge: View {
     private struct Key: Equatable { let thread: String?; let turn: String? }
 }
 
+/// The circle drawn as far round as `fill`, nothing while it's unknown; the gauge and its preview
+/// draw it alike.
+private struct ContextSymbol: View {
+    let fill: Double?
+
+    var body: some View {
+        Image(systemName: "circle", variableValue: fill ?? 0)
+            // Much heavier than the toolbar's other symbols, so the arc reads at a glance.
+            .fontWeight(.black)
+            // Drawn as far round as the value, not dimmed in layers.
+            .symbolVariableValueMode(.draw)
+            // Shaded as the SF Symbols app's Gradients option shades it.
+            .symbolColorRenderingMode(.gradient)
+            .foregroundStyle(ContextGauge.color(fill).map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
+    }
+}
+
 extension View {
     /// A popover's Form at a fixed width and as tall as its rows: a Form scrolls, so on its own it
     /// asks for no height at all.
@@ -80,18 +90,13 @@ extension View {
 }
 
 #if DEBUG
-/// The Context gauge unknown, then filling through green, yellow and red, at toolbar size.
 /// The Context gauge unknown, then at every 10% from empty to full, as the toolbar draws it.
 #Preview("Context gauge") {
     let fills: [Double?] = [nil] + (0...10).map { Double($0) / 10 }
     HStack(spacing: 14) {
         ForEach(Array(fills.enumerated()), id: \.offset) { _, fill in
             VStack(spacing: 6) {
-                Image(systemName: "circle", variableValue: fill ?? 0)
-                    .fontWeight(.black)
-                    .symbolVariableValueMode(.draw)
-                    .symbolColorRenderingMode(.gradient)
-                    .foregroundStyle(ContextGauge.color(fill).map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
+                ContextSymbol(fill: fill)
                     .font(.title2)
                 Text(fill.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? "—")
                     .font(.caption)
