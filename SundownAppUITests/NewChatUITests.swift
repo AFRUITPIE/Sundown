@@ -36,9 +36,20 @@ final class NewChatUITests: SundownUITestCase {
         let model = toolbar.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Model'")).firstMatch
         XCTAssertTrue(model.appears(timeout: 5), "no Model button in the toolbar: \(toolbar.buttons.allElementsBoundByIndex.map(\.label))")
 
+        // New Chat asked for by name takes the keyboard to the field, even from the sidebar's
+        // search, which otherwise keeps it (#102).
+        let search = window.searchFields.firstMatch
+        search.click()
+        app.typeKey("n", modifierFlags: .command)
+        XCTAssertTrue(input.appears(timeout: 5))
+        app.typeText("typed after New Chat")
+        XCTAssertTrue(waitUntil(3) { self.inputText().contains("typed after New Chat") },
+                      "⌘N from the sidebar's search left the keyboard there: the field has \(inputText())")
+        input.typeKey("a", modifierFlags: .command)
+        input.typeKey(.delete, modifierFlags: [])
+
         // New Chat keeps its directory with the composer, not in a form under the toolbar: the
         // directory, the branch checked out there, and Work In, in one row above the field.
-        app.typeKey("n", modifierFlags: .command)
         let folder = app.descendants(matching: .any)["newChat.folder"]
         XCTAssertTrue(folder.appears(timeout: 5), "New Chat has no directory menu")
         XCTAssertEqual(folder.value as? String, "/tmp/sundown-fixture")

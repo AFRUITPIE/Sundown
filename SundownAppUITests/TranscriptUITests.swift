@@ -18,6 +18,10 @@ final class TranscriptUITests: SundownUITestCase {
         let latest = text(longChatEnd)
         let jump = app.buttons["Jump to Latest"]
         XCTAssertFalse(jump.exists, "Jump to Latest is offered at the end")
+        // Not for a nudge from the end either (#78): only once the reader is a screen away.
+        app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)).scroll(byDeltaX: 0, deltaY: 60)
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertFalse(jump.exists, "a nudge from the end offered Jump to Latest")
 
         // The chat opens with its latest 50 items, about three turns; scrolling to the top loads the
         // page before them once the reader stops there. Section 22 is in that page, whatever the
@@ -280,6 +284,46 @@ final class TranscriptUITests: SundownUITestCase {
         XCTAssertTrue(window.exists)
     }
 
+    /// Switching chats (#121): once a chat is drawn nothing in it moves (one that fit the window
+    /// jumped a toolbar's height and back as it opened, a long one settled 2 pt late), a short chat
+    /// sits at the top (#50) rather than down by the field, and the transcript runs on under the
+    /// message field's glass, its end above the field (the field sat on an opaque band below it).
+    @MainActor
+    func testSwitchingChatsHoldsStill() {
+        launch("showcase")
+        XCTAssertTrue(row("Lock Screen widget layout").appears(timeout: 20), "the showcase's chats never showed")
+        let transcript = app.scrollViews["Transcript"]
+
+        /// Opens the chat titled `title` and watches `landmark` from when it's drawn: it stays put.
+        func open(_ title: String, watching landmark: XCUIElement) {
+            row(title).click()
+            XCTAssertTrue(waitForTitle(title), "didn't switch to \(title): \(app.windows.firstMatch.title)")
+            XCTAssertTrue(waitUntil(5) { self.isOnScreen(landmark) }, "\(title) never drew its landmark")
+            let first = landmark.frame.minY
+            var moved: CGFloat = 0
+            let until = Date().addingTimeInterval(1.2)
+            while Date() < until {
+                moved = max(moved, abs(landmark.frame.minY - first))
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            XCTAssertLessThanOrEqual(moved, 0.5, "\(title) moved \(moved) pt after it was drawn")
+        }
+
+        // A short chat: its prompt (its title) and one reply.
+        let shortReply = text("Done. Everything builds, and the tests pass.")
+        open("Lock Screen widget layout", watching: shortReply)
+        XCTAssertLessThan(shortReply.frame.maxY, transcript.frame.midY, "a short chat isn't at the top")
+        // A long one, at its end: its last row, the turn's edits, above the field, and the
+        // transcript on under the field.
+        let edits = app.disclosureTriangles.matching(identifier: "transcript.edits").firstMatch
+        open("Cache forecasts for offline use", watching: edits)
+        XCTAssertLessThanOrEqual(edits.frame.maxY, input.frame.minY, "the end is under the message field")
+        XCTAssertGreaterThan(transcript.frame.maxY, input.frame.maxY, "the transcript stops above the message field: nothing passes under its glass")
+        // And back again, both ways.
+        open("Lock Screen widget layout", watching: shortReply)
+        open("Cache forecasts for offline use", watching: edits)
+    }
+
     /// A reply streaming in: the prompt lifts the transcript, a running call says so, the text fades
     /// in and is ordinary selectable text once it has arrived.
     @MainActor
@@ -289,7 +333,12 @@ final class TranscriptUITests: SundownUITestCase {
         launchLongChat(environment: ["SUNDOWN_PERF_REPLY_SECTIONS": "1"])
         let previous = text(longChatEnd)
         let before = previous.frame.minY
+        // Sent from a reader scrolled up, the prompt still goes to the end, where it lands (#86).
+        let jump = app.buttons["Jump to Latest"]
+        app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)).scroll(byDeltaX: 0, deltaY: 2500)
+        XCTAssertTrue(jump.appears(timeout: 5), "the reader isn't away from the end before sending")
         send("Keep going")
+        XCTAssertTrue(jump.disappears(timeout: 5), "sending while scrolled up didn't go to the end")
 
         // A running call reads as a row that says it's running (its spinner used to make the whole
         // row read as a progress indicator). A disclosure triangle's value is whether it's open: the
