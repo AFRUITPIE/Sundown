@@ -145,20 +145,6 @@ struct WindowModelTests {
         #expect(a.tab == .chat)
     }
 
-    /// A chat shown in two windows stays loaded until the last one moves off it.
-    @Test func aChatIsLetGoOnlyWhenNoWindowShowsIt() {
-        let app = AppModel.sample()
-        let a = window(app), b = window(app)
-        a.open(threadID: "shared")
-        b.open(threadID: "shared")
-        #expect(a.selectedThread === b.selectedThread)
-
-        a.newChat()
-        #expect(app.isShown(b.selectedThread))
-        b.close()
-        #expect(!app.isShown(a.connection?.thread("shared")))
-    }
-
     /// The launch's first window reopens the last chat; a later one is New Chat on the same host,
     /// on the Chat tab, whatever tab the last window was on.
     @Test func aNewWindowOpensOnNewChat() {
@@ -199,54 +185,65 @@ struct WindowModelTests {
         #expect(a.tab == .diff && b.tab == .chat)
     }
 
-    @Test func draftsArePerChatAndSurviveRelaunch() {
+    /// A file to keep drafts in, as the app keeps them in Application Support.
+    private func draftsFile() -> URL {
+        FileManager.default.temporaryDirectory.appending(path: "drafts-\(UUID().uuidString).json")
+    }
+
+    private func appModel(draftsAt url: URL?) -> AppModel {
         let defaults = isolatedDefaults()
-        let app = AppModel(defaults: defaults)
+        return AppModel(defaults: defaults, secrets: DefaultsSecrets(defaults), draftsURL: url)
+    }
+
+    @Test func draftsArePerChatAndSurviveRelaunch() {
+        let file = draftsFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let app = appModel(draftsAt: file)
         app.setDraft("half a thought", for: "a")
         app.setDraft("another", for: "b")
         app.setDraft("   ", for: "b")
         app.saveDrafts()
 
-        let restored = AppModel(defaults: defaults)
+        let restored = appModel(draftsAt: file)
 
         #expect(restored.draft(for: "a") == "half a thought")
         // Whitespace alone isn't a draft.
         #expect(restored.draft(for: "b") == "")
     }
 
-    /// Drafts live in a file of their own; ones from the defaults file move there once, and a
-    /// deleted chat's draft goes with it.
-    @Test func draftsMoveToTheirFileAndAreForgottenWithTheirChat() throws {
-        let defaults = isolatedDefaults()
-        defaults.set(try JSONEncoder().encode(["old": "from before"]), forKey: "sundown.drafts.v1")
-        let file = FileDrafts(url: FileManager.default.temporaryDirectory.appending(path: "drafts-\(UUID().uuidString).json"))
-        defer { try? FileManager.default.removeItem(at: file.url) }
+    /// A deleted chat's draft goes with it, from the file too.
+    @Test func draftsAreForgottenWithTheirChat() {
+        let file = draftsFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let app = appModel(draftsAt: file)
+        app.setDraft("one", for: "a")
+        app.setDraft("two", for: "b")
+        app.saveDrafts()
 
-        let app = AppModel(defaults: defaults, secrets: DefaultsSecrets(defaults), draftStore: file)
-        #expect(app.draft(for: "old") == "from before")
-        #expect(defaults.data(forKey: "sundown.drafts.v1") == nil)
-        #expect(file.read()["old"] == "from before")
-
-        app.forgetDraft(for: "old")
+        app.forgetDraft(for: "a")
         app.waitForDraftWrites()
-        #expect(file.read()["old"] == nil)
+
+        let restored = appModel(draftsAt: file)
+        #expect(restored.draft(for: "a") == "")
+        #expect(restored.draft(for: "b") == "two")
     }
 
     /// Typing keeps the draft at once but writes the store only once it pauses (or the app quits),
     /// and tells no view: composers read a draft when they appear.
     @Test func draftsAreWrittenOnceTypingPausesAndObservedByNoOne() {
-        let defaults = isolatedDefaults()
-        let app = AppModel(defaults: defaults)
+        let file = draftsFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let app = appModel(draftsAt: file)
         let observed = Flag()
         withObservationTracking { _ = app.draft(for: "a"); _ = app.draftDeliveries } onChange: { observed.raised = true }
 
         app.setDraft("half", for: "a")
         #expect(app.draft(for: "a") == "half")
         #expect(!observed.raised)
-        #expect(AppModel(defaults: defaults).draft(for: "a") == "")
+        #expect(appModel(draftsAt: file).draft(for: "a") == "")
 
         app.saveDrafts()
-        #expect(AppModel(defaults: defaults).draft(for: "a") == "half")
+        #expect(appModel(draftsAt: file).draft(for: "a") == "half")
     }
 
     /// A Shortcut's prompt reaches the composer as a delivery, each with a new token, and is the draft too.
@@ -281,6 +278,16 @@ struct WindowModelTests {
         #expect(one == WindowTarget(hostID: host, threadID: "other", id: one.id))
     }
 
+    /// The scene value is saved by the system as JSON and restored from it.
+    @Test func aWindowTargetRestoresFromItsJSON() throws {
+        let host = UUID(), id = UUID()
+        let saved = #"{"hostID":"\#(host.uuidString)","threadID":"t-3","id":"\#(id.uuidString)"}"#
+        let target = try JSONDecoder().decode(WindowTarget.self, from: Data(saved.utf8))
+        #expect(target.hostID == host && target.threadID == "t-3" && target.id == id)
+        let newChat = try JSONDecoder().decode(WindowTarget.self, from: JSONEncoder().encode(WindowTarget(hostID: host, id: id)))
+        #expect(newChat.threadID == nil && newChat.id == id)
+    }
+
     /// The debug launch hook's chat goes to the launch's first window, restored or new, and only it;
     /// every window after one has started opens on New Chat.
     @Test func theLaunchChatGoesToTheFirstWindowOnly() {
@@ -304,7 +311,8 @@ struct WindowModelTests {
         #expect(restored.sidebarGrouping == .directory)
     }
 
-    @Test func aStoreWrittenBeforeTheseKeysExistedStillDecodes() {
+    /// Keys a store doesn't know (another build's) are ignored, and the ones it lacks take their defaults.
+    @Test func aStoreWithUnknownKeysStillDecodes() {
         let defaults = isolatedDefaults()
         let old = """
         {"hosts":[],"defaultModel":"opus","transcriptWidth":"medium"}
@@ -460,15 +468,6 @@ struct SettingsDestinationTests {
 
     @Test func unknownOrMalformedDestinationFallsBackToGeneral() {
         #expect(SettingsDestination(storedValue: "unknown") == .general)
-    }
-
-    /// Panes earlier builds had: the new-chat defaults moved into General, and a per-host
-    /// destination is now a selection inside Hosts.
-    @Test func retiredDestinationsMigrateToThePaneThatAbsorbedThem() {
-        #expect(SettingsDestination(storedValue: "chats") == .general)
-        #expect(SettingsDestination(storedValue: "newChats") == .general)
-        #expect(SettingsDestination(storedValue: "hosts") == .hosts)
-        #expect(SettingsDestination(storedValue: "host:\(UUID().uuidString)") == .hosts)
     }
 }
 

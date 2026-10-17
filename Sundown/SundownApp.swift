@@ -29,11 +29,8 @@ struct SundownApp: App {
         // Window carries its target.
         WindowGroup(for: WindowTarget.self) { $target in
             WindowRoot(app: app, target: $target)
-                .onAppear {
-                    app.startAttention()
-                    // The app's own action, which outlives any one window.
-                    app.openURL = { openURL($0) }
-                }
+                // The app's own action, which outlives any one window.
+                .onAppear { app.openURL = { openURL($0) } }
         } defaultValue: {
             app.newWindowTarget()
         }
