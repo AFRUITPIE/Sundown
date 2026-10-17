@@ -73,7 +73,7 @@ private final class Replay {
     let thread = ThreadModel(id: "perf")
     let markdown = MarkdownCache()
     /// Building the streaming block's text, as `MarkdownTextView` does for its changed tail.
-    let theme = MarkdownTheme(style: .reply, scale: 1, increasedContrast: false)
+    let theme = MarkdownTheme.standard
     var fading = Duration.zero
 
     init() {

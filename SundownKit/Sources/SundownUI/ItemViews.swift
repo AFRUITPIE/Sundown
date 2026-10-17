@@ -310,11 +310,10 @@ struct UserMessageView: View {
     var body: some View {
         HStack {
             Spacer(minLength: 60)
-            parts(alignment: .trailing)
+            parts
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(message.synthetic == true ? AnyShapeStyle(.fill.tertiary) : AnyShapeStyle(bubbleBlue),
-                            in: .rect(cornerRadius: Layout.cardCornerRadius))
+                .background(bubbleBlue, in: .rect(cornerRadius: Layout.cardCornerRadius))
         }
     }
 
@@ -330,45 +329,12 @@ struct UserMessageView: View {
         return true
     }
 
-    /// Who a message not typed here came from, in words rather than the SDK's kind.
-    static func originLabel(_ origin: String?) -> String {
-        switch origin {
-        case "peer": "From Another Session"
-        case "channel": "From a Channel"
-        case "coordinator", "teamLead", "team-lead": "From the Team Lead"
-        case nil: "From Claude Code"
-        case let other?: "From \(other.humanized)"
-        }
-    }
-
-    static func originSymbol(_ origin: String?) -> String {
-        switch origin {
-        case "peer": "bubble.left.and.bubble.right"
-        case "channel": "dot.radiowaves.left.and.right"
-        default: "gearshape"
-        }
-    }
-
-    private func parts(alignment: HorizontalAlignment) -> some View {
-        VStack(alignment: alignment, spacing: 6) {
-            if message.synthetic == true {
-                HStack(spacing: 6) {
-                    Label(message.originName.map { "From “\($0)”" } ?? Self.originLabel(message.origin),
-                          systemImage: Self.originSymbol(message.origin))
-                    if let session = message.originSession {
-                        PeerSessionLink(sessionID: session)
-                    }
-                }
-                .scaledFont(.caption2).foregroundStyle(.secondary)
-            }
+    private var parts: some View {
+        VStack(alignment: .trailing, spacing: 6) {
             ForEach(Array(message.content.enumerated()).filter { Self.draws($0.element) }, id: \.offset) { index, part in
                 // One view a part, even one that shows nothing, so SwiftUI can count them.
                 VStack(alignment: .trailing, spacing: 0) {
                     switch part {
-                    case .text(let t) where message.synthetic == true:
-                        Text(t.text)
-                            .textSelection(.enabled)
-                            .lineLimit(6)
                     case .text(let t):
                         // Markdown, as it was written for Claude to read, in the bubble's colors.
                         MarkdownView(text: t.text, style: .prompt)
@@ -387,10 +353,10 @@ struct UserMessageView: View {
                 Text("Sent while running").scaledFont(.caption2).foregroundStyle(.secondary)
             }
         }
-        .foregroundStyle(message.synthetic == true ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
+        .foregroundStyle(.white)
         // A group VoiceOver names as it enters: whose message this is.
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(message.synthetic == true ? Self.originLabel(message.origin) : "You")
+        .accessibilityLabel("You")
     }
 }
 
@@ -404,9 +370,7 @@ struct SyntheticMessageView: View {
     /// Claude Code's own opening for the summary it writes when it compacts a chat.
     static let compactionSummaryOpening = "This session is being continued from a previous conversation"
 
-    private var text: String {
-        message.content.compactMap { if case .text(let t) = $0 { t.text } else { nil } }.joined(separator: "\n\n")
-    }
+    private var text: String { message.plainText }
 
     /// Who it's from, in words that follow "Message from".
     private var sender: String {
@@ -633,28 +597,11 @@ struct WakeupLine: View {
 }
 
 #if DEBUG
-#Preview("User message") {
-    ScrollView {
-        ItemView(item: .sampleUserMessage("Can you clean up the build directory before we cut a release?", secondsAgo: 30), thread: .sampleIdleChat())
-            .padding(.horizontal, 28)
-            .padding(.vertical, 16)
-            .frame(maxWidth: 920)
-    }
-    .frame(width: 640, height: 200)
-}
-
-#Preview("Blue prompts, dark") {
+/// The bubble's blue is the same in both appearances; the canvas's variants show each.
+#Preview("Blue prompts") {
     ItemView(item: .sampleUserMessage("A clearer blue bubble, with white text and a quick glass handoff.", secondsAgo: 30),
              thread: .sampleIdleChat())
         .padding(28).frame(width: 640)
-        .preferredColorScheme(.dark)
-}
-
-#Preview("Blue prompts, light") {
-    ItemView(item: .sampleUserMessage("A clearer blue bubble, with white text and a quick glass handoff.", secondsAgo: 30),
-             thread: .sampleIdleChat())
-        .padding(28).frame(width: 640)
-        .preferredColorScheme(.light)
 }
 
 #Preview("Prompt with Markdown") {
@@ -771,16 +718,6 @@ private func previewScreenshot() -> String {
     .frame(width: 640)
 }
 
-#Preview("Agent message") {
-    ScrollView {
-        ItemView(item: .sampleAgentMessage("Sure — I ran `rm -rf .build` and confirmed the workspace still builds cleanly.", secondsAgo: 10), thread: .sampleIdleChat())
-            .padding(.horizontal, 28)
-            .padding(.vertical, 16)
-            .frame(maxWidth: 920)
-    }
-    .frame(width: 640, height: 160)
-}
-
 #Preview("Notice") {
     ScrollView {
         VStack(alignment: .leading, spacing: 10) {
@@ -801,21 +738,6 @@ private func previewScreenshot() -> String {
             .padding(28)
     }
     .frame(width: 640, height: 160)
-}
-
-#Preview("Full transcript") {
-    let thread = ThreadModel.sampleIdleChat()
-    ScrollView {
-        LazyVStack(alignment: .leading, spacing: 14) {
-            ForEach(thread.topLevelItems, id: \.id) { item in
-                ItemView(item: item, thread: thread)
-            }
-        }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 16)
-        .frame(maxWidth: 920)
-    }
-    .frame(width: 760, height: 560)
 }
 
 #endif
