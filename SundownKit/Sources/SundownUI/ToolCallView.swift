@@ -802,31 +802,21 @@ private struct FindOpensWorkPreview: View {
 
 #endif
 
-/// Turns into its next value the way the running turn's words do: the old blurs up and away as the
-/// new blurs in, on a gentle spring.
-private struct ReplacesWhenChanged: ViewModifier {
-    let text: String
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func body(content: Content) -> some View {
-        ZStack(alignment: .leading) {
-            content
-                .id(text)
-                .transition(.moving(AnyTransition(BlurReplaceTransition(configuration: .upUp)), reduceMotion: reduceMotion))
-        }
-        .animation(reduceMotion ? .default : .spring(duration: 0.45, bounce: 0.25), value: text)
-    }
-}
-
 /// Text that turns into its next value the way the running turn's words do. A chat's title as
 /// Claude names it.
 struct ReplacingText: View {
     let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text).modifier(ReplacesWhenChanged(text: text))
+        ZStack(alignment: .leading) {
+            Text(text)
+                .id(text)
+                .transition(.moving(AnyTransition(BlurReplaceTransition(configuration: .upUp)), reduceMotion: reduceMotion))
+        }
+        .animation(reduceMotion ? .default : .spring(duration: 0.45, bounce: 0.25), value: text)
     }
 }
 
@@ -837,10 +827,17 @@ struct ActivityLabel: View {
     let live: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    // Written out, not shared with `ReplacingText` through a view modifier: as a modifier's
+    // content, the shimmering words cost a third more CPU while a reply streamed
+    // (`testStreamingAReply`, instructions retired, Release, 2026-10-17).
     var body: some View {
-        words
-            .modifier(ReplacesWhenChanged(text: text))
-            .lineLimit(1)
+        ZStack(alignment: .leading) {
+            words
+                .id(text)
+                .transition(.moving(AnyTransition(BlurReplaceTransition(configuration: .upUp)), reduceMotion: reduceMotion))
+        }
+        .lineLimit(1)
+        .animation(reduceMotion ? .default : .spring(duration: 0.45, bounce: 0.25), value: text)
     }
 
     @ViewBuilder private var words: some View {
