@@ -191,7 +191,7 @@ struct LettingChatsGoTests {
         connection.leave(thread)
         #expect(thread.items.first?.id == "m15")
         await daemon.script.release("thread/read")
-        await loading.value
+        _ = await loading.value
 
         #expect(thread.items.first?.id == "m15")
         #expect(thread.items.count == 50)

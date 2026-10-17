@@ -1065,6 +1065,12 @@ extension Item {
         if case .toolCall(let call) = self { return call.isWorkflow }
         return false
     }
+
+    /// A prompt of the chat's own, where a turn starts.
+    var isPrompt: Bool {
+        if case .userMessage(let m) = self { return m.parentToolUseId == nil }
+        return false
+    }
 }
 
 private extension Item {
@@ -1078,12 +1084,6 @@ private extension Item {
     var isEditCall: Bool {
         guard case .toolCall(let call) = self else { return false }
         return call.kind == .fileEdit || call.kind == .fileWrite || call.kind == .notebookEdit
-    }
-
-    /// A prompt of the chat's own, where a turn starts.
-    internal var isPrompt: Bool {
-        if case .userMessage(let m) = self { return m.parentToolUseId == nil }
-        return false
     }
 
     /// An agent message with no text yet; its first delta ends `isThinking`.

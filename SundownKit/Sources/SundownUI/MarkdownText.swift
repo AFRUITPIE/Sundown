@@ -634,7 +634,9 @@ private extension NSFont {
 /// A read-only TextKit 1 text view: TextKit 1 for its text tables and its background drawing,
 /// which code blocks, quotes and rules use. Copy puts plain text on the pasteboard.
 final class MarkdownNSTextView: NSTextView {
-    var theme = MarkdownTheme.standard
+    var theme = MarkdownTheme.standard {
+        didSet { (layoutManager as? MarkdownLayoutManager)?.theme = theme }
+    }
     /// Sizes measured, by width: SwiftUI asks about a few, the same ones again and again.
     private var measured: [CGFloat: CGSize] = [:]
     /// A Copy button for each code block, in the blocks' order.
@@ -889,9 +891,8 @@ final class MarkdownLayoutManager: NSLayoutManager {
         let source: String
     }
 
-    private var theme: MarkdownTheme {
-        (firstTextView as? MarkdownNSTextView)?.theme ?? .standard
-    }
+    /// Its text view's, which the view hands it as it changes.
+    var theme = MarkdownTheme.standard
 
     /// The rect of every line of the characters in `range`, joined.
     private func rect(for range: NSRange, in container: NSTextContainer) -> NSRect {

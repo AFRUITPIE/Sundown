@@ -639,9 +639,10 @@ private struct FadesIn: ViewModifier {
 
     func body(content: Content) -> some View {
         let push = pushes && !reduceMotion
+        let below = push && !shown
         content
             .visualEffect { view, proxy in
-                view.offset(y: push && !shown ? proxy.size.height : 0)
+                view.offset(y: below ? proxy.size.height : 0)
             }
             .opacity(shown ? 1 : 0)
             .onAppear {
