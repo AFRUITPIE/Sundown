@@ -415,6 +415,9 @@ private struct TranscriptContent: View {
     /// Room after the end, under the controls floating over it.
     var bottomRoom: CGFloat = 0
     @Environment(\.appearance) private var appearance
+    /// The replies' theme, to build them ahead of their rows as the rows will.
+    @Environment(\.textScale) private var textScale
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var turnHover = TurnHover()
 
     var body: some View {
@@ -456,9 +459,12 @@ private struct TranscriptContent: View {
         // moved a chat that had just opened 2 pt more (2026-10-17).
         .padding(.top, 16)
         .readingColumn()
-        // Replies parsed off the main thread before their rows ask: the first row changes as a chat
+        // Replies built off the main thread before their rows ask: the first row changes as a chat
         // opens and as an older page goes in above.
-        .task(id: rows.first?.id) { await MarkdownCache.prewarm(repliesToParse()) }
+        .task(id: rows.first?.id) {
+            await MarkdownView.prewarm(repliesToParse(), theme: MarkdownTheme(style: .reply, scale: textScale,
+                                                                             increasedContrast: contrast == .increased))
+        }
     }
 
     private func place(of row: TranscriptRow, in places: TurnPlaces) -> TurnPlace? {

@@ -60,12 +60,13 @@ struct AttentionTests {
         #expect(AttentionCenter.describe(nil) == "Claude needs your input.")
     }
 
+    /// Its last line as it's drawn: a paragraph's lines run on, as Markdown has them.
     @Test func aFinishedReplyIsSummedUpByItsLastLine() {
         let thread = ThreadModel.sample(status: .idle, items: [
             .userMessage(.sample("Fix it", secondsAgo: 10)),
             .agentMessage(.sample("## Done\n\nI fixed the **layout loop**.\nAll tests pass.", secondsAgo: 2)),
         ])
-        #expect(AttentionCenter.lastReplyLine(thread) == "All tests pass.")
+        #expect(AttentionCenter.lastReplyLine(thread) == "I fixed the layout loop. All tests pass.")
     }
 
     @Test func preferencesAreKept() {

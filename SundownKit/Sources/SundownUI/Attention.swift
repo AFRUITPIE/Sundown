@@ -191,7 +191,7 @@ final class AttentionCenter: NSObject {
     static func lastReplyLine(_ thread: ThreadModel) -> String {
         for item in thread.items.reversed() {
             if case .agentMessage(let m) = item, !m.text.isEmpty {
-                let plain = MarkdownView.plainText(m.text).trimmingCharacters(in: .whitespacesAndNewlines)
+                let plain = MarkdownBuilder.plainText(m.text).trimmingCharacters(in: .whitespacesAndNewlines)
                 let line = plain.split(separator: "\n").last.map(String.init) ?? plain
                 return line.count > 160 ? String(line.prefix(157)) + "…" : line
             }
