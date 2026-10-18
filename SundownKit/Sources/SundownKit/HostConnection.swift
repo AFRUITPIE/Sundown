@@ -3,7 +3,7 @@ import Observation
 import os
 import TetherProtocol
 
-/// Live connection to one host's Sundown daemon, plus that host's projects and threads.
+/// Live connection to one host's Sundown daemon, plus that host's chats and the directories they're in.
 @MainActor
 @Observable
 public final class HostConnection: Identifiable {
@@ -23,9 +23,10 @@ public final class HostConnection: Identifiable {
     public private(set) var serverInfo: InitializeResult?
     public private(set) var account: AccountInfo?
     public private(set) var models: [ModelInfo] = []
-    public private(set) var projects: [ProjectListResult.Project] = []
     /// All chats on this host, most recent first (across every directory).
     public private(set) var chats: [ThreadModel] = []
+    /// The directories the chats work in, most recent first: what New Chat offers.
+    public private(set) var directories: [String] = []
     public private(set) var log: [String] = []
 
     private var threads: [String: ThreadModel] = [:]
@@ -46,12 +47,9 @@ public final class HostConnection: Identifiable {
     private var openRequested = Set<String>()
     /// Followed chats let go when no window showed them: unloaded until opened again.
     private var letGo = Set<String>()
-    private var chatsRefreshTask: Task<Void, Never>?
-    /// While a chat this client doesn't follow has background work, the list is asked for again
-    /// now and then: nothing else would say when that work ends.
-    private var backgroundRefreshTask: Task<Void, Never>?
-    /// How long until then; a test shortens it.
-    @ObservationIgnored var backgroundRefreshInterval: Duration = .seconds(30)
+    /// Chats deleted here: a summary of one still on its way doesn't bring it back.
+    @ObservationIgnored private var deleted = Set<String>()
+    private var afterTurnTask: Task<Void, Never>?
     @ObservationIgnored private let transportProvider: TransportProvider?
 
     /// Reported to the daemon on connect.
@@ -147,8 +145,8 @@ public final class HostConnection: Identifiable {
             if initResult.protocolVersion < Self.minServerProtocol {
                 throw Incompatible(message: "\(host.name) runs Sundown \(initResult.serverInfo.version), which is too old for this app. Update the server there.")
             }
-            // The same daemon still running: what it said about models, the account and projects
-            // still holds, and asking again started a Claude Code process for models and account.
+            // The same daemon still running: what it said about models and the account still holds,
+            // and asking again started a Claude Code process for them.
             let sameDaemon = serverInfo.map { Self.isSameDaemon($0, initResult) } ?? false
             serverInfo = initResult
             appendLog("Connected: \(initResult.host.hostname), claude \(initResult.claude.version) at \(initResult.claude.path)")
@@ -241,10 +239,8 @@ public final class HostConnection: Identifiable {
     private func detach() {
         client = nil
         subscribed.removeAll()
-        chatsRefreshTask?.cancel()
-        chatsRefreshTask = nil
-        backgroundRefreshTask?.cancel()
-        backgroundRefreshTask = nil
+        afterTurnTask?.cancel()
+        afterTurnTask = nil
         notificationTask?.cancel()
         for t in threads.values { t.clearPending() }
     }
@@ -299,6 +295,8 @@ public final class HostConnection: Identifiable {
     }
 
     private func apply(_ n: ServerNotification) {
+        // Host-wide: what the chat list shows of a chat, whether this client follows it or not.
+        if case .threadSummaryChanged(let e) = n { return summaryChanged(e.summary) }
         guard let tid = n.threadId else { return }
         let model = thread(tid)
         // A followed chat let go keeps no items until it's opened again; an item already on its
@@ -307,7 +305,7 @@ public final class HostConnection: Identifiable {
         guard model.apply(n) else { return }
         // A chat started from New Chat, whose window moves to it once it has the prompt's echo.
         if let op = awaitingEcho[tid], noteReadiness(op, in: model) { awaitingEcho[tid] = nil }
-        if case .threadStarted(let e) = n { attach(model, toProject: e.thread.cwd) }
+        if case .threadStarted = n { attach(model) }
         // Its query is gone. The next send resumes it with history rather than streaming into a
         // subscription to the process that ended.
         if case .threadClosed = n { subscribed.remove(tid) }
@@ -316,11 +314,10 @@ public final class HostConnection: Identifiable {
             NotificationCenter.default.post(name: .sundownRequestResolved, object: self,
                                             userInfo: ["threadId": tid, "requestId": e.requestId])
         }
-        // Claude's name for a session only appears in thread/list; nothing announces it.
         if case .turnCompleted(let e) = n {
             // A reply nobody has seen: the sidebar's green dot, until a window shows the chat.
             if e.turn.status == .completed, !openRequested.contains(tid) { model.noteUnseenReply() }
-            scheduleChatsRefresh()
+            scheduleAfterTurn()
             // A turn can have added commands (a file in .claude/commands).
             forgetCommands(after: tid)
             NotificationCenter.default.post(name: .sundownTurnFinished, object: self,
@@ -328,14 +325,29 @@ public final class HostConnection: Identifiable {
         }
     }
 
-    private func scheduleChatsRefresh() {
-        guard chatsRefreshTask == nil else { return }
-        chatsRefreshTask = Task { [weak self] in
+    private func scheduleAfterTurn() {
+        guard afterTurnTask == nil else { return }
+        afterTurnTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             guard let self, !Task.isCancelled else { return }
-            self.chatsRefreshTask = nil
-            await self.afterTurn()
+            self.afterTurnTask = nil
+            self.afterTurn()
         }
+    }
+
+    /// A chat's summary as the daemon now has it (its title, tag, status or background count
+    /// changed), coalesced there: the list takes it in place of asking for itself again, at its
+    /// place by when it last changed, below the chats not written yet.
+    private func summaryChanged(_ summary: ThreadSummary) {
+        guard !deleted.contains(summary.threadId) else { return }
+        let model = thread(summary.threadId)
+        model.setSummary(summary)
+        var next = chats.filter { $0 !== model }
+        let at = next.firstIndex { $0.summary.map { $0.updatedAt < summary.updatedAt } ?? false } ?? next.count
+        next.insert(model, at: at)
+        // The sidebar regroups whenever this is set.
+        if !next.elementsEqual(chats, by: ===) { chats = next }
+        refreshDirectories()
     }
 
     /// After reconnecting, catch every open thread up from its last seen seq (the daemon kept running).
@@ -398,50 +410,32 @@ public final class HostConnection: Identifiable {
 
     // MARK: catalog
 
-    /// Projects, chats, models and the account. Not `full` (back on the same daemon), only the chats:
-    /// models and the account start a Claude Code process to ask, and listing projects reads every
-    /// session on the host. Folders new since are taken from the chats instead.
+    /// Chats, models and the account. Not `full` (back on the same daemon), only the chats: models
+    /// and the account start a Claude Code process to ask.
     public func refreshCatalog(full: Bool = true) async {
         guard let client else { return }
         guard full else {
             await loadChats()
-            addProjectsFromChats()
             return
         }
-        async let projectsR = client.call(Methods.ProjectList.self, .init(limit: 200))
         async let modelsR = client.call(Methods.ModelList.self, .init())
         async let accountR = client.call(Methods.AccountRead.self, .init())
-        if let p = try? await projectsR { projects = p.projects }
         await loadChats()
         if let m = try? await modelsR { models = m.models }
         if let a = try? await accountR { account = a.account }
     }
 
-    /// Folders of chats started while this app was away, most recent first with the rest.
-    private func addProjectsFromChats() {
-        var known = Set(projects.map(\.cwd))
-        var added: [ProjectListResult.Project] = []
-        for chat in chats {
-            guard let cwd = chat.cwd, known.insert(cwd).inserted else { continue }
-            added.append(.init(cwd: cwd, lastActivity: chat.summary?.updatedAt ?? 0, threadCount: 1))
-        }
-        guard !added.isEmpty else { return }
-        projects = (projects + added).sorted { $0.lastActivity > $1.lastActivity }
-    }
-
-    /// How many chats the refresh after a turn asks for: the ones that just changed are the latest.
-    static let recentChatsLimit = 5
-
-    /// After a turn: the few most recent chats, for Claude's names for them and their new order,
-    /// merged into the list held rather than fetching all of it again.
-    func refreshRecentChats() async {
-        await loadChats(limit: Self.recentChatsLimit, recentOnly: true)
+    /// The directories of the chats held, most recent first.
+    private func refreshDirectories() {
+        var seen = Set<String>()
+        let next = chats.compactMap { chat in chat.cwd.flatMap { seen.insert($0).inserted ? $0 : nil } }
+        if next != directories { directories = next }
     }
 
     /// The host's chats, most recent first: the list the host has now, which drops chats deleted
-    /// elsewhere or past the limit. `recentOnly`: only the latest came back, so the rest of the
-    /// list held keeps its places.
-    public func loadChats(limit: Int = 200, recentOnly: Bool = false) async {
+    /// elsewhere or past the limit. Asked for on connecting and after an explicit action; between,
+    /// `thread/summaryChanged` keeps it current.
+    public func loadChats(limit: Int = 200) async {
         guard let client else { return }
         do {
             let r = try await client.call(Methods.ThreadList.self, .init(limit: limit))
@@ -453,28 +447,12 @@ public final class HostConnection: Identifiable {
                 listed.append(m)
             }
             // Live chats that are not persisted yet (no first message on disk), on top.
-            var next = chats.filter { $0.summary == nil && !ids.contains($0.id) } + listed
-            // Only the most recent came back: the rest keep their places below them.
-            if recentOnly { next += chats.filter { $0.summary != nil && !ids.contains($0.id) } }
+            let next = chats.filter { $0.summary == nil && !ids.contains($0.id) } + listed
             // The sidebar regroups whenever this is set.
             if !next.elementsEqual(chats, by: ===) { chats = next }
-            scheduleBackgroundRefresh()
+            refreshDirectories()
         } catch {
             appendLog("thread/list failed: \(error.localizedDescription)")
-        }
-    }
-
-    /// Asks for the list again in a while if a chat whose status nothing streams here has
-    /// background work; a subscribed chat hears when its count changes.
-    private func scheduleBackgroundRefresh() {
-        guard backgroundRefreshTask == nil,
-              chats.contains(where: { $0.hasBackgroundWork && !subscribed.contains($0.id) }) else { return }
-        let interval = backgroundRefreshInterval
-        backgroundRefreshTask = Task { [weak self] in
-            try? await Task.sleep(for: interval)
-            guard let self, !Task.isCancelled else { return }
-            self.backgroundRefreshTask = nil
-            await self.loadChats()
         }
     }
 
@@ -487,11 +465,10 @@ public final class HostConnection: Identifiable {
         return t
     }
 
-    private func attach(_ model: ThreadModel, toProject cwd: String) {
+    /// A chat started now, at the top of the list, its directory the most recent.
+    private func attach(_ model: ThreadModel) {
         if !chats.contains(where: { $0 === model }) { chats.insert(model, at: 0) }
-        if !projects.contains(where: { $0.cwd == cwd }) {
-            projects.insert(.init(cwd: cwd, lastActivity: Date().timeIntervalSince1970 * 1000, threadCount: 1), at: 0)
-        }
+        refreshDirectories()
     }
 
     /// Load a thread's history and subscribe to it. Before the connection is up this defers to
@@ -542,11 +519,10 @@ public final class HostConnection: Identifiable {
         model.trim(toLast: Self.initialHistoryLimit)
     }
 
-    /// A couple of seconds after a turn ends: Claude's name for a session only appears in
-    /// thread/list, and the chats no window shows let go of what the turn added.
-    func afterTurn() async {
+    /// A couple of seconds after a turn ends, once the chat is idle: the chats no window shows let
+    /// go of what the turn added.
+    func afterTurn() {
         for model in threads.values where subscribed.contains(model.id) { trimIfOffScreen(model) }
-        await refreshRecentChats()
     }
 
     private func loadRequestedThread(_ model: ThreadModel) async {
@@ -692,8 +668,8 @@ public final class HostConnection: Identifiable {
         model.setInfo(r.thread)
         model.loadHistory(items: model.items, turns: model.turns, seq: nil)
         subscribed.insert(model.id)
-        // In a worktree the chat's folder is the worktree's, not the one chosen.
-        attach(model, toProject: r.thread.cwd)
+        // In a worktree the chat's directory is the worktree's, not the one chosen.
+        attach(model)
         return model
     }
 
@@ -821,6 +797,7 @@ public final class HostConnection: Identifiable {
         model.clearPending()
         chats.removeAll { $0 === model }
         threads.removeValue(forKey: model.id)
+        deleted.insert(model.id)
         openRequested.remove(model.id)
         subscribed.remove(model.id)
     }
@@ -1090,7 +1067,6 @@ extension HostConnection {
         serverInfo: InitializeResult? = nil,
         account: AccountInfo? = nil,
         models: [ModelInfo] = [],
-        projects: [ProjectListResult.Project] = [],
         chats: [ThreadModel] = []
     ) {
         self.state = state
@@ -1098,9 +1074,9 @@ extension HostConnection {
         self.serverInfo = serverInfo
         self.account = account
         self.models = models
-        self.projects = projects
         self.chats = chats
         for chat in chats { threads[chat.id] = chat }
+        refreshDirectories()
     }
 }
 #endif

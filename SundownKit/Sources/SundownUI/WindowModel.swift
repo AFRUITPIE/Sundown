@@ -120,8 +120,8 @@ public final class WindowModel {
     public var draftFastMode = false
     /// Start the chat in a new git worktree, so it doesn't share a checkout with other chats.
     public var draftWorktree = false
-    /// The New Chat folder: the host's most recent project until one is chosen, nil before the
-    /// projects arrive.
+    /// The New Chat directory: the one the host's most recent chat is in until one is chosen, nil
+    /// before the chats arrive.
     public var draftDirectory: String?
     /// Why the New Chat draft couldn't start, cleared with the draft.
     var draftError: String?
@@ -390,7 +390,7 @@ public final class WindowModel {
         draftPermissionMode = nil
         draftFastMode = false
         draftWorktree = app.appearance.worktreeByDefault
-        draftDirectory = app.appearance.newChatFolder == .recent ? app.connections[hostID]?.projects.first?.cwd : nil
+        draftDirectory = app.appearance.newChatFolder == .recent ? app.connections[hostID]?.directories.first : nil
         draftError = nil
     }
 

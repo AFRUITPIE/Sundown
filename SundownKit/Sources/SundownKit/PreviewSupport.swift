@@ -631,8 +631,8 @@ I've added `PreviewSupport.swift` so every `SundownUI` view can now preview agai
 // MARK: - HostConnection scenarios
 
 extension HostConnection {
-    /// A connected "This Mac" host with a model catalog, a couple of projects, and a spread of
-    /// chats for the sidebar. Never touches the network or spawns a process.
+    /// A connected "This Mac" host with a model catalog and a spread of chats, in a few
+    /// directories, for the sidebar. Never touches the network or spawns a process.
     public static func sample() -> HostConnection {
         let day: Double = 86_400
         let chats = [
@@ -662,10 +662,6 @@ extension HostConnection {
                 claude: .init(path: "/opt/homebrew/bin/claude", version: "2.1.4")),
             account: .init(email: "hello@haydenhong.com", organization: "Personal", subscriptionType: "max", tokenSource: "keychain", apiProvider: "firstParty"),
             models: ModelInfo.sampleCatalog,
-            projects: [
-                .init(cwd: "/Users/hayden/Code/tether-app", lastActivity: preview(secondsAgo: 40), threadCount: 4),
-                .init(cwd: "/Users/hayden/Code/tether-server", lastActivity: preview(secondsAgo: 3_600), threadCount: 2),
-            ],
             chats: chats)
         return connection
     }

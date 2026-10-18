@@ -173,10 +173,6 @@ private actor FixtureScript {
                             home: "/tmp", pid: 1, mode: .daemon),
                 claude: .init(path: "/fixture/claude", version: "fixture")
             ))))
-        case "project/list":
-            return .init(value: .result(json(ProjectListResult(projects: [
-                .init(cwd: "/tmp/sundown-fixture", lastActivity: 1_700_000_000_000, threadCount: 1)
-            ]))))
         case "model/list": return .init(value: .result(json(ModelListResult(models: []))))
         // As a host whose Claude Code would start in auto mode at medium effort.
         case "session/defaults":
@@ -187,11 +183,13 @@ private actor FixtureScript {
             return .init(value: .result(json(ThreadListResult(
                 threads: listed(additionalThreads + perf + followed + [originalSummary])))))
         case "thread/tag":
-            if let id = params["threadId"]?.stringValue { tags[id] = params["tag"]?.stringValue }
-            return .init(value: .result([:]))
+            guard let id = params["threadId"]?.stringValue else { return .init(value: .result([:])) }
+            tags[id] = params["tag"]?.stringValue
+            return .init(value: .result([:]), notifications: summaryChanged(id))
         case "thread/rename":
-            if let id = params["threadId"]?.stringValue, let title = params["title"]?.stringValue { titles[id] = title }
-            return .init(value: .result([:]))
+            guard let id = params["threadId"]?.stringValue, let title = params["title"]?.stringValue else { return .init(value: .result([:])) }
+            titles[id] = title
+            return .init(value: .result([:]), notifications: summaryChanged(id))
         case "thread/delete":
             if let id = params["threadId"]?.stringValue { deleted.insert(id) }
             return .init(value: .result([:]))
@@ -257,8 +255,9 @@ private actor FixtureScript {
             let mode = params["permissionMode"]?.stringValue.flatMap(PermissionMode.init(rawValue:)) ?? .auto
             let info = ThreadInfo(threadId: id, status: .idle, cwd: "/tmp/sundown-fixture", appliedEffort: .medium,
                                   permissionMode: mode, lastSeq: 0)
-            return .init(value: .result(json(ThreadStartResult(thread: info))),
-                         notifications: turnNotifications(threadID: id, input: params["input"]))
+            let turn = turnNotifications(threadID: id, input: params["input"])
+            return .init(value: .result(json(ThreadStartResult(thread: info, messageId: "fixture-sent-\(nextMessage)"))),
+                         notifications: turn + summaryChanged(id))
         case "turn/start":
             let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
             if options.performance { return performanceTurn(threadID: id, input: params["input"]) }
@@ -312,6 +311,15 @@ private actor FixtureScript {
         }
     }
 
+    /// What every client is told when a chat's summary changes (`thread/summaryChanged`), as the
+    /// list now has it.
+    private func summaryChanged(_ id: String) -> [(String, JSONValue)] {
+        let all = listed(additionalThreads + (options.showcase ? ShowcaseTranscript.summaries : PerformanceTranscript.otherChats)
+                         + [originalSummary])
+        guard let summary = all.first(where: { $0.threadId == id }) else { return [] }
+        return [("thread/summaryChanged", json(ThreadSummaryChangedNotification(summary: summary)))]
+    }
+
     /// The tasks scenario's chats' tasks, live and followed alike.
     private func tasks(of id: String) -> [TaskState] {
         options.tasks && (id == UITestFixture.threadID || id == TaskTranscript.followedChat.threadId) ? TaskTranscript.tasks() : []
@@ -323,7 +331,6 @@ private actor FixtureScript {
     private func showcaseReply(method: String, params: JSONValue) -> Reply? {
         let id = params["threadId"]?.stringValue ?? ShowcaseTranscript.mainThreadID
         switch method {
-        case "project/list": return .init(value: .result(json(ProjectListResult(projects: ShowcaseTranscript.projects))))
         case "model/list": return .init(value: .result(json(ModelListResult(models: ShowcaseTranscript.models))))
         case "account/read": return .init(value: .result(json(AccountReadResult(account: .init(subscriptionType: "max")))))
         case "session/defaults":

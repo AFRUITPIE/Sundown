@@ -52,12 +52,6 @@ enum ShowcaseTranscript {
         }
     }
 
-    static var projects: [ProjectListResult.Project] {
-        [(tidecast, 12.0, 12), (pantry, 4, 6), (sundown, 38, 1), (site, 300, 3)].map {
-            .init(cwd: $0.0, lastActivity: ago(minutes: $0.1), threadCount: $0.2)
-        }
-    }
-
     static func cwd(of threadID: String) -> String {
         summaries.first { $0.threadId == threadID }?.cwd ?? tidecast
     }
