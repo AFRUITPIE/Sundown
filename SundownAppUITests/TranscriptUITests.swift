@@ -196,8 +196,29 @@ final class TranscriptUITests: SundownUITestCase {
         assertAtEnd("narrowing after Jump to Latest")
         resize(to: 1000)
         assertAtEnd("widening after Jump to Latest")
+        // Scrolled up, the reader stays where they were through a resize: the prompt nearest the
+        // top is the same one after, though every row above and below it is laid out again.
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)).scroll(byDeltaX: 0, deltaY: 1500)
+        XCTAssertTrue(app.buttons["Jump to Latest"].appears(timeout: 5), "no Jump to Latest after scrolling up")
+        let prompts = messageTops()
+        // The first message starting below the toolbar, and where it is.
+        let scrollTop = app.scrollViews["Transcript"].frame.minY
+        guard let place = prompts.filter({ $0.value >= scrollTop + 60 }).min(by: { $0.value < $1.value }) else {
+            return XCTFail("no prompt on screen after scrolling up: \(prompts)")
+        }
+        for width: CGFloat in [860, 1000] {
+            resize(to: width)
+            let after = messageTops()
+            let moved = after[place.key].map { abs($0 - place.value) }
+            // The row at the top goes back to the top, which can bring down one the toolbar hid.
+            XCTAssertLessThan(moved ?? .infinity, 200, "resizing to \(width) moved a scrolled-up reader: \(place.key) was at \(place.value), now \(after)")
+        }
+        app.buttons["Jump to Latest"].click()
+        XCTAssertTrue(app.buttons["Jump to Latest"].disappears(timeout: 5), "Jump to Latest stayed after a resize")
         app.typeKey("2", modifierFlags: .command)
         XCTAssertTrue(input.disappears(timeout: 5), "⌘2 didn't leave the chat")
+        // The chat stays under Tasks, hidden from VoiceOver as from sight.
+        XCTAssertTrue(app.scrollViews["Transcript"].disappears(timeout: 3), "the hidden transcript is in the accessibility tree under Tasks")
         app.typeKey("1", modifierFlags: .command)
         XCTAssertTrue(input.appears(timeout: 5), "⌘1 didn't come back to the chat")
         XCTAssertTrue(waitUntil(5) { footer.isHittable }, "the chat isn't at its end after switching to Tasks and back")
