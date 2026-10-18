@@ -171,7 +171,13 @@ final class TranscriptBlankUITests: SundownUITestCase {
             transcript.scroll(byDeltaX: 0, deltaY: CGFloat(min(points, 1500)))
             Thread.sleep(forTimeInterval: 0.3)
         }
-        XCTAssertTrue(app.buttons["Jump to Latest"].appears(timeout: 5), "scrolling up by \(points) left the reader at the end")
+        if !app.buttons["Jump to Latest"].appears(timeout: 5) {
+            let shot = XCTAttachment(screenshot: mainWindow().screenshot())
+            shot.name = "Still at the end after scrolling up by \(points)"
+            shot.lifetime = .keepAlways
+            add(shot)
+            XCTFail("scrolling up by \(points) left the reader at the end: \(messagesOnScreen())")
+        }
     }
 
     /// Scrolls to the top `count` times, a page going in each time.

@@ -29,20 +29,12 @@ struct TranscriptView: View {
     @Environment(\.appearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.messageSendGeometry) private var sendGeometry
-    @Environment(\.transcriptPlaces) private var places
+    /// Under Tasks or Diff: nothing in it is on screen, and that isn't a blank to recover from.
+    @Environment(\.transcriptHidden) private var hidden
 
     // In parts: as one chain, the preview canvas couldn't type-check it in time.
     var body: some View {
         observingScroll(reacting(scrollView))
-        // Back from another tab: where the reader was, rather than the end.
-        .task {
-            guard let id = places?.rows.removeValue(forKey: thread.id) else { return }
-            await go(to: id)
-        }
-        .onDisappear {
-            guard let places else { return }
-            places.rows[thread.id] = onScreen.atEnd ? nil : onScreen.topRow
-        }
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: .stressScroll), perform: stressScroll)
         #endif
@@ -71,9 +63,8 @@ struct TranscriptView: View {
     /// What brings the reader somewhere: opening, sending, Find, Previous and Next Prompt, a fold.
     private func reacting(_ content: some View) -> some View {
         content
-            // Shown again (back from Tasks or Diff) on a chat already loaded: at its end, unless the
-            // reader had scrolled up, whose place the `task` below goes back to.
-            .onAppear { if thread.historyLoaded, places?.rows[thread.id] == nil { scrollToEnd() } }
+            // A chat already loaded, chosen again: at its end.
+            .onAppear { if thread.historyLoaded { scrollToEnd() } }
             // A newly opened chat starts at its latest message.
             .onChange(of: thread.historyLoaded) {
                 guard thread.historyLoaded else { return }
@@ -98,7 +89,10 @@ struct TranscriptView: View {
     /// Where the reader is, from the scroll view.
     private func observingScroll(_ content: some View) -> some View {
         content
+            .onChange(of: hidden, initial: true) { onScreen.hidden = hidden }
             .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.01) { ids in
+                // Hidden, no row is visible: the reader's place is the one they left.
+                guard !onScreen.hidden else { return }
                 onScreen.ids = Set(ids)
                 let rows = thread.rows(appearance.toolCalls.folding)
                 let showing = rows.last.map { onScreen.ids.contains($0.id) } ?? true
@@ -158,7 +152,7 @@ struct TranscriptView: View {
     /// Jump to Latest, while the reader is more than a screen from the end and the last row is off it.
     private var jumpToLatest: some View {
             ZStack {
-                if farFromEnd, !lastRowOnScreen {
+                if farFromEnd, !lastRowOnScreen, !hidden {
                     Button("Jump to Latest", systemImage: "arrow.down") { jumpToEnd() }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.glass)
@@ -213,6 +207,8 @@ extension TranscriptView {
         /// The width is changing: `atEnd` and `topRow` keep what they were before it began.
         var resizing = false
         var resizes = 0
+        /// Under Tasks or Diff (`transcriptHidden`).
+        var hidden = false
     }
 
     /// The animation for a scroll the reader asked for: none under Reduce Motion.
@@ -257,7 +253,7 @@ extension TranscriptView {
         let count = built
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(300))
-            guard count === built, built.count == 0, thread.historyLoaded, onScreen.phase == .idle,
+            guard count === built, built.count == 0, thread.historyLoaded, onScreen.phase == .idle, !onScreen.hidden,
                   !thread.rows(appearance.toolCalls.folding).isEmpty else { return }
             Signposts.transcriptLog.error("Transcript had no rows built (\(why, privacy: .public)): built them again.")
             built = BuiltRows()
@@ -317,7 +313,8 @@ extension TranscriptView {
             try? await Task.sleep(for: .milliseconds(400))
             onScreen.checking = false
             let rows = thread.rows(appearance.toolCalls.folding)
-            guard onScreen.ids.isEmpty || built.count == 0, !rows.isEmpty, thread.historyLoaded, onScreen.phase == .idle else { return }
+            guard onScreen.ids.isEmpty || built.count == 0, !rows.isEmpty, thread.historyLoaded, onScreen.phase == .idle,
+                  !onScreen.hidden else { return }
             let reshape = thread.lastReshape.map { "\($0.what), \(Int(-$0.at.timeIntervalSinceNow)) s before" } ?? "none"
             Signposts.transcriptLog.error("""
                 Transcript showed nothing (\(why, privacy: .public)): \(rows.count) rows, \(thread.items.count) items, \
@@ -947,15 +944,6 @@ final class TurnHover {
     }
 }
 
-/// Where the reader was in each chat a window showed, for the Chat tab to go back to: switching
-/// to Tasks or Diff takes the transcript away, and made again it opened at the end. Not observed:
-/// read once as the transcript appears, written as it goes.
-@MainActor
-final class TranscriptPlaces {
-    /// The topmost row on screen, by chat; none while the reader was at the end.
-    var rows: [String: String] = [:]
-}
-
 /// How many of the transcript's rows the lazy stack has built. Not observed: counted as rows appear
 /// and disappear, and read only to tell whether it has lost them.
 @MainActor
@@ -972,7 +960,7 @@ private struct RowsIdentity: Hashable {
 
 extension EnvironmentValues {
     @Entry var builtRows: BuiltRows? = nil
-    @Entry var transcriptPlaces: TranscriptPlaces? = nil
+    @Entry var transcriptHidden = false
     @Entry var turnHover: TurnHover? = nil
     @Entry var turnPlace: TurnPlace? = nil
 }

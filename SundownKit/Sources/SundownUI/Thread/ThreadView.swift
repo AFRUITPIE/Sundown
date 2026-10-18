@@ -9,6 +9,9 @@ struct ThreadView: View {
     let connection: HostConnection
     /// The controls' height, which the transcript leaves as room after its end.
     @State private var barHeight: CGFloat = 0
+    /// Under Tasks or Diff. The controls go meanwhile: glass draws whatever the opacity around it,
+    /// so the hidden composer's circles showed over the pane.
+    @Environment(\.transcriptHidden) private var hidden
 
     var body: some View {
         // The controls float over the transcript, so it passes under their glass, and the transcript
@@ -18,13 +21,15 @@ struct ThreadView: View {
         // (macOS 27, 2026-10-09). Below the transcript in a stack, the glass had nothing under it.
         TranscriptView(thread: thread, connection: connection, bottomRoom: barHeight)
             .overlay(alignment: .bottom) {
-                BottomBar(thread: thread, connection: connection)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height.rounded() } action: { barHeight = $0 }
+                if !hidden {
+                    BottomBar(thread: thread, connection: connection)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height.rounded() } action: { barHeight = $0 }
+                }
             }
             // Find in Chat's bar, above the transcript while it's open. An inset, not a `safeAreaBar`:
             // a top bar, even empty while Find is closed, took the toolbar's scroll edge effect, and
             // text scrolled up under the title and tabs unblurred.
-            .safeAreaInset(edge: .top, spacing: 0) { FindBarHost(thread: thread) }
+            .safeAreaInset(edge: .top, spacing: 0) { if !hidden { FindBarHost(thread: thread) } }
             .task(id: thread.id) { await connection.open(thread) }
             .modifier(OpensFileLinks(cwd: thread.cwd))
     }

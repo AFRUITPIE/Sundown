@@ -187,8 +187,16 @@ struct DetailView: View {
 
     var body: some View {
         ZStack {
+            // The chat stays under Tasks and Diff, hidden, rather than going: made again, its
+            // transcript opened at the end, and going back to the reader's row from there missed
+            // it when an older page was above it (2026-10-17).
+            chat
+                .opacity(window.tab == .chat ? 1 : 0)
+                .disabled(window.tab != .chat)
+                .accessibilityHidden(window.tab != .chat)
+                .environment(\.transcriptHidden, window.tab != .chat)
             switch window.tab {
-            case .chat: chat
+            case .chat: EmptyView()
             case .tasks:
                 if let thread = window.selectedThread, let connection = window.connection {
                     TasksPane(thread: thread, connection: connection, selectedTaskID: $window.inspectedTaskID)
@@ -224,7 +232,6 @@ struct DetailView: View {
             }
         }
         .environment(\.messageSendGeometry, window.sendGeometry)
-        .environment(\.transcriptPlaces, window.transcriptPlaces)
     }
 }
 
