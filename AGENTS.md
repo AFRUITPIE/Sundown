@@ -39,12 +39,19 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
   - `PendingStart.swift`: a chat New Chat is starting, from Send until its window moves to the host's chat: the stand-in it shows meanwhile, and how the start came out.
   - `ThreadModel.swift`: `@MainActor @Observable` reducer for one thread.
   - `TranscriptRows.swift`: pure folding of transcript items, including compact tool-call groups, what goes between turns (dates above prompts, a turn's edited files), and Previous/Next Prompt's targets.
-  - `Workflow.swift`: what a Workflow call says of itself (its script, the name it gives), and `TaskState`'s small conveniences. A workflow's run is its tasks: the workflow's (`TaskState.workflow`) and its agents' (`workflowAgent`). `WorkflowSample.swift` is the run the previews and the fixture's `tasks` scenario show.
+  - `Workflow.swift`: what a Workflow call says of itself (its script, the name it gives), and `TaskState`'s small conveniences. A workflow's run is its tasks: the workflow's (`TaskState.workflow`) and its agents' (`workflowAgent`).
   - `Edits.swift`: a finished turn's edited files (`EditedFiles`), grouped by path from its calls' `edit`s, with the turn's own totals (`Turn.edits`); `LineDiff`, two texts compared, for an edit not yet diffed by the daemon (a request's proposed edit, a running call).
   - `WorkingChanges.swift`: the Changes pane's working tree from `git/changes`, its lines numbered (`FileDiff`).
-  - `PreviewSupport.swift`: debug-only sample state used by Xcode previews.
   - `Reconnect.swift`: when a lost host tries again (`ReconnectBackoff`) and whether the network is there (`NetworkPath`).
   - `Signposts.swift`: signposts (subsystem `com.haydenhong.Sundown`) and the connection log's `Logger`.
+- `SundownKit/Sources/SundownFixtures`: a daemon in memory and the chats it serves, in every build (the performance tests run against Release) and inert until something connects to it. SundownUI depends on it for the UI-test fixture and previews; both test targets for their fake host. What it needs of SundownKit is `package`, not public.
+  - `FakeHost.swift`: the one fake daemon. Each `connect()` is a new connection (`Link`, a `Transport`) to the same daemon, which answers `initialize` (as `hostname`, with a settable `pid`) and the empty catalog itself; anything else as told: a standing `answer` (a result, a closure of the `Call`, or `fail`), `queue` (each in turn, the last again), `once`, `hold`/`release`. It records every call (`calls(of:onConnection:)`, `count`, `takeMethods`) and every line the client sent (`received`), sends notifications, requests and raw lines down its latest connection (`emit`), and can `drop` it, `hangUp`, or refuse connections; `FakeHost.connection(to:)` connects to a list of hosts in turn, a daemon that restarts. An answer can send messages after it and a paced stream (300 ms, then a message a frame); a responder's `call.emit` goes before it, as a prompt's echo does. `json(_:)` is the JSON helper everything uses.
+  - `FakeHost+Chats.swift`: `serve(_:)`, the daemon's side of a `FixtureScenario`: the list, reads paged from the end, subscriptions (a chat's request asked the first time on a connection, a replay gap when told), Rename, Tag, Delete and Duplicate, New Chat's start (its echo and summary before the answer), a prompt's reply, requests that follow the client's answers, and a window's other asks. Its state is per host: the UI fixture makes a fresh host for each connection.
+  - `FixtureScenario.swift`: scenarios as values: chats (`FixtureChat`: summary, items and tasks as functions of the time they're read, `historySeq`, what a subscription says, a request), the catalog, the working tree, and the prompt → reply function (`FixtureReply.quick`, or `scripted`, a turn as a host plays it). The UI-test scenarios: `standard`, `performance`, `tasks`, `prompts`, `showcase`.
+  - `UITestFixture.swift`: the app's hosts in a UI-test launch (`launchConnection`, reading the knobs below), and a connection to any scenario (`connection(host:scenario:)`), which tests use too.
+  - `PerformanceTranscript.swift`, `TaskTranscript.swift`, `ShowcaseTranscript.swift`, `WorkflowSample.swift`: the scenarios' chats (the long chat and its reply, one of each kind of task, the README's week of work, a dynamic workflow's run). The real workflow captures in `Tests/SundownKitTests/Fixtures` are one agent's transcript and one run's notifications, without the run's tasks and phases the sample has, so they stay test fixtures.
+  - `PreviewSupport.swift`: debug-only sample state used by Xcode previews and tests, built through the reducers (`ThreadModel.sample…`, `HostConnection.sample…`).
+- `SundownKit/Sources/SundownTestSupport`: what both test targets share, for tests only: `eventually`, `observing` and `expectUnchanged(reading:during:)` (what a view would be told to redraw for), item builders (`TimedItems`) and case views.
 - `SundownKit/Sources/SundownUI`: views and app-level state.
   - `AppModel.swift`: hosts and their connections, what a new window opens on (`newWindowTarget`), drafts, and persisted preferences.
   - `WindowModel.swift`: one window's host, chat, tab (Chat, Tasks, Diff) and New Chat draft, and `WindowTarget`, the window's scene value. Each window has its own; commands reach the frontmost through `@FocusedValue(\.window)`.
@@ -64,7 +71,8 @@ Work on local branches and commit there; releases, pin bumps and PRs happen toge
   - `PromptViews.swift`: permission, question, plan, and elicitation requests.
   - `WorkflowViews.swift`: a workflow's row in the chat (`WorkflowCallView`), its result (`WorkflowResultView`), and its Tasks detail (`WorkflowReport`) and agents' transcripts (`WorkflowAgentTranscript`).
   - `ItemViews.swift`, `ToolCallView.swift`, `MarkdownBuilder.swift`, `MarkdownText.swift`, `Markdown.swift`: transcript rendering. `MarkdownBuilder` builds a message's attributed text straight from swift-markdown's tree (CommonMark and GitHub's tables, task lists and strikethrough; smart punctuation off), with no model of its own in between: a list's own numbers (from where an ordered list starts), its markers right-aligned to its widest, what an item holds after its first paragraph (paragraphs, code, quotes, a nested list) lined up with the item's text, a quote's paragraphs each with the bar, tables' column alignment, and inline styling and links from the same tree, so nothing is parsed twice. swift-markdown leaves GitHub's autolinks to its client: the system's link detector finds them, kept to `http://`, `https://`, `ftp://`, `www.` and email addresses. Foundation's block parsing (`presentationIntent`) wasn't used: it drops a numbered list's own numbers. Copy's plain text (`MarkdownBuilder.plain`, and `plainText` for a whole message: the Copy button, a notification, an announcement) is read from the built text. `MarkdownText.swift` draws a message (a reply, or a prompt in its bubble) as one read-only TextKit 1 text view (`MarkdownView`), and `MarkdownLayoutManager` draws code boxes, quote bars, rules and table and inline-code fills. `Markdown.swift` is a tool call's `CodeBlock`.
-- `SundownKit/Tests/SundownKitTests`: transcript folding and opt-in live-server coverage.
+- `SundownKit/Tests/SundownKitTests`: the state layer: folding (`TranscriptStabilityTests`' seeded random walk holds incremental rows equal to folding everything, every step, now and then, and across foldings), connections against `FakeHost` (reattach and replay gaps in `ReattachTests`, chats let go in `LettingChatsGoTests`, a chat's tasks in `TaskStateTests`), the real workflow captures, and opt-in live-server coverage.
+- `SundownKit/Tests/SundownUITests`: app-level state and views' logic, `RPCBudgetTests`, and the micro-benchmarks.
 
 ## Runtime flow
 
@@ -260,27 +268,37 @@ Package tests:
 swift test --package-path SundownKit
 ```
 
+A test that needs a host talks to a `FakeHost` (or a scenario it serves) rather than a fake of its own;
+what a test needs that it lacks becomes a `FakeHost` feature. Waiting, observation checks and item
+builders are `SundownTestSupport`'s.
+
 The shared Xcode scheme also contains `SundownAppUITests`. Its launch sets
-`SUNDOWN_UI_TEST_MODE=1`, which uses an in-process JSON-RPC fixture and fails closed before any
-daemon or SSH launch. The PR workflow runs it on `xcode-27` and resolves the public
+`SUNDOWN_UI_TEST_MODE=1`, which connects every host to an in-process `FakeHost` serving a
+`FixtureScenario` (`UITestFixture`) and fails closed before any daemon or SSH launch. The PR workflow runs it on `xcode-27` and resolves the public
 SwiftPM protocol package without a repository secret. A launch costs seconds, so each test is one
 launch walking one flow (`SundownUITestCase` in `UITestSupport.swift` holds the launch and the shared
 queries), checking each step with a message that names it; add a check to the flow that already
 launches its scenario rather than a test of its own, and keep logic (ordering, formatting, what's
-kept across launches) in the package tests. Scenarios (`SUNDOWN_UI_TEST_SCENARIO`): none (one short
-chat), `performance` (three long chats; `SUNDOWN_PERF_TURNS` shortens them), `connect-failure`,
-`permission`, and `prompts` (a permission, another, a question, a form and a too-long question, each
-asked once the one before is answered, each answer said in the chat), and `showcase` (the README's screenshots: a full sidebar, a finished chat with its diff, one waiting on a permission, one running a workflow and agents, a reply streamed for any prompt; the Sundown Showcase scheme launches it). `SUNDOWN_UI_TEST_FAIL=a,b`
+kept across launches) in the package tests; a fixture's conversation is a `FixtureScenario` value, so
+a package test can serve the same chats (`UITestFixture.connection(scenario:)`). Scenarios
+(`SUNDOWN_UI_TEST_SCENARIO`): none (one short chat), `performance` (three long chats;
+`SUNDOWN_PERF_TURNS` shortens them), `connect-failure` (this Mac's first two connections fail),
+`tasks` (one of each kind of task, and a followed chat with the same), `prompts` (a permission,
+another, a question, a form and a too-long question, each asked once the one before is answered,
+each answer said in the chat), and `showcase` (the README's screenshots: a full sidebar, a finished chat with its diff, one waiting on a permission, one running a workflow and agents, a reply streamed for any prompt; the Sundown Showcase scheme launches it). `SUNDOWN_UI_TEST_FAIL=a,b`
 makes the fixture answer those methods with an error. `SUNDOWN_UI_TEST_GAP=1` makes every connection after the
 first report a replay gap on resubscribing (Host ▸ Reconnect then reloads the chat, as after sleep or a daemon
-restart), and `SUNDOWN_PERF_LONG_REPLY=n` ends each performance turn with one reply of n sections, as a long report is.
+restart; the showcase never reports one), and `SUNDOWN_PERF_LONG_REPLY=n` ends each performance turn with one reply of n sections, as a long report is.
+`SUNDOWN_PERF_REPLY_SECTIONS=n` sizes each performance reply (3 sections), `SUNDOWN_PERF_LONG_TURN=1` makes the
+long chat's last turn 80 bursts of calls long, `SUNDOWN_PERF_VARIED=1` varies its replies' heights as real ones vary,
+and `SUNDOWN_UI_TEST_DEFAULTS` names the defaults suite a relaunching test keeps.
 
 `SundownPerformanceUITests` (in the same target) measures hitches with
 `XCTHitchMetric` while it drives the Chat, Tasks and Diff tabs (⌘1–3), the sidebar, chat switching, window
 resizes, scrolling the transcript and a streamed reply, against the fixture's `performance` scenario: a 30-turn chat shaped
 like real work, and a long working reply for each prompt. Run it with the Sundown Performance scheme, which builds the tests in Release
 (Apple: performance testing belongs in an optimized build; the main scheme skips the class, and CI
-too), and read the hitch time ratio in the report. The fixture (`UITestFixture`,
+too), and read the hitch time ratio in the report. The fixture (`SundownFixtures`,
 `AppModel.uiTestFixture`) is compiled into every build for this, inert unless the app is launched
 with `SUNDOWN_UI_TEST_MODE=1`; Apple counts 10 ms/s or less as good. The tests also record the app's CPU,
 memory and disk writes, and `XCTOSSignpostMetric` for Chat Switch, History Load and Reply; `testLaunch`
