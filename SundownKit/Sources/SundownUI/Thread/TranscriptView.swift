@@ -103,9 +103,12 @@ struct TranscriptView: View {
                 let rows = thread.rows(appearance.toolCalls.folding)
                 let showing = rows.last.map { onScreen.ids.contains($0.id) } ?? true
                 if showing != lastRowOnScreen { lastRowOnScreen = showing }
-                let top = rows.first { onScreen.ids.contains($0.id) }
-                onScreen.topRow = top?.id
-                onScreen.topItem = top?.firstItemID
+                // Mid-resize the rows are where the lazy stack guessed: the place is the one before it.
+                if !onScreen.resizing {
+                    let top = rows.first { onScreen.ids.contains($0.id) }
+                    onScreen.topRow = top?.id
+                    onScreen.topItem = top?.firstItemID
+                }
                 if ids.isEmpty, !rows.isEmpty, thread.historyLoaded { checkShowingNothing("no row on screen") }
             }
             // Scrolling for themselves, the reader's place is where they scroll to, not the prompt
@@ -139,9 +142,16 @@ struct TranscriptView: View {
                                    fits: !far && g.contentSize.height <= room)
             } action: { _, place in
                 if farFromEnd != place.far { farFromEnd = place.far }
-                onScreen.atEnd = place.atEnd
+                if !onScreen.resizing { onScreen.atEnd = place.atEnd }
                 onScreen.fits = place.fits
                 if place.pastContent { checkShowingNothing("scrolled past the end of the content") }
+            }
+            // A new width lays every row's text out again, and the lazy stack places what it hasn't
+            // built at a guess: snapping a window back and forth (⌃⌥← and →) left the rows it had
+            // built outside the window, which stayed blank until the next layout, while the
+            // visibility callback still listed rows on screen (2026-10-13).
+            .onScrollGeometryChange(for: CGFloat.self) { $0.containerSize.width.rounded() } action: { old, new in
+                if old > 0, old != new { resized() }
             }
     }
 
@@ -200,6 +210,9 @@ extension TranscriptView {
         var settling = 0
         /// The whole transcript fits on screen: there's no end to go to.
         var fits = true
+        /// The width is changing: `atEnd` and `topRow` keep what they were before it began.
+        var resizing = false
+        var resizes = 0
     }
 
     /// The animation for a scroll the reader asked for: none under Reduce Motion.
@@ -218,6 +231,21 @@ extension TranscriptView {
             scrollToEnd()
         } else if let top = onScreen.topRow {
             await go(to: top)
+        }
+    }
+
+    /// Once the width has stopped changing, back to where the reader was before: the end, or the
+    /// row that was at the top. Going to a row by its id has the lazy stack build the rows there.
+    private func resized() {
+        onScreen.resizing = true
+        onScreen.resizes &+= 1
+        let resize = onScreen.resizes
+        Task {
+            try? await Task.sleep(for: .milliseconds(180))
+            guard onScreen.resizes == resize else { return }
+            onScreen.resizing = false
+            await returnToPlace()
+            recoverIfCollapsed("after a resize")
         }
     }
 
