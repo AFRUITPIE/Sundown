@@ -77,8 +77,8 @@ public final class ThreadModel: Identifiable {
     /// The rows as the current folding draws them, dates and edits included. Only one folding's:
     /// the Tool Calls setting changes rarely, and each kept another copy of the whole transcript.
     @ObservationIgnored private var folded: FoldedRows?
-    /// The first index in `storage` changed since `folded` was made. The turns before it are kept
-    /// as they are; the rest fold again.
+    /// The first index in `storage` changed since `folded` was made: the turns before the last one
+    /// are kept unless it's among them.
     @ObservationIgnored private var refoldFrom = 0
     /// Each finished edit call's changes, by call id: counting a change diffs its old and new text,
     /// and a finished call's input never changes, so the earlier turns aren't diffed again every
@@ -343,7 +343,7 @@ public final class ThreadModel: Identifiable {
         workflowMetas = [:]
         workflowAgentItems = [:]
         reindex()
-        dropDerived()
+        folded = nil
         lastSeq = 0
         hasMoreHistory = false
         historyLoaded = false
@@ -354,7 +354,8 @@ public final class ThreadModel: Identifiable {
     /// so live events go on applying after it with no gap or overlap, and the items let go load
     /// again a page at a time when it's shown and scrolled back (`hasMoreHistory`).
     func trim(toLast count: Int) {
-        defer { dropDerived() }
+        // What's worked out from the items is made again when it's next asked for.
+        defer { folded = nil }
         guard historyLoaded, storage.count > count else { return }
         reshaped("trimmed \(storage.count) items to \(count)")
         // Its title stays the prompt it opened with, until Claude names it.
@@ -380,12 +381,6 @@ public final class ThreadModel: Identifiable {
         if skillBodies.keys.contains(where: { !held.contains($0) }) { skillBodies = skillBodies.filter { held.contains($0.key) } }
         skillMessages = skillMessages.filter { held.contains($0.value) }
         if !hasMoreHistory { hasMoreHistory = true }
-    }
-
-    /// Lets go of what's worked out from the items, all of it made again when it's next asked for.
-    private func dropDerived() {
-        folded = nil
-        refoldFrom = 0
     }
 
     // MARK: notifications
@@ -655,7 +650,7 @@ public final class ThreadModel: Identifiable {
         if isUnnamed, case .userMessage(let m) = item, m.synthetic != true { refreshTitle() }
     }
 
-    /// What an item added or replaced changes: the rows, from its turn on, when it's the chat's own
+    /// What an item added or replaced changes: the rows, when it's the chat's own
     /// or an edit (a subagent's edits count in its turn's); its subagent's children, when it's a
     /// subagent's.
     private func noteChange(of item: Item, at i: Int, isNew: Bool, was previous: Item?) {
@@ -873,9 +868,9 @@ public final class ThreadModel: Identifiable {
     /// the date above a prompt after a break and the files each finished turn edited after it. The
     /// edits, and Worked For's folding, depend on whether the last turn is still running.
     ///
-    /// The same as folding and decorating every item at once, made a turn at a time: a finished
-    /// turn's rows are kept, and only the turns from the first item changed since fold again, which
-    /// while a turn runs is that turn alone.
+    /// The same as folding every item at once, made in two parts: the turns before the last one,
+    /// kept until one of their items changes (a turn that finishes joins them), and the last turn,
+    /// which folds again each time its items do.
     public func rows(_ folding: TranscriptFolding) -> [TranscriptRow] {
         foldedRows(folding).rows
     }
@@ -886,56 +881,45 @@ public final class ThreadModel: Identifiable {
         foldedRows(folding).prompts
     }
 
-    /// The rows as one folding draws them, and where each turn's are among them.
+    /// The rows as one folding draws them, and where the last turn's begin.
     private struct FoldedRows {
         let folding: TranscriptFolding
+        /// Where the last turn starts in `storage` (at its prompt), and its rows and prompts among
+        /// `rows` and `prompts`.
+        var lastTurn = 0, lastTurnRows = 0, lastTurnPrompts = 0
+        /// What the date separators carry into the last turn.
+        var dates = DateSeparators.Carry()
         var version = 0
         var running = false
         var rows: [TranscriptRow] = []
         var prompts: [TranscriptPrompt] = []
-        var turns: [Span] = []
-
-        /// One turn's place in `storage` and among the rows.
-        struct Span {
-            /// Where the turn is in `storage`: from its prompt, or the first item held, up to the next prompt.
-            let items: Range<Int>
-            /// Where its rows and prompts end in `rows` and `prompts`.
-            let rowsEnd: Int
-            let promptsEnd: Int
-            /// What the date separators carry into the next turn.
-            let dates: DateSeparators.Carry
-        }
     }
 
     private func foldedRows(_ folding: TranscriptFolding) -> FoldedRows {
         let running = isRunning
-        let version = itemsVersion
-        if let f = folded, f.folding == folding, f.version == version, f.running == running { return f }
-        var f = folded.flatMap { $0.folding == folding ? $0 : nil } ?? FoldedRows(folding: folding)
-        // Edited in place rather than copied.
+        if let f = folded, f.folding == folding, f.version == itemsVersion, f.running == running { return f }
+        // What's before the last turn is kept unless something in it changed, edited in place rather
+        // than copied; the last turn always folds again.
+        var f = folded.flatMap { $0.folding == folding && refoldFrom >= $0.lastTurn ? $0 : nil } ?? FoldedRows(folding: folding)
         folded = nil
-        // The turns that end before the first change stay as they are. The last one held always
-        // folds again: the items it's given, and whether it's running, change as it runs.
-        var kept = 0
-        while kept < f.turns.count - 1, f.turns[kept].items.upperBound < refoldFrom { kept += 1 }
-        let last = kept > 0 ? f.turns[kept - 1] : nil
-        f.turns.removeSubrange(kept...)
-        f.rows.removeSubrange((last?.rowsEnd ?? 0)...)
-        f.prompts.removeSubrange((last?.promptsEnd ?? 0)...)
-        var dates = last?.dates ?? DateSeparators.Carry()
-        var start = last?.items.upperBound ?? 0
-        while start < storage.count {
-            var end = start + 1
-            while end < storage.count, !storage[end].isPrompt { end += 1 }
-            var rows = transcriptRows(ofTurn: storage[start..<end], folding: folding, running: running && end == storage.count,
-                                      dates: &dates) { self.changes(of: $0) }
-            keepDates(in: &rows)
+        f.rows.removeSubrange(f.lastTurnRows...)
+        f.prompts.removeSubrange(f.lastTurnPrompts...)
+        func fold(_ items: Range<Int>, running: Bool, dates: inout DateSeparators.Carry) -> [TranscriptRow] {
+            transcriptRows(storage[items], folding: folding, running: running, dates: &dates, dated: &datedPrompts) { self.changes(of: $0) }
+        }
+        // The turns finished since go with those kept.
+        let lastTurn = storage.lastIndex(where: \.isPrompt) ?? 0
+        if f.lastTurn < lastTurn {
+            let rows = fold(f.lastTurn..<lastTurn, running: false, dates: &f.dates)
             f.rows += rows
             f.prompts += TranscriptPrompt.list(in: rows)
-            f.turns.append(.init(items: start..<end, rowsEnd: f.rows.count, promptsEnd: f.prompts.count, dates: dates))
-            start = end
+            (f.lastTurn, f.lastTurnRows, f.lastTurnPrompts) = (lastTurn, f.rows.count, f.prompts.count)
         }
-        f.version = version
+        var dates = f.dates
+        let rows = fold(lastTurn..<storage.count, running: running, dates: &dates)
+        f.rows += rows
+        f.prompts += TranscriptPrompt.list(in: rows)
+        f.version = itemsVersion
         f.running = running
         refoldFrom = .max
         folded = f
@@ -946,19 +930,7 @@ public final class ThreadModel: Identifiable {
     /// gets one because nothing is known before it; an older page going in above can make it a
     /// prompt with no break before it, and taking its date away then moved every row under it while
     /// the reader was looking at the top. So once a prompt has had its date, it keeps it.
-    private var datedPrompts: Set<String> = []
-
-    private func keepDates(in rows: inout [TranscriptRow]) {
-        guard let first = rows.first else { return }
-        switch first {
-        case .dateSeparator(let id, _):
-            datedPrompts.insert(id)
-        case .item(.userMessage(let m)) where m.parentToolUseId == nil && datedPrompts.contains(m.id) && m.createdAt > 0:
-            rows.insert(.dateSeparator(promptID: m.id, ms: m.createdAt), at: 0)
-        default:
-            break
-        }
-    }
+    @ObservationIgnored private var datedPrompts: Set<String> = []
 
     /// The foldings whose rows are held, for tests: the current one's alone.
     var foldingsHeld: [TranscriptFolding] { folded.map { [$0.folding] } ?? [] }

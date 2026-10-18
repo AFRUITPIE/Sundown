@@ -261,7 +261,7 @@ public enum DateSeparators {
         public init() {}
     }
 
-    /// The same for items that follow others, so a chat's dates can be worked out a turn at a time:
+    /// The same for items that follow others, so a chat's dates can be worked out in parts:
     /// `carry` says what came before them, and is left saying what they end with.
     public static func prompts(in items: some Sequence<Item>, after carry: inout Carry,
                                calendar: Calendar = .current) -> [String: Double] {
@@ -281,23 +281,24 @@ public enum DateSeparators {
     }
 }
 
-/// One turn's rows as drawn: `items` run from a prompt of the chat's own up to the next one, or
-/// are what comes before the first prompt held. The same as that turn's part of folding and
-/// decorating the whole transcript at once, which cuts at the same places: a prompt ends any run of
-/// tool calls, starts a Worked For turn and a turn's edits. `running` is for the chat's last turn
-/// while it runs, and `dates` carries the date separators from one turn to the next.
-func transcriptRows(ofTurn items: ArraySlice<Item>, folding: TranscriptFolding, running: Bool,
-                    dates: inout DateSeparators.Carry, changes: (Item.ToolCall) -> [FileChange]) -> [TranscriptRow] {
+/// The transcript's rows as drawn: `items` (the chat's own and its subagents') folded as `folding`
+/// says, with the date above each prompt after a break and each finished turn's edits after it.
+/// `running` is for the chat's last turn while it runs. Items that begin at a prompt can be folded
+/// apart from those before them, cut where folding the whole chat cuts (a prompt ends any run of
+/// calls, starts a Worked For turn and a turn's edits): `dates` carries the date separators across.
+/// `dated` holds the prompts that have had a date, and each keeps it, though an older page going in
+/// above has put it right after another: taking it away moved every row under it while the reader
+/// looked at the top.
+func transcriptRows(_ items: ArraySlice<Item>, folding: TranscriptFolding, running: Bool, dates carry: inout DateSeparators.Carry,
+                    dated: inout Set<String>, changes: (Item.ToolCall) -> [FileChange]) -> [TranscriptRow] {
     let top = items.filter { $0.parentToolUseId == nil }
-    let folded = foldTranscriptRows(top, folding: folding, lastTurnRunning: running)
-    let promptDates = DateSeparators.prompts(in: top, after: &dates)
-    var edits: [String: TurnEdits] = [:]
-    // A subagent's edits count too, so they're read from every item of the turn, not only the top.
-    if !running, case .userMessage(let prompt)? = items.first, prompt.parentToolUseId == nil,
-       let e = TurnEdits.summarize(promptID: prompt.id, items.dropFirst(), changes: changes) {
-        edits[prompt.id] = e
+    var dates = DateSeparators.prompts(in: top, after: &carry)
+    for case .userMessage(let m) in top where m.createdAt > 0 && dates[m.id] == nil && dated.contains(m.id) {
+        dates[m.id] = m.createdAt
     }
-    return decorateTranscriptRows(folded, dates: promptDates, edits: edits)
+    dated.formUnion(dates.keys)
+    return decorateTranscriptRows(foldTranscriptRows(top, folding: folding, lastTurnRunning: running), dates: dates,
+                                  edits: turnEdits(in: Array(items), lastTurnRunning: running, changes: changes))
 }
 
 /// One of the reader's own prompts, for VoiceOver's Prompts rotor: its row's id and its first words.
@@ -378,13 +379,7 @@ extension TranscriptRow {
 
     /// Whether the row matches `query`, case- and diacritic-insensitively.
     public func matches(_ query: String) -> Bool {
-        !query.isEmpty && Self.text(searchText, matches: query)
-    }
-
-    /// Whether `text`, a row's `searchText`, holds `query` as `matches` compares them, for a caller
-    /// that keeps rows' search text rather than making it again for every query.
-    public static func text(_ text: String, matches query: String) -> Bool {
-        !query.isEmpty && text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        !query.isEmpty && searchText.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
     }
 }
 

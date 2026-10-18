@@ -291,56 +291,11 @@ public final class HostConnection: Identifiable {
         }
     }
 
-    /// A batch, in order. A reply's text deltas go in as one, where nothing else for its chat comes
-    /// between them: its text grows once per batch, and its row updates once.
+    /// A batch, in order, one notification at a time: a reply's text is appended where it is, so a
+    /// delta costs its own length.
     func route(_ batch: [ServerNotification]) {
         Signposts.flushed(batch.count)
-        for run in Self.textRuns(in: batch) {
-            guard run.count > 1 else {
-                apply(run[0])
-                continue
-            }
-            let deltas = run.compactMap { n -> ItemAgentMessageDeltaNotification? in
-                if case .itemAgentMessageDelta(let d) = n { d } else { nil }
-            }
-            if let joined = Self.joining(deltas, after: thread(deltas[0].threadId).lastSeq) {
-                apply(.itemAgentMessageDelta(joined))
-            }
-        }
-    }
-
-    /// The batch in order, each notification on its own, except that a reply's text deltas are
-    /// gathered at the first one's place for as long as nothing else for their chat comes between
-    /// them. Other chats' notifications don't order against them: each chat is applied on its own.
-    nonisolated static func textRuns(in batch: [ServerNotification]) -> [[ServerNotification]] {
-        var runs: [[ServerNotification]] = []
-        var gathered = [Bool](repeating: false, count: batch.count)
-        for i in batch.indices where !gathered[i] {
-            var run = [batch[i]]
-            if case .itemAgentMessageDelta(let first) = batch[i] {
-                for j in batch.indices.dropFirst(i + 1) where !gathered[j] && batch[j].threadId == first.threadId {
-                    guard case .itemAgentMessageDelta(let next) = batch[j], next.itemId == first.itemId else { break }
-                    run.append(batch[j])
-                    gathered[j] = true
-                }
-            }
-            runs.append(run)
-        }
-        return runs
-    }
-
-    /// One reply's deltas as one: their text in order and the last seq, leaving out any at or
-    /// below the chat's `lastSeq` as `ThreadModel.apply` would one at a time. Nil when none is new.
-    nonisolated static func joining(_ deltas: [ItemAgentMessageDeltaNotification], after lastSeq: Int) -> ItemAgentMessageDeltaNotification? {
-        var seen = lastSeq
-        var fresh: [ItemAgentMessageDeltaNotification] = []
-        for d in deltas where seen == 0 || d.seq > seen {
-            fresh.append(d)
-            seen = d.seq
-        }
-        guard var joined = fresh.last else { return nil }
-        joined.delta = fresh.count == 1 ? joined.delta : fresh.map(\.delta).joined()
-        return joined
+        for n in batch { apply(n) }
     }
 
     private func apply(_ n: ServerNotification) {
