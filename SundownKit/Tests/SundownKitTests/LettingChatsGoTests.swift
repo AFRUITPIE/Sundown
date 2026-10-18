@@ -99,22 +99,6 @@ struct LettingChatsGoTests {
         #expect(thread.title == "Prompt 0")
     }
 
-    /// The tasks are the chat's, as the daemon says them, whatever page of items is held: one whose
-    /// call was let go is still listed, and can still be stopped.
-    @Test func trimmingKeepsTheChatsTasks() {
-        let thread = ThreadModel(id: threadID)
-        var items = transcript
-        items[2] = subagent("early-agent", 2)
-        let tasks = [TaskState(id: "early-agent", toolUseId: "early-agent", kind: .agent, title: "early", status: .done),
-                     TaskState(id: "agent", toolUseId: "agent", kind: .agent, title: "late", status: .running)]
-        thread.loadHistory(items: items, turns: [], seq: 60, tasks: tasks)
-
-        thread.trim(toLast: 50)
-
-        #expect(thread.tasks == tasks)
-        #expect(thread.callTasks.keys.sorted() == ["agent", "early-agent"])
-    }
-
     /// A background command's call on a page not held, finishing now: the page brings it when it
     /// loads. Appended, it read as the chat's latest.
     @Test func anItemFromAPageNotHeldIsLeftToThatPage() {
@@ -254,6 +238,85 @@ struct LettingChatsGoTests {
         connection.leave(thread)
         #expect(thread.historyLoaded)
         #expect(thread.items.count == 60)
+    }
+
+    // MARK: a followed chat let go
+
+    /// A followed chat (in the daemon, not loaded) left is unsubscribed but keeps its last page, so
+    /// going back to it, host up or not, shows it at once; opened again, it's read afresh.
+    @Test func aFollowedChatLeftKeepsItsLastPageUntilItIsReadAgain() async throws {
+        let host = FakeHost()
+        #expect(transcript.count > HostConnection.initialHistoryLimit)
+        let (connection, thread) = await connect(host, status: .notLoaded)
+        #expect(thread.isFollowed)
+
+        connection.leave(thread)
+        #expect(thread.historyLoaded, "a chat left went blank")
+        #expect(thread.items.map(\.id) == transcript.suffix(HostConnection.initialHistoryLimit).map(\.id))
+        #expect(thread.hasMoreHistory)
+        try await eventually { host.calls(of: "thread/unsubscribe").count == 1 }
+
+        // Opened again, it's read afresh, with what came meanwhile.
+        serve(host, status: .notLoaded, items: transcript + [message(60), message(61)], historySeq: 120)
+        await connection.open(thread)
+        #expect(thread.items.last?.id == "m61")
+        #expect(thread.lastSeq == 120)
+        #expect(host.calls(of: "thread/subscribe").count == 2)
+        await connection.disconnect()
+    }
+
+    /// A reconnect resubscribes the chats on screen and the live ones, not those let go: each
+    /// subscription to a followed chat costs the daemon a file watcher and its parsed transcript.
+    @Test func aReconnectDoesNotResubscribeAChatLetGo() async throws {
+        let first = FakeHost(), second = FakeHost()
+        serve(first, status: .notLoaded)
+        let connection = FakeHost.connection(to: [first, second])
+        await connection.connect()
+        let thread = connection.thread(threadID)
+        await connection.open(thread)
+        connection.leave(thread)
+
+        await connection.reconnect()
+        #expect(second.calls(of: "thread/subscribe").isEmpty)
+        #expect(thread.historyLoaded, "the page it kept went with the reconnect")
+        await connection.disconnect()
+    }
+
+    /// Opened again while the host is down, a chat let go shows the page it kept, and is read
+    /// afresh and subscribed once the host is back.
+    @Test func aChatLetGoOpenedWhileDisconnectedIsReadOnceConnected() async throws {
+        let first = FakeHost(), second = FakeHost()
+        serve(first, status: .notLoaded)
+        serve(second, status: .notLoaded, items: transcript + [message(60), message(61)], historySeq: 120)
+        let connection = FakeHost.connection(to: [first, second])
+        await connection.connect()
+        let thread = connection.thread(threadID)
+        await connection.open(thread)
+        connection.leave(thread)
+        await connection.disconnect()
+
+        await connection.open(thread)
+        #expect(thread.items.count == HostConnection.initialHistoryLimit, "nothing to show while the host is down")
+        await connection.connect()
+        #expect(thread.items.last?.id == "m61")
+        #expect(second.calls(of: "thread/subscribe").count == 1)
+        await connection.disconnect()
+    }
+
+    /// An event in flight when a followed chat is let go would land in the page it kept, past a gap.
+    /// A chat let go drops item events until it's read again.
+    @Test func anEventAfterLeavingAFollowedChatIsDropped() async throws {
+        let host = FakeHost()
+        let (connection, thread) = await connect(host, status: .notLoaded)
+        connection.leave(thread)
+
+        host.emit("item/started", json(ItemStartedNotification(threadId: threadID, seq: 101, item: message(60))))
+        // A status change after it, which still reaches the chat: once it has, the item was routed too.
+        host.emit("thread/status/changed", ["threadId": .string(threadID), "seq": 102, "status": "idle"])
+        try await eventually { thread.lastSeq == 102 }
+
+        #expect(!thread.items.contains { $0.id == "m60" }, "a chat let go took an item past its gap")
+        await connection.disconnect()
     }
 
     // MARK: edits

@@ -36,6 +36,30 @@ struct ToolCallTextTests {
         #expect(ToolCallText.reason(call(.bash, ["command": "make"])) == nil)
     }
 
+    /// An agent's row says how its task stands, as the daemon states it.
+    @MainActor
+    @Test func anAgentReadsAsItsTask() {
+        let agent = call(.subagent, ["subagent_type": "Explore", "description": "Find every SwiftUI view"], status: .running,
+                         name: "Task")
+        func state(_ status: TaskStatus, backgrounded: Bool? = nil) -> TaskState {
+            TaskState(id: agent.id, toolUseId: agent.id, taskId: "task-explore", kind: .agent, title: "Find every SwiftUI view",
+                      status: status, backgrounded: backgrounded)
+        }
+        let thread = ThreadModel(id: "t")
+        thread.loadHistory(items: [.toolCall(agent)], turns: [], seq: 1, tasks: [state(.running)])
+        #expect(SubagentLifecycle.title(call: agent, task: thread.callTasks[agent.id]) == "Agent running")
+        thread.apply(.taskUpdated(.init(threadId: thread.id, seq: 20, task: state(.running, backgrounded: true))))
+        #expect(SubagentLifecycle.title(call: agent, task: thread.callTasks[agent.id]) == "Agent running in background")
+        #expect(thread.callTasks[agent.id]?.isInBackground == true)
+        thread.apply(.taskUpdated(.init(threadId: thread.id, seq: 21, task: state(.done, backgrounded: true))))
+        #expect(SubagentLifecycle.title(call: agent, task: thread.callTasks[agent.id]) == "Agent finished")
+        #expect(thread.callTasks[agent.id]?.isInBackground == false)
+        #expect(SubagentLifecycle.title(call: agent, task: state(.failed)) == "Agent failed")
+        #expect(SubagentLifecycle.title(call: agent, task: state(.stopped)) == "Agent stopped")
+        // With no task, the call says it.
+        #expect(SubagentLifecycle.title(call: agent, task: nil) == "Agent running")
+    }
+
     /// A workflow is called by the name the daemon gives its run, in its run's tense: its call comes
     /// back at once.
     @Test func aWorkflowReadsAsItsRun() {

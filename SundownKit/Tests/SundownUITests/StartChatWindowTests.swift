@@ -68,6 +68,7 @@ struct StartChatWindowTests {
         let second = Task { await window.startDraftChat([.text(.init(text: "And the tests"))]) }
         try await Task.sleep(for: .milliseconds(50))
         #expect(host.calls(of: "turn/start").isEmpty)
+        #expect(host.calls(of: "turn/interrupt").isEmpty)
 
         host.release("thread/start")
         #expect(await send.value)

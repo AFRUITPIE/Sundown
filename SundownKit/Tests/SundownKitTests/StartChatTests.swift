@@ -9,6 +9,7 @@ import SundownTestSupport
 /// `thread/start` goes as ever. The host's chat is its own model, the one its notifications reach,
 /// and the start is ready for the window to move to it once that chat holds the prompt the answer
 /// names (`messageId`), which the host sends first, though the app may apply it after the answer.
+/// What a window does meanwhile (Stop, another message, the menus) is `StartChatWindowTests`'.
 @MainActor
 @Suite(.serialized)
 struct StartChatTests {
@@ -191,33 +192,6 @@ struct StartChatTests {
         await connection.disconnect()
         #expect(op.isReady)
         #expect(op.echoID == nil)
-    }
-
-    /// Stop and a second message while the host hasn't answered reach the chat it started.
-    @Test func stopAndASecondMessageReachTheStartedChat() async throws {
-        let host = FakeHost()
-        let connection = await connected(host)
-        host.hold("thread/start")
-        host.queue("thread/start", started("host-chat"))
-        host.queue("turn/start", TurnStartResult(turnId: "turn", messageId: "second", queued: true))
-        host.queue("turn/interrupt", TurnInterruptResult())
-        let op = connection.prepareStart(cwd: "/repo", input: input, options: .init(), defaults: nil)
-        let start = Task { try await connection.start(op) }
-
-        await connection.interrupt(op)
-        let second = Task { await connection.send(op, input: [.text(.init(text: "And the tests"))]) }
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(host.calls(of: "turn/start").isEmpty)
-        #expect(host.calls(of: "turn/interrupt").isEmpty)
-
-        host.release("thread/start")
-        _ = try await start.value
-        #expect(await second.value)
-        let sent = try #require(host.calls(of: "turn/start").first)
-        #expect(sent["threadId"]?.stringValue == "host-chat")
-        let interrupted = try #require(host.calls(of: "turn/interrupt").first)
-        #expect(interrupted["threadId"]?.stringValue == "host-chat")
-        await connection.disconnect()
     }
 
     /// A start that fails sends nothing more: a second message is handed back, and Stop has nothing

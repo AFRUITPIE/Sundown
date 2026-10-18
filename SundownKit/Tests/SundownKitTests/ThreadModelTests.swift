@@ -123,22 +123,6 @@ struct ThreadModelTests {
         .agentMessage(.init(id: id, parentToolUseId: parent, createdAt: 0, text: text))
     }
 
-    /// A task's update changes the tasks, not the transcript.
-    @Test func tasksFollowTheirUpdatesWithoutAnyItemChange() {
-        let thread = ThreadModel(id: threadID)
-        #expect(thread.tasks.isEmpty)
-        let itemsVersion = thread.itemsVersion
-
-        thread.apply(.taskUpdated(.init(threadId: threadID, seq: 1, task: .init(
-            id: "task:task-1", taskId: "task-1", kind: .agent, title: "Explore the inspector", status: .running))))
-        #expect(thread.tasks.map(\.id) == ["task:task-1"])
-        thread.apply(.taskUpdated(.init(threadId: threadID, seq: 2, task: .init(
-            id: "task:task-1", taskId: "task-1", kind: .agent, title: "Explore the inspector", status: .running, backgrounded: true))))
-        #expect(thread.tasks.first?.isInBackground == true)
-
-        #expect(thread.itemsVersion == itemsVersion)
-    }
-
     /// Only the reply being streamed into fades its text in: from its start until it completes or
     /// its turn ends, and never a subagent's words. Its deltas don't change which reply it is.
     @Test func theStreamingReplyIsTheOneBeingStreamedInto() {

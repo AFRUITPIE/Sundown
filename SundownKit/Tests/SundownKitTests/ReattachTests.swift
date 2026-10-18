@@ -68,25 +68,6 @@ struct ReattachTests {
         await connection.disconnect()
     }
 
-    @Test func leavingAFollowedThreadReleasesIt() async throws {
-        let script = host(reads: [readResult(text: "watched", sequence: 12)],
-                          subscriptions: [subscribeResult(lastSequence: 12, status: .notLoaded)])
-        let connection = makeConnection([script])
-        await connection.connect()
-        let thread = connection.thread(threadID)
-        await connection.open(thread)
-        #expect(thread.isFollowed)
-        #expect(!connection.isLoaded(thread))
-
-        connection.leave(thread)
-
-        // Unsubscribed, keeping its last page to show until it's read again.
-        #expect(thread.historyLoaded)
-        #expect(!thread.items.isEmpty)
-        try await eventually { script.count("thread/unsubscribe") > 0 }
-        await connection.disconnect()
-    }
-
     @Test func sendingIntoAFollowedThreadResumesItInItsOwnSequence() async throws {
         let script = host(
             reads: [readResult(text: "watched", sequence: 500)],
@@ -197,6 +178,68 @@ struct ReattachTests {
         #expect(script.calls(of: "thread/resume").first?["effort"]?.stringValue == "low")
         #expect(thread.pendingSettings == PendingSettings())
         await connection.disconnect()
+    }
+
+    // MARK: a replay gap on reconnecting
+
+    /// Two connections to one chat: the first holds its last page and an older page the reader
+    /// scrolled to; after a reconnect whose subscription reports a gap, the chat reloads, reading
+    /// back as far as it held: every row the reader held survives the reload.
+    @Test func aGapReconnectKeepsTheOlderRowsTheReaderHeld() async throws {
+        let (before, after) = try await reconnectAfterOlderPage(gap: true)
+        #expect(after.count == before.count, "a gap reload dropped \(before.count - after.count) rows the reader held")
+        #expect(Set(before).isSubset(of: Set(after)))
+    }
+
+    /// Without a gap, the reconnect keeps everything the chat held (the control for the test above).
+    @Test func aReconnectWithoutAGapKeepsEveryRow() async throws {
+        let (before, after) = try await reconnectAfterOlderPage(gap: false)
+        #expect(after == before)
+    }
+
+    /// Loads a 120-item chat as its last page of 50 and an older page of 70, then reconnects to the
+    /// same daemon state with the subscription reporting `gap`. Returns the row ids before and after.
+    private func reconnectAfterOlderPage(gap: Bool) async throws -> ([String], [String]) {
+        func message(_ n: Int) -> Item {
+            n % 10 == 0
+                ? .userMessage(.init(id: "m\(n)", createdAt: Double(1_000 + n), content: [.text(.init(text: "Prompt \(n)"))]))
+                : .agentMessage(.init(id: "m\(n)", createdAt: Double(1_000 + n), text: "Reply \(n)"))
+        }
+        let all = (0..<120).map(message)
+        let tail = Array(all.suffix(50)), head = Array(all.prefix(70))
+        let id = threadID
+        func subscription(_ gap: Bool) -> ThreadSubscribeResult {
+            ThreadSubscribeResult(thread: .init(threadId: id, status: .idle, cwd: "/repo", lastSeq: 200), replayed: 0, gap: gap)
+        }
+
+        let first = FakeHost()
+        first.queue("thread/read", ThreadReadResult(items: tail, turns: [], historySeq: 200, hasMore: true))
+        first.queue("thread/subscribe", subscription(false))
+        first.queue("thread/read", ThreadReadResult(items: head, turns: [], hasMore: false))
+
+        let second = FakeHost()
+        if gap {
+            second.queue("thread/subscribe", subscription(true))
+            // The reload asks for at least as much as the chat held; the daemon answers with that
+            // many from the end (here the whole chat).
+            second.queue("thread/read", ThreadReadResult(items: all, turns: [], historySeq: 200, hasMore: false))
+            second.queue("thread/subscribe", subscription(false))
+        } else {
+            second.queue("thread/subscribe", subscription(false))
+        }
+
+        let connection = FakeHost.connection(to: [first, second])
+        await connection.connect()
+        let thread = connection.thread(threadID)
+        await connection.open(thread)
+        await connection.loadOlderHistory(thread)
+        let before = thread.rows(.summarized).map(\.id)
+        #expect(thread.items.count == 120)
+
+        await connection.reconnect()
+        let after = thread.rows(.summarized).map(\.id)
+        await connection.disconnect()
+        return (before, after)
     }
 
     /// A daemon on claude-box with each read and subscription given once, in turn (a call past
