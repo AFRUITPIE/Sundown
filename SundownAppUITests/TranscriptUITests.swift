@@ -141,19 +141,18 @@ final class TranscriptUITests: SundownUITestCase {
         return last
     }
 
-    /// Where each "Step n" prompt in the transcript is (its top, on screen), once two reads half a
-    /// second apart agree.
+    /// Where each prompt ("Step n") and reply ("Section n") in the transcript starts, on screen,
+    /// once two reads half a second apart agree.
     @MainActor
-    private func promptTops() -> [Int: CGFloat] {
-        var last: [Int: CGFloat] = [:]
+    private func messageTops() -> [String: CGFloat] {
+        var last: [String: CGFloat] = [:]
         for _ in 0..<10 {
             Thread.sleep(forTimeInterval: 0.5)
             guard let root = try? app.scrollViews["Transcript"].snapshot() else { continue }
-            var prompts: [Int: CGFloat] = [:]
+            var prompts: [String: CGFloat] = [:]
             func walk(_ element: any XCUIElementSnapshot) {
-                if let words = element.messageWords, words.hasPrefix("Step "),
-                   let number = Int(words.dropFirst(5).prefix { $0.isNumber }) {
-                    prompts[number] = element.frame.minY
+                if let words = element.messageWords, words.hasPrefix("Step ") || words.hasPrefix("Section ") {
+                    prompts[String(words.prefix { $0 != ":" })] = element.frame.minY
                 }
                 element.children.forEach(walk)
             }
@@ -223,18 +222,18 @@ final class TranscriptUITests: SundownUITestCase {
         // top is the same one after, though every row above and below it is laid out again.
         window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)).scroll(byDeltaX: 0, deltaY: 1500)
         XCTAssertTrue(app.buttons["Jump to Latest"].appears(timeout: 5), "no Jump to Latest after scrolling up")
-        let prompts = promptTops()
-        // The first prompt wholly below the toolbar, and where it is.
+        let prompts = messageTops()
+        // The first message starting below the toolbar, and where it is.
         let scrollTop = app.scrollViews["Transcript"].frame.minY
         guard let place = prompts.filter({ $0.value >= scrollTop + 60 }).min(by: { $0.value < $1.value }) else {
             return XCTFail("no prompt on screen after scrolling up: \(prompts)")
         }
         for width: CGFloat in [860, 1000] {
             resize(to: width)
-            let after = promptTops()
+            let after = messageTops()
             let moved = after[place.key].map { abs($0 - place.value) }
             // The row at the top goes back to the top, which can bring down one the toolbar hid.
-            XCTAssertLessThan(moved ?? .infinity, 200, "resizing to \(width) moved a scrolled-up reader: Step \(place.key) was at \(place.value), now \(after)")
+            XCTAssertLessThan(moved ?? .infinity, 200, "resizing to \(width) moved a scrolled-up reader: \(place.key) was at \(place.value), now \(after)")
         }
         app.buttons["Jump to Latest"].click()
         XCTAssertTrue(app.buttons["Jump to Latest"].disappears(timeout: 5), "Jump to Latest stayed after a resize")
