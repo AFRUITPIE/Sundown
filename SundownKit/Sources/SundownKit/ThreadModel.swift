@@ -165,7 +165,7 @@ public final class ThreadModel: Identifiable {
 
     /// Background commands and agents still running, though the turn that started them may have
     /// ended, as the daemon counts them (`thread/status/changed`, `thread/list`). Stored, so the
-    /// sidebar reads it without reading the transcript; 0 from a server too old to say.
+    /// sidebar reads it without reading the transcript.
     public private(set) var backgroundTaskCount = 0
     /// Claude is still at work in the background: a chat sitting idle while its agents run.
     public var hasBackgroundWork: Bool { backgroundTaskCount > 0 }
@@ -209,8 +209,8 @@ public final class ThreadModel: Identifiable {
     func setSummary(_ s: ThreadSummary) {
         if summary != s { summary = s }
         if info == nil, status != s.status { status = s.status }
-        // A chat the daemon hasn't loaded runs nothing; a server too old to count says nothing.
-        let count = s.backgroundTasks ?? (s.status == .notLoaded ? 0 : backgroundTaskCount)
+        // Counted only for a chat the daemon runs: one it hasn't loaded runs nothing.
+        let count = s.backgroundTasks ?? 0
         if count != backgroundTaskCount { backgroundTaskCount = count }
         refreshTitle()
     }

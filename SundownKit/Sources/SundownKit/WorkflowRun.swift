@@ -9,7 +9,7 @@ import TetherProtocol
 // after a reload, `workflow/read`. Pure, so it's tested without a view.
 
 extension Item.ToolCall {
-    /// A dynamic workflow's launch: recognized by the tool's name, so older daemons' calls are too.
+    /// A dynamic workflow's launch, by the tool's name.
     public var isWorkflow: Bool { name == "Workflow" }
 
     /// A Workflow call's script, when it was sent inline (not run from a saved file).
@@ -556,34 +556,4 @@ func firstCapture(_ pattern: String, in text: String?) -> String? {
           let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
           match.numberOfRanges > 1, let range = Range(match.range(at: 1), in: text) else { return nil }
     return String(text[range])
-}
-
-/// The daemon's workflow methods. Declared here rather than taken from the protocol package, so
-/// the app reads workflows from a daemon that has them while it builds against a package that
-/// doesn't; a daemon without them answers "method not found", and they aren't asked again.
-public enum WorkflowMethods {
-    /// A run's snapshot, from the live thread, the CLI's run record or its journal.
-    public enum Read: TetherMethod {
-        public static let name = "workflow/read"
-        public struct Params: Encodable, Sendable {
-            public let threadId: String
-            public let runId: String
-        }
-        public struct Result: Decodable, Sendable {
-            public let workflow: JSONValue?
-        }
-    }
-
-    /// One agent's transcript, itemized as history is.
-    public enum AgentItems: TetherMethod {
-        public static let name = "workflow/agentItems"
-        public struct Params: Encodable, Sendable {
-            public let threadId: String
-            public let runId: String
-            public let agentId: String
-        }
-        public struct Result: Decodable, Sendable {
-            public let items: [Item]
-        }
-    }
 }

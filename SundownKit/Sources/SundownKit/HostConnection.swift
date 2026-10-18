@@ -151,7 +151,6 @@ public final class HostConnection: Identifiable {
             // still holds, and asking again started a Claude Code process for models and account.
             let sameDaemon = serverInfo.map { Self.isSameDaemon($0, initResult) } ?? false
             serverInfo = initResult
-            workflowMethodsMissing = false
             appendLog("Connected: \(initResult.host.hostname), claude \(initResult.claude.version) at \(initResult.claude.path)")
             state = .connected
             reconnectAttempt = 0
@@ -180,8 +179,9 @@ public final class HostConnection: Identifiable {
             && old.serverInfo.version == new.serverInfo.version
     }
 
-    /// The oldest server protocol this app talks to.
-    static let minServerProtocol = 1
+    /// The oldest server protocol this app talks to: 2, whose tasks, edits, working-tree changes
+    /// and chat-list notifications the app reads as they come, with no fallbacks for protocol 1.
+    static let minServerProtocol = 2
 
     /// The app and the server can't talk to each other until one of them is updated.
     struct Incompatible: LocalizedError {
@@ -874,9 +874,6 @@ public final class HostConnection: Identifiable {
     @ObservationIgnored private var workflowReads = Set<String>()
     /// Finished runs already read, by chat and run id: what a reopened chat shows without asking.
     @ObservationIgnored private var finishedWorkflows: [String: JSONValue] = [:]
-    /// The daemon doesn't know `workflow/read` or `workflow/agentItems` (one older than them):
-    /// not asked again on this connection.
-    @ObservationIgnored private var workflowMethodsMissing = false
 
     /// Lets go of the finished runs read for a chat that's deleted, or reloaded after a gap. A chat
     /// merely let go of (`leave`) keeps them: they're what it shows when it's reopened, without
@@ -889,7 +886,7 @@ public final class HostConnection: Identifiable {
     /// Reads the run of each Workflow call with no live task, in the background.
     private func readWorkflows(of model: ThreadModel) {
         let runs = model.workflowsToRead
-        guard !runs.isEmpty, !workflowMethodsMissing else { return }
+        guard !runs.isEmpty else { return }
         for run in runs {
             if let known = finishedWorkflows["\(model.id)/\(run.runId)"] {
                 model.setLoadedWorkflow(known, for: run.toolUseId)
@@ -903,7 +900,7 @@ public final class HostConnection: Identifiable {
     /// older page, or for the Tasks tab while a run goes on that this client isn't told about. One
     /// request in flight per run; a finished run read once isn't read again.
     public func loadWorkflow(_ model: ThreadModel, toolUseId: String) async {
-        guard let client, !workflowMethodsMissing,
+        guard let client,
               let run = model.workflowsToRead.first(where: { $0.toolUseId == toolUseId }) else { return }
         let key = "\(model.id)/\(run.runId)"
         if let known = finishedWorkflows[key] {
@@ -919,8 +916,6 @@ public final class HostConnection: Identifiable {
             // Kept only once it's over: an unknown run (history with nothing to say) may be going
             // on still, and a paused one goes on, so both are read again.
             if let status = snapshot["status"]?.stringValue, WorkflowRun.status(status).isSettled { finishedWorkflows[key] = snapshot }
-        } catch let e as RPCError where e.code == -32601 {
-            workflowMethodsMissing = true
         } catch {
             appendLog("Reading workflow \(run.runId) failed: \(error.localizedDescription)")
         }
@@ -931,19 +926,9 @@ public final class HostConnection: Identifiable {
     public func workflowAgentItems(_ model: ThreadModel, runId: String, agentId: String, finished: Bool) async throws -> [Item] {
         if let known = model.workflowAgentTranscript(runId: runId, agentId: agentId) { return known }
         guard let client else { throw RPCError.notConnected }
-        if workflowMethodsMissing { throw Self.workflowAgentsUnavailable(-32601) }
-        do {
-            let r = try await client.call(WorkflowMethods.AgentItems.self, .init(threadId: model.id, runId: runId, agentId: agentId))
-            if finished { model.rememberWorkflowAgentTranscript(r.items, runId: runId, agentId: agentId) }
-            return r.items
-        } catch let e as RPCError where e.code == -32601 {
-            workflowMethodsMissing = true
-            throw Self.workflowAgentsUnavailable(e.code)
-        }
-    }
-
-    private static func workflowAgentsUnavailable(_ code: Int) -> RPCError {
-        RPCError(code: code, message: "This host’s server can’t read workflow agents.")
+        let r = try await client.call(Methods.WorkflowAgentItems.self, .init(threadId: model.id, runId: runId, agentId: agentId))
+        if finished { model.rememberWorkflowAgentTranscript(r.items, runId: runId, agentId: agentId) }
+        return r.items
     }
 
     /// Throws so the Context popover can explain a thread the daemon hasn't loaded.
