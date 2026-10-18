@@ -30,10 +30,18 @@ let package = Package(
             .product(name: "TetherProtocol", package: "tether-server"),
             .product(name: "Subprocess", package: "swift-subprocess"),
         ]),
-        .target(name: "SundownUI", dependencies: ["SundownKit", .product(name: "Markdown", package: "swift-markdown")]),
-        .testTarget(name: "SundownKitTests", dependencies: ["SundownKit"], resources: [.copy("Fixtures")]),
+        // A daemon in memory (`FakeHost`) and the chats it serves: the UI-test fixture, which every
+        // build carries (the performance tests run against Release), previews' samples, and the
+        // tests' fake host.
+        .target(name: "SundownFixtures", dependencies: [
+            "SundownKit", .product(name: "TetherProtocol", package: "tether-server"),
+        ]),
+        .target(name: "SundownUI", dependencies: [
+            "SundownKit", "SundownFixtures", .product(name: "Markdown", package: "swift-markdown"),
+        ]),
+        .testTarget(name: "SundownKitTests", dependencies: ["SundownKit", "SundownFixtures"], resources: [.copy("Fixtures")]),
         .testTarget(name: "SundownUITests", dependencies: [
-            "SundownUI", "SundownKit", .product(name: "TetherProtocol", package: "tether-server"),
+            "SundownUI", "SundownKit", "SundownFixtures", .product(name: "TetherProtocol", package: "tether-server"),
         ]),
     ]
 )

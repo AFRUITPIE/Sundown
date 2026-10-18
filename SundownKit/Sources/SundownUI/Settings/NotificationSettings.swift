@@ -1,3 +1,4 @@
+import SundownFixtures
 import SwiftUI
 
 /// Settings ▸ Notifications: when Sundown tells you a chat needs you, and what the Dock shows.

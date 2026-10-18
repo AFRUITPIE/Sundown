@@ -1,4 +1,5 @@
 import AppKit
+@testable import SundownFixtures
 import SwiftUI
 import Testing
 import TetherProtocol

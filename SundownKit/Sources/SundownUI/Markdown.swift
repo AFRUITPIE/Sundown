@@ -1,3 +1,4 @@
+import SundownFixtures
 import SwiftUI
 
 /// Monospaced block that wraps and sizes itself; long output collapses to `lineLimit` lines.

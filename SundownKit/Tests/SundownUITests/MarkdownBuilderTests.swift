@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import Foundation
+@testable import SundownFixtures
 import Testing
 @testable import SundownKit
 @testable import SundownUI

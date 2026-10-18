@@ -7,6 +7,12 @@ public struct PendingRequest: Identifiable, Sendable {
     public let id: String
     public let request: ServerRequest
     let respond: @Sendable (JSONValue?) -> Void
+
+    package init(id: String, request: ServerRequest, respond: @escaping @Sendable (JSONValue?) -> Void) {
+        self.id = id
+        self.request = request
+        self.respond = respond
+    }
 }
 
 /// One item's current value, observed on its own. A streamed delta changes only its item's box, so
@@ -69,7 +75,7 @@ public final class ThreadModel: Identifiable {
     /// How full the context window was when last asked (0–1), for the toolbar's gauge. Set by
     /// whoever asks (`thread/contextUsage`), after a turn ends or when the breakdown is opened.
     public var contextFill: Double?
-    public internal(set) var lastError: String?
+    public package(set) var lastError: String?
     /// Settings chosen while the daemon hasn't loaded the thread, applied when it resumes.
     public internal(set) var pendingSettings = PendingSettings()
     private var index: [String: Int] = [:]
@@ -186,13 +192,13 @@ public final class ThreadModel: Identifiable {
     // Assigned only when they differ: an observed property tells its views even when it's given the
     // same value, and every chat's summary comes again after each turn.
 
-    func setInfo(_ i: ThreadInfo) {
+    package func setInfo(_ i: ThreadInfo) {
         if info != i { info = i }
         if status != i.status { status = i.status }
         refreshTitle()
     }
 
-    func setSummary(_ s: ThreadSummary) {
+    package func setSummary(_ s: ThreadSummary) {
         if summary != s { summary = s }
         if info == nil, status != s.status { status = s.status }
         // Counted only for a chat the daemon runs: one it hasn't loaded runs nothing.
@@ -240,7 +246,7 @@ public final class ThreadModel: Identifiable {
 
     /// Replace transcript with server history (thread/read or thread/resume includeHistory), and
     /// the tasks with the ones it came with, which are as of `seq`.
-    func loadHistory(items newItems: [Item], turns newTurns: [Turn], seq: Int?, hasMore: Bool = false,
+    package func loadHistory(items newItems: [Item], turns newTurns: [Turn], seq: Int?, hasMore: Bool = false,
                      tasks newTasks: [TaskState]? = nil) {
         reshaped(historyLoaded ? "reloaded \(newItems.count) items over \(storage.count)" : "loaded \(newItems.count) items")
         if let seq { lastSeq = seq }
@@ -342,7 +348,7 @@ public final class ThreadModel: Identifiable {
 
     /// Returns false for a notification already applied (a replay overlap, or a stale stream's).
     @discardableResult
-    func apply(_ n: ServerNotification) -> Bool {
+    package func apply(_ n: ServerNotification) -> Bool {
         if let seq = n.seq {
             if seq <= lastSeq, lastSeq > 0 { return false }
             lastSeq = seq
@@ -411,7 +417,7 @@ public final class ThreadModel: Identifiable {
         return true
     }
 
-    func addPending(_ p: PendingRequest) {
+    package func addPending(_ p: PendingRequest) {
         pending.removeAll { $0.id == p.id }
         pending.append(p)
     }
@@ -526,7 +532,7 @@ public final class ThreadModel: Identifiable {
 
     #if DEBUG
     /// For a `#Preview`'s still: nothing in it is arriving, so no row is caught mid-fade.
-    func settleArrivals() { started = [:] }
+    package func settleArrivals() { started = [:] }
     #endif
 
     /// Whether the item started live within the last moment, so its row fades in as it appears.
@@ -603,7 +609,7 @@ public final class ThreadModel: Identifiable {
     // MARK: tasks
 
     /// The tasks as the daemon says they stand now, whole.
-    func setTasks(_ list: [TaskState]) {
+    package func setTasks(_ list: [TaskState]) {
         var next: [TaskState] = []
         var index: [String: Int] = [:]
         next.reserveCapacity(list.count)
@@ -643,7 +649,7 @@ public final class ThreadModel: Identifiable {
         workflowAgentItems["\(runId)/\(agentId)"]
     }
 
-    func rememberWorkflowAgentTranscript(_ items: [Item], runId: String, agentId: String) {
+    package func rememberWorkflowAgentTranscript(_ items: [Item], runId: String, agentId: String) {
         workflowAgentItems["\(runId)/\(agentId)"] = items
     }
 

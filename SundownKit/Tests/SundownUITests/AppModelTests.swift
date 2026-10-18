@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+@testable import SundownFixtures
 import Testing
 import SundownKit
 @testable import SundownUI

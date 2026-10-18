@@ -1,4 +1,5 @@
 import Foundation
+import SundownKit
 import TetherProtocol
 
 /// The `showcase` scenario (SUNDOWN_UI_TEST_SCENARIO=showcase): a week of believable work for the
@@ -54,6 +55,12 @@ enum ShowcaseTranscript {
 
     static func cwd(of threadID: String) -> String {
         summaries.first { $0.threadId == threadID }?.cwd ?? tidecast
+    }
+
+    /// What a subscription says of the chat: Opus at high effort, in auto mode, with the MCP servers.
+    static func info(_ threadID: String, status: ThreadStatus) -> ThreadInfo {
+        ThreadInfo(threadId: threadID, status: status, cwd: cwd(of: threadID), model: "opus", appliedEffort: .high,
+                   permissionMode: .auto, mcpServers: mcpServers, lastSeq: 0)
     }
 
     static let models: [ModelInfo] = [

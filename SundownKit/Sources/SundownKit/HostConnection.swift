@@ -7,7 +7,7 @@ import TetherProtocol
 @MainActor
 @Observable
 public final class HostConnection: Identifiable {
-    typealias TransportProvider = @Sendable (HostConfig) async throws -> any Transport
+    package typealias TransportProvider = @Sendable (HostConfig) async throws -> any Transport
     public enum State: Equatable {
         case disconnected
         case connecting(String)
@@ -63,7 +63,7 @@ public final class HostConnection: Identifiable {
     /// The designated init, and the test seam for reconnect/replay coverage. `network` is the path
     /// a test drives; without one the host never waits for the network. Without a
     /// `transportProvider` the host runs its server with `npx`, or over `ssh`.
-    init(host: HostConfig, network: NetworkPath? = nil, transportProvider: TransportProvider?) {
+    package init(host: HostConfig, network: NetworkPath? = nil, transportProvider: TransportProvider?) {
         self.host = host
         self.id = host.id
         self.transportProvider = transportProvider

@@ -1,5 +1,6 @@
 #if DEBUG
 import Foundation
+@testable import SundownFixtures
 import Testing
 @testable import SundownKit
 import TetherProtocol

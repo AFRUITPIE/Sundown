@@ -1,4 +1,5 @@
 import Charts
+import SundownFixtures
 import SwiftUI
 import SundownKit
 import TetherProtocol

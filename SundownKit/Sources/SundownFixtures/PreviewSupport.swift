@@ -1,11 +1,12 @@
-// Sample data for `#Preview`s across SundownKit and SundownUI. None of this runs in a release
-// build — the whole file compiles out. Everything below builds instances through the same
+// Sample data for SundownUI's `#Preview`s and the tests. None of this runs in a release build —
+// the whole file compiles out. Everything below builds instances through the same
 // reducer methods live data goes through (`loadHistory`, `setInfo`, `addPending`, `apply`, …)
 // so previews stay honest about what the app can actually produce; `HostConnection.previewSeed`
 // in HostConnection.swift is the one exception, needed only because its stored properties are
 // `private(set)` to that file.
 #if DEBUG
 import Foundation
+import SundownKit
 import TetherProtocol
 
 /// A millisecond timestamp `seconds` in the past, so relative-time labels read naturally.
@@ -296,13 +297,15 @@ extension ThreadModel {
 
     /// One of each kind of task, as the SDK reports them: a workflow, an agent that started an agent
     /// and a background command of its own, a monitor and an MCP tool, running and finished.
+    /// The UI-test fixture's `tasks` scenario's live chat.
     public static func sampleWithTaskKinds() -> ThreadModel {
-        sample(
+        let chat = FixtureScenario.tasks.chats.first { $0.id == UITestFixture.threadID }!
+        return sample(
             title: "Review the Markdown changes",
             status: .running,
-            items: TaskTranscript.items(),
+            items: chat.items(),
             turns: [.sample(status: .inProgress, secondsAgo: 400)],
-            tasks: TaskTranscript.tasks())
+            tasks: chat.tasks())
     }
 
     /// A /loop and a /goal as Claude Code 2.1.291 ran them (the loop-goal capture): the loop's job

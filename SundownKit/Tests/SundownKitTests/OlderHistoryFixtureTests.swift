@@ -1,4 +1,5 @@
 import Foundation
+@testable import SundownFixtures
 import Testing
 import TetherProtocol
 @testable import SundownKit
@@ -8,7 +9,7 @@ import TetherProtocol
 @Suite
 struct OlderHistoryFixtureTests {
     @Test func olderPagesLoadUntilTheStart() async throws {
-        let connection = UITestFixture.connection(performance: true)
+        let connection = UITestFixture.connection(scenario: .performance)
         await connection.connect()
         let thread = try #require(connection.chats.first { $0.id == UITestFixture.threadID })
         await connection.open(thread)

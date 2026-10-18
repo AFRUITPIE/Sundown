@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import SundownFixtures
 import SwiftUI
 import Synchronization
 import SundownKit
@@ -630,24 +631,16 @@ extension AppModel {
     /// The launched XCTest app uses the real UI and reducer with only in-process transports. In
     /// every build (the performance tests run against Release), used only with SUNDOWN_UI_TEST_MODE.
     public static func uiTestFixture() -> AppModel {
-        let failedConnects = ProcessInfo.processInfo.environment["SUNDOWN_UI_TEST_SCENARIO"] == "connect-failure" ? 2 : 0
-        let pendingPermission = ProcessInfo.processInfo.environment["SUNDOWN_UI_TEST_SCENARIO"] == "permission"
-        let performance = ProcessInfo.processInfo.environment["SUNDOWN_UI_TEST_SCENARIO"] == "performance"
         // The README's screenshots: one host, as most people have, so no host name in the subtitle.
         let showcase = ProcessInfo.processInfo.environment["SUNDOWN_UI_TEST_SCENARIO"] == "showcase"
         let ssh = HostConfig(name: "Fixture SSH", kind: .ssh(destination: "fixture.invalid"))
         // A fresh store each launch, unless a test that relaunches names one to keep.
         let suite = ProcessInfo.processInfo.environment["SUNDOWN_UI_TEST_DEFAULTS"]
-        let local = UITestFixture.connection(failedConnects: failedConnects, pendingPermission: pendingPermission, performance: performance)
-        let app = sample(connections: showcase ? [local] : [local, UITestFixture.connection(host: ssh)],
+        let local = UITestFixture.launchConnection(host: .local)
+        let app = sample(connections: showcase ? [local] : [local, UITestFixture.launchConnection(host: ssh)],
                          defaults: suite.flatMap(UserDefaults.init(suiteName:)))
         // The first window opens on the fixture's chat, or where the kept store says it was.
         if app.lastThreadID == nil { app.lastThreadID = showcase ? UITestFixture.showcaseThreadID : UITestFixture.threadID }
-        // Settings a test starts from, as the JSON Settings stores.
-        if let json = ProcessInfo.processInfo.environment["SUNDOWN_UI_TEST_APPEARANCE"],
-           let appearance = try? JSONDecoder().decode(Appearance.self, from: Data(json.utf8)) {
-            app.appearance = appearance
-        }
         return app
     }
 

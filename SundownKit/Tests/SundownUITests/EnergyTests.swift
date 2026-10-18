@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+@testable import SundownFixtures
 import Synchronization
 import Testing
 import SundownKit

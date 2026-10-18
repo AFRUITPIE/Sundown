@@ -1,4 +1,5 @@
 import Foundation
+@testable import SundownFixtures
 import Testing
 import SundownKit
 import TetherProtocol
