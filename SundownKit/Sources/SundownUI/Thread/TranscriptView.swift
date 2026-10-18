@@ -359,20 +359,16 @@ extension TranscriptView {
     /// The whole transcript is on screen, so there's no end to go to.
     private var fitsOnScreen: Bool { onScreen.fits && !onScreen.ids.isEmpty }
 
-    /// To the end of the transcript, in three steps, until the reader scrolls for themselves:
+    /// To the end of the transcript, in two steps, until the reader scrolls for themselves:
     /// - its end row, by id, not the bottom edge. The edge is the lazy stack's estimate of the rows
     ///   it hasn't built, which for replies from a line to thousands of points tall was far off: it
     ///   put the reader past every row it had built, and the transcript stayed blank until they
     ///   scrolled, for minutes (2026-10-09). A row asked for by id is built and placed where it is.
-    /// - the end row again, twice, as the rows near it are built: a stack already stuck past its
-    ///   rows (a chat opening, or shown again from Tasks) got out only that way. It was the last
-    ///   message's row while the end row was a point tall; holding the room under the bottom bar,
-    ///   the end row is a row's height of its own, and the last row's bottom is that far above the
-    ///   end, so going to it put the last row under the bar and the next step took it back up.
     /// - the bottom edge, once the rows there are built and the edge is where they are: a position
     ///   held by a row's id keeps that row still, so streamed text grew below the window; held by
     ///   the edge, it follows the end.
-
+    /// The end row was gone to twice more between them, for a transcript made again on coming back
+    /// from Tasks; it stays mounted now, and the guards passed without them (2026-10-17).
     private func scrollToEnd() {
         // A transcript that fits sits at the top (the alignment anchor), and has no end to go to:
         // going to a row's bottom there put it a toolbar's height too low, and the alignment took it
@@ -383,13 +379,9 @@ extension TranscriptView {
         onScreen.settling &+= 1
         let request = onScreen.settling
         Task {
-            for step in 0..<3 {
-                try? await Task.sleep(for: .milliseconds(step == 0 ? 60 : 120))
-                guard onScreen.settling == request else { return }
-                if fitsOnScreen { continue }
-                position.scrollTo(id: TranscriptContent.endID, anchor: .bottom)
-                if step == 2 { position.scrollTo(edge: .bottom) }
-            }
+            try? await Task.sleep(for: .milliseconds(60))
+            guard onScreen.settling == request, !fitsOnScreen else { return }
+            position.scrollTo(edge: .bottom)
         }
     }
 
