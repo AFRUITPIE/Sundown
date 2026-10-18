@@ -124,18 +124,3 @@ struct InstalledEditor: Identifiable {
         }
     }
 }
-
-extension String {
-    /// The repository `self` (a folder on this Mac) is in, which git's paths are relative to: the
-    /// nearest folder up from it with a `.git` in it (a folder, or a worktree's file). Nil when
-    /// there is none.
-    var enclosingRepository: String? {
-        var folder = URL(fileURLWithPath: self).standardizedFileURL
-        while true {
-            if FileManager.default.fileExists(atPath: folder.appending(path: ".git").path) { return folder.path }
-            let parent = folder.deletingLastPathComponent()
-            if parent.path == folder.path { return nil }
-            folder = parent
-        }
-    }
-}

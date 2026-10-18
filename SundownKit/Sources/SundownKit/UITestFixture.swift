@@ -270,18 +270,14 @@ private actor FixtureScript {
             return .init(value: .result(["answer": .string("A side answer to “\(q)”.")]))
         case "git/status":
             return .init(value: .result(["isRepo": true, "branch": "main", "files": [["status": "M", "path": "Sources/App.swift"]]]))
-        case "git/diff":
-            let staged = params["staged"]?.boolValue ?? false
-            return .init(value: .result(["diff": .string(staged ? "" : """
-            diff --git a/Sources/App.swift b/Sources/App.swift
-            --- a/Sources/App.swift
-            +++ b/Sources/App.swift
-            @@ -1,3 +1,3 @@
-             import SwiftUI
-            -let greeting = "Hello"
-            +let greeting = "Hello, Sundown"
-             print(greeting)
-            """)]))
+        case "git/changes":
+            return .init(value: .result(json(GitChangesResult(isRepo: true, root: "/tmp/sundown-fixture", branch: "main", files: [
+                WorkingFileChange(path: "Sources/App.swift", status: .modified, hunks: [
+                    DiffHunk(oldStart: 1, oldLines: 3, newStart: 1, newLines: 3, lines: [
+                        " import SwiftUI", "-let greeting = \"Hello\"", "+let greeting = \"Hello, Sundown\"", " print(greeting)",
+                    ]),
+                ], added: 1, removed: 1, truncatedLines: 0),
+            ], omittedFiles: 0))))
         case "thread/rewindFiles":
             let dryRun = params["dryRun"]?.boolValue ?? false
             rewound += dryRun ? 0 : 1
@@ -359,12 +355,8 @@ private actor FixtureScript {
         case "turn/start": return showcaseTurn(threadID: id, input: params["input"])
         case "git/status":
             return .init(value: .result(ShowcaseTranscript.gitStatus(cwd: params["cwd"]?.stringValue ?? "")))
-        case "git/diff":
-            let diff = ShowcaseTranscript.gitDiff(cwd: params["cwd"]?.stringValue ?? "", staged: params["staged"]?.boolValue ?? false)
-            return .init(value: .result(["diff": .string(diff)]))
-        case "fs/read":
-            guard let content = ShowcaseTranscript.fileContent(path: params["path"]?.stringValue ?? "") else { return nil }
-            return .init(value: .result(json(FsReadResult(content: content, encoding: .utf8, truncated: false))))
+        case "git/changes":
+            return .init(value: .result(json(ShowcaseTranscript.gitChanges(cwd: params["cwd"]?.stringValue ?? ""))))
         case "fs/search":
             let query = (params["query"]?.stringValue ?? "").lowercased()
             let paths = ShowcaseTranscript.searchablePaths.filter { query.isEmpty || $0.lowercased().contains(query) }

@@ -11,7 +11,7 @@ struct ChangesPane: View {
     @State private var state: Loaded<WorkingChanges?>
     @State private var comments: [ReviewComment] = []
     /// Where the repository is on this Mac, which git's paths are relative to, for Open and Show
-    /// in Finder; nil on another host. Found when the changes are read, not in a body.
+    /// in Finder; nil on another host. Said with the changes, not found in a body.
     @State private var repository: String?
     /// Each file's widest line number, which every number in it is given the width of, found when
     /// the changes are read: finding it in the file's body walked every line on every update.
@@ -166,8 +166,8 @@ struct ChangesPane: View {
         do {
             let changes = try await connection.workingChanges(cwd: cwd)
             let widest = await Self.widestNumbersOffMain(changes)
-            // A chat can work in a folder below the repository's top, and git's paths start there.
-            repository = connection.host.isLocal ? cwd.enclosingRepository ?? cwd : nil
+            // A chat can work in a directory below the repository's top, and git's paths start there.
+            repository = connection.host.isLocal ? changes?.root ?? cwd : nil
             self.widest = widest
             state = .ready(changes)
         } catch is CancellationError {
@@ -417,21 +417,31 @@ private struct CommentRow: View {
 
 #if DEBUG
 extension WorkingChanges {
-    static let sample = WorkingChanges(branch: "dev", files: UnifiedDiff.parse("""
-    diff --git a/SundownKit/Sources/SundownUI/RootView.swift b/SundownKit/Sources/SundownUI/RootView.swift
-    index 1111111..2222222 100644
-    --- a/SundownKit/Sources/SundownUI/RootView.swift
-    +++ b/SundownKit/Sources/SundownUI/RootView.swift
-    @@ -38,6 +38,9 @@ public struct RootView: View {
-                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
-             } detail: {
-                 DetailView(window: window)
-    +                // Declared, like the other columns'.
-    +                .navigationSplitViewColumnWidth(min: 520, ideal: 720)
-    +                .navigationTitle(window.selectedThread?.title ?? "New Chat")
-    -                .navigationTitle(window.title)
-                     .navigationSubtitle(window.subtitle)
-    """) + [.added(path: "SundownKit/Sources/SundownUI/Inspector/ChangesPane.swift", content: "import SwiftUI\n\nstruct ChangesPane: View {\n}\n")])
+    /// A new file as the daemon sends one git doesn't track yet: its whole content, added.
+    static func added(_ path: String, _ content: String) -> WorkingFileChange {
+        let lines = content.split(separator: "\n", omittingEmptySubsequences: false).dropLast(content.hasSuffix("\n") ? 1 : 0)
+        let kept = lines.prefix(5_000)
+        return WorkingFileChange(path: path, status: .untracked,
+                                 hunks: [DiffHunk(oldStart: 0, oldLines: 0, newStart: 1, newLines: lines.count,
+                                                  lines: kept.map { "+" + $0 })],
+                                 added: lines.count, removed: 0, truncatedLines: lines.count - kept.count)
+    }
+
+    static let sample = WorkingChanges(branch: "dev", files: [
+        WorkingFileChange(path: "SundownKit/Sources/SundownUI/RootView.swift", status: .modified, hunks: [
+            DiffHunk(oldStart: 38, oldLines: 6, newStart: 38, newLines: 9, lines: [
+                "             .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)",
+                "         } detail: {",
+                "             DetailView(window: window)",
+                "+                // Declared, like the other columns'.",
+                "+                .navigationSplitViewColumnWidth(min: 520, ideal: 720)",
+                "+                .navigationTitle(window.selectedThread?.title ?? \"New Chat\")",
+                "-                .navigationTitle(window.title)",
+                "                 .navigationSubtitle(window.subtitle)",
+            ], header: "public struct RootView: View {"),
+        ], added: 3, removed: 1, truncatedLines: 0),
+        added("SundownKit/Sources/SundownUI/Inspector/ChangesPane.swift", "import SwiftUI\n\nstruct ChangesPane: View {\n}\n"),
+    ].map(FileDiff.init))
 }
 
 #Preview("Changes") {
@@ -443,11 +453,11 @@ extension WorkingChanges {
 extension WorkingChanges {
     /// A generated file past the kept limit, and a long edit past the shown one.
     static let large = WorkingChanges(branch: "dev", files: [
-        .added(path: "Generated/Schema.swift",
-               content: (1...(UnifiedDiff.maxLinesPerFile + 1_200)).map { "    case field\($0) = \"field_\($0)\"" }.joined(separator: "\n")),
-    ] + UnifiedDiff.parse(
-        "diff --git a/Sources/App.swift b/Sources/App.swift\n--- a/Sources/App.swift\n+++ b/Sources/App.swift\n@@ -1,0 +1,800 @@\n"
-            + (1...800).map { "+let value\($0) = \($0)" }.joined(separator: "\n")))
+        added("Generated/Schema.swift", (1...6_200).map { "    case field\($0) = \"field_\($0)\"" }.joined(separator: "\n")),
+        WorkingFileChange(path: "Sources/App.swift", status: .modified, hunks: [
+            DiffHunk(oldStart: 1, oldLines: 0, newStart: 1, newLines: 800, lines: (1...800).map { "+let value\($0) = \($0)" }),
+        ], added: 800, removed: 0, truncatedLines: 0),
+    ].map(FileDiff.init))
 }
 
 /// A diff too big to show whole: each file shows its first lines with Show All, and a file past

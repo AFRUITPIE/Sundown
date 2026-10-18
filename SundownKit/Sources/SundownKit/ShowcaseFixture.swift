@@ -313,52 +313,57 @@ enum ShowcaseTranscript {
         ]]
     }
 
-    static func gitDiff(cwd: String, staged: Bool) -> String {
-        guard cwd == tidecast, !staged else { return "" }
-        return """
-        diff --git a/Sources/Tidecast/Forecast/ForecastService.swift b/Sources/Tidecast/Forecast/ForecastService.swift
-        --- a/Sources/Tidecast/Forecast/ForecastService.swift
-        +++ b/Sources/Tidecast/Forecast/ForecastService.swift
-        @@ -3,10 +3,18 @@ import Foundation
-         struct ForecastService {
-             let client: WeatherClient
-        +    var cache: ForecastCache = .shared
-
-             func forecast(for location: Location) async throws -> Forecast {
-        -        try await client.forecast(for: location)
-        +        do {
-        +            let fresh = try await client.forecast(for: location)
-        +            try? await cache.store(fresh, for: location)
-        +            return fresh
-        +        } catch let error as URLError where error.isOffline {
-        +            guard let saved = try await cache.load(for: location) else { throw error }
-        +            return saved.marked(stale: true)
-        +        }
-             }
-         }
-        diff --git a/Sources/Tidecast/Forecast/ForecastView.swift b/Sources/Tidecast/Forecast/ForecastView.swift
-        --- a/Sources/Tidecast/Forecast/ForecastView.swift
-        +++ b/Sources/Tidecast/Forecast/ForecastView.swift
-        @@ -8,6 +8,12 @@ struct ForecastView: View {
-                 VStack(alignment: .leading, spacing: 4) {
-                     Text(forecast.location.name)
-                         .font(.largeTitle.bold())
-        +            if forecast.isStale {
-        +                Label("Updated \\(forecast.fetchedAt, format: .relative(presentation: .named))",
-        +                      systemImage: "wifi.slash")
-        +                    .font(.subheadline)
-        +                    .foregroundStyle(.secondary)
-        +            }
-                     TideChart(tides: forecast.tides)
+    /// The working tree as `git/changes` says it: two files edited, two new ones.
+    static func gitChanges(cwd: String) -> GitChangesResult {
+        guard cwd == tidecast else { return GitChangesResult(isRepo: true, root: cwd, branch: "main", files: [], omittedFiles: 0) }
+        func lines(_ text: String) -> [String] { text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) }
+        func new(_ path: String, _ content: String) -> WorkingFileChange {
+            let added = content.split(separator: "\n", omittingEmptySubsequences: false).dropLast(content.hasSuffix("\n") ? 1 : 0)
+            return WorkingFileChange(path: path, status: .untracked,
+                                     hunks: [DiffHunk(oldStart: 0, oldLines: 0, newStart: 1, newLines: added.count,
+                                                      lines: added.map { "+" + $0 })],
+                                     added: added.count, removed: 0, truncatedLines: 0)
+        }
+        return GitChangesResult(isRepo: true, root: tidecast, branch: "offline-forecasts", files: [
+            new("Sources/Tidecast/Forecast/ForecastCache.swift", cacheSource),
+            WorkingFileChange(path: "Sources/Tidecast/Forecast/ForecastService.swift", status: .modified, hunks: [
+                DiffHunk(oldStart: 3, oldLines: 10, newStart: 3, newLines: 18, lines: lines("""
+                 struct ForecastService {
+                     let client: WeatherClient
+                +    var cache: ForecastCache = .shared
+                 
+                     func forecast(for location: Location) async throws -> Forecast {
+                -        try await client.forecast(for: location)
+                +        do {
+                +            let fresh = try await client.forecast(for: location)
+                +            try? await cache.store(fresh, for: location)
+                +            return fresh
+                +        } catch let error as URLError where error.isOffline {
+                +            guard let saved = try await cache.load(for: location) else { throw error }
+                +            return saved.marked(stale: true)
+                +        }
+                     }
                  }
-                 .padding()
-        """
-    }
-
-    static func fileContent(path: String) -> String? {
-        if path.hasSuffix("ForecastCache.swift") { return cacheSource }
-        if path.hasSuffix("ForecastCacheTests.swift") { return testsSource }
-        return nil
+                """), header: "import Foundation"),
+            ], added: 9, removed: 1, truncatedLines: 0),
+            WorkingFileChange(path: "Sources/Tidecast/Forecast/ForecastView.swift", status: .modified, hunks: [
+                DiffHunk(oldStart: 8, oldLines: 6, newStart: 8, newLines: 12, lines: lines("""
+                         VStack(alignment: .leading, spacing: 4) {
+                             Text(forecast.location.name)
+                                 .font(.largeTitle.bold())
+                +            if forecast.isStale {
+                +                Label("Updated \\(forecast.fetchedAt, format: .relative(presentation: .named))",
+                +                      systemImage: "wifi.slash")
+                +                    .font(.subheadline)
+                +                    .foregroundStyle(.secondary)
+                +            }
+                             TideChart(tides: forecast.tides)
+                         }
+                         .padding()
+                """), header: "struct ForecastView: View {"),
+            ], added: 6, removed: 0, truncatedLines: 0),
+            new("Tests/TidecastTests/ForecastCacheTests.swift", testsSource),
+        ], omittedFiles: 0)
     }
 
     static let searchablePaths = [

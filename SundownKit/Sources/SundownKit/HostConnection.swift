@@ -966,38 +966,11 @@ public final class HostConnection: Identifiable {
     }
 
     /// Everything that differs from the last commit in `cwd`: staged and unstaged edits, and new
-    /// files git doesn't track yet (their whole content, as added). Nil when `cwd` isn't a repository.
+    /// files git doesn't track yet (their whole content, as added), as the daemon reads them (at
+    /// most 200 new files, each kept to 5,000 lines). Nil when `cwd` isn't a repository.
     public func workingChanges(cwd: String) async throws -> WorkingChanges? {
         guard let client else { throw RPCError.notConnected }
-        let status = try await client.call(Methods.GitStatus.self, .init(cwd: cwd))
-        guard status.isRepo else { return nil }
-        async let unstaged = client.call(Methods.GitDiff.self, .init(cwd: cwd))
-        async let staged = client.call(Methods.GitDiff.self, .init(cwd: cwd, staged: true))
-        // New files, read eight at a time rather than one after another, and only so many: a
-        // build folder missing from .gitignore can hold thousands. The rest are counted.
-        let new = status.files.filter { $0.status == "??" && !$0.path.hasSuffix("/") }.map(\.path)
-        var paths = new.prefix(WorkingChanges.maxUntrackedFiles).makeIterator()
-        let untracked = await withTaskGroup(of: (path: String, content: String?).self) { group in
-            func readNext() {
-                guard let path = paths.next() else { return }
-                let full = (cwd as NSString).appendingPathComponent(path)
-                group.addTask {
-                    let read = try? await client.call(Methods.FsRead.self, .init(path: full, maxBytes: 64 * 1024))
-                    return (path, read.flatMap { $0.encoding == .utf8 ? $0.content : nil })
-                }
-            }
-            for _ in 0..<8 { readNext() }
-            var untracked: [(path: String, content: String?)] = []
-            for await file in group {
-                untracked.append(file)
-                readNext()
-            }
-            return untracked
-        }
-        let stagedDiff = try await staged.diff, unstagedDiff = try await unstaged.diff
-        let files = await UnifiedDiff.workingTree(staged: stagedDiff, unstaged: unstagedDiff, untracked: untracked)
-        return WorkingChanges(branch: status.branchName, files: files,
-                              omittedFiles: max(new.count - WorkingChanges.maxUntrackedFiles, 0))
+        return await WorkingChanges.make(try await client.call(Methods.GitChanges.self, .init(cwd: cwd)))
     }
 
     /// Whether `cwd` is in a git repository and what is checked out there (`branchName`), for New
@@ -1071,36 +1044,10 @@ public struct NewThreadOptions: Sendable {
 }
 
 extension GitStatusResult {
-    /// The branch from the header of `git status -b`, which the daemon passes on as git wrote it:
-    /// "main", "No commits yet on main" in a new repository, and "HEAD (no branch)" when detached,
-    /// which has no branch to name.
+    /// The branch checked out, as `gitBranchName` reads git's header; nil when detached.
     public var branchName: String? {
-        guard isRepo, let branch, !branch.isEmpty, branch != "HEAD (no branch)" else { return nil }
-        for prefix in ["No commits yet on ", "Initial commit on "] where branch.hasPrefix(prefix) {
-            return String(branch.dropFirst(prefix.count))
-        }
-        return branch
-    }
-}
-
-public struct WorkingChanges: Sendable, Equatable {
-    public let branch: String?
-    public let files: [FileDiff]
-    /// Summed once, not per draw.
-    public let added: Int
-    public let removed: Int
-    /// New files past `maxUntrackedFiles`, counted but not read or listed.
-    public let omittedFiles: Int
-
-    /// New files read and listed, at most.
-    public static let maxUntrackedFiles = 200
-
-    public init(branch: String?, files: [FileDiff], omittedFiles: Int = 0) {
-        self.branch = branch
-        self.files = files
-        added = files.reduce(0) { $0 + $1.added }
-        removed = files.reduce(0) { $0 + $1.removed }
-        self.omittedFiles = omittedFiles
+        guard isRepo, let branch else { return nil }
+        return gitBranchName(branch)
     }
 }
 
