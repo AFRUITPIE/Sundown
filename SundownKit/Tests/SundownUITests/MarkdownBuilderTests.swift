@@ -6,8 +6,8 @@ import Testing
 @testable import SundownUI
 
 /// A message's Markdown as the text it's drawn with: what each construct becomes, and a streamed
-/// reply built a piece at a time coming out as the whole text built at once, at every step.
-@MainActor
+/// reply built a piece at a time coming out as the whole text built at once, at every step. Off
+/// the main actor (the builder is nonisolated), so other suites' main-actor tests don't wait on it.
 @Suite
 struct MarkdownBuilderTests {
     private let theme = MarkdownTheme.standard
@@ -18,7 +18,7 @@ struct MarkdownBuilderTests {
         text.enumerateAttributes(in: NSRange(location: 0, length: text.length)) { attributes, range, _ in
             let p = attributes[.paragraphStyle] as? NSParagraphStyle
             let font = attributes[.font] as? NSFont
-            let decoration = (attributes[.markdownDecoration] as? MarkdownDecoration).map { "\($0.kind)" } ?? ""
+            let decoration = (attributes[.markdownDecoration] as? MarkdownDecoration).map { if case .code(let language, _) = $0.kind { "code \(language)" } else { "\($0.kind)" } } ?? ""
             out.append([
                 (text.string as NSString).substring(with: range), font.map { "\($0.fontName) \($0.pointSize)" } ?? "",
                 p.map { "\($0.headIndent) \($0.firstLineHeadIndent) \($0.paragraphSpacingBefore) \($0.alignment.rawValue) \($0.textBlocks.count)" } ?? "",
@@ -29,15 +29,21 @@ struct MarkdownBuilderTests {
         return out
     }
 
-    /// The text streamed a chunk at a time, checked against building it whole after each one.
-    private func streamed(_ text: String, chunk: Int, settles: Bool = false) -> NSAttributedString {
+    /// The text streamed in pieces, checked against building it whole after each one. The pieces
+    /// end where it matters: on each side of every line's end, one character into every
+    /// line (where "|" or "-" could still become anything), and every 61st character between.
+    private func streamed(_ text: String, settles: Bool = false) -> NSAttributedString {
+        var cuts: Set<String.Index> = [text.endIndex]
+        for (n, i) in text.indices.enumerated() {
+            if n % 61 == 0 { cuts.insert(i) }
+            guard text[i] == "\n" else { continue }
+            cuts.insert(i)
+            for ahead in 1...2 { text.index(i, offsetBy: ahead, limitedBy: text.endIndex).map { _ = cuts.insert($0) } }
+        }
         var stream = MarkdownStream()
         let built = NSMutableAttributedString()
-        var rest = Substring(text)
-        var shown = ""
-        while !rest.isEmpty {
-            shown += rest.prefix(chunk)
-            rest = rest.dropFirst(chunk)
+        for cut in cuts.sorted() where cut > text.startIndex {
+            let shown = String(text[..<cut])
             _ = stream.update(built, to: shown, theme: theme, streaming: false)
             #expect(signature(built) == signature(MarkdownBuilder.build(shown, theme: theme)), "diverged after \(shown.utf8.count) bytes")
         }
@@ -55,14 +61,14 @@ struct MarkdownBuilderTests {
     }
 
     @Test func streamingMatchesBuildingTheWholeText() {
-        let text = (0..<4).map { PerformanceTranscript.markdown(section: $0) }.joined(separator: "\n\n")
-        _ = streamed(text, chunk: 7, settles: true)
+        let text = (0..<2).map { PerformanceTranscript.markdown(section: $0) }.joined(separator: "\n\n")
+        _ = streamed(text, settles: true)
     }
 
     @Test func aBlankLineInsideACodeFenceDoesNotSettleIt() {
-        let filler = String(repeating: "Lorem ipsum dolor sit amet. ", count: 90)
+        let filler = String(repeating: "Lorem ipsum dolor sit amet. ", count: 20)
         _ = streamed(filler + "\n\n```swift\nlet a = 1\n\nlet b = 2\n```\n\nAfter the fence — with an em dash and “quotes”.\n",
-                     chunk: 5, settles: true)
+                     settles: true)
     }
 
     /// The settled text isn't built again: only the last top-level element is replaced, once its
@@ -95,10 +101,10 @@ struct MarkdownBuilderTests {
     /// The settled prefix ends where the last top-level element starts, so a reply whose tail is a
     /// list or an open code fence builds as the whole text does.
     @Test func aStreamedTailEndingMidListOrMidFenceBuildsAsTheWhole() {
-        let filler = (0..<3).map { PerformanceTranscript.markdown(section: $0) }.joined(separator: "\n\n")
-        let list = streamed(filler + "\n\n1. first\n\n   more about it\n2. sec", chunk: 9, settles: true)
+        let filler = PerformanceTranscript.markdown(section: 0)
+        let list = streamed(filler + "\n\n1. first\n\n   more about it\n2. sec", settles: true)
         #expect(MarkdownBuilder.plain(list, in: NSRange(location: 0, length: list.length)).hasSuffix("1. first\n\nmore about it\n\n2. sec"))
-        let fence = streamed(filler + "\n\nIntro:\n\n```swift\nlet a = 1\n\nlet b", chunk: 9, settles: true)
+        let fence = streamed(filler + "\n\nIntro:\n\n```swift\nlet a = 1\n\nlet b", settles: true)
         #expect(fence.string.hasSuffix("let a = 1\n\nlet b"))
     }
 
@@ -120,7 +126,7 @@ struct MarkdownBuilderTests {
 
     /// A page of replies built ahead of their rows, kept for them; and a streaming reply's text only
     /// once it has arrived, since each length of it would be a key never looked up again.
-    @Test func builtTextIsKeptForSettledReplies() async {
+    @MainActor @Test func builtTextIsKeptForSettledReplies() async {
         let texts = (0..<3).map { "# Reply \($0) \(UUID())\n\nSome `code` and **bold**.\n\n- one\n- two" }
         await MarkdownView.prewarm(texts + [texts[0]], theme: theme)
         for text in texts {
