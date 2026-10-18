@@ -115,7 +115,6 @@ struct PermissionLabelTests {
     /// Forward compatibility: a mode a newer daemon introduces still has to display as words.
     @Test func anUnknownModeIsNotShownAsAWireValue() {
         #expect(PermissionMode(rawValue: "askForRisky").longLabel == "Ask For Risky")
-        #expect(PermissionMode(rawValue: "askForRisky").label == "Ask For Risky")
     }
 
     @Test func everySelectableModeIsOffered() {

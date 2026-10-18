@@ -69,7 +69,6 @@ public struct RootView: View {
         .environment(\.promptNavigator, window.prompts)
         .environment(\.composerDrafts, ComposerDrafts(app: app))
         .chatActionAlerts(window)
-        .task { app.connectAll() }
     }
 
     private var modelEffort: some View {
