@@ -217,6 +217,8 @@ final class TranscriptUITests: SundownUITestCase {
         XCTAssertTrue(app.buttons["Jump to Latest"].disappears(timeout: 5), "Jump to Latest stayed after a resize")
         app.typeKey("2", modifierFlags: .command)
         XCTAssertTrue(input.disappears(timeout: 5), "⌘2 didn't leave the chat")
+        // The chat stays under Tasks, hidden from VoiceOver as from sight.
+        XCTAssertTrue(app.scrollViews["Transcript"].disappears(timeout: 3), "the hidden transcript is in the accessibility tree under Tasks")
         app.typeKey("1", modifierFlags: .command)
         XCTAssertTrue(input.appears(timeout: 5), "⌘1 didn't come back to the chat")
         XCTAssertTrue(waitUntil(5) { footer.isHittable }, "the chat isn't at its end after switching to Tasks and back")

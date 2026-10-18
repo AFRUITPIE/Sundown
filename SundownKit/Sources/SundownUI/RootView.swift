@@ -193,7 +193,9 @@ struct DetailView: View {
             chat
                 .opacity(window.tab == .chat ? 1 : 0)
                 .disabled(window.tab != .chat)
-                .accessibilityHidden(window.tab != .chat)
+                // Out of VoiceOver's way while hidden. Not `accessibilityHidden(false)` while shown:
+                // that put back what `ViewThatFits` leaves out, New Chat's row twice.
+                .accessibilityElement(children: window.tab == .chat ? .contain : .ignore)
                 .environment(\.transcriptHidden, window.tab != .chat)
             switch window.tab {
             case .chat: EmptyView()
