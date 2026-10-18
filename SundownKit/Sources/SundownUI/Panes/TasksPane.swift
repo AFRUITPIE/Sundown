@@ -5,9 +5,9 @@ import TetherProtocol
 
 /// The chat's tasks (subagents, commands, workflows, monitors, MCP tools), browsed in columns as
 /// Finder browses: each column the tasks started by the one selected to its left, and the last the
-/// selected task itself. Reads `thread.taskEntries`, which is stored and rebuilt only on task
-/// events, so streamed message deltas don't reach the columns; an agent's detail is its own
-/// transcript, which follows its items as they stream.
+/// selected task itself. Reads `thread.tasks`, which change only when the daemon says a task did,
+/// so streamed message deltas don't reach the columns; an agent's detail is its own transcript,
+/// which follows its items as they stream.
 struct TasksPane: View {
     let thread: ThreadModel
     let connection: HostConnection
@@ -24,7 +24,7 @@ struct TasksPane: View {
     private static let detailMinimum: CGFloat = 360
 
     var body: some View {
-        let tree = TaskNode.tree(thread.taskEntries, call: thread.call)
+        let tree = TaskNode.tree(thread.tasks, call: thread.call)
         if tree.isEmpty {
             PaneEmptyState("No Tasks", symbol: WindowTab.tasks.symbol)
         } else {
@@ -57,28 +57,7 @@ struct TasksPane: View {
                 guard let id = selectedTaskID, path.last != id else { return }
                 if let found = TaskNode.path(to: id, in: tree) { path = found }
             }
-            // A workflow with no live task (after a reload, or run by another client) is read.
-            .task {
-                for run in thread.workflowsToRead { await connection.loadWorkflow(thread, toolUseId: run.toolUseId) }
-            }
-            // The workflow shown, or whose agent is, is read again now and then while it goes on and
-            // this client isn't told about it, so its report and its agents' details stay current.
-            .task(id: selectedWorkflow(in: tree)) {
-                guard let id = selectedWorkflow(in: tree) else { return }
-                while !Task.isCancelled {
-                    if !thread.hasLiveWorkflowTask(id) { await connection.loadWorkflow(thread, toolUseId: id) }
-                    guard thread.workflowRuns[id]?.isRunning == true else { return }
-                    try? await Task.sleep(for: .seconds(5))
-                }
-            }
         }
-    }
-
-    /// The Workflow call of the workflow selected in some column, whether it or one of its agents
-    /// is what's shown.
-    private func selectedWorkflow(in tree: [TaskNode]) -> String? {
-        path.indices.lazy.compactMap { node(at: $0, in: tree) }
-            .first { $0.kind == .workflow && $0.agent == nil }?.workflow?.toolUseId
     }
 
     private func width(_ index: Int) -> CGFloat { widths[index] ?? (index == 0 ? Self.firstWidth : Self.width) }
@@ -174,7 +153,7 @@ struct TaskNodeRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(node.title).lineLimit(1)
                 HStack {
-                    Text(node.kind.name)
+                    Text(node.kindName)
                     Spacer(minLength: 8)
                     TaskTime(node: node)
                 }
@@ -343,14 +322,14 @@ struct TaskDetail: View {
                     Spacer(minLength: 12)
                     // Controls, so glass, at the composer's size.
                     HStack {
-                        if node.agent == nil, node.entry.canMoveToBackground, let toolUseId = node.entry.task?.toolUseId,
-                           thread.isTopLevelCall(toolUseId) {
+                        if !node.isWorkflowAgent, node.task.canBackground == true, node.task.isGoing,
+                           let toolUseId = node.task.toolUseId, thread.isTopLevelCall(toolUseId) {
                             Button("Move to Background") {
                                 Task { await connection.moveToBackground(thread, toolUseId: toolUseId) }
                             }
                         }
                         // A workflow's script, as its row's menu in the chat has it.
-                        if node.agent == nil, let script = node.call?.workflowScript {
+                        if node.isWorkflow, let script = node.call?.workflowScript {
                             Button("Copy Script") { Clipboard.copy(script) }
                         }
                         // A task with tasks of its own is stopped from above its column.
@@ -368,15 +347,15 @@ struct TaskDetail: View {
     }
 
     @ViewBuilder private var content: some View {
-        if let run = node.entry.schedule {
-            ScheduleReport(run: run)
-        } else if let goal = node.entry.goal {
-            GoalReport(goal: goal)
-        } else if let agent = node.agent, let run = node.workflow {
-            WorkflowAgentTranscript(thread: thread, connection: connection, run: run, agent: agent)
-        } else if node.kind == .workflow, let run = node.workflow {
-            WorkflowReport(run: run)
-        } else if node.kind == .agent, let call = node.call {
+        if let schedule = node.task.schedule {
+            ScheduleReport(task: node.task, schedule: schedule)
+        } else if let goal = node.task.goal {
+            GoalReport(task: node.task, goal: goal)
+        } else if node.isWorkflowAgent {
+            WorkflowAgentTranscript(thread: thread, connection: connection, agent: node.task, runId: node.runId)
+        } else if node.isWorkflow {
+            WorkflowReport(workflow: node.task, agents: node.children.filter(\.isWorkflowAgent).map(\.task))
+        } else if node.task.kind == .agent, let call = node.call {
             SubagentTranscript(thread: thread, call: call, running: node.state == .running)
         } else {
             TaskReport(node: node)
@@ -422,10 +401,9 @@ private struct TaskReport: View {
     let node: TaskNode
 
     var body: some View {
-        let entry = node.entry
         let command = node.call?.input.string("command")
-        let summary = entry.task?.summary
-        let output = node.call?.outputText
+        let summary = node.task.summary ?? node.task.error
+        let output = node.task.output ?? node.call?.outputText
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if let command, command != node.title {
@@ -433,9 +411,6 @@ private struct TaskReport: View {
                         .font(.callout.monospaced())
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
-                }
-                if let workflow = entry.task?.data["workflow_name"]?.stringValue, workflow != node.title {
-                    LabeledContent("Workflow", value: workflow)
                 }
                 if let summary, !summary.isEmpty {
                     Text(summary).textSelection(.enabled)

@@ -228,7 +228,7 @@ private actor FixtureScript {
             return .init(value: .result(json(ThreadReadResult(
                 items: shown, turns: [], summary: summary,
                 historySeq: id == UITestFixture.threadID || id.hasPrefix("perf-chat-") || id == TaskTranscript.followedChat.threadId ? 1 : 0,
-                hasMore: shown.count < page.count
+                hasMore: shown.count < page.count, tasks: tasks(of: id)
             ))))
         case "thread/subscribe":
             let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
@@ -237,12 +237,8 @@ private actor FixtureScript {
             let status: ThreadStatus = id.hasPrefix("perf-chat-") || id == TaskTranscript.followedChat.threadId ? .notLoaded : .idle
             var reply = Reply(value: .result(json(ThreadSubscribeResult(
                 thread: .init(threadId: id, status: status, cwd: "/tmp/sundown-fixture", lastSeq: nextSequence),
-                replayed: 0, gap: options.reportsGap && (params["afterSeq"]?.intValue ?? 0) > 1
+                replayed: 0, gap: options.reportsGap && (params["afterSeq"]?.intValue ?? 0) > 1, tasks: tasks(of: id)
             ))))
-            if id == UITestFixture.threadID, options.tasks {
-                reply.notifications = TaskTranscript.events(threadID: id, firstSeq: nextSequence + 1).map { ("task/event", json($0)) }
-                nextSequence += reply.notifications.count
-            }
             if id == UITestFixture.threadID, options.pendingPermission, !sentPermission {
                 sentPermission = true
                 let prompt = PermissionRequestParams(
@@ -313,14 +309,16 @@ private actor FixtureScript {
             }
             guard let entries else { return .init(value: .error("Permission denied: \(path)")) }
             return .init(value: .result(json(FsListResult(entries: entries))))
-        case "workflow/read":
-            guard params["runId"]?.stringValue == WorkflowSample.runID else { return .init(value: .result(["workflow": .null])) }
-            return .init(value: .result(["workflow": WorkflowSample.snapshot(now: TaskTranscript.workflowNow, running: false)]))
         case "workflow/agentItems":
             let agent = params["agentId"]?.stringValue ?? ""
             return .init(value: .result(["items": json(WorkflowSample.agentItems(agentId: agent, now: TaskTranscript.workflowNow))]))
         default: return .init(value: .error("Unexpected fixture method: \(method)"))
         }
+    }
+
+    /// The tasks scenario's chats' tasks, live and followed alike.
+    private func tasks(of id: String) -> [TaskState] {
+        options.tasks && (id == UITestFixture.threadID || id == TaskTranscript.followedChat.threadId) ? TaskTranscript.tasks() : []
     }
 
     // MARK: The showcase scenario
@@ -340,7 +338,8 @@ private actor FixtureScript {
             guard let summary = (additionalThreads + ShowcaseTranscript.summaries).first(where: { $0.threadId == id }) else { return nil }
             let items = id == ShowcaseTranscript.reviewThreadID ? TaskTranscript.items() + ShowcaseTranscript.reviewItems()
                 : ShowcaseTranscript.items(for: id)
-            return .init(value: .result(json(ThreadReadResult(items: items, turns: [], summary: summary, historySeq: 1, hasMore: false))))
+            return .init(value: .result(json(ThreadReadResult(items: items, turns: [], summary: summary, historySeq: 1, hasMore: false,
+                                                              tasks: ShowcaseTranscript.tasks(of: id)))))
         case "thread/subscribe":
             let status: ThreadStatus = switch id {
             case ShowcaseTranscript.flakyThreadID: .requiresAction
@@ -350,13 +349,7 @@ private actor FixtureScript {
             var reply = Reply(value: .result(json(ThreadSubscribeResult(
                 thread: .init(threadId: id, status: status, cwd: ShowcaseTranscript.cwd(of: id), model: "opus", appliedEffort: .high,
                               permissionMode: .auto, mcpServers: ShowcaseTranscript.mcpServers, lastSeq: nextSequence),
-                replayed: 0, gap: false))))
-            if id == ShowcaseTranscript.reviewThreadID {
-                let tasks = TaskTranscript.events(threadID: id, firstSeq: nextSequence + 1)
-                let more = ShowcaseTranscript.reviewEvents(threadID: id, firstSeq: nextSequence + 1 + tasks.count)
-                reply.notifications = (tasks + more).map { ("task/event", json($0)) }
-                nextSequence += reply.notifications.count
-            }
+                replayed: 0, gap: false, tasks: ShowcaseTranscript.tasks(of: id)))))
             if id == ShowcaseTranscript.flakyThreadID, !sentPermission {
                 sentPermission = true
                 reply.requests = [(.number(900), "permission/request", json(ShowcaseTranscript.permission(threadID: id)))]
@@ -685,7 +678,7 @@ enum PerformanceTranscript {
 /// background command, a monitor and an MCP tool, as the SDK reports them, running and finished;
 /// and messages the person didn't type (Claude Code's, another session's, a compaction's summary).
 /// A second chat holds the same items, followed rather than live, as most of a host's chats are.
-/// Times as seconds before now, and the calls and task events the task scenarios (`TaskTranscript`,
+/// Times as seconds before now, and the calls the task scenarios (`TaskTranscript`,
 /// `ShowcaseTranscript.reviewItems`) and the Tasks previews are made of.
 struct TaskClock {
     let now = Date().timeIntervalSince1970 * 1000
@@ -696,29 +689,6 @@ struct TaskClock {
               output: String? = nil, parent: String? = nil, at seconds: Double) -> Item {
         .toolCall(.init(id: id, parentToolUseId: parent, createdAt: ago(seconds), name: name, kind: kind, input: input,
                         status: status, outputText: output))
-    }
-}
-
-/// `task/event`s numbered one after another from `firstSeq`.
-struct TaskEvents {
-    let threadID: String
-    private(set) var seq: Int
-
-    init(threadID: String, firstSeq: Int) {
-        self.threadID = threadID
-        seq = firstSeq
-    }
-
-    /// The SDK's `task_type`, and its `usage` (milliseconds, tokens, tool uses) once it has finished.
-    mutating func next(_ name: String, _ id: String, _ type: String, _ description: String, toolUseId: String? = nil,
-                       status: String, summary: String? = nil, usage: (Double, Double, Double)? = nil) -> TaskEventNotification {
-        var data: [String: JSONValue] = ["task_type": .string(type)]
-        if let usage {
-            data["usage"] = ["duration_ms": .number(usage.0), "total_tokens": .number(usage.1), "tool_uses": .number(usage.2)]
-        }
-        defer { seq += 1 }
-        return TaskEventNotification(threadId: threadID, seq: seq, event: name, taskId: id, toolUseId: toolUseId,
-                                     description: description, status: status, summary: summary, data: .object(data))
     }
 }
 
@@ -765,19 +735,26 @@ enum TaskTranscript {
         ]
     }
 
-    static func events(threadID: String, firstSeq: Int) -> [TaskEventNotification] {
-        let workflow = WorkflowSample.events(threadID: threadID, firstSeq: firstSeq, now: workflowNow, running: false)
-        var events = TaskEvents(threadID: threadID, firstSeq: firstSeq + workflow.count)
-        return workflow + [
-            events.next("started", "agent-task-1", "local_agent", "Find every SwiftUI view", toolUseId: "agent-1", status: "running"),
-            events.next("started", "bg-tests", "local_bash", "swift test", toolUseId: "bg-call", status: "running"),
-            events.next("started", "agent-task-2", "local_agent", "Check how TranscriptFind reads items", toolUseId: "agent-2",
-                        status: "running"),
-            events.next("started", "monitor-1", "monitor", "Watch CI on the pull request", status: "running"),
-            events.next("notification", "mcp-1", "mcp_task", "Run all tests in Xcode", status: "completed",
-                        summary: "412 tests passed, 3 skipped.", usage: (243_000, 0, 1)),
-            events.next("notification", "build-1", "local_bash", "xcodebuild -scheme Sundown build", toolUseId: "failed-call",
-                        status: "failed", summary: "Build failed", usage: (123_000, 0, 0)),
+    /// The chat's tasks as the daemon sends them: the finished workflow's, two agents (one started
+    /// by the other) and a background command the first started, a monitor, an MCP tool, and a
+    /// build that failed.
+    static func tasks() -> [TaskState] {
+        let clock = TaskClock()
+        return WorkflowSample.tasks(now: workflowNow, running: false) + [
+            TaskState(id: "agent-1", toolUseId: "agent-1", taskId: "agent-task-1", kind: .agent, taskType: "local_agent",
+                      title: "Find every SwiftUI view", status: .running, startedAt: clock.ago(100)),
+            TaskState(id: "agent-2", parentId: "agent-1", toolUseId: "agent-2", taskId: "agent-task-2", kind: .agent,
+                      taskType: "local_agent", title: "Check how TranscriptFind reads items", status: .running,
+                      startedAt: clock.ago(34)),
+            TaskState(id: "bg-call", parentId: "agent-1", toolUseId: "bg-call", taskId: "bg-tests", kind: .command,
+                      taskType: "local_bash", title: "swift test", status: .running, startedAt: clock.ago(70), backgrounded: true),
+            TaskState(id: "task:monitor-1", taskId: "monitor-1", kind: .monitor, taskType: "monitor",
+                      title: "Watch CI on the pull request", status: .running, startedAt: clock.ago(60)),
+            TaskState(id: "task:mcp-1", taskId: "mcp-1", kind: .mcpTool, taskType: "mcp_task", title: "Run all tests in Xcode",
+                      status: .done, summary: "412 tests passed, 3 skipped.", usage: .init(durationMs: 243_000, toolUses: 1)),
+            TaskState(id: "failed-call", toolUseId: "failed-call", taskId: "build-1", kind: .command, taskType: "local_bash",
+                      title: "xcodebuild -scheme Sundown build", status: .failed, startedAt: clock.ago(300),
+                      backgrounded: true, summary: "Build failed", usage: .init(durationMs: 123_000)),
         ]
     }
 }

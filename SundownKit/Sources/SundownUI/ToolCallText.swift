@@ -7,13 +7,13 @@ import TetherProtocol
 /// acted on. And for a run of finished calls, one line that says what they did together:
 /// "Read 3 files, searched code, and ran 2 commands". Pure, so it's tested without a view.
 enum ToolCallText {
-    /// The verb, before what the call acted on. A workflow's tense is its run's (the thread's
-    /// `workflowRuns`): its call comes back as soon as the run has started. Without one, its call's.
-    static func verb(_ call: Item.ToolCall, workflow: WorkflowRun? = nil) -> String {
+    /// The verb, before what the call acted on. A workflow's tense is its run's (its task, the
+    /// thread's `callTasks`): its call comes back as soon as the run has started. Without one, its call's.
+    static func verb(_ call: Item.ToolCall, workflow: TaskState? = nil) -> String {
         let running = call.status == .running || call.status == .pending
         if call.isWorkflow {
             if call.status == .denied { return "Run workflow" }
-            return (workflow?.isRunning ?? running) ? "Running workflow" : "Ran workflow"
+            return (workflow.map { $0.status == .running } ?? running) ? "Running workflow" : "Ran workflow"
         }
         // A workflow agent's hand-back of its result: what it returned is in the opened row.
         if call.isStructuredOutput {
@@ -84,10 +84,10 @@ enum ToolCallText {
     /// What the call acted on: a file's name (its path is in the help tag and the detail), a
     /// search pattern, a URL's host and path. Nothing for a command: a shell line is more than a
     /// reader wants on every row.
-    static func object(_ call: Item.ToolCall, workflow: WorkflowRun? = nil) -> String {
+    static func object(_ call: Item.ToolCall, workflow: TaskState? = nil) -> String {
         if call.kind == .bash { return "" }
-        // Never the script read here: the run's name, else what the call names.
-        if call.isWorkflow { return workflow?.name ?? WorkflowScript.callName(call) ?? "" }
+        // The run's name as the daemon gives it, else what the call names.
+        if call.isWorkflow { return workflow?.workflow?.name ?? call.workflowCallName ?? "" }
         if call.isStructuredOutput { return "" }
         if let summary = call.summary { return summary }
         let input = call.input

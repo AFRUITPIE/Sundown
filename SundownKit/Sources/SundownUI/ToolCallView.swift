@@ -49,7 +49,7 @@ struct ToolCallView: View {
         if call.isWorkflow {
             // A workflow's agents and result are in the Tasks tab; its script and launch receipt
             // are nothing to read.
-            WorkflowCallView(call: call, run: thread.workflowRuns[call.id])
+            WorkflowCallView(call: call, task: thread.callTasks[call.id])
         } else if call.kind == .subagent {
             // A subagent opens in the Tasks tab instead of here, behind the same chevron as a row that
             // opens in place.
@@ -85,7 +85,7 @@ struct ToolCallView: View {
                 // Running, it shimmers as the turn's work row does, rather than spinning: while
                 // something is still doing it (its turn, or the background task it became).
                 ActivityLabel(text: subtitle.isEmpty ? title : "\(title) \(subtitle)",
-                              live: thread.isRunning || thread.isTaskBackgrounded(toolUseId: call.id))
+                              live: thread.isRunning || thread.callTasks[call.id]?.isInBackground == true)
             } else {
                 Text(title)
                 if !subtitle.isEmpty {
@@ -129,11 +129,7 @@ struct ToolCallView: View {
 
     private var title: String {
         guard call.kind == .subagent else { return ToolCallText.verb(call) }
-        return SubagentLifecycle.title(
-            call: call,
-            task: thread.taskEvent(forToolUseId: call.id),
-            isBackgrounded: thread.isTaskBackgrounded(toolUseId: call.id)
-        )
+        return SubagentLifecycle.title(call: call, task: thread.callTasks[call.id])
     }
 
     private var subtitle: String { ToolCallText.object(call) }
@@ -172,7 +168,7 @@ struct ToolCallView: View {
             TodoListView(todos: input["todos"]?.arrayValue ?? [])
         case .skill:
             // What the skill told Claude, which Claude Code put in the chat as a message of its own.
-            if let body = thread.skillBodies[call.id], !body.isEmpty {
+            if let body = call.skillInstructions, !body.isEmpty {
                 CodeBlock(code: body, language: "Instructions", lineLimit: 14)
             } else {
                 output
@@ -200,22 +196,22 @@ extension EnvironmentValues {
 }
 
 enum SubagentLifecycle {
-    static func title(call: Item.ToolCall, task: TaskEventNotification?, isBackgrounded: Bool = false) -> String {
-        let state = (task?.status ?? task?.event ?? call.status.rawValue).lowercased()
-        if isBackgrounded || state.contains("background") { return "Agent running in background" }
-        if state.contains("fail") { return "Agent failed" }
-        if state.contains("stop") || state.contains("interrupt") { return "Agent stopped" }
-        if state.contains("complete") || state.contains("finish") { return "Agent finished" }
-        if state.contains("start") || state.contains("progress") || state.contains("running") || state.contains("pending") {
-            return "Agent running"
+    /// How an agent stands, as its row says it: its task's state, else its call's.
+    static func title(call: Item.ToolCall, task: TaskState?) -> String {
+        switch task?.status {
+        case .running?, .waiting?: return task?.backgrounded == true ? "Agent running in background" : "Agent running"
+        case .failed?: return "Agent failed"
+        case .stopped?: return "Agent stopped"
+        case .done?: return "Agent finished"
+        default: break
         }
-        return "Agent"
-    }
-
-    static func isRunning(call: Item.ToolCall?, task: TaskEventNotification?) -> Bool {
-        let state = (task?.status ?? task?.event ?? call?.status.rawValue ?? "").lowercased()
-        return !state.contains("complete") && !state.contains("finish") && !state.contains("fail")
-            && !state.contains("stop") && !state.contains("interrupt") && state != ""
+        switch call.status {
+        case .running, .pending: return "Agent running"
+        case .failed: return "Agent failed"
+        case .interrupted: return "Agent stopped"
+        case .completed: return "Agent finished"
+        default: return "Agent"
+        }
     }
 }
 

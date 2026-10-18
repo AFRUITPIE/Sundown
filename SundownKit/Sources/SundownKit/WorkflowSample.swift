@@ -3,10 +3,10 @@ import TetherProtocol
 
 /// A dynamic workflow as Claude Code and the daemon report one, for previews and the UI-test
 /// fixture's `tasks` scenario: a Workflow call whose input is only its script, which comes back at
-/// once with the launch receipt (`async_launched`); a `local_workflow` task whose progress events
-/// carry the run's snapshot now and then and nothing between; the task's notification; the result
-/// as a synthetic "workflow" message; and an agent's message to the main session, which the daemon
-/// files under the workflow's call so it isn't a line of its own. In every build, as the fixture is.
+/// once with the launch receipt (`async_launched`); the run's tasks, the workflow's and one per
+/// agent, as the daemon sends them; the result as a synthetic "workflow" message; and an agent's
+/// message to the main session, which the daemon files under the workflow's call so it isn't a line
+/// of its own. In every build, as the fixture is.
 enum WorkflowSample {
     static let callID = "workflow-call"
     static let taskID = "wf-1"
@@ -85,111 +85,65 @@ enum WorkflowSample {
     private struct AgentSpec {
         let label: String
         let phase: Int
-        let state: String
+        let status: TaskStatus
         var agentId: String?
         var tokens: Double = 0
         var toolCalls: Double = 0
-        var queuedOnly = false
-        var lastTool: (String, String)?
+        var lastTool: String?
         var result: String?
     }
 
     private static func agents(running: Bool) -> [AgentSpec] {
         [
-            AgentSpec(label: "TaskTree.swift", phase: 1, state: "done", agentId: "a1f09c3e2b7d", tokens: 18_204, toolCalls: 6,
+            AgentSpec(label: "TaskTree.swift", phase: 1, status: .done, agentId: "a1f09c3e2b7d", tokens: 18_204, toolCalls: 6,
                       result: "One finding: workflow nodes never have children."),
-            AgentSpec(label: "TasksPane.swift", phase: 1, state: "done", agentId: "a2c81d77e019", tokens: 15_877, toolCalls: 4,
+            AgentSpec(label: "TasksPane.swift", phase: 1, status: .done, agentId: "a2c81d77e019", tokens: 15_877, toolCalls: 4,
                       result: "No findings."),
-            AgentSpec(label: "ThreadModel.swift", phase: 1, state: "done", agentId: "a3d5e0b4c6f1", tokens: 21_090, toolCalls: 7,
+            AgentSpec(label: "ThreadModel.swift", phase: 1, status: .done, agentId: "a3d5e0b4c6f1", tokens: 21_090, toolCalls: 7,
                       result: "One finding: merged() drops workflow_name."),
-            AgentSpec(label: "skeptic 1", phase: 2, state: running ? "progress" : "done", agentId: "a4b7c2d9e8f0",
+            AgentSpec(label: "skeptic 1", phase: 2, status: running ? .running : .done, agentId: "a4b7c2d9e8f0",
                       tokens: running ? 9_310 : 14_388, toolCalls: running ? 3 : 5,
-                      lastTool: running ? ("Read", "TaskTree.swift") : nil, result: running ? nil : "Holds: confirmed at TaskTree.swift:45."),
-            AgentSpec(label: "skeptic 2", phase: 2, state: running ? "start" : "done", agentId: running ? nil : "a5e3f1a0b2c4",
-                      tokens: running ? 0 : 12_102, toolCalls: running ? 0 : 3, queuedOnly: running,
+                      lastTool: running ? "Read" : nil, result: running ? nil : "Holds: confirmed at TaskTree.swift:45."),
+            AgentSpec(label: "skeptic 2", phase: 2, status: running ? .waiting : .done, agentId: running ? nil : "a5e3f1a0b2c4",
+                      tokens: running ? 0 : 12_102, toolCalls: running ? 0 : 3,
                       result: running ? nil : "Holds: workflow_name is lost after the first progress event."),
         ]
     }
 
-    /// The run as the daemon's snapshot says it (`task/event.workflow`, `workflow/read`).
-    static func snapshot(now: Double, running: Bool) -> JSONValue {
+    /// The run's tasks as the daemon sends them: the workflow's, and each agent's under it.
+    static func tasks(now: Double, running: Bool) -> [TaskState] {
         func ago(_ seconds: Double) -> Double { now - seconds * 1000 }
-        let agents: [JSONValue] = Self.agents(running: running).enumerated().map { i, a in
-            var o: [String: JSONValue] = [
-                "index": .number(Double(i + 1)), "label": .string(a.label), "phaseIndex": .number(Double(a.phase)),
-                "phaseTitle": .string(a.phase == 1 ? "Review" : "Verify"), "state": .string(a.state),
-                "queuedAt": .number(ago(a.phase == 1 ? 285 : 150)), "model": "claude-sonnet-5",
-                "promptPreview": .string(a.phase == 1 ? "Review \(a.label) for correctness bugs" : "Try to disprove the finding"),
-                "lastProgressAt": .number(ago(a.state == "done" ? 160 : 4)),
-            ]
-            if !a.queuedOnly { o["startedAt"] = .number(ago(a.phase == 1 ? 284 : 148)) }
-            if let id = a.agentId { o["agentId"] = .string(id) }
-            if a.tokens > 0 { o["tokens"] = .number(a.tokens) }
-            if a.toolCalls > 0 { o["toolCalls"] = .number(a.toolCalls) }
-            if a.state == "done" { o["durationMs"] = .number(a.phase == 1 ? 118_000 : 74_000) }
-            if let (tool, summary) = a.lastTool { o["lastToolName"] = .string(tool); o["lastToolSummary"] = .string(summary) }
-            if let r = a.result { o["resultPreview"] = .string(r) }
-            return .object(o)
+        let phases = [TaskPhase(index: 1, title: "Review", status: .done),
+                      TaskPhase(index: 2, title: "Verify", status: running ? .running : .done)]
+        let workflow = TaskState(
+            id: callID, toolUseId: callID, taskId: taskID, kind: .workflow, taskType: "local_workflow", title: name,
+            status: running ? .running : .done, startedAt: ago(290), endedAt: running ? nil : ago(60),
+            summary: running ? nil : "Dynamic workflow \"\(description)\" completed",
+            usage: .init(durationMs: running ? 150_000 : 238_000, totalTokens: running ? 64_481 : 81_661, toolUses: running ? 20 : 25),
+            workflow: .init(runId: runID, name: name, description: description, phases: phases,
+                            activity: running ? "Verify: skeptic 1" : nil, result: running ? nil : result))
+        let agents = Self.agents(running: running).enumerated().map { i, a in
+            TaskState(
+                id: "\(callID)/agent/\(i + 1)", parentId: callID, kind: .workflowAgent, title: a.label, status: a.status,
+                startedAt: a.status == .waiting ? nil : ago(a.phase == 1 ? 284 : 148),
+                endedAt: a.status == .done ? ago(a.phase == 1 ? 166 : 74) : nil,
+                output: a.result,
+                usage: .init(durationMs: a.status == .done ? (a.phase == 1 ? 118_000 : 74_000) : nil,
+                             totalTokens: a.tokens > 0 ? a.tokens : nil, toolUses: a.toolCalls > 0 ? a.toolCalls : nil),
+                workflowAgent: .init(runId: runID, index: i + 1, agentId: a.agentId, phase: a.phase == 1 ? "Review" : "Verify",
+                                     phaseIndex: a.phase,
+                                     prompt: a.phase == 1 ? "Review \(a.label) for correctness bugs" : "Try to disprove the finding",
+                                     model: "claude-sonnet-5", lastToolName: a.lastTool))
         }
-        var snapshot: [String: JSONValue] = [
-            "runId": .string(runID), "name": .string(name), "description": .string(description),
-            "status": running ? "running" : "completed",
-            "phases": [
-                ["index": 1, "title": "Review", "detail": "One reviewer per changed file"],
-                ["index": 2, "title": "Verify", "detail": "Three skeptics per finding"],
-            ],
-            "agents": .array(agents),
-            "totalTokens": running ? 64_481 : 81_661, "toolUses": running ? 20 : 25,
-        ]
-        if running {
-            snapshot["activity"] = "Verify: skeptic 1"
-        } else {
-            snapshot["durationMs"] = 238_000
-            snapshot["result"] = .string(result)
-        }
-        return .object(snapshot)
+        return [workflow] + agents
     }
 
-    /// The task's events: started, progress with a snapshot, progress without one (throttled), and
-    /// once it has finished, its notification.
-    static func events(threadID: String, firstSeq: Int, now: Double, running: Bool) -> [TaskEventNotification] {
-        var seq = firstSeq
-        func event(_ name: String, status: String, summary: String? = nil, data: [String: JSONValue]) -> TaskEventNotification {
-            defer { seq += 1 }
-            var data = data
-            data["task_type"] = "local_workflow"
-            return TaskEventNotification(threadId: threadID, seq: seq, event: name, taskId: taskID, toolUseId: callID,
-                                         description: name == "started" ? description : nil, status: status, summary: summary,
-                                         data: .object(data))
-        }
-        let snapshot = snapshot(now: now, running: running)
-        var events = [
-            event("started", status: "running", data: ["workflow_name": .string(name), "workflow": snapshot.with(agents: [])]),
-            event("progress", status: "running", data: ["workflow": snapshot,
-                                                        "usage": ["total_tokens": 64_481, "tool_uses": 20, "duration_ms": 150_000]]),
-            // Throttled: no snapshot; the last one still holds.
-            event("progress", status: "running", data: ["usage": ["total_tokens": 64_900, "tool_uses": 20, "duration_ms": 152_000]]),
-        ]
-        if !running {
-            events.append(event("notification", status: "completed", summary: "Dynamic workflow \"\(description)\" completed",
-                                data: ["workflow": snapshot,
-                                       "usage": ["total_tokens": 81_661, "tool_uses": 25, "duration_ms": 238_000]]))
-        }
-        return events
-    }
-
-    /// A background command skeptic 1 ran, as the daemon reports a workflow agent's own task: the
-    /// CLI's `owned_by_subagent`, and which run and agent it was, on every event.
-    static func agentCommandEvents(threadID: String, firstSeq: Int, running: Bool) -> [TaskEventNotification] {
-        func event(_ name: String, seq: Int, status: String, data: [String: JSONValue] = [:]) -> TaskEventNotification {
-            TaskEventNotification(threadId: threadID, seq: seq, event: name, taskId: "bg-skeptic-1", toolUseId: "skeptic-1-bash",
-                                  description: name == "started" ? "swift test --filter TaskTreeTests" : nil, status: status,
-                                  ownedBySubagent: true, workflowToolUseId: callID, workflowAgentId: "a4b7c2d9e8f0",
-                                  data: .object(data.merging(["task_type": "local_bash"]) { a, _ in a }))
-        }
-        var events = [event("started", seq: firstSeq, status: "running", data: ["owned_by_subagent": true, "is_backgrounded": true])]
-        if !running { events.append(event("notification", seq: firstSeq + 1, status: "completed")) }
-        return events
+    /// A background command skeptic 1 ran, which the daemon puts under that agent.
+    static func agentCommand(now: Double, running: Bool) -> TaskState {
+        TaskState(id: "skeptic-1-bash", parentId: "\(callID)/agent/4", toolUseId: "skeptic-1-bash", taskId: "bg-skeptic-1",
+                  kind: .command, taskType: "local_bash", title: "swift test --filter TaskTreeTests",
+                  status: running ? .running : .done, startedAt: now - 120_000, endedAt: running ? nil : now - 90_000,
+                  backgrounded: true)
     }
 
     /// One agent's transcript, as `workflow/agentItems` itemizes it.
@@ -208,18 +162,5 @@ enum WorkflowSample {
             .agentMessage(.init(id: "\(agentId)-reply", createdAt: ago(170),
                                 text: "One finding. `TaskNode.tree` attaches a child only when its call's `parentToolUseId` is the parent's call, and a workflow's agents have no calls in the stream, so a workflow is always a leaf.")),
         ]
-    }
-}
-
-private extension JSONValue {
-    /// The snapshot with its agents replaced: the run as it starts.
-    func with(agents: [JSONValue]) -> JSONValue {
-        guard case .object(var o) = self else { return self }
-        o["agents"] = .array(agents)
-        o["status"] = "running"
-        o["result"] = nil
-        o["durationMs"] = nil
-        o["activity"] = nil
-        return .object(o)
     }
 }

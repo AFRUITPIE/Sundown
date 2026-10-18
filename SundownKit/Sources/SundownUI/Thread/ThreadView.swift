@@ -140,9 +140,9 @@ private struct WorkChatPreview: View {
     let items: [Item] = [
         .userMessage(.sample("Run the Sundown demo skill.", secondsAgo: 30)),
         .toolCall(.sample(name: "Skill", kind: .skill, input: ["skill": "sundown-demo"], status: .completed,
-                          outputText: "Launching skill: sundown-demo", secondsAgo: 28)),
-        .userMessage(.sample("Base directory for this skill: /tmp/skilldemo/.claude/skills/sundown-demo\n\n# Sundown demo skill\n\nWhen this skill is used, reply with exactly one line.",
-                           secondsAgo: 28, synthetic: true)),
+                          outputText: "Launching skill: sundown-demo",
+                          skillInstructions: "Base directory for this skill: /tmp/skilldemo/.claude/skills/sundown-demo\n\n# Sundown demo skill\n\nWhen this skill is used, reply with exactly one line.",
+                          secondsAgo: 28)),
         .agentMessage(.sample("The Sundown demo skill ran.", secondsAgo: 26)),
     ]
     NavigationStack {

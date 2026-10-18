@@ -354,11 +354,12 @@ public final class HostConnection: Identifiable {
         do {
             let r = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: model.lastSeq))
             if r.gap || r.thread.lastSeq < model.lastSeq {
-                // Server restarted or buffer overflowed: reload the transcript, and its runs.
-                forgetWorkflows(of: model.id)
+                // Server restarted or buffer overflowed: reload the transcript.
                 try await loadHistory(model, force: true, keepingHeld: true)
             } else {
                 model.setInfo(r.thread)
+                // As they stand now, after anything replayed.
+                model.setTasks(r.tasks)
             }
             subscribed.insert(model.id)
         } catch let e as RPCError where e.code == RPCError.threadNotLoaded {
@@ -592,15 +593,15 @@ public final class HostConnection: Identifiable {
         let changes = await FileChange.changes(ofCallsIn: items)
         if let s = r.summary { model.setSummary(s) }
         letGo.remove(model.id)
-        model.loadHistory(items: items, turns: r.turns, seq: r.historySeq, hasMore: hasMore, fileChanges: changes)
+        model.loadHistory(items: items, turns: r.turns, seq: r.historySeq, hasMore: hasMore, tasks: r.tasks, fileChanges: changes)
         if let seq = r.historySeq {
-            // Loaded in the daemon: stream everything after the snapshot.
+            // Loaded in the daemon: stream everything after the snapshot, and the tasks as they
+            // stand once it's replayed.
             let sub = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: seq))
             model.setInfo(sub.thread)
+            model.setTasks(sub.tasks)
             subscribed.insert(model.id)
         }
-        // Task events aren't kept with history: a workflow's run is read on its own.
-        readWorkflows(of: model)
     }
 
     /// What a new chat in `cwd` starts with when nothing is chosen, as the host's Claude Code decides:
@@ -713,7 +714,7 @@ public final class HostConnection: Identifiable {
             permissionMode: pending.permissionMode ?? model.info?.permissionMode,
             includeHistory: true, limit: Self.initialHistoryLimit))
         model.loadHistory(items: r.items ?? model.items, turns: r.turns ?? model.turns,
-                          seq: r.historySeq, hasMore: r.hasMore ?? false)
+                          seq: r.historySeq, hasMore: r.hasMore ?? false, tasks: r.tasks)
         model.setInfo(r.thread)
         subscribed.insert(model.id)
         try await apply(pending, to: model, over: r.thread, client)
@@ -824,7 +825,6 @@ public final class HostConnection: Identifiable {
         threads.removeValue(forKey: model.id)
         openRequested.remove(model.id)
         subscribed.remove(model.id)
-        forgetWorkflows(of: model.id)
     }
 
     /// What asking for an older page came to, so a caller asking again knows whether to.
@@ -860,7 +860,6 @@ public final class HostConnection: Identifiable {
             // with a gap between the page and what it now holds. Asked again, from what it holds.
             guard !Task.isCancelled, model.itemIndex(of: oldest) == 0 else { return .busy }
             model.prependHistory(items: r.items, hasMore: r.hasMore ?? false, fileChanges: changes)
-            readWorkflows(of: model)
             return .loaded
         } catch {
             appendLog("Loading older history for \(model.id) failed: \(error.localizedDescription)")
@@ -869,57 +868,6 @@ public final class HostConnection: Identifiable {
     }
 
     // MARK: workflows
-
-    /// Runs being read, by chat and run id: one request in flight per run.
-    @ObservationIgnored private var workflowReads = Set<String>()
-    /// Finished runs already read, by chat and run id: what a reopened chat shows without asking.
-    @ObservationIgnored private var finishedWorkflows: [String: JSONValue] = [:]
-
-    /// Lets go of the finished runs read for a chat that's deleted, or reloaded after a gap. A chat
-    /// merely let go of (`leave`) keeps them: they're what it shows when it's reopened, without
-    /// asking again (`RPCBudgetTests`).
-    private func forgetWorkflows(of threadID: String) {
-        let prefix = "\(threadID)/"
-        finishedWorkflows = finishedWorkflows.filter { !$0.key.hasPrefix(prefix) }
-    }
-
-    /// Reads the run of each Workflow call with no live task, in the background.
-    private func readWorkflows(of model: ThreadModel) {
-        let runs = model.workflowsToRead
-        guard !runs.isEmpty else { return }
-        for run in runs {
-            if let known = finishedWorkflows["\(model.id)/\(run.runId)"] {
-                model.setLoadedWorkflow(known, for: run.toolUseId)
-                continue
-            }
-            Task { await loadWorkflow(model, toolUseId: run.toolUseId) }
-        }
-    }
-
-    /// Reads a workflow's run (`workflow/read`) when its call has no live task: after a reload, an
-    /// older page, or for the Tasks tab while a run goes on that this client isn't told about. One
-    /// request in flight per run; a finished run read once isn't read again.
-    public func loadWorkflow(_ model: ThreadModel, toolUseId: String) async {
-        guard let client,
-              let run = model.workflowsToRead.first(where: { $0.toolUseId == toolUseId }) else { return }
-        let key = "\(model.id)/\(run.runId)"
-        if let known = finishedWorkflows[key] {
-            model.setLoadedWorkflow(known, for: toolUseId)
-            return
-        }
-        guard workflowReads.insert(key).inserted else { return }
-        defer { workflowReads.remove(key) }
-        do {
-            let r = try await client.call(WorkflowMethods.Read.self, .init(threadId: model.id, runId: run.runId))
-            guard let snapshot = r.workflow else { return }
-            model.setLoadedWorkflow(snapshot, for: toolUseId)
-            // Kept only once it's over: an unknown run (history with nothing to say) may be going
-            // on still, and a paused one goes on, so both are read again.
-            if let status = snapshot["status"]?.stringValue, WorkflowRun.status(status).isSettled { finishedWorkflows[key] = snapshot }
-        } catch {
-            appendLog("Reading workflow \(run.runId) failed: \(error.localizedDescription)")
-        }
-    }
 
     /// One workflow agent's transcript (`workflow/agentItems`): its prompt, calls and replies. A
     /// finished agent's is kept with the chat until the chat is let go.
@@ -1229,7 +1177,6 @@ private extension ServerNotification {
 extension HostConnection {
     /// As after a replay gap: the chat read again from its last page.
     public func stressReload(_ model: ThreadModel) async {
-        forgetWorkflows(of: model.id)
         try? await loadHistory(model, force: true)
     }
 

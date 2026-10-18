@@ -20,33 +20,36 @@ public final class TranscriptFind {
     public var current: String? { matches.indices.contains(index) ? matches[index] : nil }
 
     /// Recomputes the matches over `rows`, keeping the current one if it still matches.
-    func update(rows: [TranscriptRow]) {
-        apply(Self.search(rows[...], query: query))
+    /// `workflowNames` are the names the chat's workflow rows show (`ThreadModel.workflowNames`).
+    func update(rows: [TranscriptRow], workflowNames: [String: String] = [:]) {
+        apply(Self.search(rows[...], query: query, workflowNames: workflowNames))
     }
 
     /// `update(rows:)` a moment after the query or the rows last changed, searching off the main
     /// actor: typing in a long chat searched the whole transcript on the main thread at every
     /// keystroke. Cancelled by the next change.
-    func search(rows: [TranscriptRow]) async {
+    func search(rows: [TranscriptRow], workflowNames: [String: String] = [:]) async {
         try? await Task.sleep(for: .milliseconds(100))
         let query = query
-        guard !Task.isCancelled, let found = await Self.searchOffMain(rows, query: query),
+        guard !Task.isCancelled, let found = await Self.searchOffMain(rows, query: query, workflowNames: workflowNames),
               !Task.isCancelled, query == self.query else { return }
         apply(found)
     }
 
     /// The ids of the rows that hold `query`, in order.
-    nonisolated static func search(_ rows: ArraySlice<TranscriptRow>, query: String) -> [String] {
-        rows.compactMap { $0.matches(query) ? $0.id : nil }
+    nonisolated static func search(_ rows: ArraySlice<TranscriptRow>, query: String,
+                                   workflowNames: [String: String] = [:]) -> [String] {
+        rows.compactMap { $0.matches(query, workflowNames: workflowNames) ? $0.id : nil }
     }
 
     /// Nil when cancelled part of the way.
     @concurrent
-    nonisolated static func searchOffMain(_ rows: [TranscriptRow], query: String) async -> [String]? {
+    nonisolated static func searchOffMain(_ rows: [TranscriptRow], query: String,
+                                          workflowNames: [String: String] = [:]) async -> [String]? {
         var found: [String] = []
         for chunk in stride(from: 0, to: rows.count, by: 64) {
             guard !Task.isCancelled else { return nil }
-            found += search(rows[chunk..<min(chunk + 64, rows.count)], query: query)
+            found += search(rows[chunk..<min(chunk + 64, rows.count)], query: query, workflowNames: workflowNames)
         }
         return found
     }
@@ -106,6 +109,8 @@ extension EnvironmentValues {
 struct FindBar: View {
     @Bindable var find: TranscriptFind
     let rows: [TranscriptRow]
+    /// The names the chat's workflow rows show, which Find matches them by.
+    var workflowNames: [String: String] = [:]
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -139,8 +144,8 @@ struct FindBar: View {
         // stops a running turn), not the bar's.
         .onExitCommand { find.dismiss() }
         // At once when the bar opens; then a moment after each change, off the main actor.
-        .onAppear { find.update(rows: rows) }
-        .task(id: SearchKey(query: find.query, rows: rows.count)) { await find.search(rows: rows) }
+        .onAppear { find.update(rows: rows, workflowNames: workflowNames) }
+        .task(id: SearchKey(query: find.query, rows: rows.count)) { await find.search(rows: rows, workflowNames: workflowNames) }
         // Typing goes straight into the field: ⌘F is how people start a search, even from the
         // message field.
         .defaultFocus($focused, true, priority: .userInitiated)
@@ -170,7 +175,7 @@ struct FindBarHost: View {
 
     var body: some View {
         if let find, find.isPresented {
-            FindBar(find: find, rows: thread.rows(appearance.toolCalls.folding))
+            FindBar(find: find, rows: thread.rows(appearance.toolCalls.folding), workflowNames: thread.workflowNames)
         }
     }
 }

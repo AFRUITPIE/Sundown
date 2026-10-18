@@ -366,20 +366,24 @@ public enum PromptNavigation {
 
 extension TranscriptRow {
     /// What Find in Chat matches against: what the row shows or holds — a message's text, a tool
-    /// call's input values and output — as one string.
-    public var searchText: String {
+    /// call's input values and output — as one string. `workflowNames`: the names the daemon gives
+    /// the chat's workflows, by their calls' ids (`ThreadModel.workflowNames`), which a workflow's
+    /// row shows.
+    public func searchText(workflowNames: [String: String] = [:]) -> String {
         switch self {
-        case .item(let item): return item.searchText
-        case .toolGroup(let calls, _): return calls.map { Item.toolCall($0).searchText }.joined(separator: "\n")
-        case .turnWork(_, let rows, _): return rows.map(\.searchText).joined(separator: "\n")
+        case .item(let item): return item.searchText(workflowNames: workflowNames)
+        case .toolGroup(let calls, _):
+            return calls.map { Item.toolCall($0).searchText(workflowNames: workflowNames) }.joined(separator: "\n")
+        case .turnWork(_, let rows, _): return rows.map { $0.searchText(workflowNames: workflowNames) }.joined(separator: "\n")
         // Their files are in the calls, which match already.
         case .turnEdits, .dateSeparator: return ""
         }
     }
 
     /// Whether the row matches `query`, case- and diacritic-insensitively.
-    public func matches(_ query: String) -> Bool {
-        !query.isEmpty && searchText.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    public func matches(_ query: String, workflowNames: [String: String] = [:]) -> Bool {
+        !query.isEmpty && searchText(workflowNames: workflowNames)
+            .range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
     }
 }
 
@@ -394,15 +398,14 @@ extension Item.UserMessage {
 }
 
 extension Item {
-    var searchText: String {
+    func searchText(workflowNames: [String: String]) -> String {
         switch self {
         case .userMessage(let m):
             return m.texts.joined(separator: "\n")
         case .agentMessage(let m): return m.text
-        // A workflow's row shows its name, not its script or launch receipt: the name the call
-        // gives, or its script's as already read, never reading the script here.
+        // A workflow's row shows its name, not its script or launch receipt.
         case .toolCall(let t) where t.isWorkflow:
-            return [t.name, WorkflowScript.searchName(t) ?? ""].joined(separator: "\n")
+            return [t.name, workflowNames[t.id] ?? t.workflowCallName ?? ""].joined(separator: "\n")
         // An agent's result row says only that it returned one; the result is in its detail.
         case .toolCall(let t) where t.isStructuredOutput:
             return "Returned its result\n" + t.input.strings.joined(separator: "\n")

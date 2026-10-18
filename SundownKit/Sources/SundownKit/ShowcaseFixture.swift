@@ -476,20 +476,31 @@ extension ShowcaseTranscript {
         ]
     }
 
-    static func reviewEvents(threadID: String, firstSeq: Int) -> [TaskEventNotification] {
-        var events = TaskEvents(threadID: threadID, firstSeq: firstSeq)
-        return [
-            events.next("started", "task-tests", "local_agent", "Write tests for TaskNode.tree", toolUseId: "agent-tests", status: "running"),
-            events.next("notification", "task-tests", "local_agent", "Write tests for TaskNode.tree", toolUseId: "agent-tests",
-                        status: "completed", summary: "Added 9 tests to TaskTreeTests; all pass.", usage: (184_000, 41_200, 23)),
-            events.next("started", "task-lint", "local_bash", "swiftlint --strict", toolUseId: "bg-lint", status: "running"),
-            events.next("notification", "task-lint", "local_bash", "swiftlint --strict", toolUseId: "bg-lint",
-                        status: "completed", summary: "No violations.", usage: (38_000, 0, 0)),
-            events.next("started", "task-a11y", "local_agent", "Audit VoiceOver labels in Tasks", toolUseId: "agent-a11y", status: "running"),
-            events.next("started", "task-a11y-dot", "local_agent", "Check TaskStateDot's label", toolUseId: "agent-a11y-dot", status: "running"),
-            events.next("started", "task-perf", "local_agent", "Profile scrolling a long chat", toolUseId: "agent-perf", status: "running"),
-            events.next("started", "task-trace", "local_bash", "xcrun xctrace record --template SwiftUI", toolUseId: "bg-trace", status: "running"),
-            events.next("started", "task-daemon-log", "monitor", "Tail the daemon's log for errors", status: "running"),
+    /// A chat's tasks as the daemon sends them: the review chat's, the `tasks` scenario's and its
+    /// own; none for the others.
+    static func tasks(of threadID: String) -> [TaskState] {
+        guard threadID == reviewThreadID else { return [] }
+        let clock = TaskClock()
+        return TaskTranscript.tasks() + [
+            TaskState(id: "agent-tests", toolUseId: "agent-tests", taskId: "task-tests", kind: .agent, taskType: "local_agent",
+                      title: "Write tests for TaskNode.tree", status: .done, startedAt: clock.ago(640),
+                      summary: "Added 9 tests to TaskTreeTests; all pass.",
+                      usage: .init(durationMs: 184_000, totalTokens: 41_200, toolUses: 23)),
+            TaskState(id: "bg-lint", toolUseId: "bg-lint", taskId: "task-lint", kind: .command, taskType: "local_bash",
+                      title: "swiftlint --strict", status: .done, startedAt: clock.ago(520), backgrounded: true,
+                      summary: "No violations.", usage: .init(durationMs: 38_000)),
+            TaskState(id: "agent-a11y", toolUseId: "agent-a11y", taskId: "task-a11y", kind: .agent, taskType: "local_agent",
+                      title: "Audit VoiceOver labels in Tasks", status: .running, startedAt: clock.ago(260)),
+            TaskState(id: "agent-a11y-dot", parentId: "agent-a11y", toolUseId: "agent-a11y-dot", taskId: "task-a11y-dot",
+                      kind: .agent, taskType: "local_agent", title: "Check TaskStateDot's label", status: .running,
+                      startedAt: clock.ago(120)),
+            TaskState(id: "agent-perf", toolUseId: "agent-perf", taskId: "task-perf", kind: .agent, taskType: "local_agent",
+                      title: "Profile scrolling a long chat", status: .running, startedAt: clock.ago(180)),
+            TaskState(id: "bg-trace", parentId: "agent-perf", toolUseId: "bg-trace", taskId: "task-trace", kind: .command,
+                      taskType: "local_bash", title: "xcrun xctrace record --template SwiftUI", status: .running,
+                      startedAt: clock.ago(150), backgrounded: true),
+            TaskState(id: "task:task-daemon-log", taskId: "task-daemon-log", kind: .monitor, taskType: "monitor",
+                      title: "Tail the daemon's log for errors", status: .running, startedAt: clock.ago(100)),
         ]
     }
 }
