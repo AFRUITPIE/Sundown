@@ -4,8 +4,9 @@ import Testing
 import TetherProtocol
 @testable import SundownKit
 
-/// `ThreadModel.rows(_:)` folds a turn at a time and keeps the finished ones. Whatever it keeps, it
-/// must return what folding and decorating every item at once returns, at every step of a chat.
+/// `ThreadModel.rows(_:)` keeps the turns before the last one and folds the last again. Whatever it
+/// keeps, it must return what folding and decorating every item at once returns, at every step of a
+/// chat.
 @MainActor
 @Suite
 struct IncrementalRowsTests: TimedItems {
