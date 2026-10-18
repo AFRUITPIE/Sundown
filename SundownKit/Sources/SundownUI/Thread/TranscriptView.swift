@@ -19,11 +19,6 @@ struct TranscriptView: View {
     /// The rows on screen, for Chat ▸ Previous and Next Prompt. Not observed: it changes as rows
     /// scroll in and out, and nothing is drawn from it.
     @State private var onScreen = OnScreenRows()
-    /// The rows the lazy stack has built, counted as they appear and disappear: a new count for
-    /// each list it builds.
-    @State private var built = BuiltRows()
-    /// Bumped to build the rows anew, when the lazy stack has lost them (`recoverIfCollapsed`).
-    @State private var rebuilds = 0
     @Environment(\.transcriptFind) private var find
     @Environment(\.promptNavigator) private var promptNavigator
     @Environment(\.appearance) private var appearance
@@ -46,12 +41,11 @@ struct TranscriptView: View {
     private var scrollView: some View {
         ScrollView {
             TranscriptContent(thread: thread, connection: connection, position: $position, bottomRoom: bottomRoom)
-                .environment(\.builtRows, built)
                 // A different Tool Calls folding is a different list of rows, made new: the lazy
                 // stack kept the rows it had built for the old one, and once the content had shrunk
                 // to the new one's height they lay outside what it showed, so the transcript stayed
-                // blank until the reader scrolled. So is a list the lazy stack lost.
-                .id(RowsIdentity(folding: appearance.toolCalls.folding, rebuilds: rebuilds))
+                // blank until the reader scrolled.
+                .id(appearance.toolCalls.folding)
         }
         .accessibilityLabel("Transcript")
         .defaultScrollAnchor(.bottom)
@@ -113,8 +107,6 @@ struct TranscriptView: View {
                     onScreen.lastPrompt = nil
                     onScreen.settling &+= 1
                 }
-                // Scrolling didn't always bring back rows the lazy stack had lost.
-                if new == .idle { recoverIfCollapsed("after scrolling") }
             }
             .onScrollGeometryChange(for: ScrollPlace.self) { g in
                 #if DEBUG
@@ -241,25 +233,6 @@ extension TranscriptView {
             guard onScreen.resizes == resize else { return }
             onScreen.resizing = false
             await returnToPlace()
-            recoverIfCollapsed("after a resize")
-        }
-    }
-
-    /// The lazy stack can lose its rows altogether after rapid resizes: none built, its content
-    /// height shrinking toward nothing, and neither a scroll from code nor the reader's own brought
-    /// them back (2026-10-13). Given a moment to build them, a chat with rows and none built is
-    /// built anew, and the reader taken back to where they were.
-    private func recoverIfCollapsed(_ why: String) {
-        let count = built
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            guard count === built, built.count == 0, thread.historyLoaded, onScreen.phase == .idle, !onScreen.hidden,
-                  !thread.rows(appearance.toolCalls.folding).isEmpty else { return }
-            Signposts.transcriptLog.error("Transcript had no rows built (\(why, privacy: .public)): built them again.")
-            built = BuiltRows()
-            rebuilds &+= 1
-            try? await Task.sleep(for: .milliseconds(50))
-            await returnToPlace()
         }
     }
 
@@ -313,7 +286,7 @@ extension TranscriptView {
             try? await Task.sleep(for: .milliseconds(400))
             onScreen.checking = false
             let rows = thread.rows(appearance.toolCalls.folding)
-            guard onScreen.ids.isEmpty || built.count == 0, !rows.isEmpty, thread.historyLoaded, onScreen.phase == .idle,
+            guard onScreen.ids.isEmpty, !rows.isEmpty, thread.historyLoaded, onScreen.phase == .idle,
                   !onScreen.hidden else { return }
             let reshape = thread.lastReshape.map { "\($0.what), \(Int(-$0.at.timeIntervalSinceNow)) s before" } ?? "none"
             Signposts.transcriptLog.error("""
@@ -569,7 +542,6 @@ struct TranscriptRowView: View, Equatable {
     var place: TurnPlace? = nil
     @Environment(\.messageSendGeometry) private var sendGeometry
     @Environment(\.turnHover) private var turnHover
-    @Environment(\.builtRows) private var builtRows
 
     nonisolated static func == (a: Self, b: Self) -> Bool {
         guard a.thread === b.thread, a.place == b.place else { return false }
@@ -605,9 +577,6 @@ struct TranscriptRowView: View, Equatable {
         .transformEnvironment(\.turnPlace) { if let place { $0 = place } }
         // Anywhere in a turn shows its actions, after its last reply.
         .onHover { inside in if let place { turnHover?.pointer(inside, turn: place.turn) } }
-        // Built and let go by the lazy stack.
-        .onAppear { builtRows?.count += 1 }
-        .onDisappear { builtRows?.count -= 1 }
     }
 }
 
@@ -936,22 +905,7 @@ final class TurnHover {
     }
 }
 
-/// How many of the transcript's rows the lazy stack has built. Not observed: counted as rows appear
-/// and disappear, and read only to tell whether it has lost them.
-@MainActor
-final class BuiltRows {
-    var count = 0
-}
-
-/// The list of rows the transcript's lazy stack builds: a new one for another folding, or to
-/// rebuild rows it lost.
-private struct RowsIdentity: Hashable {
-    let folding: TranscriptFolding
-    let rebuilds: Int
-}
-
 extension EnvironmentValues {
-    @Entry var builtRows: BuiltRows? = nil
     @Entry var transcriptHidden = false
     @Entry var turnHover: TurnHover? = nil
     @Entry var turnPlace: TurnPlace? = nil
