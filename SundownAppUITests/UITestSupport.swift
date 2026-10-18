@@ -86,7 +86,9 @@ class SundownUITestCase: XCTestCase {
     /// Whether `element`'s middle is inside the chat window: on screen, not merely built somewhere.
     @MainActor
     func isOnScreen(_ element: XCUIElement) -> Bool {
-        element.exists && mainWindow().frame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY))
+        // From one snapshot: a row made again between `exists` and `frame` failed the test.
+        guard let frame = try? element.snapshot().frame else { return false }
+        return mainWindow().frame.contains(CGPoint(x: frame.midX, y: frame.midY))
     }
 
     /// Moves the pointer over `element` until `reveal` holds: a hover-only control shows once the
@@ -102,6 +104,43 @@ class SundownUITestCase: XCTestCase {
             }
             return reveal()
         }
+    }
+
+    /// Where each prompt ("Step n") and reply ("Section n") in the transcript starts, on screen,
+    /// once two reads half a second apart agree.
+    @MainActor
+    func messageTops() -> [String: CGFloat] {
+        var last: [String: CGFloat] = [:]
+        for _ in 0..<10 {
+            Thread.sleep(forTimeInterval: 0.5)
+            guard let root = try? app.scrollViews["Transcript"].snapshot() else { continue }
+            var prompts: [String: CGFloat] = [:]
+            func walk(_ element: any XCUIElementSnapshot) {
+                if let words = element.messageWords, words.hasPrefix("Step ") || words.hasPrefix("Section ") {
+                    prompts[String(words.prefix { $0 != ":" })] = element.frame.minY
+                }
+                element.children.forEach(walk)
+            }
+            walk(root)
+            if !prompts.isEmpty, prompts == last { return prompts }
+            last = prompts
+        }
+        return last
+    }
+
+    /// The topmost prompt or reply that starts in the transcript's visible part (below the toolbar,
+    /// above the bottom bar), and where.
+    @MainActor
+    func topMessage(in tops: [String: CGFloat]) -> (key: String, value: CGFloat)? {
+        let frame = app.scrollViews["Transcript"].frame
+        return tops.filter { $0.value >= frame.minY + 60 && $0.value <= frame.maxY - 150 }.min { $0.value < $1.value }
+    }
+
+    /// Whether the message `key` starts in the transcript's visible part.
+    @MainActor
+    func isVisible(_ key: String, in tops: [String: CGFloat]) -> Bool {
+        let frame = app.scrollViews["Transcript"].frame
+        return tops[key].map { $0 >= frame.minY && $0 <= frame.maxY - 100 } ?? false
     }
 
     /// Types `message` into the composer and presses Send.

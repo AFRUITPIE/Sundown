@@ -141,28 +141,6 @@ final class TranscriptUITests: SundownUITestCase {
         return last
     }
 
-    /// Where each prompt ("Step n") and reply ("Section n") in the transcript starts, on screen,
-    /// once two reads half a second apart agree.
-    @MainActor
-    private func messageTops() -> [String: CGFloat] {
-        var last: [String: CGFloat] = [:]
-        for _ in 0..<10 {
-            Thread.sleep(forTimeInterval: 0.5)
-            guard let root = try? app.scrollViews["Transcript"].snapshot() else { continue }
-            var prompts: [String: CGFloat] = [:]
-            func walk(_ element: any XCUIElementSnapshot) {
-                if let words = element.messageWords, words.hasPrefix("Step ") || words.hasPrefix("Section ") {
-                    prompts[String(words.prefix { $0 != ":" })] = element.frame.minY
-                }
-                element.children.forEach(walk)
-            }
-            walk(root)
-            if !prompts.isEmpty, prompts == last { return prompts }
-            last = prompts
-        }
-        return last
-    }
-
     /// Resizing keeps the end in view; a turn's edited files; tool calls folded and opened; the
     /// tabs in a window as narrow as it goes.
     @MainActor
