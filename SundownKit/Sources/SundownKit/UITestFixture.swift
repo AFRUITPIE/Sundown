@@ -94,11 +94,12 @@ private final class FixtureTransport: Transport, @unchecked Sendable {
         case .error(let message):
             response = ["id": id, "error": ["code": -32601, "message": .string(message)]]
         }
-        continuation.yield(try JSONEncoder().encode(response))
-        for (name, params) in reply.notifications {
-            let notification: JSONValue = ["method": .string(name), "params": params]
-            continuation.yield(try JSONEncoder().encode(notification))
+        let notifications = try reply.notifications.map { name, params in
+            try JSONEncoder().encode(["method": .string(name), "params": params] as JSONValue)
         }
+        if reply.notifiesFirst { notifications.forEach { continuation.yield($0) } }
+        continuation.yield(try JSONEncoder().encode(response))
+        if !reply.notifiesFirst { notifications.forEach { continuation.yield($0) } }
         for (id, method, params) in reply.requests {
             let request: JSONValue = ["id": id, "method": .string(method), "params": params]
             continuation.yield(try JSONEncoder().encode(request))
@@ -125,6 +126,8 @@ private actor FixtureScript {
     struct Reply: Sendable {
         let value: Value
         var notifications: [(String, JSONValue)] = []
+        /// The notifications go before the answer, as `thread/start`'s prompt does.
+        var notifiesFirst = false
         var requests: [(JSONValue, String, JSONValue)] = []
         /// Sent one every 16 ms after the reply, for the performance scenario.
         var stream: [(String, JSONValue)] = []
@@ -256,8 +259,9 @@ private actor FixtureScript {
             let info = ThreadInfo(threadId: id, status: .idle, cwd: "/tmp/sundown-fixture", appliedEffort: .medium,
                                   permissionMode: mode, lastSeq: 0)
             let turn = turnNotifications(threadID: id, input: params["input"])
+            // The prompt is on the chat's stream before the answer, which names it.
             return .init(value: .result(json(ThreadStartResult(thread: info, messageId: "fixture-sent-\(nextMessage)"))),
-                         notifications: turn + summaryChanged(id))
+                         notifications: turn + summaryChanged(id), notifiesFirst: true)
         case "turn/start":
             let id = params["threadId"]?.stringValue ?? UITestFixture.threadID
             if options.performance { return performanceTurn(threadID: id, input: params["input"]) }

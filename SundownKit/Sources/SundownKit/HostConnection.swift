@@ -243,6 +243,10 @@ public final class HostConnection: Identifiable {
         afterTurnTask = nil
         notificationTask?.cancel()
         for t in threads.values { t.clearPending() }
+        // A start whose prompt hadn't come in by then moves to its chat as it is: nothing more
+        // comes on this connection.
+        for waiting in awaitingEcho.values { waiting.op.markReady(echo: nil) }
+        awaitingEcho = [:]
     }
 
     /// Tries again after `ReconnectBackoff`'s wait, or, for an SSH host while the Mac is off the
@@ -304,7 +308,10 @@ public final class HostConnection: Identifiable {
         if letGo.contains(tid), n.isItemContent { return }
         guard model.apply(n) else { return }
         // A chat started from New Chat, whose window moves to it once it has the prompt's echo.
-        if let op = awaitingEcho[tid], noteReadiness(op, in: model) { awaitingEcho[tid] = nil }
+        if let waiting = awaitingEcho[tid], model.itemIndex(of: waiting.messageId) != nil {
+            awaitingEcho[tid] = nil
+            waiting.op.markReady(echo: waiting.messageId)
+        }
         if case .threadStarted = n { attach(model) }
         // Its query is gone. The next send resumes it with history rather than streaming into a
         // subscription to the process that ended.
@@ -593,46 +600,32 @@ public final class HostConnection: Identifiable {
     }
 
     /// Starts a chat `prepareStart` made, with `thread/start` as ever: the host's chat, which is
-    /// the model its notifications already went to if any came first. A Stop pressed meanwhile
-    /// interrupts it now. The start is ready for its window once the chat shows the prompt's echo.
-    /// A failure isn't tried again: the host may have started the chat before the connection went.
+    /// the model its notifications already went to. A Stop pressed meanwhile interrupts it now.
+    /// The start is ready for its window once the chat holds the prompt the host says it made
+    /// (`messageId`), which the host sends before its answer. A failure isn't tried again: the
+    /// host may have started the chat before the connection went.
     public func start(_ op: PendingStart) async throws -> ThreadModel {
-        let model: ThreadModel
+        let started: (model: ThreadModel, messageId: String?)
         do {
-            model = try await startThread(cwd: op.cwd, input: op.input, options: op.options)
+            started = try await begin(cwd: op.cwd, input: op.input, options: op.options)
         } catch {
             op.resolve(.failure(error))
             throw error
         }
+        let model = started.model
         op.resolve(.success(model))
-        watchForEcho(op, in: model)
+        if let id = started.messageId, model.itemIndex(of: id) == nil {
+            // On the wire before the answer, but maybe not applied yet.
+            awaitingEcho[model.id] = (op, id)
+        } else {
+            op.markReady(echo: started.messageId)
+        }
         if op.interruptRequested { await interrupt(model) }
         return model
     }
 
-    /// Starts that are waiting for their chat's echo of the prompt, by the chat's id.
-    @ObservationIgnored private var awaitingEcho: [String: PendingStart] = [:]
-    /// How long a start waits for its echo before its window moves to the chat anyway.
-    @ObservationIgnored var echoWait: Duration = .seconds(2)
-
-    private func watchForEcho(_ op: PendingStart, in model: ThreadModel) {
-        if noteReadiness(op, in: model) { return }
-        awaitingEcho[model.id] = op
-        let wait = echoWait
-        Task { [weak self] in
-            try? await Task.sleep(for: wait)
-            guard let self, self.awaitingEcho[model.id] === op else { return }
-            self.awaitingEcho[model.id] = nil
-            op.markReady(echo: nil)
-        }
-    }
-
-    /// Marks the start ready once its chat shows enough to take the placeholder's place.
-    private func noteReadiness(_ op: PendingStart, in model: ThreadModel) -> Bool {
-        let readiness = op.readiness(of: model)
-        if readiness.ready { op.markReady(echo: readiness.echo) }
-        return readiness.ready
-    }
+    /// Starts whose chat hasn't applied the prompt's item yet, by the chat's id, with the item's.
+    @ObservationIgnored private var awaitingEcho: [String: (op: PendingStart, messageId: String)] = [:]
 
     /// Sent while a chat is starting: it goes to the chat once the host has started it. False,
     /// with nothing sent, when the start failed.
@@ -652,6 +645,11 @@ public final class HostConnection: Identifiable {
     }
 
     public func startThread(cwd: String, input: [UserInput], options: NewThreadOptions) async throws -> ThreadModel {
+        try await begin(cwd: cwd, input: input, options: options).model
+    }
+
+    /// `thread/start`: the chat, and the id of its prompt's item when there's a prompt.
+    private func begin(cwd: String, input: [UserInput], options: NewThreadOptions) async throws -> (model: ThreadModel, messageId: String?) {
         guard let client else { throw RPCError.notConnected }
         let r = try await client.call(Methods.ThreadStart.self, .init(
             cwd: cwd,
@@ -670,7 +668,7 @@ public final class HostConnection: Identifiable {
         subscribed.insert(model.id)
         // In a worktree the chat's directory is the worktree's, not the one chosen.
         attach(model)
-        return model
+        return (model, r.messageId)
     }
 
     /// Not loaded in the daemon, or only followed: resume it there. A follower numbers its events
