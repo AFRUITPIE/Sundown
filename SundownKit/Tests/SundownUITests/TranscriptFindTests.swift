@@ -69,9 +69,9 @@ struct TranscriptFindTests {
         #expect(Set(find.matches).isSubset(of: shown.map(\.id)))
     }
 
-    /// Find keeps each row's text and result between searches; whatever changes — the query, rows
-    /// added, a row's contents — the matches are what searching every row afresh finds.
-    @Test func keptResultsMatchSearchingAfresh() {
+    /// Whatever changes — the query, rows added, a row's contents — the matches are the rows that
+    /// hold the query, in order.
+    @Test func matchesFollowTheQueryAndTheRows() {
         let find = TranscriptFind()
         var shown = rows()
         func check(_ query: String, _ note: Comment) {
@@ -85,14 +85,14 @@ struct TranscriptFindTests {
         check("RÉDUCER", "case and diacritics")
         shown.append(.item(.agentMessage(.init(id: "a3", createdAt: 4, text: "The reducer again."))))
         check("reducer", "a row added")
-        // A row that changes in place, as a reply does while it streams, is searched again.
+        // A row that changes in place, as a reply does while it streams.
         shown[3] = .item(.agentMessage(.init(id: "a2", createdAt: 3, text: "Nothing else about the reducer.")))
         check("reducer", "a row changed")
         shown[1] = .item(.agentMessage(.init(id: "a1", createdAt: 1, text: "Batched per frame.")))
         check("reducer", "a match gone")
         shown.removeFirst()
         check("reducer", "a row gone")
-        check("threadmodel", "another query over kept text")
+        check("threadmodel", "another query")
     }
 
     /// Typing searches a moment later, off the main actor, and finds what searching at once finds.
