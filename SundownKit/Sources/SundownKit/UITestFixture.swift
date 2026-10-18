@@ -573,11 +573,11 @@ enum PerformanceTranscript {
                                    input: ["pattern": .string("readingColumn"), "path": .string("SundownKit/Sources")],
                                    status: status, outputText: files.map { "SundownKit/Sources/SundownUI/\($0)" }.joined(separator: "\n")))
         case 3:
-            return .toolCall(.init(id: id, createdAt: time, name: "Edit", kind: .fileEdit,
+            return .toolCall(Item.ToolCall(id: id, createdAt: time, name: "Edit", kind: .fileEdit,
                                    input: ["file_path": .string(file), "old_string": .string("let blocks = parse(text)"),
                                            "new_string": .string("let blocks = cache.blocks(for: text)")],
                                    status: status, outputText: failed ? "String to replace not found in file." : "The file \(file) has been updated.",
-                                   isError: failed ? true : nil))
+                                   isError: failed ? true : nil).withComparedEdit)
         default:
             return .toolCall(.init(id: id, createdAt: time, name: "Glob", kind: .glob, input: ["pattern": .string("**/*View.swift")],
                                    status: status, outputText: files.map { "SundownKit/Sources/SundownUI/\($0)" }.joined(separator: "\n")))

@@ -152,7 +152,10 @@ struct ToolCallView: View {
             }
         case .fileEdit:
             Text("Changes").scaledFont(.caption, weight: .semibold).foregroundStyle(.secondary)
-            if let old = input.string("old_string"), let new = input.string("new_string") {
+            if let edit = call.edit {
+                // What it changed, as Claude Code reported it.
+                FileEditDiff(edit: edit)
+            } else if let old = input.string("old_string"), let new = input.string("new_string") {
                 DiffView(old: old, new: new)
             } else if let edits = input["edits"]?.arrayValue {
                 VStack(alignment: .leading) {
@@ -335,7 +338,7 @@ struct ToolCallGroupView: View {
     let calls: [Item.ToolCall]
     /// The turn's edits, when they come right after this run: said in its line and listed under
     /// its calls.
-    var edits: TurnEdits? = nil
+    var edits: EditedFiles? = nil
     let thread: ThreadModel
     /// The transcript row's id, so Find in Chat opens the group when it's the current match.
     var rowID: String?
@@ -482,17 +485,46 @@ struct TodoListView: View {
     }
 }
 
-/// Line diff between two strings (removed in red, added in green); collapses past `lineLimit` lines.
-/// Each run of lines of one kind is one text on one tint, not a view per line.
+/// What one finished edit changed: each hunk as a diff of its own, and a note for lines past what's
+/// kept.
+struct FileEditDiff: View {
+    let edit: FileEdit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(edit.hunks.enumerated()), id: \.offset) { _, hunk in
+                DiffView(hunk: hunk)
+            }
+            if let more = edit.truncatedLines, more > 0 {
+                Text("\(more.formatted()) more lines aren’t shown.")
+                    .scaledFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// A line diff (removed in red, added in green): a hunk the daemon diffed, or two strings compared
+/// here (a request's proposed edit, a call still running); collapses past `lineLimit` lines. Each
+/// run of lines of one kind is one text on one tint, not a view per line.
 struct DiffView: View {
-    let old: String
-    let new: String
+    let key: Key
     var lineLimit = 24
     @State private var expanded = false
-    /// A large diff, worked out off the main actor: it's O(old × new).
+    /// A large diff, worked out off the main actor: comparing two texts is O(old × new).
     @State private var loaded: Loaded?
     // Cached: the transcript redraws on every streamed delta.
     @State private var cache = DiffCache()
+
+    init(old: String, new: String, lineLimit: Int = 24) {
+        key = .texts(old: old, new: new)
+        self.lineLimit = lineLimit
+    }
+
+    init(hunk: DiffHunk, lineLimit: Int = 24) {
+        key = .hunk(hunk)
+        self.lineLimit = lineLimit
+    }
 
     struct Line: Hashable { let sign: Character; let text: String }
 
@@ -513,9 +545,9 @@ struct DiffView: View {
         let collapsed: [Run]
     }
 
-    struct Key: Equatable, Sendable {
-        let old: String
-        let new: String
+    enum Key: Equatable, Sendable {
+        case texts(old: String, new: String)
+        case hunk(DiffHunk)
     }
 
     private struct Loaded {
@@ -524,9 +556,13 @@ struct DiffView: View {
         let diff: Diff
     }
 
-    /// The same comparison the edited-files row counts with (`LineDiff`), as signed lines.
+    /// Two texts compared (`LineDiff`), as signed lines.
     nonisolated static func diff(old: String, new: String) -> [Line] {
-        LineDiff.lines(old: old, new: new).map { line in
+        signed(LineDiff.lines(old: old, new: new))
+    }
+
+    nonisolated static func signed(_ lines: [LineDiff.Line]) -> [Line] {
+        lines.map { line in
             switch line.kind {
             case .removed: Line(sign: "-", text: line.text)
             case .added: Line(sign: "+", text: line.text)
@@ -554,7 +590,10 @@ struct DiffView: View {
     }
 
     nonisolated static func diff(_ key: Key, lineLimit: Int) -> Diff {
-        let lines = diff(old: key.old, new: key.new)
+        let lines = switch key {
+        case .texts(let old, let new): diff(old: old, new: new)
+        case .hunk(let hunk): signed(hunk.diffLines)
+        }
         return Diff(lineCount: lines.count, all: runs(lines), collapsed: runs(lines.prefix(lineLimit)))
     }
 
@@ -563,12 +602,16 @@ struct DiffView: View {
         diff(key, lineLimit: lineLimit)
     }
 
-    /// Nearly every edit is a few lines, worked out at once so it's drawn with its row; a larger one
-    /// is worked out off the main actor.
-    private static func isSmall(_ key: Key) -> Bool { key.old.utf8.count + key.new.utf8.count <= 16 * 1024 }
+    /// Nearly every edit is a few lines, worked out at once so it's drawn with its row; two large
+    /// texts are compared off the main actor. A hunk is already a diff.
+    private static func isSmall(_ key: Key) -> Bool {
+        switch key {
+        case .texts(let old, let new): old.utf8.count + new.utf8.count <= 16 * 1024
+        case .hunk: true
+        }
+    }
 
     var body: some View {
-        let key = Key(old: old, new: new)
         let diff = Self.isSmall(key) ? cache.diff(key, lineLimit: lineLimit)
             : loaded.flatMap { $0.lineLimit == lineLimit && $0.key == key ? $0.diff : nil }
         VStack(alignment: .leading, spacing: 0) {

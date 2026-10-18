@@ -109,7 +109,9 @@ enum ShowcaseTranscript {
 
     private static func call(_ id: String, _ name: String, _ kind: ToolKind, _ input: JSONValue, at time: Double,
                              status: ToolStatus = .completed, output: String? = nil) -> Item {
-        .toolCall(.init(id: id, createdAt: time, name: name, kind: kind, input: input, status: status, outputText: output))
+        // An edit's change, as the daemon sends it with the finished call.
+        .toolCall(Item.ToolCall(id: id, createdAt: time, name: name, kind: kind, input: input, status: status, outputText: output)
+            .withComparedEdit)
     }
 
     private static func path(_ file: String) -> JSONValue { .string("\(tidecast)/\(file)") }

@@ -3,17 +3,17 @@ import SundownKit
 import TetherProtocol
 
 /// The files a finished turn edited, after its last reply, as quiet as a tool row: "Edited 3 files
-/// +42 −7", counted from the turn's own edits (`TurnEdits`). Open, one line per file, each opening
+/// +42 −7", from the turn's own edits (`EditedFiles`). Open, one line per file, each opening
 /// to its diff beneath it, and Restore Files…, which puts the files back as they were before the
 /// turn's prompt (Restore Code to Here…'s preview and confirmation). Nothing indents.
 struct TurnEditsView: View {
-    let edits: TurnEdits
+    let edits: EditedFiles
     /// The chat's directory, which each file's directory is shown relative to.
     let cwd: String?
     @State private var expanded: Bool
     private let openFiles: Set<String>
 
-    init(edits: TurnEdits, cwd: String?, expanded: Bool = false, openFiles: Set<String> = []) {
+    init(edits: EditedFiles, cwd: String?, expanded: Bool = false, openFiles: Set<String> = []) {
         self.edits = edits
         self.cwd = cwd
         _expanded = State(initialValue: expanded)
@@ -40,12 +40,12 @@ struct TurnEditsView: View {
 /// A turn's edited files, one line each opening to its diffs, and Restore Files…: what the turn's
 /// edits row opens to, or a run of calls that took them in.
 struct TurnEditsList: View {
-    let edits: TurnEdits
+    let edits: EditedFiles
     let cwd: String?
     @State private var openFiles: Set<String>
     @Environment(\.windowRef) private var windowRef
 
-    init(edits: TurnEdits, cwd: String?, openFiles: Set<String> = []) {
+    init(edits: EditedFiles, cwd: String?, openFiles: Set<String> = []) {
         self.edits = edits
         self.cwd = cwd
         _openFiles = State(initialValue: openFiles)
@@ -71,7 +71,7 @@ struct TurnEditsList: View {
 /// One file a turn edited: its name, the directory it's in, what the turn added and removed, and,
 /// open, the turn's edits to it as diffs.
 private struct EditedFileRow: View {
-    let file: TurnEdits.File
+    let file: EditedFiles.File
     let cwd: String?
     @Binding var isOpen: Bool
     @Environment(\.hostIsLocal) private var hostIsLocal
@@ -80,8 +80,8 @@ private struct EditedFileRow: View {
     var body: some View {
         DisclosureGroup(isExpanded: $isOpen) {
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(file.changes.enumerated()), id: \.offset) { _, change in
-                    DiffView(old: change.old, new: change.new)
+                ForEach(Array(file.edits.enumerated()), id: \.offset) { _, edit in
+                    FileEditDiff(edit: edit)
                 }
             }
         } label: {
@@ -141,7 +141,7 @@ struct LineCounts: View {
 /// A turn's edits as `ThreadModel` summarizes them: two edits to one file, a new file, and one
 /// elsewhere in the chat's directory.
 @MainActor
-private func sampleTurnEdits() -> TurnEdits {
+private func sampleTurnEdits() -> EditedFiles {
     let thread = ThreadModel.sampleWorkChat()
     let rows = thread.rows(.summarized)
     for case .turnEdits(let edits) in rows where edits.files.count > 1 { return edits }

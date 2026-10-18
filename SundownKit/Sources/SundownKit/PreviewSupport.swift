@@ -57,9 +57,11 @@ extension Item.ToolCall {
         parentToolUseId: String? = nil,
         secondsAgo: Double
     ) -> Item.ToolCall {
-        .init(id: id, parentToolUseId: parentToolUseId, createdAt: preview(secondsAgo: secondsAgo),
-              name: name, kind: kind, input: input, status: status, outputText: outputText,
-              isError: isError, elapsedSeconds: elapsedSeconds, skillInstructions: skillInstructions)
+        // An edit's change, as the daemon sends it with the finished call.
+        Item.ToolCall(id: id, parentToolUseId: parentToolUseId, createdAt: preview(secondsAgo: secondsAgo),
+                      name: name, kind: kind, input: input, status: status, outputText: outputText,
+                      isError: isError, elapsedSeconds: elapsedSeconds, skillInstructions: skillInstructions)
+            .withComparedEdit
     }
 }
 

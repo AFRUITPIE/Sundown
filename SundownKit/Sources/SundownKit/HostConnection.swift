@@ -588,12 +588,10 @@ public final class HostConnection: Identifiable {
             items.removeFirst(start)
             hasMore = true
         }
-        // Counted before the page goes in, so its first draw only looks them up. Events that land
-        // meanwhile are replayed by the subscription after `historySeq` below.
-        let changes = await FileChange.changes(ofCallsIn: items)
         if let s = r.summary { model.setSummary(s) }
         letGo.remove(model.id)
-        model.loadHistory(items: items, turns: r.turns, seq: r.historySeq, hasMore: hasMore, tasks: r.tasks, fileChanges: changes)
+        // Events that land meanwhile are replayed by the subscription after `historySeq` below.
+        model.loadHistory(items: items, turns: r.turns, seq: r.historySeq, hasMore: hasMore, tasks: r.tasks)
         if let seq = r.historySeq {
             // Loaded in the daemon: stream everything after the snapshot, and the tasks as they
             // stand once it's replayed.
@@ -855,11 +853,10 @@ public final class HostConnection: Identifiable {
         do {
             let r = try await client.call(Methods.ThreadRead.self, .init(
                 threadId: model.id, cwd: model.cwd, limit: Self.olderHistoryPageSize, before: oldest))
-            let changes = await FileChange.changes(ofCallsIn: r.items)
             // Only onto what it was asked before: a chat trimmed or let go meanwhile would be left
             // with a gap between the page and what it now holds. Asked again, from what it holds.
             guard !Task.isCancelled, model.itemIndex(of: oldest) == 0 else { return .busy }
-            model.prependHistory(items: r.items, hasMore: r.hasMore ?? false, fileChanges: changes)
+            model.prependHistory(items: r.items, hasMore: r.hasMore ?? false)
             return .loaded
         } catch {
             appendLog("Loading older history for \(model.id) failed: \(error.localizedDescription)")

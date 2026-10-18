@@ -8,13 +8,13 @@ public indirect enum TranscriptRow: Sendable, Equatable {
     case item(Item)
     /// A run of calls; `edits`, when the turn's edits come right after it, are the turn's too
     /// ("Ran a command and edited 3 files").
-    case toolGroup([Item.ToolCall], edits: TurnEdits? = nil)
+    case toolGroup([Item.ToolCall], edits: EditedFiles? = nil)
     /// Everything a finished turn did before its last message, as one "Worked for" line
     /// (View ▸ Tool Calls ▸ Worked For). `durationMs` runs from the prompt to that
     /// message, when both are known.
     case turnWork(id: String, rows: [TranscriptRow], durationMs: Double?)
     /// The files a finished turn edited, after its last row.
-    case turnEdits(TurnEdits)
+    case turnEdits(EditedFiles)
     /// When a prompt was sent, above it, where the chat picks up after a break (`DateSeparators`).
     case dateSeparator(promptID: String, ms: Double)
 
@@ -201,9 +201,9 @@ private extension Item {
 }
 
 /// Folded rows with what goes between turns: a date above each prompt in `dates` (by prompt id,
-/// from `DateSeparators.prompts`), and each turn's edits in `edits` (from `turnEdits`) after the
+/// from `DateSeparators.prompts`), and each turn's edits in `edits` (from `editedFiles`) after the
 /// turn's last row, before the next prompt's date.
-public func decorateTranscriptRows(_ rows: [TranscriptRow], dates: [String: Double], edits: [String: TurnEdits]) -> [TranscriptRow] {
+public func decorateTranscriptRows(_ rows: [TranscriptRow], dates: [String: Double], edits: [String: EditedFiles]) -> [TranscriptRow] {
     guard !dates.isEmpty || !edits.isEmpty else { return rows }
     var out: [TranscriptRow] = []
     out.reserveCapacity(rows.count + dates.count + edits.count)
@@ -282,7 +282,8 @@ public enum DateSeparators {
 }
 
 /// The transcript's rows as drawn: `items` (the chat's own and its subagents') folded as `folding`
-/// says, with the date above each prompt after a break and each finished turn's edits after it.
+/// says, with the date above each prompt after a break and each finished turn's edits after it
+/// (`totals`: each turn's own, by its id).
 /// `running` is for the chat's last turn while it runs. Items that begin at a prompt can be folded
 /// apart from those before them, cut where folding the whole chat cuts (a prompt ends any run of
 /// calls, starts a Worked For turn and a turn's edits): `dates` carries the date separators across.
@@ -290,7 +291,7 @@ public enum DateSeparators {
 /// above has put it right after another: taking it away moved every row under it while the reader
 /// looked at the top.
 func transcriptRows(_ items: ArraySlice<Item>, folding: TranscriptFolding, running: Bool, dates carry: inout DateSeparators.Carry,
-                    dated: inout Set<String>, changes: (Item.ToolCall) -> [FileChange]) -> [TranscriptRow] {
+                    dated: inout Set<String>, totals: [String: TurnEdits]) -> [TranscriptRow] {
     let top = items.filter { $0.parentToolUseId == nil }
     var dates = DateSeparators.prompts(in: top, after: &carry)
     for case .userMessage(let m) in top where m.createdAt > 0 && dates[m.id] == nil && dated.contains(m.id) {
@@ -298,7 +299,7 @@ func transcriptRows(_ items: ArraySlice<Item>, folding: TranscriptFolding, runni
     }
     dated.formUnion(dates.keys)
     return decorateTranscriptRows(foldTranscriptRows(top, folding: folding, lastTurnRunning: running), dates: dates,
-                                  edits: turnEdits(in: Array(items), lastTurnRunning: running, changes: changes))
+                                  edits: editedFiles(in: Array(items), lastTurnRunning: running, totals: totals))
 }
 
 /// One of the reader's own prompts, for VoiceOver's Prompts rotor: its row's id and its first words.

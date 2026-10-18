@@ -87,14 +87,6 @@ public final class ThreadModel: Identifiable {
     /// The first index in `storage` changed since `folded` was made: the turns before the last one
     /// are kept unless it's among them.
     @ObservationIgnored private var refoldFrom = 0
-    /// Each finished edit call's changes, by call id: counting a change diffs its old and new text,
-    /// and a finished call's input never changes, so the earlier turns aren't diffed again every
-    /// time the running one adds an item. Worked out off the main actor as calls finish and pages
-    /// arrive (`remember(_:)`), so drawing the rows only looks them up.
-    @ObservationIgnored private(set) var fileChanges: [String: [FileChange]] = [:]
-    /// How many calls' changes the rows had to work out on the main actor, for tests: none, once
-    /// the pages and finished calls have been counted off it.
-    @ObservationIgnored private(set) var changesCountedOnMainActor = 0
     /// Each subagent's items, as their indexes in `storage`.
     @ObservationIgnored private var childIndexes: [String: [Int]] = [:]
     /// A finished workflow agent's transcript, by run and agent id, as `workflow/agentItems` read it.
@@ -248,13 +240,11 @@ public final class ThreadModel: Identifiable {
 
     /// Replace transcript with server history (thread/read or thread/resume includeHistory), and
     /// the tasks with the ones it came with, which are as of `seq`.
-    /// `fileChanges` are the page's edits, counted off the main actor.
     func loadHistory(items newItems: [Item], turns newTurns: [Turn], seq: Int?, hasMore: Bool = false,
-                     tasks newTasks: [TaskState]? = nil, fileChanges changes: [String: [FileChange]] = [:]) {
+                     tasks newTasks: [TaskState]? = nil) {
         reshaped(historyLoaded ? "reloaded \(newItems.count) items over \(storage.count)" : "loaded \(newItems.count) items")
         if let seq { lastSeq = seq }
         if let newTasks { setTasks(newTasks) }
-        remember(changes)
         storage = newItems
         if turns != newTurns { turns = newTurns }
         noteLastTurn()
@@ -269,20 +259,14 @@ public final class ThreadModel: Identifiable {
 
     private func reshaped(_ what: String) { lastReshape = (what, Date()) }
 
-    /// Add an older page to the front. `fileChanges` are its edits, counted off the main actor.
-    func prependHistory(items older: [Item], hasMore: Bool, fileChanges changes: [String: [FileChange]] = [:]) {
+    /// Add an older page to the front.
+    func prependHistory(items older: [Item], hasMore: Bool) {
         if hasMoreHistory != hasMore { hasMoreHistory = hasMore }
-        remember(changes)
         let fresh = older.filter { index[$0.id] == nil }
         guard !fresh.isEmpty else { return }
         reshaped("an older page of \(fresh.count) items")
         storage.insert(contentsOf: fresh, at: 0)
         reindex()
-    }
-
-    /// Changes counted ahead of drawing, for the calls not already counted.
-    func remember(_ changes: [String: [FileChange]]) {
-        for (id, c) in changes where fileChanges[id] == nil { fileChanges[id] = c }
     }
 
     /// Every bulk replacement of `items` goes through here, so the fallback title is refreshed
@@ -317,7 +301,6 @@ public final class ThreadModel: Identifiable {
     /// Drops the transcript so the next open reads it afresh.
     func unload() {
         reshaped("unloaded")
-        fileChanges = [:]
         started = [:]
         openingPrompt = nil
         storage = []
@@ -352,7 +335,6 @@ public final class ThreadModel: Identifiable {
         workflowAgentItems = workflowAgentItems.filter { key, _ in
             key.split(separator: "/", maxSplits: 1).first.map { runs.contains(String($0)) } ?? false
         }
-        fileChanges = fileChanges.filter { held.contains($0.key) }
         if !hasMoreHistory { hasMoreHistory = true }
     }
 
@@ -389,6 +371,8 @@ public final class ThreadModel: Identifiable {
             Signposts.replyEnded(in: self)
             upsertTurn(e.turn)
             setStreamingReply(nil)
+        case .turnUpdated(let e):
+            upsertTurn(e.turn)
         case .itemStarted(let e):
             if index[e.item.id] == nil {
                 noteStarted(e.item.id)
@@ -480,8 +464,16 @@ public final class ThreadModel: Identifiable {
     func noteSeen() { if hasUnseenReply { hasUnseenReply = false } }
 
     private func upsertTurn(_ t: Turn) {
-        if let i = turns.lastIndex(where: { $0.id == t.id }) { turns[i] = t } else { turns.append(t) }
+        let held = turns.lastIndex(where: { $0.id == t.id })
+        let edits = held.map { turns[$0].edits } ?? nil
+        if let i = held { turns[i] = t } else { turns.append(t) }
         noteLastTurn()
+        // Its edits' totals are drawn after it (at its end, or when a background agent edits a
+        // file later): its rows fold again from its prompt.
+        if edits != t.edits, let prompt = storage.lastIndex(where: { $0.isPrompt && $0.turnId == t.id }) {
+            refoldFrom = min(refoldFrom, prompt)
+            itemsVersion &+= 1
+        }
     }
 
     private func upsert(_ item: Item) {
@@ -507,7 +499,6 @@ public final class ThreadModel: Identifiable {
         } else {
             noteChange(of: item, at: i, isNew: previous == nil, was: previous)
         }
-        if case .toolCall(let call) = item, call.changesFiles, fileChanges[id] == nil { countChanges(of: call) }
         // Only an opening user message can move the title, and only until Claude names the session.
         if isUnnamed, case .userMessage(let m) = item, m.synthetic != true { refreshTitle() }
     }
@@ -523,16 +514,6 @@ public final class ThreadModel: Identifiable {
         if item.parentToolUseId == nil || item.isEditCall || previous?.isEditCall == true {
             refoldFrom = min(refoldFrom, i)
             itemsVersion &+= 1
-        }
-    }
-
-    /// Counts a finished edit's changes off the main actor, for its turn's edits once it ends.
-    private func countChanges(of call: Item.ToolCall) {
-        Task { [weak self] in
-            let changes = await FileChange.changes(ofCallsIn: [.toolCall(call)])
-            // Unless it was let go meanwhile.
-            guard let self, self.index[call.id] != nil else { return }
-            self.remember(changes)
         }
     }
 
@@ -713,8 +694,9 @@ public final class ThreadModel: Identifiable {
         folded = nil
         f.rows.removeSubrange(f.lastTurnRows...)
         f.prompts.removeSubrange(f.lastTurnPrompts...)
+        let totals = Dictionary(turns.compactMap { t in t.edits.map { (t.id, $0) } }, uniquingKeysWith: { _, b in b })
         func fold(_ items: Range<Int>, running: Bool, dates: inout DateSeparators.Carry) -> [TranscriptRow] {
-            transcriptRows(storage[items], folding: folding, running: running, dates: &dates, dated: &datedPrompts) { self.changes(of: $0) }
+            transcriptRows(storage[items], folding: folding, running: running, dates: &dates, dated: &datedPrompts, totals: totals)
         }
         // The turns finished since go with those kept.
         let lastTurn = storage.lastIndex(where: \.isPrompt) ?? 0
@@ -749,17 +731,7 @@ public final class ThreadModel: Identifiable {
     var itemsHeld: Int {
         storage.count + boxes.count
             + (folded?.rows.count ?? 0) + childIndexes.values.reduce(0) { $0 + $1.count }
-            + fileChanges.count + started.count
-    }
-
-    private func changes(of call: Item.ToolCall) -> [FileChange] {
-        // Every other call changed nothing, and takes nothing to say so.
-        guard call.changesFiles else { return [] }
-        if let known = fileChanges[call.id] { return known }
-        changesCountedOnMainActor += 1
-        let changes = FileChange.changes(of: call)
-        fileChanges[call.id] = changes
-        return changes
+            + started.count
     }
 
     /// Position of an item in the transcript, for views that need to know what came after it.
@@ -844,6 +816,20 @@ extension Item {
         case .error(let v): return v.parentToolUseId
         case .notice(let v): return v.parentToolUseId
         case .unknown(let v): return v["parentToolUseId"]?.stringValue
+        }
+    }
+
+    /// The turn it's part of.
+    public var turnId: String? {
+        switch self {
+        case .userMessage(let v): return v.turnId
+        case .agentMessage(let v): return v.turnId
+        case .reasoning(let v): return v.turnId
+        case .toolCall(let v): return v.turnId
+        case .compaction(let v): return v.turnId
+        case .error(let v): return v.turnId
+        case .notice(let v): return v.turnId
+        case .unknown(let v): return v["turnId"]?.stringValue
         }
     }
 
