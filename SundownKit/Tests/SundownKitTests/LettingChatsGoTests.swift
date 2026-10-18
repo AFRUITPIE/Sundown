@@ -17,8 +17,10 @@ struct LettingChatsGoTests {
     }
 
     private func edit(_ id: String, _ n: Int, parent: String? = nil, status: ToolStatus = .completed) -> Item {
-        .toolCall(.init(id: id, parentToolUseId: parent, createdAt: Double(1_000 + n), name: "Edit", kind: .fileEdit,
-                        input: ["file_path": "/repo/a.swift", "old_string": "a\nb\nc", "new_string": "a\nB\nc\nd"], status: status))
+        // With its change, as the daemon sends a finished one.
+        .toolCall(Item.ToolCall(id: id, parentToolUseId: parent, createdAt: Double(1_000 + n), name: "Edit", kind: .fileEdit,
+                                input: ["file_path": "/repo/a.swift", "old_string": "a\nb\nc", "new_string": "a\nB\nc\nd"],
+                                status: status).withComparedEdit)
     }
 
     private func subagent(_ id: String, _ n: Int) -> Item {
@@ -64,7 +66,6 @@ struct LettingChatsGoTests {
         #expect(thread.historyLoaded && thread.hasMoreHistory)
         #expect(thread.turns.map(\.id) == ["t1"])
         #expect(thread.foldingsHeld.isEmpty)
-        #expect(thread.fileChanges["edit-early"] == nil)
         #expect(thread.children(of: "agent").map(\.id) == ["agent-edit"])
 
         // The stream goes on from where it was: a replay of what's held is refused, the next event
@@ -96,25 +97,20 @@ struct LettingChatsGoTests {
         #expect(thread.title == "Prompt 0")
     }
 
-    /// As with a page loaded afresh, a finished task whose call was let go isn't listed; a running
-    /// one still is, so it can be stopped.
-    @Test func trimmingLetsGoOfFinishedTasksWhoseCallWent() {
+    /// The tasks are the chat's, as the daemon says them, whatever page of items is held: one whose
+    /// call was let go is still listed, and can still be stopped.
+    @Test func trimmingKeepsTheChatsTasks() {
         let thread = ThreadModel(id: threadID)
         var items = transcript
         items[2] = subagent("early-agent", 2)
-        thread.loadHistory(items: items, turns: [], seq: 60)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 61, event: "started", taskId: "done", toolUseId: "early-agent",
-                                      status: "completed", data: [:])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 62, event: "started", taskId: "going", toolUseId: "m4",
-                                      status: "running", data: [:])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 63, event: "started", taskId: "late", toolUseId: "agent",
-                                      status: "completed", data: [:])))
+        let tasks = [TaskState(id: "early-agent", toolUseId: "early-agent", kind: .agent, title: "early", status: .done),
+                     TaskState(id: "agent", toolUseId: "agent", kind: .agent, title: "late", status: .running)]
+        thread.loadHistory(items: items, turns: [], seq: 60, tasks: tasks)
 
         thread.trim(toLast: 50)
 
-        #expect(Set(thread.tasks.keys) == ["going", "late"])
-        #expect(thread.taskEntries.map(\.id) == ["agent", "task:going"])
-        #expect(thread.taskEvent(forToolUseId: "agent")?.taskId == "late")
+        #expect(thread.tasks == tasks)
+        #expect(thread.callTasks.keys.sorted() == ["agent", "early-agent"])
     }
 
     /// A background command's call on a page not held, finishing now: the page brings it when it
@@ -208,13 +204,13 @@ struct LettingChatsGoTests {
 
         daemon.emit("thread/status/changed", ["threadId": .string(threadID), "seq": 101, "status": "idle"])
         try await eventually { thread.status == .idle }
-        await connection.afterTurn()
+        connection.afterTurn()
 
         #expect(thread.items.count == 50)
         #expect(thread.lastSeq == 101)
         #expect(connection.isLoaded(thread))
-        // And the chat list is refreshed with the latest few.
-        #expect(await daemon.script.params(of: "thread/list").last?["limit"]?.intValue == HostConnection.recentChatsLimit)
+        // The chat list isn't asked for again: the daemon tells of what changed in it.
+        #expect(await daemon.script.params(of: "thread/list").count == 1)
         await connection.disconnect()
     }
 
@@ -222,7 +218,7 @@ struct LettingChatsGoTests {
         let daemon = FakeDaemon()
         let (connection, thread) = await connect(daemon)
         _ = thread.rows(.summarized)
-        await connection.afterTurn()
+        connection.afterTurn()
         #expect(thread.items.count == 60)
         #expect(thread.foldingsHeld == [.summarized])
         await connection.disconnect()
@@ -253,44 +249,32 @@ struct LettingChatsGoTests {
         #expect(thread.items.count == 60)
     }
 
-    // MARK: edits counted off the main actor
+    // MARK: edits
 
-    /// A page's edits are counted before it goes in, so drawing its rows only looks them up.
-    @Test func aPagesEditsAreCountedBeforeItsFirstDraw() async throws {
+    /// A page's edits are its calls' own: its turns' edits are drawn from them, a subagent's included.
+    @Test func aPagesEditsAreItsCalls() async throws {
         let daemon = FakeDaemon()
         let (connection, thread) = await connect(daemon)
-        #expect(Set(thread.fileChanges.keys) == ["edit-early", "agent-edit", "edit-late"])
-        #expect(thread.fileChanges["edit-late"] == FileChange.changes(of: {
-            guard case .toolCall(let c) = edit("edit-late", 57) else { fatalError() }
-            return c
-        }()))
-        _ = thread.rows(.summarized)
-        #expect(thread.rows(.summarized).contains { $0.id == "edits-m50" })
-        #expect(thread.changesCountedOnMainActor == 0)
-
-        await daemon.script.queue("thread/read", ThreadReadResult(items: [edit("edit-older", -5)], turns: [], hasMore: false))
-        connection.leave(thread)
-        await connection.open(thread)
-        await connection.loadOlderHistory(thread)
-        #expect(thread.fileChanges["edit-older"] != nil)
+        guard case .turnEdits(let edits)? = thread.rows(.summarized).first(where: { $0.id == "edits-m50" }) else {
+            Issue.record("no edits for the turn from m50"); return
+        }
+        #expect(edits.files.map(\.path) == ["/repo/a.swift"])
+        #expect(edits.files.first?.edits.count == 2)
         await connection.disconnect()
     }
 
-    /// An edit finishing live is counted off the main actor too, by the time its turn ends.
-    @Test func aFinishedEditIsCountedOffTheMainActor() async throws {
+    /// An edit finishing live goes with its turn's last call once the turn ends.
+    @Test func aFinishedEditIsInItsTurnsLastRow() async throws {
         let thread = ThreadModel(id: threadID)
         thread.loadHistory(items: [message(0)], turns: [], seq: 1)
         thread.apply(.threadStatusChanged(.init(threadId: threadID, seq: 2, status: .running)))
         thread.apply(.itemStarted(.init(threadId: threadID, seq: 3, item: edit("live-edit", 1, status: .running))))
-        #expect(thread.fileChanges["live-edit"] == nil)
         thread.apply(.itemCompleted(.init(threadId: threadID, seq: 4, item: edit("live-edit", 1))))
-        try await eventually { thread.fileChanges["live-edit"] != nil }
         thread.apply(.threadStatusChanged(.init(threadId: threadID, seq: 5, status: .idle)))
         // The turn ends with the edit, so its edits are that call's row.
         guard case .toolGroup(let calls, let edits?)? = thread.rows(.summarized).last else {
             Issue.record("the turn's edits aren't with its last call"); return
         }
         #expect(calls.map(\.id) == ["live-edit"] && edits.promptID == "m0")
-        #expect(thread.changesCountedOnMainActor == 0)
     }
 }

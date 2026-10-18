@@ -14,8 +14,8 @@ import TetherProtocol
 @MainActor
 @Suite
 struct RPCBudgetTests {
-    /// initialize, then the catalog: project/list, model/list, account/read, thread/list.
-    static let connecting = 5
+    /// initialize, then the catalog: model/list, account/read, thread/list.
+    static let connecting = 4
     /// thread/read and thread/subscribe (ThreadView).
     static let openingAChat = 2
     /// The same for the chat switched to, and thread/unsubscribe for the one left: a chat the
@@ -24,11 +24,15 @@ struct RPCBudgetTests {
     /// thread/start alone: New Chat shows the chat at once from what it sent, and the chat it moves
     /// to has its history and subscription from the start, so ThreadView asks for nothing more.
     static let startingAChat = 1
-    /// thread/read and thread/subscribe, and workflow/read for its workflow's run: task events
-    /// aren't kept with history. A finished run read once isn't read again.
-    static let openingAChatWithAWorkflow = 3
+    /// Nothing more than any chat: its tasks, the workflow's among them, come with the read and the
+    /// subscription.
+    static let openingAChatWithAWorkflow = openingAChat
+    /// git/changes alone: the daemon diffs the working tree and reads its new files itself.
+    static let readingTheChanges = 1
+    /// Nothing: the chat list hears of what changed (`thread/summaryChanged`).
+    static let afterATurn = 0
 
-    @Test func aWorkflowsRunIsReadOnceItHasFinished() async throws {
+    @Test func aWorkflowsRunComesWithItsChat() async throws {
         let host = CountingHost()
         let connection = HostConnection(host: HostConfig(name: "Budget", kind: .ssh(destination: "budget.invalid")),
                                         transportProvider: { _ in host })
@@ -47,43 +51,41 @@ struct RPCBudgetTests {
 
         let open = try await show("chat-w")
         #expect(open.count <= Self.openingAChatWithAWorkflow, "opening a chat with a workflow: \(open)")
-        #expect(open.contains("workflow/read"))
         let thread = try #require(window.selectedThread)
-        try await eventually { thread.workflowRuns[WorkflowSample.callID]?.status == .completed }
-        #expect(thread.taskEntries.first?.workflow?.agents.count == 5)
+        #expect(thread.callTasks[WorkflowSample.callID]?.status == .done)
+        #expect(thread.tasks.filter { $0.parentId == WorkflowSample.callID }.count == 5)
 
         _ = try await show("chat-a")
         let back = try await show("chat-w")
-        #expect(!back.contains("workflow/read"), "reopening: \(back)")
-        #expect(thread.workflowRuns[WorkflowSample.callID]?.agents.count == 5)
+        #expect(back.count <= Self.switchingChats, "reopening: \(back)")
         await connection.disconnect()
     }
 
-    /// A run read as unknown (history with nothing to say) or paused may be going on still, so
-    /// reopening its chat reads it again rather than showing what was read before (#108).
-    @Test(arguments: ["unknown", "paused"])
-    func aWorkflowsRunIsReadAgainWhileItMayGoOn(status: String) async throws {
-        let host = CountingHost(workflowStatus: status)
+    @Test func readingTheChangesStaysWithinBudget() async throws {
+        let host = CountingHost()
         let connection = HostConnection(host: HostConfig(name: "Budget", kind: .ssh(destination: "budget.invalid")),
                                         transportProvider: { _ in host })
         await connection.connect()
-        let window = WindowModel(app: .sample(connections: [connection]), target: WindowTarget(hostID: connection.id))
-        window.start()
         _ = host.take()
+        let changes = try #require(try await connection.workingChanges(cwd: "/work/project"))
+        #expect(changes.files.map(\.path) == ["new.txt"])
+        let read = host.take()
+        #expect(read.count <= Self.readingTheChanges, "reading the changes: \(read)")
+        await connection.disconnect()
+    }
 
-        func show(_ id: String) async throws -> [String] {
-            window.threadID = id
-            let thread = try #require(window.selectedThread)
-            await connection.open(thread) // ThreadView's task
-            try await Task.sleep(for: .milliseconds(50))
-            return host.take()
-        }
-
-        let open = try await show("chat-w")
-        #expect(open.contains("workflow/read"))
-        _ = try await show("chat-a")
-        let back = try await show("chat-w")
-        #expect(back.contains("workflow/read"), "a \(status) run wasn't read again on reopening: \(back)")
+    @Test func aTurnsEndAsksForNothing() async throws {
+        let host = CountingHost()
+        let connection = HostConnection(host: HostConfig(name: "Budget", kind: .ssh(destination: "budget.invalid")),
+                                        transportProvider: { _ in host })
+        await connection.connect()
+        _ = host.take()
+        host.emit("turn/completed", json(TurnCompletedNotification(
+            threadId: "chat-a", seq: 6, turn: .init(id: "turn", status: .completed, startedAt: 1, completedAt: 2))))
+        // Past the moment after a turn when the list was once asked for again.
+        try await Task.sleep(for: .seconds(2.5))
+        let after = host.take()
+        #expect(after.count <= Self.afterATurn, "after a turn: \(after)")
         await connection.disconnect()
     }
 
@@ -144,12 +146,8 @@ private final class CountingHost: Transport, @unchecked Sendable {
     private var methods: [String] = []
     private let stream: AsyncThrowingStream<Data, any Error>
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
-    /// What `workflow/read` says of the run, in place of the sample's own (completed).
-    private let workflowStatus: String?
-
-    init(workflowStatus: String? = nil) {
+    init() {
         (stream, continuation) = AsyncThrowingStream.makeStream()
-        self.workflowStatus = workflowStatus
     }
 
     /// The requests since the last call.
@@ -174,12 +172,7 @@ private final class CountingHost: Transport, @unchecked Sendable {
                 continuation.yield(try JSONEncoder().encode(["method": .string(name), "params": body] as JSONValue))
             }
         }
-        var result = Self.result(method, message["params"] ?? [:])
-        if method == "workflow/read", let workflowStatus, case .object(var r)? = result, case .object(var run)? = r["workflow"] {
-            run["status"] = .string(workflowStatus)
-            r["workflow"] = .object(run)
-            result = .object(r)
-        }
+        let result = Self.result(method, message["params"] ?? [:])
         let reply: JSONValue = if let result {
             ["id": id, "result": result]
         } else {
@@ -190,6 +183,11 @@ private final class CountingHost: Transport, @unchecked Sendable {
 
     func close() async { continuation.finish() }
 
+    func emit(_ method: String, _ params: JSONValue) {
+        continuation.yield(try! JSONEncoder().encode(["method": .string(method), "params": params] as JSONValue))
+    }
+
+
     private static func result(_ method: String, _ params: JSONValue) -> JSONValue? {
         let thread = params["threadId"]?.stringValue ?? "chat-a"
         switch method {
@@ -198,7 +196,6 @@ private final class CountingHost: Transport, @unchecked Sendable {
                 serverInfo: .init(name: "tether-server", version: "test"), protocolVersion: tetherProtocolVersion,
                 host: .init(hostname: "budget", platform: "linux", arch: "arm64", home: "/home/dev", pid: 1, mode: .daemon),
                 claude: .init(path: "/usr/bin/claude", version: "test")))
-        case "project/list": return ["projects": []]
         case "model/list": return ["models": []]
         case "thread/list":
             return json(ThreadListResult(threads: ["chat-a", "chat-b", "chat-w"].map {
@@ -207,23 +204,31 @@ private final class CountingHost: Transport, @unchecked Sendable {
         case "thread/read":
             if thread == "chat-w" {
                 return json(ThreadReadResult(items: WorkflowSample.items(now: 1_000_000, running: false), turns: [],
-                                             historySeq: 5, hasMore: false))
+                                             historySeq: 5, hasMore: false, tasks: workflowTasks))
             }
             return json(ThreadReadResult(items: [.agentMessage(.init(id: "\(thread)-answer", createdAt: 1, text: "An answer."))],
                                          turns: [], historySeq: 5, hasMore: false))
-        case "workflow/read":
-            return ["workflow": WorkflowSample.snapshot(now: 1_000_000, running: false)]
         case "thread/subscribe":
             return json(ThreadSubscribeResult(thread: .init(threadId: thread, status: .notLoaded, cwd: "/work/project", lastSeq: 5),
-                                              replayed: 0, gap: false))
+                                              replayed: 0, gap: false, tasks: thread == "chat-w" ? workflowTasks : []))
+        case "git/changes":
+            return json(GitChangesResult(isRepo: true, root: "/work/project", branch: "main", files: [
+                WorkingFileChange(path: "new.txt", status: .untracked,
+                                  hunks: [DiffHunk(oldStart: 0, oldLines: 0, newStart: 1, newLines: 1, lines: ["+one line"])],
+                                  added: 1, removed: 0, truncatedLines: 0),
+            ], omittedFiles: 0))
         case "thread/unsubscribe": return [:]
         case "command/list": return ["commands": []]
         case "thread/start":
-            return json(ThreadStartResult(thread: .init(threadId: "chat-new", status: .running, cwd: "/work/project", lastSeq: 2)))
+            return json(ThreadStartResult(thread: .init(threadId: "chat-new", status: .running, cwd: "/work/project", lastSeq: 2),
+                                          messageId: "chat-new-prompt", turnId: "turn"))
         default: return nil
         }
     }
 }
+
+/// The finished workflow's tasks, as the daemon sends them with its chat.
+private let workflowTasks = WorkflowSample.tasks(now: 1_000_000, running: false)
 
 private func json<T: Encodable>(_ value: T) -> JSONValue {
     try! JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))

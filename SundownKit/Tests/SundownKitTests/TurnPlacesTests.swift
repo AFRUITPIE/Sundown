@@ -36,3 +36,24 @@ import TetherProtocol
         #expect(thread.turnReplies(through: "c") == ["Three"])
     }
 }
+
+/// A scheduled job's wakeup in a real chat (`sampleScheduledWork`, from the loop-goal capture).
+@MainActor @Suite struct WakeupTurnTests {
+    /// A wakeup starts a turn as a prompt does: it gets its turn's message actions and Copy, and
+    /// isn't one of the reader's prompts.
+    @Test func aWakeupStartsATurn() {
+        let thread = ThreadModel.sampleScheduledWork(finished: true)
+        let rows = thread.rows(.summarized)
+        let prompts = TranscriptPrompt.list(in: rows)
+        #expect(!prompts.contains { $0.id.hasPrefix("wakeup") })
+        let places = TurnPlaces(rows, prompts: prompts, running: false)
+        #expect(places.turns["wakeup-1"] == "wakeup-1")
+        // The turn's last reply ends the turn the wakeup started, not the /loop prompt's.
+        let reply = thread.items.firstIndex { $0.id == "wakeup-1" }.map { i in
+            thread.items[i...].first { if case .agentMessage = $0 { true } else { false } }!.id
+        }!
+        #expect(places.turns[reply] == "wakeup-1")
+        #expect(places.ends.contains(reply))
+        #expect(thread.turnReplies(through: reply) == ["It’s 22:13:14."])
+    }
+}

@@ -6,13 +6,13 @@ import TetherProtocol
 @MainActor
 @Suite
 struct SubagentInspectorTests {
-    @Test func nestedSubagentContentRoutesToOneInspectorEntry() {
+    @Test func nestedSubagentContentRoutesToOneTask() {
         let thread = ThreadModel.sampleToolCalls()
 
-        let entries = thread.taskEntries
-        let entry = entries.first { $0.id == "tool-subagent-explore" }
+        let task = thread.tasks.first { $0.id == "tool-subagent-explore" }
 
-        #expect(entry?.call?.kind == .subagent)
+        #expect(task?.kind == .agent)
+        #expect(thread.callTasks["tool-subagent-explore"] == task)
         #expect(thread.children(of: "tool-subagent-explore").count == 2)
         #expect(foldTranscriptRows(thread.topLevelItems).contains { row in
             if case .item(.toolCall(let call)) = row { return call.id == "tool-subagent-explore" }
@@ -23,72 +23,24 @@ struct SubagentInspectorTests {
         })
     }
 
-    @Test func taskLifecycleEnrichesTheMatchingInspectorEntry() {
+    /// The agent's row says how its task stands, as the daemon states it.
+    @Test func theRowFollowsTheAgentsTask() throws {
         let thread = ThreadModel.sampleToolCalls()
-        thread.apply(.taskEvent(.init(
-            threadId: thread.id,
-            seq: 20,
-            event: "progress",
-            taskId: "task-explore",
-            toolUseId: "tool-subagent-explore",
-            description: "Find every SwiftUI view",
-            status: "running",
-            summary: "Reading view files",
-            data: [:]
-        )))
-
-        let entry = thread.taskEntries.first { $0.id == "tool-subagent-explore" }
-
-        #expect(entry?.task?.taskId == "task-explore")
-        #expect(entry?.task?.summary == "Reading view files")
-        #expect(entry.map { SubagentLifecycle.title(call: $0.call!, task: $0.task) } == "Agent running")
-    }
-
-    @Test func terminalLifecycleUsesQuietChatSummaries() throws {
-        let thread = ThreadModel.sampleToolCalls()
-        let call = try #require(thread.taskEntries.first(where: { $0.id == "tool-subagent-explore" })?.call,
-                                "Missing subagent fixture")
-        let completed = TaskEventNotification(
-            threadId: thread.id, seq: 21, event: "updated", taskId: "task-explore",
-            toolUseId: call.id, description: nil, status: "completed", summary: nil, data: [:]
-        )
-
-        #expect(SubagentLifecycle.title(call: call, task: completed) == "Agent finished")
-        #expect(!SubagentLifecycle.isRunning(call: call, task: completed))
-    }
-
-    @Test func backgroundSnapshotUpdatesTheChatAndInspectorLifecycle() throws {
-        let thread = ThreadModel.sampleToolCalls()
-        thread.apply(.taskEvent(.init(
-            threadId: thread.id,
-            seq: 20,
-            event: "started",
-            taskId: "task-explore",
-            toolUseId: "tool-subagent-explore",
-            description: "Find every SwiftUI view",
-            status: "running",
-            summary: nil,
-            data: [:]
-        )))
-        thread.apply(.taskBackgroundChanged(.init(
-            threadId: thread.id,
-            seq: 21,
-            tasks: [[
-                "task_id": "task-explore",
-                "task_type": "local_agent",
-                "description": "Find every SwiftUI view"
-            ]]
-        )))
-
-        let entry = try #require(thread.taskEntries.first(where: { $0.id == "tool-subagent-explore" }),
-                                 "Missing subagent fixture")
-        let call = try #require(entry.call, "Missing subagent fixture")
-
-        #expect(entry.isBackgrounded)
-        #expect(SubagentLifecycle.title(
-            call: call,
-            task: entry.task,
-            isBackgrounded: entry.isBackgrounded
-        ) == "Agent running in background")
+        let call = try #require(thread.call("tool-subagent-explore"), "Missing subagent fixture")
+        func state(_ status: TaskStatus, backgrounded: Bool? = nil) -> TaskState {
+            TaskState(id: call.id, toolUseId: call.id, taskId: "task-explore", kind: .agent, title: "Find every SwiftUI view",
+                      status: status, backgrounded: backgrounded)
+        }
+        #expect(SubagentLifecycle.title(call: call, task: thread.callTasks[call.id]) == "Agent running")
+        thread.apply(.taskUpdated(.init(threadId: thread.id, seq: 20, task: state(.running, backgrounded: true))))
+        #expect(SubagentLifecycle.title(call: call, task: thread.callTasks[call.id]) == "Agent running in background")
+        #expect(thread.callTasks[call.id]?.isInBackground == true)
+        thread.apply(.taskUpdated(.init(threadId: thread.id, seq: 21, task: state(.done, backgrounded: true))))
+        #expect(SubagentLifecycle.title(call: call, task: thread.callTasks[call.id]) == "Agent finished")
+        #expect(thread.callTasks[call.id]?.isInBackground == false)
+        #expect(SubagentLifecycle.title(call: call, task: state(.failed)) == "Agent failed")
+        #expect(SubagentLifecycle.title(call: call, task: state(.stopped)) == "Agent stopped")
+        // With no task, the call says it.
+        #expect(SubagentLifecycle.title(call: call, task: nil) == "Agent running")
     }
 }

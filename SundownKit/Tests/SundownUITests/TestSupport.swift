@@ -39,3 +39,17 @@ extension Composer.Prepared {
     var attachment: Composer.Attachment? { if case .attachment(let attachment) = self { attachment } else { nil } }
     var mention: String? { if case .mention(let path) = self { path } else { nil } }
 }
+
+// A chat with no tasks, as most tests' are: reads and subscriptions say so.
+
+extension ThreadReadResult {
+    init(items: [Item], turns: [Turn], summary: ThreadSummary? = nil, historySeq: Int? = nil, hasMore: Bool? = nil) {
+        self.init(items: items, turns: turns, summary: summary, historySeq: historySeq, hasMore: hasMore, tasks: [])
+    }
+}
+
+extension ThreadSubscribeResult {
+    init(thread: ThreadInfo, replayed: Int, gap: Bool) {
+        self.init(thread: thread, replayed: replayed, gap: gap, tasks: [])
+    }
+}

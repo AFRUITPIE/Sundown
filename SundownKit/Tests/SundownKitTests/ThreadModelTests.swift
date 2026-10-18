@@ -17,110 +17,6 @@ struct ThreadModelTests {
         .itemStarted(.init(threadId: threadID, seq: seq, item: item))
     }
 
-    /// A skill's instructions, which Claude Code puts in the chat as a message of their own right
-    /// after the call, belong to the call: neither a message nor a turn of their own, live or read.
-    @Test func aSkillsInstructionsGoToItsCall() {
-        let skill = Item.toolCall(.init(id: "skill-1", createdAt: 1, name: "Skill", kind: .skill,
-                                        input: ["skill": "shadcn"], status: .completed, outputText: "Launching skill: shadcn"))
-        let body = userMessage("Base directory for this skill: /x\n\n# shadcn/ui", id: "u2", synthetic: true)
-        let after = userMessage("Thanks", id: "u3")
-
-        let live = ThreadModel(id: threadID)
-        live.loadHistory(items: [userMessage("Use shadcn")], turns: [], seq: 0)
-        live.apply(started(skill, seq: 1))
-        live.apply(started(body, seq: 2))
-        // The daemon sends the instructions again as they complete (a real session's order).
-        live.apply(.itemCompleted(.init(threadId: threadID, seq: 3, item: body)))
-        live.apply(started(after, seq: 4))
-        #expect(live.items.map(\.id) == ["u1", "skill-1", "u3"])
-        #expect(live.skillBodies["skill-1"]?.hasPrefix("Base directory for this skill") == true)
-
-        let read = ThreadModel(id: threadID)
-        read.loadHistory(items: [userMessage("Use shadcn"), skill, body, after], turns: [], seq: 4)
-        #expect(read.items.map(\.id) == ["u1", "skill-1", "u3"])
-        #expect(read.skillBodies["skill-1"] == live.skillBodies["skill-1"])
-
-        // Anything else synthetic after a call stays a message.
-        let other = ThreadModel(id: threadID)
-        other.loadHistory(items: [userMessage("Go"), body], turns: [], seq: 1)
-        #expect(other.items.count == 2)
-    }
-
-    /// The same in an older page: a skill call and its instructions arriving together above the
-    /// reader go to the call, not a "Message from Claude Code" of their own (#107).
-    @Test func aSkillsInstructionsInAnOlderPageGoToItsCall() {
-        let skill = Item.toolCall(.init(id: "skill-1", createdAt: 1, name: "Skill", kind: .skill,
-                                        input: ["skill": "shadcn"], status: .completed, outputText: "Launching skill: shadcn"))
-        let body = userMessage("Base directory for this skill: /x\n\n# shadcn/ui", id: "u2", synthetic: true)
-        let thread = ThreadModel(id: threadID)
-        thread.loadHistory(items: [userMessage("Thanks", id: "u3")], turns: [], seq: 4, hasMore: true)
-
-        thread.prependHistory(items: [userMessage("Use shadcn"), skill, body], hasMore: false)
-
-        #expect(thread.items.map(\.id) == ["u1", "skill-1", "u3"], "the instructions were left in the transcript")
-        #expect(thread.skillBodies["skill-1"]?.hasPrefix("Base directory for this skill") == true)
-    }
-
-    /// Only `started` says what a task is, and a later `updated` patch can leave out its tool call.
-    @Test func laterTaskEventsKeepWhatEarlierOnesSaid() {
-        let thread = ThreadModel(id: threadID)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1",
-                                      toolUseId: "toolu_1", description: "Sleep then echo", data: [:])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 2, event: "updated", taskId: "b1",
-                                      status: "completed", data: [:])))
-
-        let task = thread.tasks["b1"]
-        #expect(task?.event == "updated")
-        #expect(task?.status == "completed")
-        #expect(task?.toolUseId == "toolu_1")
-        #expect(task?.description == "Sleep then echo")
-    }
-
-    @Test func aTaskRunsUntilItsNotificationOrAFinalStatus() {
-        let thread = ThreadModel(id: threadID)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1", data: [:])))
-        #expect(thread.taskEntries.first?.isTaskRunning == true)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 2, event: "updated", taskId: "b1", status: "stopped", data: [:])))
-        #expect(thread.taskEntries.first?.isTaskRunning == false)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 3, event: "started", taskId: "b2", data: [:])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 4, event: "notification", taskId: "b2", data: [:])))
-        #expect(thread.taskEntries.first { $0.task?.taskId == "b2" }?.isTaskRunning == false)
-    }
-
-    @Test func aFinalStatusSurvivesALaterUpdateWithoutOne() {
-        let thread = ThreadModel(id: threadID)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1", toolUseId: "toolu_1",
-                                      data: ["task_type": "local_bash"])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 2, event: "updated", taskId: "b1", status: "completed", data: [:])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 3, event: "updated", taskId: "b1", data: ["patch": [:]])))
-        #expect(thread.taskEntries.first?.isTaskRunning == false)
-        #expect(thread.tasks["b1"]?.data["task_type"]?.stringValue == "local_bash")
-    }
-
-    /// The thread's process ended: nothing it ran is running any more, and nothing offers to stop it.
-    @Test func closingAThreadSettlesItsTasks() {
-        let thread = ThreadModel(id: threadID)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1", toolUseId: "toolu_1",
-                                      data: ["task_type": "local_bash"])))
-        thread.apply(.taskBackgroundChanged(.init(threadId: threadID, seq: 2, tasks: [["task_id": "b1"]])))
-        #expect(thread.taskEntries.first?.isTaskRunning == true)
-
-        thread.apply(.threadClosed(.init(threadId: threadID, seq: 3)))
-
-        #expect(thread.taskEntries.first?.isTaskRunning == false)
-        #expect(thread.backgroundTaskIDs.isEmpty)
-    }
-
-    @Test func onlyACommandOrAgentCanMoveToTheBackground() {
-        let thread = ThreadModel(id: threadID)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1", toolUseId: "toolu_1",
-                                      data: ["task_type": "local_bash"])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 2, event: "started", taskId: "w1", toolUseId: "toolu_2",
-                                      data: ["task_type": "local_workflow"])))
-        #expect(thread.taskEntries.first { $0.task?.taskId == "b1" }?.canMoveToBackground == true)
-        #expect(thread.taskEntries.first { $0.task?.taskId == "w1" }?.canMoveToBackground == false)
-    }
-
     @Test func theOpeningPromptNamesAnUnnamedThread() {
         let thread = ThreadModel(id: threadID)
         #expect(thread.title == "New Chat")
@@ -150,7 +46,7 @@ struct ThreadModelTests {
 
         let observed = Invalidation()
         // The Tasks tab's list, too: streamed text is not a task change.
-        withObservationTracking { _ = thread.title; _ = thread.taskEntries } onChange: { observed.happened = true }
+        withObservationTracking { _ = thread.title; _ = thread.tasks } onChange: { observed.happened = true }
 
         thread.apply(started(.agentMessage(.init(id: "a1", createdAt: 0, text: "")), seq: 2))
         for (offset, delta) in ["On ", "it", "."].enumerated() {
@@ -231,18 +127,18 @@ struct ThreadModelTests {
         .agentMessage(.init(id: id, parentToolUseId: parent, createdAt: 0, text: text))
     }
 
-    @Test func taskEntriesFollowTaskEventsWithoutAnyItemChange() {
+    /// A task's update changes the tasks, not the transcript.
+    @Test func tasksFollowTheirUpdatesWithoutAnyItemChange() {
         let thread = ThreadModel(id: threadID)
-        #expect(thread.taskEntries.isEmpty)
+        #expect(thread.tasks.isEmpty)
         let itemsVersion = thread.itemsVersion
 
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "task_started", taskId: "task-1",
-                                      description: "Explore the inspector", status: "running", data: [:])))
-        #expect(thread.taskEntries.map(\.id) == ["task:task-1"])
-        #expect(thread.taskEntries.first?.isBackgrounded == false)
-
-        thread.apply(.taskBackgroundChanged(.init(threadId: threadID, seq: 2, tasks: [["task_id": "task-1"]])))
-        #expect(thread.taskEntries.first?.isBackgrounded == true)
+        thread.apply(.taskUpdated(.init(threadId: threadID, seq: 1, task: .init(
+            id: "task:task-1", taskId: "task-1", kind: .agent, title: "Explore the inspector", status: .running))))
+        #expect(thread.tasks.map(\.id) == ["task:task-1"])
+        thread.apply(.taskUpdated(.init(threadId: threadID, seq: 2, task: .init(
+            id: "task:task-1", taskId: "task-1", kind: .agent, title: "Explore the inspector", status: .running, backgrounded: true))))
+        #expect(thread.tasks.first?.isInBackground == true)
 
         #expect(thread.itemsVersion == itemsVersion)
     }

@@ -5,8 +5,8 @@ import TetherProtocol
 
 /// A chat started from New Chat shows at once in its window, as a stand-in (`PendingStart`), while
 /// `thread/start` goes as ever. The host's chat is its own model, the one its notifications reach,
-/// and the start is ready for the window to move to it once that chat has the prompt's echo,
-/// whichever of the echo and the answer comes first.
+/// and the start is ready for the window to move to it once that chat holds the prompt the answer
+/// names (`messageId`), which the host sends first, though the app may apply it after the answer.
 @MainActor
 @Suite(.serialized)
 struct StartChatTests {
@@ -18,17 +18,18 @@ struct StartChatTests {
         return connection
     }
 
-    private func started(_ id: String, lastSeq: Int = 2) -> ThreadStartResult {
-        .init(thread: .init(threadId: id, status: .running, cwd: "/repo", lastSeq: lastSeq))
+    private func started(_ id: String, lastSeq: Int = 2, messageId: String? = "host-prompt") -> ThreadStartResult {
+        .init(thread: .init(threadId: id, status: .running, cwd: "/repo", lastSeq: lastSeq), messageId: messageId, turnId: "turn")
     }
 
     /// The prompt's echo, as the host sends it: the turn, then the prompt with the host's own id.
-    private func echo(_ daemon: FakeDaemon, in thread: String, text: String = "Tidy the build scripts", id: String = "host-prompt") {
+    private func echo(_ daemon: FakeDaemon, in thread: String, text: String = "Tidy the build scripts", id: String = "host-prompt",
+                      seq: Int = 1) {
         daemon.emit("turn/started", encoded(TurnStartedNotification(
-            threadId: thread, seq: 1, turn: .init(id: "turn", status: .inProgress, startedAt: 1))))
+            threadId: thread, seq: seq, turn: .init(id: "turn", status: .inProgress, startedAt: 1))))
         daemon.emit("item/started", encoded(ItemStartedNotification(
-            threadId: thread, seq: 2, item: .userMessage(.init(id: id, turnId: "turn", createdAt: 1,
-                                                               content: [.text(.init(text: text))])))))
+            threadId: thread, seq: seq + 1, item: .userMessage(.init(id: id, turnId: "turn", createdAt: 1,
+                                                                     content: [.text(.init(text: text))])))))
     }
 
     private func prompts(in model: ThreadModel) -> [String] {
@@ -153,26 +154,41 @@ struct StartChatTests {
         await connection.disconnect()
     }
 
-    /// No echo: the window moves to the chat after a moment anyway. A first prompt that doesn't say
-    /// what was sent isn't taken for the echo.
-    @Test func withoutAnEchoTheStartIsReadyAfterAMoment() async throws {
+    /// The prompt the answer names is the echo, not whatever user message comes first; with no
+    /// prompt named, the chat is ready as it is.
+    @Test func theNamedPromptIsTheEcho() async throws {
         let daemon = FakeDaemon()
         let connection = await connected(daemon)
-        connection.echoWait = .milliseconds(50)
-        await daemon.script.queue("thread/start", started("quiet-chat"), started("other-chat"))
+        await daemon.script.queue("thread/start", started("named-chat"), started("bare-chat", messageId: nil))
 
-        let quiet = connection.prepareStart(cwd: "/repo", input: input, options: .init(), defaults: nil)
-        _ = try await connection.start(quiet)
-        await quiet.ready()
-        #expect(quiet.isReady)
-        #expect(quiet.echoID == nil)
+        let named = connection.prepareStart(cwd: "/repo", input: input, options: .init(), defaults: nil)
+        _ = try await connection.start(named)
+        echo(daemon, in: "named-chat", text: "Something else", id: "other")
+        try await eventually { connection.thread("named-chat").items.count == 1 }
+        #expect(!named.isReady)
+        echo(daemon, in: "named-chat", seq: 3)
+        await named.ready()
+        #expect(named.echoID == "host-prompt")
 
-        let other = connection.prepareStart(cwd: "/repo", input: input, options: .init(), defaults: nil)
-        _ = try await connection.start(other)
-        echo(daemon, in: "other-chat", text: "Something else")
-        await other.ready()
-        #expect(other.echoID == nil)
+        let bare = connection.prepareStart(cwd: "/repo", input: input, options: .init(), defaults: nil)
+        _ = try await connection.start(bare)
+        #expect(bare.isReady)
+        #expect(bare.echoID == nil)
         await connection.disconnect()
+    }
+
+    /// The connection lost before the prompt came in: nothing more will come, so the window moves
+    /// to the chat as it is.
+    @Test func aStartWaitingWhenTheConnectionGoesIsReady() async throws {
+        let daemon = FakeDaemon()
+        let connection = await connected(daemon)
+        await daemon.script.queue("thread/start", started("host-chat"))
+        let op = connection.prepareStart(cwd: "/repo", input: input, options: .init(), defaults: nil)
+        _ = try await connection.start(op)
+        #expect(!op.isReady)
+        await connection.disconnect()
+        #expect(op.isReady)
+        #expect(op.echoID == nil)
     }
 
     /// Stop and a second message while the host hasn't answered reach the chat it started.
@@ -238,14 +254,5 @@ struct StartChatTests {
         #expect(op.placeholder.permissionMode == .auto)
         #expect(op.placeholder.cwd == "/repo")
         await connection.disconnect()
-    }
-
-    @Test func anEchoSaysWhatWasSent() {
-        let sent: [UserInput] = [.text(.init(text: "  Hello\n"))]
-        #expect(PendingStart.says([.text(.init(text: "Hello"))], as: sent))
-        #expect(!PendingStart.says([.text(.init(text: "Goodbye"))], as: sent))
-        let image: [UserInput] = [.image(.init(mediaType: .imagePng, data: "AAAA"))]
-        #expect(PendingStart.says(image, as: image))
-        #expect(!PendingStart.says([], as: image))
     }
 }

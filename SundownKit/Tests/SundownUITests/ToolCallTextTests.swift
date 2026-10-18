@@ -35,12 +35,13 @@ struct ToolCallTextTests {
         #expect(ToolCallText.reason(call(.bash, ["command": "make"])) == nil)
     }
 
-    /// A workflow is called by its script's name, in its run's tense: its call comes back at once.
+    /// A workflow is called by the name the daemon gives its run, in its run's tense: its call comes
+    /// back at once.
     @Test func aWorkflowReadsAsItsRun() {
         let script = "export const meta = { name: 'review-diff', description: 'Review', phases: [] }"
         let workflow = call(.other, ["script": .string(script)], name: "Workflow")
-        let running = WorkflowRun(call: workflow, task: .init(threadId: "t", seq: 1, event: "progress", taskId: "w",
-                                                             toolUseId: "c", status: "running", data: ["task_type": "local_workflow"]))
+        let running = TaskState(id: "c", toolUseId: "c", taskId: "w", kind: .workflow, title: "review-diff", status: .running,
+                                workflow: .init(name: "review-diff", phases: []))
         #expect(ToolCallText.verb(workflow, workflow: running) == "Running workflow")
         #expect(ToolCallText.object(workflow, workflow: running) == "review-diff")
         // Without its run, what the call says, never its script read here.

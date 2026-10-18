@@ -3,74 +3,66 @@ import Testing
 import TetherProtocol
 @testable import SundownKit
 
-/// The Changes pane's new files are read a few at a time, and only so many.
+/// The Changes pane's working tree is one `git/changes` call, its lines numbered here for comments.
 @MainActor
 @Suite
 struct WorkingChangesTests {
-    @Test func newFilesAreReadEightAtATimeAndCapped() async throws {
-        let script = GitScript(untracked: WorkingChanges.maxUntrackedFiles + 50)
+    private let edited = WorkingFileChange(path: "Sources/App.swift", status: .modified, hunks: [
+        DiffHunk(oldStart: 10, oldLines: 3, newStart: 10, newLines: 4,
+                 lines: [" a", "-b", "+B", "+C", " d", "\\ No newline at end of file"], header: "func body()"),
+    ], added: 2, removed: 1, truncatedLines: 0)
+
+    /// Each line takes its number on the side it's on, from where its hunk starts; "No newline at
+    /// end of file" isn't a line.
+    @Test func linesAreNumberedFromTheirHunk() throws {
+        let file = FileDiff(edited)
+        let hunk = try #require(file.hunks.first)
+        #expect(hunk.header == "@@ -10,3 +10,4 @@ func body()")
+        #expect(hunk.lines.map(\.text) == ["a", "b", "B", "C", "d"])
+        #expect(hunk.lines.map(\.kind) == [.context, .removed, .added, .added, .context])
+        #expect(hunk.lines.map(\.oldNumber) == [10, 11, nil, nil, 12])
+        #expect(hunk.lines.map(\.newNumber) == [10, nil, 11, 12, 13])
+        #expect(file.lineCount == 5)
+        #expect(file.added == 2 && file.removed == 1)
+    }
+
+    /// One call, and what it says: the repository's top, the branch as git's header names it, and
+    /// the new files the daemon left uncounted.
+    @Test func oneCallReadsTheWorkingTree() async throws {
+        let calls = Calls()
         let connection = HostConnection(host: HostConfig(name: "Git fixture", kind: .ssh(destination: "git-box")),
-                                        transportProvider: { _ in ScriptedTransport { method, _ in await script.reply(method: method) } })
+                                        transportProvider: { [edited] _ in ScriptedTransport { method, params in
+            await calls.note(method)
+            switch method {
+            case "initialize":
+                return .result(encoded(InitializeResult(
+                    serverInfo: .init(name: "tether-server", version: "test"), protocolVersion: tetherProtocolVersion,
+                    host: .init(hostname: "git-box", platform: "linux", arch: "arm64", home: "/home/dev", pid: 1, mode: .daemon),
+                    claude: .init(path: "/usr/bin/claude", version: "test"))))
+            case "model/list": return .result(["models": []])
+            case "thread/list": return .result(["threads": []])
+            case "git/changes":
+                let inRepo = params["cwd"]?.stringValue == "/work/project/Sources"
+                return .result(encoded(GitChangesResult(isRepo: inRepo, root: inRepo ? "/work/project" : nil,
+                                                        branch: inRepo ? "No commits yet on main" : nil,
+                                                        files: inRepo ? [edited] : [], omittedFiles: inRepo ? 50 : 0)))
+            default: return .error(code: -32601, message: "Not in the script: \(method)")
+            }
+        } })
         await connection.connect()
-        let changes = try #require(try await connection.workingChanges(cwd: "/work/project"))
-        #expect(changes.files.count == WorkingChanges.maxUntrackedFiles)
+        let changes = try #require(try await connection.workingChanges(cwd: "/work/project/Sources"))
+        #expect(changes.root == "/work/project")
+        #expect(changes.branch == "main")
+        #expect(changes.files.map(\.path) == ["Sources/App.swift"])
         #expect(changes.omittedFiles == 50)
-        #expect(changes.files.map(\.path) == changes.files.map(\.path).sorted())
-        #expect(changes.files.allSatisfy { $0.added == 1 })
-        let reads = await script.readCounts()
-        #expect(reads.total == WorkingChanges.maxUntrackedFiles)
-        #expect(reads.mostAtOnce > 1 && reads.mostAtOnce <= 8)
+        #expect(changes.added == 2 && changes.removed == 1)
+        #expect(try await connection.workingChanges(cwd: "/tmp") == nil)
+        #expect(await calls.methods.filter { $0.hasPrefix("git/") || $0.hasPrefix("fs/") } == ["git/changes", "git/changes"])
         await connection.disconnect()
     }
 }
 
-private actor GitScript {
-    let untracked: Int
-    private var reading = 0
-    private var mostAtOnce = 0
-    private var total = 0
-
-    init(untracked: Int) { self.untracked = untracked }
-
-    func readCounts() -> (total: Int, mostAtOnce: Int) { (total, mostAtOnce) }
-
-    func startRead() {
-        reading += 1
-        total += 1
-        mostAtOnce = max(mostAtOnce, reading)
-    }
-
-    func endRead() { reading -= 1 }
-
-    func reply(method: String) async -> ScriptedReply {
-        if method == "fs/read" {
-            // Answered a moment later, as a host does, so reads can overlap.
-            startRead()
-            try? await Task.sleep(for: .milliseconds(2))
-            endRead()
-            return .result(["content": "one line\n", "encoding": "utf-8", "truncated": false])
-        }
-        guard let result = result(method: method) else { return .error(code: -32601, message: "Not implemented in fixture") }
-        return .result(result)
-    }
-
-    private func result(method: String) -> JSONValue? {
-        switch method {
-        case "initialize":
-            return encoded(InitializeResult(
-                serverInfo: .init(name: "tether-server", version: "test"),
-                protocolVersion: tetherProtocolVersion,
-                host: .init(hostname: "git-box", platform: "linux", arch: "arm64", home: "/home/dev", pid: 1, mode: .daemon),
-                claude: .init(path: "/usr/bin/claude", version: "test")
-            ))
-        case "project/list": return ["projects": []]
-        case "model/list": return ["models": []]
-        case "thread/list": return ["threads": []]
-        case "git/status":
-            let files = (0..<untracked).map { i -> JSONValue in ["status": "??", "path": .string(String(format: "new/file%03d.txt", i))] }
-            return ["isRepo": true, "branch": "main", "files": .array(files + [["status": "??", "path": "build/"]])]
-        case "git/diff": return ["diff": ""]
-        default: return nil
-        }
-    }
+private actor Calls {
+    private(set) var methods: [String] = []
+    func note(_ method: String) { methods.append(method) }
 }

@@ -52,26 +52,22 @@ enum Bench {
         return items
     }
 
-    /// A working tree's diff: 40 files of 300 changed lines, one past the 5,000 lines a file keeps,
-    /// and one whose added lines run past the 1,000 characters a line keeps.
-    static let largeDiff: String = (0..<40).map { file in
-        let count = file == 0 ? 6_000 : 300
-        let lines = (0..<count).map { n in
+    /// A working tree as `git/changes` sends it: 40 files of 300 changed lines, one of 5,000, the
+    /// most a file keeps.
+    static let largeChanges = GitChangesResult(isRepo: true, root: "/repo", branch: "main", files: (0..<40).map { file in
+        let lines = (0..<(file == 0 ? 5_000 : 300)).map { n in
             switch n % 3 {
             case 0: " let kept\(n) = \(n)"
             case 1: "-let old\(n) = \(n)"
-            default: "+let new\(n) = \(n)" + (file == 1 ? String(repeating: "x", count: 1_200) : "")
+            default: "+let new\(n) = \(n)"
             }
         }
         let old = lines.count { !$0.hasPrefix("+") }, new = lines.count { !$0.hasPrefix("-") }
-        return """
-        diff --git a/Sources/File\(file).swift b/Sources/File\(file).swift
-        --- a/Sources/File\(file).swift
-        +++ b/Sources/File\(file).swift
-        @@ -1,\(old) +1,\(new) @@ struct File\(file)
-        \(lines.joined(separator: "\n"))
-        """
-    }.joined(separator: "\n")
+        return WorkingFileChange(path: "Sources/File\(file).swift", status: .modified,
+                                 hunks: [DiffHunk(oldStart: 1, oldLines: old, newStart: 1, newLines: new, lines: lines)],
+                                 added: lines.count { $0.hasPrefix("+") }, removed: lines.count { $0.hasPrefix("-") },
+                                 truncatedLines: 0)
+    }, omittedFiles: 0)
 }
 
 final class TranscriptBenchmark: XCTestCase {
@@ -147,14 +143,14 @@ final class MarkdownBenchmark: XCTestCase {
 }
 
 final class DiffBenchmark: XCTestCase {
-    /// The Changes pane's parse of a large working tree, which runs off the main actor but decides
-    /// how soon the pane fills.
-    func testParsingALargeDiff() throws {
+    /// The Changes pane's numbering of a large working tree, which runs off the main actor but
+    /// decides how soon the pane fills.
+    func testNumberingALargeWorkingTree() throws {
         try Bench.skipUnlessEnabled()
-        let diff = Bench.largeDiff
-        XCTAssertEqual(UnifiedDiff.parse(diff).count, 40)
+        let files = Bench.largeChanges.files
+        XCTAssertEqual(files.map(FileDiff.init).count, 40)
         measure(metrics: Bench.metrics) {
-            _ = UnifiedDiff.parse(diff)
+            _ = files.map(FileDiff.init)
         }
     }
 }

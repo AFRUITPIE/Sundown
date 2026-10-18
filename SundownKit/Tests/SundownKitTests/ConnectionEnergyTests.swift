@@ -20,7 +20,6 @@ private actor ScriptedDaemon {
     private var live: [ScriptedTransport] = []
 
     init() {
-        replies["project/list"] = .result(["projects": []])
         replies["model/list"] = .result(encoded(ModelListResult(models: [.init(value: "sonnet", displayName: "Sonnet", description: "")])))
         replies["thread/list"] = .result(["threads": []])
         replies["account/read"] = .error(code: -1, message: "No account in the fixture")
@@ -176,13 +175,12 @@ struct NetworkRetryTests {
 @Suite(.serialized)
 struct CatalogRefreshTests {
     /// Back on the same daemon, only the chats are asked for again: models and the account start
-    /// a Claude Code process, and projects read every session. A restarted daemon gets all of it.
+    /// a Claude Code process. A restarted daemon gets all of it. Nothing reads every session.
     @Test func reconnectingToTheSameDaemonAsksOnlyForTheChats() async throws {
         let daemon = ScriptedDaemon()
         let c = connection(daemon)
         await c.connect()
         #expect(await daemon.count("model/list") == 1)
-        #expect(await daemon.count("project/list") == 1)
         #expect(!c.models.isEmpty)
 
         await daemon.resetCalls()
@@ -190,23 +188,23 @@ struct CatalogRefreshTests {
         #expect(await daemon.count("thread/list") == 1)
         #expect(await daemon.count("model/list") == 0)
         #expect(await daemon.count("account/read") == 0)
-        #expect(await daemon.count("project/list") == 0)
 
         await daemon.setPID(2)
         await c.reconnect()
         #expect(await daemon.count("model/list") == 1)
-        #expect(await daemon.count("project/list") == 1)
         await c.disconnect()
     }
 
-    /// Folders of chats started while the app was away still reach New Chat's list.
-    @Test func foldersNewSinceComeFromTheChats() async throws {
+    /// New Chat's directories are the chats' own, those started while the app was away included:
+    /// nothing reads every session on the host for them.
+    @Test func directoriesComeFromTheChats() async throws {
         let daemon = ScriptedDaemon()
         let c = connection(daemon)
         await c.connect()
         await daemon.set("thread/list", .result(encoded(ThreadListResult(threads: [summary("new", cwd: "/work/new")]))))
         await c.reconnect()
-        #expect(c.projects.map(\.cwd) == ["/work/new"])
+        #expect(c.directories == ["/work/new"])
+        #expect(await daemon.count("project/list") == 0)
         await c.disconnect()
     }
 }

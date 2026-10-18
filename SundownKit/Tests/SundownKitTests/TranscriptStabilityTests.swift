@@ -42,7 +42,9 @@ struct TranscriptStabilityTests: TimedItems {
         let running = thread.isRunning
         let folded = foldTranscriptRows(top, folding: folding, lastTurnRunning: running)
         return decorateTranscriptRows(folded, dates: DateSeparators.prompts(in: top),
-                                      edits: turnEdits(in: items, lastTurnRunning: running))
+                                      edits: editedFiles(in: items, lastTurnRunning: running,
+                                                         totals: Dictionary(thread.turns.compactMap { t in t.edits.map { (t.id, $0) } },
+                                                                            uniquingKeysWith: { _, b in b })))
     }
 
     // MARK: 1. a reload with the same items

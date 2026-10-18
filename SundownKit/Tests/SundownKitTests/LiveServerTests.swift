@@ -98,12 +98,12 @@ struct LiveServerTests {
         let thread = try await conn.startThread(cwd: cwd.path, input: [], options: Self.cheap)
         await conn.send(thread, input: [.text(.init(text:
             "Run `sleep 40 && echo late > late.txt` with Bash in the background (run_in_background: true), then reply with just \"started\". Do not wait for it."))])
-        try await waitUntil { thread.taskEntries.contains { $0.isTaskRunning } && thread.status == .idle }
-        let task = try #require(thread.taskEntries.first { $0.isTaskRunning }?.task)
+        try await waitUntil { thread.tasks.contains { $0.isGoing && $0.taskId != nil } && thread.status == .idle }
+        let task = try #require(thread.tasks.first { $0.isGoing && $0.taskId != nil })
 
-        await conn.stopTask(thread, taskId: task.taskId)
+        await conn.stopTask(thread, taskId: task.taskId!)
 
-        try await waitUntil(.seconds(30)) { thread.tasks[task.taskId]?.status == "stopped" }
+        try await waitUntil(.seconds(30)) { thread.tasks.first { $0.id == task.id }?.status == .stopped }
         try await Task.sleep(for: .seconds(45))
         #expect(!FileManager.default.fileExists(atPath: cwd.appendingPathComponent("late.txt").path))
         stopDaemon(home)
@@ -117,8 +117,8 @@ struct LiveServerTests {
         let thread = try await conn.startThread(cwd: cwd.path, input: [], options: Self.cheap)
         await conn.send(thread, input: [.text(.init(text:
             "Run exactly this with Bash in the foreground (not in the background): `for i in $(seq 1 40); do sleep 1; done; echo done > done.txt` — then reply with just \"ok\"."))])
-        try await waitUntil { thread.taskEntries.contains { $0.isTaskRunning && $0.task?.toolUseId != nil } }
-        let toolUseId = try #require(thread.taskEntries.first { $0.isTaskRunning }?.task?.toolUseId)
+        try await waitUntil { thread.tasks.contains { $0.canBackground == true && $0.toolUseId != nil } }
+        let toolUseId = try #require(thread.tasks.first { $0.canBackground == true }?.toolUseId)
 
         await conn.moveToBackground(thread, toolUseId: toolUseId)
 

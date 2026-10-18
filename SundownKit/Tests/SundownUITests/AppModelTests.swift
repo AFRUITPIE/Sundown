@@ -59,9 +59,9 @@ struct WindowModelTests {
         #expect(w.selectedThread == nil)
     }
 
-    @Test func newChatStartsInTheHostsMostRecentFolder() {
+    @Test func newChatStartsInTheHostsMostRecentDirectory() {
         let w = window(.sample())
-        let first = w.connection?.projects.first?.cwd
+        let first = w.connection?.directories.first
         #expect(first != nil)
         #expect(w.draftDirectory == first)
         w.draftError = "Choose a folder first."
@@ -83,7 +83,7 @@ struct WindowModelTests {
         let name = (w.draftDirectory as NSString?)?.lastPathComponent ?? ""
         #expect(w.subtitle == "\(w.host?.name ?? "") · \(name)")
 
-        // A host with no projects yet: the host alone, not a dangling separator.
+        // A host with no chats yet: the host alone, not a dangling separator.
         w.hostID = w.app.hosts[1].id
         #expect(w.draftDirectory == nil)
         #expect(w.subtitle == "staging")

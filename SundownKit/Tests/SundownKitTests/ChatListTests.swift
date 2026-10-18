@@ -4,8 +4,9 @@ import Testing
 import TetherProtocol
 @testable import SundownKit
 
-/// The chat list is fetched after every turn; the sidebar regroups whenever it's set, so it's set
-/// only when it changes, and only the latest few chats are asked for.
+/// The chat list is fetched on connecting and after an explicit action, and kept current between
+/// by `thread/summaryChanged`; the sidebar regroups whenever it's set, so it's set only when it
+/// changes.
 @MainActor
 @Suite(.serialized)
 struct ChatListTests {
@@ -21,17 +22,43 @@ struct ChatListTests {
         return connection
     }
 
-    /// A chat this client doesn't follow that has background work has the list asked for again in a
-    /// while: nothing streams here to say when that work ends (#106).
-    @Test func aChatWithBackgroundWorkHasTheListReadAgain() async throws {
+    /// A summary told host-wide takes its chat's place by when it changed, whether this client
+    /// follows the chat or not: a new title, the chat to the top, below a chat not written yet; a
+    /// chat new to the list joins it, and its directory is the most recent. Nothing is asked again.
+    @Test func aSummaryChangedTakesItsPlace() async throws {
         let daemon = FakeDaemon()
-        await daemon.script.queue("thread/list", list(.init(threadId: "a", title: "A", cwd: "/repo", updatedAt: 1,
-                                                            status: .idle, backgroundTasks: 2)))
-        let connection = daemon.connection()
-        connection.backgroundRefreshInterval = .milliseconds(50)
-        await connection.connect()
-        let first = await daemon.script.params(of: "thread/list").count
-        try await eventually { await daemon.script.params(of: "thread/list").count > first }
+        await daemon.script.queue("thread/list", list(summary("a", "A", updated: 3), summary("b", "B", updated: 2),
+                                                      summary("c", "C", updated: 1)))
+        let connection = await connected(daemon)
+        daemon.emit("thread/started", encoded(ThreadStartedNotification(
+            threadId: "new", seq: 1, thread: .init(threadId: "new", status: .running, cwd: "/new", lastSeq: 1))))
+        try await eventually { connection.chats.first?.id == "new" }
+        let asked = await daemon.script.params(of: "thread/list").count
+
+        daemon.emit("thread/summaryChanged", encoded(ThreadSummaryChangedNotification(summary: summary("c", "Claude's name for C", updated: 4))))
+        try await eventually { connection.chats.map(\.id) == ["new", "c", "a", "b"] }
+        #expect(connection.thread("c").title == "Claude's name for C")
+
+        var other = summary("d", "D", updated: 2.5)
+        other.cwd = "/elsewhere"
+        daemon.emit("thread/summaryChanged", encoded(ThreadSummaryChangedNotification(summary: other)))
+        try await eventually { connection.chats.map(\.id) == ["new", "c", "a", "d", "b"] }
+        #expect(connection.directories == ["/new", "/repo", "/elsewhere"])
+        #expect(await daemon.script.params(of: "thread/list").count == asked)
+        await connection.disconnect()
+    }
+
+    /// A chat deleted here stays gone, though a summary of it was already on its way.
+    @Test func aDeletedChatTakesNoSummary() async throws {
+        let daemon = FakeDaemon()
+        await daemon.script.queue("thread/list", list(summary("a", "A", updated: 3), summary("b", "B", updated: 2)))
+        await daemon.script.queue("thread/delete", ThreadDeleteResult())
+        let connection = await connected(daemon)
+        await connection.delete(connection.thread("a"))
+        daemon.emit("thread/summaryChanged", encoded(ThreadSummaryChangedNotification(summary: summary("a", "A", updated: 4))))
+        daemon.emit("thread/summaryChanged", encoded(ThreadSummaryChangedNotification(summary: summary("b", "B again", updated: 5))))
+        try await eventually { connection.thread("b").title == "B again" }
+        #expect(connection.chats.map(\.id) == ["b"])
         await connection.disconnect()
     }
 
@@ -69,23 +96,6 @@ struct ChatListTests {
 
         #expect(connection.chats.map(\.id) == ["new", "a", "c"])
         #expect(await daemon.script.params(of: "thread/list").last?["limit"]?.intValue == 200)
-        await connection.disconnect()
-    }
-
-    /// After a turn only the latest few are asked for: they move to the top with their new titles,
-    /// and the rest keep their places below.
-    @Test func afterATurnOnlyTheLatestChatsAreAskedFor() async throws {
-        let daemon = FakeDaemon()
-        await daemon.script.queue("thread/list", list(summary("a", "A", updated: 3), summary("b", "B", updated: 2),
-                                                      summary("c", "C", updated: 1)))
-        let connection = await connected(daemon)
-
-        await daemon.script.queue("thread/list", list(summary("c", "Claude's name for C", updated: 4), summary("a", "A", updated: 3)))
-        await connection.refreshRecentChats()
-
-        #expect(await daemon.script.params(of: "thread/list").last?["limit"]?.intValue == HostConnection.recentChatsLimit)
-        #expect(connection.chats.map(\.id) == ["c", "a", "b"])
-        #expect(connection.thread("c").title == "Claude's name for C")
         await connection.disconnect()
     }
 

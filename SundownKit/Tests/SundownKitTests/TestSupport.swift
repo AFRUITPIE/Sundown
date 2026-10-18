@@ -97,13 +97,29 @@ extension TimedItems {
 
     func edit(_ id: String, _ minutes: Double, path: String = "/repo/a.swift", status: ToolStatus = .completed,
               parent: String? = nil) -> Item {
-        .toolCall(.init(id: id, parentToolUseId: parent, createdAt: at(minutes), name: "Edit", kind: .fileEdit,
-                        input: ["file_path": .string(path), "old_string": "one\ntwo\nthree", "new_string": .string("one\n\(id)\nthree\nfour")],
-                        status: status))
+        // With its change once finished, as the daemon sends it.
+        .toolCall(Item.ToolCall(id: id, parentToolUseId: parent, createdAt: at(minutes), name: "Edit", kind: .fileEdit,
+                                input: ["file_path": .string(path), "old_string": "one\ntwo\nthree",
+                                        "new_string": .string("one\n\(id)\nthree\nfour")],
+                                status: status).withComparedEdit)
     }
 
     func subagent(_ id: String, _ minutes: Double, status: ToolStatus) -> Item {
         .toolCall(.init(id: id, createdAt: at(minutes), name: "Task", kind: .subagent,
                         input: ["description": "Look around"], status: status))
+    }
+}
+
+// A chat with no tasks, as most tests' are: reads and subscriptions say so.
+
+extension ThreadReadResult {
+    init(items: [Item], turns: [Turn], summary: ThreadSummary? = nil, historySeq: Int? = nil, hasMore: Bool? = nil) {
+        self.init(items: items, turns: turns, summary: summary, historySeq: historySeq, hasMore: hasMore, tasks: [])
+    }
+}
+
+extension ThreadSubscribeResult {
+    init(thread: ThreadInfo, replayed: Int, gap: Bool) {
+        self.init(thread: thread, replayed: replayed, gap: gap, tasks: [])
     }
 }

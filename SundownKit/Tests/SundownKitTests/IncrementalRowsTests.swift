@@ -15,8 +15,9 @@ struct IncrementalRowsTests: TimedItems {
     // MARK: items
 
     private func write(_ id: String, _ minutes: Double, parent: String? = nil) -> Item {
-        .toolCall(.init(id: id, parentToolUseId: parent, createdAt: at(minutes), name: "Write", kind: .fileWrite,
-                        input: ["file_path": .string("/repo/\(id).swift"), "content": "a\nb\n"], status: .completed))
+        .toolCall(Item.ToolCall(id: id, parentToolUseId: parent, createdAt: at(minutes), name: "Write", kind: .fileWrite,
+                                input: ["file_path": .string("/repo/\(id).swift"), "content": "a\nb\n"], status: .completed)
+            .withComparedEdit)
     }
 
     private func reasoning(_ id: String, _ minutes: Double) -> Item {
@@ -32,7 +33,9 @@ struct IncrementalRowsTests: TimedItems {
         let running = thread.isRunning
         let folded = foldTranscriptRows(top, folding: folding, lastTurnRunning: running)
         return decorateTranscriptRows(folded, dates: DateSeparators.prompts(in: top),
-                                      edits: turnEdits(in: items, lastTurnRunning: running))
+                                      edits: editedFiles(in: items, lastTurnRunning: running,
+                                                         totals: Dictionary(thread.turns.compactMap { t in t.edits.map { (t.id, $0) } },
+                                                                            uniquingKeysWith: { _, b in b })))
     }
 
     /// A chat's life: pages, turns with tool calls, edits, a subagent and its edits, replies

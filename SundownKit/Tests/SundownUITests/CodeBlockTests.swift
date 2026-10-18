@@ -30,7 +30,7 @@ struct CodeBlockTests {
 
     /// A diff is drawn as runs of one kind; the runs hold every line, in order, with its sign.
     @Test func diffRunsGroupLinesOfOneKind() {
-        let diff = DiffView.diff(.init(old: "a\nb\nc\nd", new: "a\nB\nC\nd\ne"), lineLimit: 3)
+        let diff = DiffView.diff(.texts(old: "a\nb\nc\nd", new: "a\nB\nC\nd\ne"), lineLimit: 3)
         #expect(diff.lineCount == 7)
         #expect(diff.all.map(\.sign) == [" ", "-", "+", " ", "+"])
         #expect(diff.all.map(\.text) == ["  a", "- b\n- c", "+ B\n+ C", "  d", "+ e"])
@@ -38,5 +38,9 @@ struct CodeBlockTests {
         #expect(diff.collapsed.map(\.text) == ["  a", "- b\n- c"])
         let lines = DiffView.diff(old: "a\nb\nc\nd", new: "a\nB\nC\nd\ne")
         #expect(diff.all.map(\.text).joined(separator: "\n") == lines.map { "\($0.sign) \($0.text)" }.joined(separator: "\n"))
+        // A hunk the daemon diffed draws the same way.
+        let hunk = DiffView.diff(.hunk(.init(oldStart: 1, oldLines: 4, newStart: 1, newLines: 5,
+                                             lines: [" a", "-b", "-c", "+B", "+C", " d", "+e"])), lineLimit: 3)
+        #expect(hunk.all == diff.all)
     }
 }

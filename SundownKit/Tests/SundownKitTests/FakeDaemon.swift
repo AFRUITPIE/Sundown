@@ -125,7 +125,6 @@ actor DaemonScript {
                 host: .init(hostname: "fake", platform: "linux", arch: "arm64", home: "/home/dev", pid: 1, mode: .daemon),
                 claude: .init(path: "/usr/bin/claude", version: "test")))
         case "thread/unsubscribe": return [:]
-        case "project/list": return ["projects": []]
         case "model/list": return ["models": []]
         case "thread/list": return ["threads": []]
         default: return nil

@@ -271,7 +271,8 @@ final class StartingHost: Transport, @unchecked Sendable {
             "type": "userMessage", "id": "host-prompt", "turnId": "turn", "createdAt": 1,
             "content": [["type": "text", "text": text]],
         ]])
-        reply(id, json(ThreadStartResult(thread: .init(threadId: "host-chat", status: .running, cwd: "/repo", lastSeq: 2))))
+        reply(id, json(ThreadStartResult(thread: .init(threadId: "host-chat", status: .running, cwd: "/repo", lastSeq: 2),
+                                         messageId: "host-prompt", turnId: "turn")))
     }
 
     private func reply(_ id: JSONValue, _ result: JSONValue?) {
@@ -297,7 +298,6 @@ final class StartingHost: Transport, @unchecked Sendable {
                 serverInfo: .init(name: "tether-server", version: "test"), protocolVersion: tetherProtocolVersion,
                 host: .init(hostname: "starting", platform: "linux", arch: "arm64", home: "/home/dev", pid: 1, mode: .daemon),
                 claude: .init(path: "/usr/bin/claude", version: "test")))
-        case "project/list": return ["projects": []]
         case "model/list": return ["models": []]
         case "thread/list": return ["threads": []]
         case "turn/start": return json(TurnStartResult(turnId: "turn", messageId: "second", queued: true))

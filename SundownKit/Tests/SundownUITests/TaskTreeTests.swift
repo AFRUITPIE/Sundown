@@ -11,26 +11,28 @@ import TetherProtocol
 struct TaskTreeTests {
     private func tree() -> [TaskNode] {
         let thread = ThreadModel.sampleWithTaskKinds()
-        return TaskNode.tree(thread.taskEntries, call: thread.call)
+        return TaskNode.tree(thread.tasks, call: thread.call)
     }
 
     @Test func eachTaskIsUnderTheTaskThatStartedIt() {
         let top = tree()
         let agent = top.first { $0.id == "agent-1" }
         #expect(agent != nil)
-        // The agent's own agent, and the command it ran in the background (a task with no call of
-        // its own, found through the call that started it).
-        #expect(Set(agent?.children.map(\.id) ?? []) == ["agent-2", "task:bg-tests"])
-        #expect(!top.contains { $0.id == "agent-2" || $0.id == "task:bg-tests" })
+        // The agent's own agent, and the command it ran in the background, as the daemon says.
+        #expect(Set(agent?.children.map(\.id) ?? []) == ["agent-2", "bg-call"])
+        #expect(!top.contains { $0.id == "agent-2" || $0.id == "bg-call" })
     }
 
-    @Test func kindsComeFromTheSDKsTaskType() {
+    @Test func kindsAreNamedAsTheDaemonSaysThem() {
         let all = flatten(tree())
-        #expect(all["workflow-call"]?.kind == .workflow)
-        #expect(all["agent-1"]?.kind == .agent)
-        #expect(all["task:bg-tests"]?.kind == .command)
-        #expect(all["task:monitor-1"]?.kind == .monitor)
-        #expect(all["task:mcp-1"]?.kind == .mcpTool)
+        #expect(all["workflow-call"]?.kindName == "Workflow")
+        #expect(all["agent-1"]?.kindName == "Agent")
+        #expect(all["bg-call"]?.kindName == "Command")
+        #expect(all["task:monitor-1"]?.kindName == "Monitor")
+        #expect(all["task:mcp-1"]?.kindName == "MCP Tool")
+        // One this app doesn't know yet, by the CLI's own name for it.
+        let other = TaskNode(task: .init(id: "x", kind: "somethingNew", taskType: "remote_shell", title: "x", status: .running))
+        #expect(other.kindName == "Remote Shell")
     }
 
     @Test func runningComesFirstAndAFinishedTaskKeepsItsTime() {
@@ -52,7 +54,7 @@ struct TaskTreeTests {
     /// first in each, with their states and times; the workflow is called by its name.
     @Test func aWorkflowsAgentsAreItsChildrenByPhase() throws {
         let thread = ThreadModel.sampleWorkflow(running: true)
-        let workflow = try #require(TaskNode.tree(thread.taskEntries, call: thread.call).first { $0.id == "workflow-call" })
+        let workflow = try #require(TaskNode.tree(thread.tasks, call: thread.call).first { $0.id == "workflow-call" })
         #expect(workflow.title == "review-diff")
         #expect(workflow.state == .running)
         #expect(workflow.stoppableTaskID == "wf-1")
@@ -62,7 +64,7 @@ struct TaskTreeTests {
         #expect(agents.map(\.state) == [.done, .done, .done, .running, .waiting])
         #expect(agents[0].seconds == 118)
         #expect(agents[3].started != nil && agents[3].seconds == nil)
-        #expect(agents.allSatisfy { $0.kind == .agent && $0.stoppableTaskID == nil })
+        #expect(agents.allSatisfy { $0.kindName == "Agent" && $0.isWorkflowAgent && $0.stoppableTaskID == nil })
         #expect(agents[3].id == "workflow-call/agent/4")
         #expect(TaskNode.path(to: "workflow-call/agent/4", in: [workflow]) == ["workflow-call", "workflow-call/agent/4"])
 
@@ -76,88 +78,72 @@ struct TaskTreeTests {
 
     /// Agents in no phase come first, in a section with no header, never under an empty one.
     @Test func agentsInNoPhaseHaveNoHeader() throws {
-        let snapshot: JSONValue = [
-            "runId": "r", "status": "running",
-            "phases": [["index": 1, "title": "Scan"], ["index": 2, "title": "Review"]],
-            "agents": [
-                ["index": 1, "label": "scan", "phaseIndex": 1, "state": "done"],
-                ["index": 2, "label": "loose", "state": "progress"],
-                ["index": 3, "label": "review", "phaseIndex": 2, "state": "progress"],
-            ],
+        func agent(_ index: Int, _ title: String, phase: Int?, _ status: TaskStatus) -> TaskState {
+            TaskState(id: "wf/agent/\(index)", parentId: "wf", kind: .workflowAgent, title: title, status: status,
+                      workflowAgent: .init(index: index, phase: phase == 1 ? "Scan" : phase == 2 ? "Review" : nil, phaseIndex: phase))
+        }
+        let tasks = [
+            TaskState(id: "wf", kind: .workflow, title: "wf", status: .running, workflow: .init(runId: "r", phases: [
+                .init(index: 1, title: "Scan", status: .done), .init(index: 2, title: "Review", status: .running),
+            ])),
+            agent(1, "scan", phase: 1, .done), agent(2, "loose", phase: nil, .running), agent(3, "review", phase: 2, .running),
         ]
-        let run = WorkflowRun(standingInFor: "wf", loaded: snapshot)
-        let entry = InspectorTaskEntry(id: "wf", call: nil, task: nil, isBackgrounded: false, workflow: run)
-        let workflow = try #require(TaskNode.tree([entry], call: { _ in nil }).first)
+        let workflow = try #require(TaskNode.tree(tasks, call: { _ in nil }).first)
         #expect(workflow.children.map(\.title) == ["loose", "scan", "review"])
+        #expect(workflow.children.allSatisfy { $0.runId == "r" })
         let sections = TaskNode.phaseSections(workflow.children)
         #expect(sections.map(\.title) == [nil, "Scan", "Review"])
     }
 
     @Test func aFinishedWorkflowKeepsItsTime() throws {
         let thread = ThreadModel.sampleWorkflow(running: false)
-        let workflow = try #require(TaskNode.tree(thread.taskEntries, call: thread.call).first { $0.id == "workflow-call" })
+        let workflow = try #require(TaskNode.tree(thread.tasks, call: thread.call).first { $0.id == "workflow-call" })
         #expect(workflow.state == .done)
         #expect(workflow.seconds == 238)
         #expect(workflow.stoppableTaskID == nil)
         #expect(workflow.children.allSatisfy { $0.state == .done })
     }
 
-    /// A workflow agent's own background command (slow-check's agents each ran `sleep 45`) is
-    /// under that agent, never at the top: the daemon says whose it is on every event.
+    /// A workflow agent's own background command is under that agent, as the daemon says
+    /// (`parentId`), never at the top.
     @Test func anAgentsOwnCommandIsUnderItsAgent() throws {
         let thread = ThreadModel.sampleWorkflow(running: true)
-        let top = TaskNode.tree(thread.taskEntries, call: thread.call)
+        let top = TaskNode.tree(thread.tasks, call: thread.call)
         #expect(top.map(\.id) == ["workflow-call"])
         let workflow = try #require(top.first)
-        #expect(workflow.children.allSatisfy { $0.kind == .agent })
+        #expect(workflow.children.allSatisfy { $0.isWorkflowAgent })
         let skeptic = try #require(workflow.children.first { $0.title == "skeptic 1" })
-        #expect(skeptic.children.map(\.id) == ["task:bg-skeptic-1"])
+        #expect(skeptic.children.map(\.id) == ["skeptic-1-bash"])
         let command = try #require(skeptic.children.first)
-        #expect(command.kind == .command)
+        #expect(command.kindName == "Command")
         #expect(command.title == "swift test --filter TaskTreeTests")
         #expect(command.state == .running)
-        #expect(TaskNode.path(to: "task:bg-skeptic-1", in: top) == ["workflow-call", skeptic.id, "task:bg-skeptic-1"])
+        #expect(command.stoppableTaskID == "bg-skeptic-1")
+        #expect(TaskNode.path(to: "skeptic-1-bash", in: top) == ["workflow-call", skeptic.id, "skeptic-1-bash"])
     }
 
-    /// Until the daemon knows which agent ran it, an agent's command is under its workflow; with
-    /// no workflow to go under (an older daemon says only `owned_by_subagent`, on the start) it
-    /// isn't listed, though its later events don't say so again.
-    @Test func anAgentsCommandWithNoAgentIsUnderItsWorkflowOrNowhere() throws {
-        let thread = ThreadModel.sampleWorkflow(running: true)
-        thread.apply(.taskEvent(.init(threadId: thread.id, seq: 200, event: "started", taskId: "bg-unplaced", toolUseId: "elsewhere-1",
-                                      description: "sleep 45", status: "running", ownedBySubagent: true,
-                                      workflowToolUseId: WorkflowSample.callID,
-                                      data: ["task_type": "local_bash", "owned_by_subagent": true])))
-        thread.apply(.taskEvent(.init(threadId: thread.id, seq: 201, event: "started", taskId: "bg-old-daemon", toolUseId: "elsewhere-2",
-                                      description: "sleep 45", status: "running",
-                                      data: ["task_type": "local_bash", "owned_by_subagent": true, "is_backgrounded": true])))
-        thread.apply(.taskEvent(.init(threadId: thread.id, seq: 202, event: "notification", taskId: "bg-old-daemon",
-                                      toolUseId: "elsewhere-2", status: "stopped", summary: "sleep 45", data: ["status": "stopped"])))
-        let top = TaskNode.tree(thread.taskEntries, call: thread.call)
-        #expect(top.map(\.id) == ["workflow-call"])
-        let workflow = try #require(top.first)
-        #expect(workflow.children.first?.id == "task:bg-unplaced")
-        #expect(workflow.children.dropFirst().allSatisfy { $0.kind == .agent })
-        #expect(flatten(top)["task:bg-old-daemon"] == nil)
-        #expect(thread.taskEntries.contains { $0.id == "task:bg-old-daemon" && $0.task?.status == "stopped" })
+    /// A task whose parent isn't listed is at the top rather than lost.
+    @Test func aTaskWhoseParentIsntListedIsAtTheTop() {
+        let tasks = [TaskState(id: "orphan", parentId: "gone", kind: .command, title: "orphan", status: .running)]
+        #expect(TaskNode.tree(tasks, call: { _ in nil }).map(\.id) == ["orphan"])
     }
 
     /// A /loop's job and a /goal are tasks of their own: the job named for its prompt, saying how
     /// often it fires; the goal for its condition, saying how many checks it has had.
     @Test func schedulesAndGoalsAreTasks() throws {
-        let running = flatten(TaskNode.tree(ThreadModel.sampleScheduledWork(finished: false).taskEntries, call: { _ in nil }))
+        let running = flatten(TaskNode.tree(ThreadModel.sampleScheduledWork(finished: false).tasks, call: { _ in nil }))
         let job = try #require(running["schedule:cron-create"])
-        #expect(job.kind == .schedule && job.kind.name == "Schedule")
+        #expect(job.kindName == "Schedule")
         #expect(job.title == "reply with the current time in one short line")
         #expect(job.state == .running)
         #expect(job.note == "Every minute")
         #expect(job.stoppableTaskID == nil)
         let goal = try #require(running["goal:goal-set"])
-        #expect(goal.kind == .goal && goal.title == "notes.md in this directory has no spelling mistakes")
+        #expect(goal.kindName == "Goal" && goal.title == "notes.md in this directory has no spelling mistakes")
         #expect(goal.state == .running)
         #expect(goal.note == "1 check")
 
-        let finished = flatten(TaskNode.tree(ThreadModel.sampleScheduledWork(finished: true).taskEntries, call: { _ in nil }))
+        let finished = flatten(TaskNode.tree(ThreadModel.sampleScheduledWork(finished: true).tasks, call: { _ in nil }))
         #expect(finished["schedule:cron-create"]?.state == .stopped)
         #expect(finished["schedule:cron-create"]?.note == "Fired 2 times")
         #expect(finished["goal:goal-set"]?.state == .done)
