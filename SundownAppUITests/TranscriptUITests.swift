@@ -141,6 +141,29 @@ final class TranscriptUITests: SundownUITestCase {
         return last
     }
 
+    /// Where each "Step n" prompt in the transcript is (its top, on screen), once two reads half a
+    /// second apart agree.
+    @MainActor
+    private func promptTops() -> [Int: CGFloat] {
+        var last: [Int: CGFloat] = [:]
+        for _ in 0..<10 {
+            Thread.sleep(forTimeInterval: 0.5)
+            guard let root = try? app.scrollViews["Transcript"].snapshot() else { continue }
+            var prompts: [Int: CGFloat] = [:]
+            func walk(_ element: any XCUIElementSnapshot) {
+                if let words = element.messageWords, words.hasPrefix("Step "),
+                   let number = Int(words.dropFirst(5).prefix { $0.isNumber }) {
+                    prompts[number] = element.frame.minY
+                }
+                element.children.forEach(walk)
+            }
+            walk(root)
+            if !prompts.isEmpty, prompts == last { return prompts }
+            last = prompts
+        }
+        return last
+    }
+
     /// Resizing keeps the end in view; a turn's edited files; tool calls folded and opened; the
     /// tabs in a window as narrow as it goes.
     @MainActor
@@ -196,6 +219,25 @@ final class TranscriptUITests: SundownUITestCase {
         assertAtEnd("narrowing after Jump to Latest")
         resize(to: 1000)
         assertAtEnd("widening after Jump to Latest")
+        // Scrolled up, the reader stays where they were through a resize: the prompt nearest the
+        // top is the same one after, though every row above and below it is laid out again.
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)).scroll(byDeltaX: 0, deltaY: 1500)
+        XCTAssertTrue(app.buttons["Jump to Latest"].appears(timeout: 5), "no Jump to Latest after scrolling up")
+        let prompts = promptTops()
+        // The first prompt wholly below the toolbar, and where it is.
+        let scrollTop = app.scrollViews["Transcript"].frame.minY
+        guard let place = prompts.filter({ $0.value >= scrollTop + 60 }).min(by: { $0.value < $1.value }) else {
+            return XCTFail("no prompt on screen after scrolling up: \(prompts)")
+        }
+        for width: CGFloat in [860, 1000] {
+            resize(to: width)
+            let after = promptTops()
+            let moved = after[place.key].map { abs($0 - place.value) }
+            // The row at the top goes back to the top, which can bring down one the toolbar hid.
+            XCTAssertLessThan(moved ?? .infinity, 200, "resizing to \(width) moved a scrolled-up reader: Step \(place.key) was at \(place.value), now \(after)")
+        }
+        app.buttons["Jump to Latest"].click()
+        XCTAssertTrue(app.buttons["Jump to Latest"].disappears(timeout: 5), "Jump to Latest stayed after a resize")
         app.typeKey("2", modifierFlags: .command)
         XCTAssertTrue(input.disappears(timeout: 5), "⌘2 didn't leave the chat")
         app.typeKey("1", modifierFlags: .command)
