@@ -64,6 +64,20 @@ final class TranscriptBlankUITests: SundownUITestCase {
         assertNeverBlank("back from Tasks")
     }
 
+    /// Back on the Chat tab from Tasks, a reader who had scrolled up is where they were, not at the
+    /// end: the transcript is made again, at its end, as it comes back.
+    @MainActor
+    func testBackFromTasksKeepsThePlace() throws {
+        try launchVaried()
+        for depth in 1...3 {
+            scrollUp(by: 1500 * depth)
+            let place = settledPlace()
+            run("tab tasks", "wait 800", "tab chat")
+            assertNeverBlank("back from Tasks, \(depth)")
+            assertKept(place, "back from Tasks, \(depth)")
+        }
+    }
+
     /// A streamed reply keeps the end in view: Jump to Latest is never offered while it streams.
     @MainActor
     func testStreamingFollowsTheEnd() throws {
@@ -89,24 +103,37 @@ final class TranscriptBlankUITests: SundownUITestCase {
     /// The window tiled back and forth (⌃⌥←, → and ↑), animated and at once, at the end and scrolled
     /// up: every change of width lays every row out again, and rapid ones left the lazy stack's
     /// built rows outside the window, or none built at all (2026-10-13), until the reader scrolled.
+    /// At the end the reader stays there, and scrolled up the message at the top stays on screen.
     @MainActor
     func testSnapping() throws {
         try launchVaried()
-        func snapAround(_ place: String) {
+        let jump = app.buttons["Jump to Latest"]
+        func snapAround(atEnd: Bool) {
+            let where_ = atEnd ? "at the end" : "scrolled up"
             for round in 1...6 {
                 let now = round.isMultiple(of: 2) ? " now" : ""
                 for side in ["left", "right", "full"] {
+                    let place = atEnd ? nil : settledPlace()
+                    let step = "snapped \(side)\(now), round \(round), \(where_)"
                     run("snap \(side)\(now)")
-                    assertNeverBlank("snapped \(side)\(now), round \(round), \(place)", seconds: 1.5)
+                    assertNeverBlank(step, seconds: 1.5)
+                    if let place { assertKept(place, step) }
+                    else { XCTAssertFalse(jump.exists && jump.isHittable, "left the end: \(step)") }
                 }
             }
-            // All three at once, with nothing between them.
+            // Several at once, with nothing between them.
+            let place = atEnd ? nil : settledPlace()
             run("snap left now", "snap right now", "snap full now", "snap left now", "snap full now")
-            assertNeverBlank("snapped in a burst, \(place)")
+            assertNeverBlank("snapped in a burst, \(where_)")
+            if let place { assertKept(place, "snapped in a burst") }
+            else { XCTAssertFalse(jump.exists && jump.isHittable, "left the end: snapped in a burst") }
+            // After a burst, what the window reports of its frame (and so where XCUITest points and
+            // what it reads) lagged what was on screen for seconds: settled before going on.
+            run("snap center now", "wait 1000")
         }
-        snapAround("at the end")
-        run("scroll top", "wait 1500", "scroll frac 0.5", "wait 800")
-        snapAround("scrolled up")
+        snapAround(atEnd: true)
+        scrollUp(by: 3000)
+        snapAround(atEnd: false)
         run("snap center now")
     }
 
@@ -132,6 +159,20 @@ final class TranscriptBlankUITests: SundownUITestCase {
         _ = waitUntil(5) { app.state == .runningBackground }
     }
 
+    /// Scrolls up by `points` as the reader does, with the scroll wheel over the transcript, and
+    /// waits until Jump to Latest says they're away from the end. (`scroll frac` goes to an offset
+    /// worked out from the lazy stack's estimate of the content's height, and could land past every
+    /// row, where the transcript went back to the end.)
+    @MainActor
+    private func scrollUp(by points: Int) {
+        let transcript = mainWindow().coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
+        for _ in 0..<max(1, points / 1500) {
+            transcript.scroll(byDeltaX: 0, deltaY: CGFloat(min(points, 1500)))
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+        XCTAssertTrue(app.buttons["Jump to Latest"].appears(timeout: 5), "scrolling up by \(points) left the reader at the end")
+    }
+
     /// Scrolls to the top `count` times, a page going in each time.
     @MainActor
     private func loadOlderPages(_ count: Int) {
@@ -153,6 +194,70 @@ final class TranscriptBlankUITests: SundownUITestCase {
         XCTAssertTrue(ran, "the driver didn't run \(lines)")
     }
 
+    // MARK: Place
+
+    /// The messages in the transcript's visible part, top to bottom, by their first words: what the
+    /// reader is looking at. Read from one snapshot of the window.
+    @MainActor
+    private func messagesOnScreen() -> [String] {
+        let scrollView = app.scrollViews["Transcript"]
+        // A snapshot can fail while the app is busy laying out: tried again.
+        var root: (any XCUIElementSnapshot)?
+        for _ in 0..<3 where root == nil {
+            do { root = try scrollView.snapshot() } catch {
+                snapshotError = "\(error)"
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+        }
+        guard let root else { return [] }
+        var messages: [(frame: CGRect, words: String)] = []
+        func walk(_ element: any XCUIElementSnapshot) {
+            if let words = element.messageWords, !words.isEmpty, element.frame.height > 0 {
+                messages.append((element.frame, String(words.prefix(60))))
+            }
+            element.children.forEach(walk)
+        }
+        walk(root)
+        let frame = root.frame
+        // Below the toolbar, above the bottom bar.
+        let visible = CGRect(x: frame.minX, y: frame.minY + 60, width: frame.width, height: max(0, frame.height - 180))
+        return messages.filter { $0.frame.intersects(visible) }
+            .sorted { $0.frame.minY < $1.frame.minY }
+            .map(\.words)
+    }
+
+    /// Why the last snapshot of the transcript failed, for a failure's message.
+    private var snapshotError = ""
+
+    /// Where the reader is once scrolling has settled: the messages on screen, read until two reads
+    /// half a second apart agree.
+    @MainActor
+    private func settledPlace() -> [String] {
+        var last = messagesOnScreen()
+        for _ in 0..<10 {
+            Thread.sleep(forTimeInterval: 0.5)
+            let now = messagesOnScreen()
+            if now == last, !now.isEmpty { return now }
+            last = now
+        }
+        return last
+    }
+
+    /// The reader is still where `place` was: its topmost prompt or numbered reply (words no other
+    /// message has), else its topmost message, is still on screen.
+    @MainActor
+    private func assertKept(_ place: [String], _ step: String, file: StaticString = #filePath, line: UInt = #line) {
+        guard let top = place.first(where: { $0.hasPrefix("Step ") || $0.contains("Section ") }) ?? place.first else {
+            let shot = XCTAttachment(screenshot: mainWindow().screenshot())
+            shot.name = "No message: \(step)"
+            shot.lifetime = .keepAlways
+            add(shot)
+            return XCTFail("no message on screen before: \(step) (ink \(ink() ?? -1), \(snapshotError))", file: file, line: line)
+        }
+        let now = settledPlace()
+        XCTAssertTrue(now.contains(top), "lost the reader's place: \(step): \(top) was on screen, now \(now)", file: file, line: line)
+    }
+
     // MARK: Pixels
 
     /// Watches the window for `seconds`: a blank (the transcript's area all background) lasting
@@ -164,8 +269,9 @@ final class TranscriptBlankUITests: SundownUITestCase {
         var longest: TimeInterval = 0
         var evidence: XCUIScreenshot?
         repeat {
-            let shot = mainWindow().screenshot()
-            if let ink = ink(of: shot.image), ink < 0.0002 {
+            let window = mainWindow()
+            let shot = window.screenshot()
+            if let ink = ink(of: shot.image, window: window.frame), ink < 0.0002 {
                 let since = blankSince ?? Date()
                 blankSince = since
                 if Date().timeIntervalSince(since) > longest {
@@ -188,25 +294,55 @@ final class TranscriptBlankUITests: SundownUITestCase {
     }
 
     @MainActor
-    private func ink() -> Double? { ink(of: mainWindow().screenshot().image) }
+    private func ink() -> Double? {
+        let window = mainWindow()
+        return ink(of: window.screenshot().image, window: window.frame)
+    }
 
-    /// The share of sampled pixels in the transcript's area (the window's right two thirds, between
-    /// the toolbar and the composer) that differ from the background beside it.
-    private func ink(of image: NSImage) -> Double? {
-        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-        let rep = NSBitmapImageRep(cgImage: cg)
-        let w = rep.pixelsWide, h = rep.pixelsHigh
-        guard w > 0, h > 0, let bg = rep.colorAt(x: w * 95 / 100, y: h / 2)?.usingColorSpace(.deviceRGB) else { return nil }
-        var inked = 0, total = 0
-        for y in stride(from: h * 12 / 100, to: h * 80 / 100, by: 5) {
-            for x in stride(from: w * 32 / 100, to: w * 90 / 100, by: 5) {
-                total += 1
-                guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
-                let d = abs(c.redComponent - bg.redComponent) + abs(c.greenComponent - bg.greenComponent)
-                    + abs(c.blueComponent - bg.blueComponent)
-                if d > 0.12 { inked += 1 }
+    /// The share of sampled pixels in the transcript's visible part (its scroll view, below the
+    /// toolbar, above the bottom bar, clear of the scroller) that differ from its most common color,
+    /// its background. From the scroll view's own frame, whatever the window's width and the
+    /// sidebar's: at half a screen's width a share of the window took in the sidebar, and a blank
+    /// read as drawn.
+    @MainActor
+    private func ink(of image: NSImage, window: CGRect) -> Double? {
+        let transcript = app.scrollViews["Transcript"].frame
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              window.width > 0, !transcript.isEmpty else { return nil }
+        let w = cg.width, h = cg.height
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard drawn else { return nil }
+        let scale = CGFloat(w) / window.width
+        let area = CGRect(x: transcript.minX - window.minX, y: transcript.minY - window.minY + 60,
+                          width: transcript.width - 20, height: transcript.height - 60 - 150)
+            .intersection(CGRect(origin: .zero, size: window.size))
+        guard area.width > 40, area.height > 40 else { return nil }
+        // The buffer's rows run from the image's top, as the frames' y does.
+        var samples: [UInt32] = []
+        for y in stride(from: Int(area.minY * scale), to: min(h, Int(area.maxY * scale)), by: 5) {
+            for x in stride(from: Int(area.minX * scale), to: min(w, Int(area.maxX * scale)), by: 5) {
+                let i = (y * w + x) * 4
+                samples.append(UInt32(pixels[i]) << 16 | UInt32(pixels[i + 1]) << 8 | UInt32(pixels[i + 2]))
             }
         }
-        return total > 0 ? Double(inked) / Double(total) : nil
+        guard !samples.isEmpty else { return nil }
+        func channels(_ c: UInt32) -> (Int, Int, Int) { (Int(c >> 16 & 0xff), Int(c >> 8 & 0xff), Int(c & 0xff)) }
+        // The background: the most common color, to within a few levels.
+        var counts: [UInt32: Int] = [:]
+        for c in samples { counts[c & 0xf0f0f0, default: 0] += 1 }
+        guard let mode = counts.max(by: { $0.value < $1.value })?.key,
+              let bg = samples.first(where: { $0 & 0xf0f0f0 == mode }).map(channels) else { return nil }
+        let inked = samples.filter { c in
+            let (r, g, b) = channels(c)
+            return abs(r - bg.0) + abs(g - bg.1) + abs(b - bg.2) > 30
+        }.count
+        return Double(inked) / Double(samples.count)
     }
 }
