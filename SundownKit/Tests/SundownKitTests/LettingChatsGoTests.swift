@@ -2,6 +2,8 @@ import Foundation
 import Testing
 import TetherProtocol
 @testable import SundownKit
+import SundownFixtures
+import SundownTestSupport
 
 /// A chat no window shows holds only its last page, and nothing worked out from it, without losing
 /// its place in the stream.
@@ -126,21 +128,26 @@ struct LettingChatsGoTests {
 
     // MARK: the connection
 
-    private func connect(_ daemon: FakeDaemon, status: ThreadStatus = .idle, items: [Item]? = nil,
+    private func connect(_ host: FakeHost, status: ThreadStatus = .idle, items: [Item]? = nil,
                          historySeq: Int? = 100) async -> (HostConnection, ThreadModel) {
-        await daemon.script.queue("thread/read", ThreadReadResult(items: items ?? transcript, turns: [], historySeq: historySeq, hasMore: false))
-        await daemon.script.queue("thread/subscribe", ThreadSubscribeResult(
-            thread: .init(threadId: threadID, status: status, cwd: "/repo", lastSeq: historySeq ?? 0), replayed: 0, gap: false))
-        let connection = daemon.connection()
+        serve(host, status: status, items: items, historySeq: historySeq)
+        let connection = host.connection()
         await connection.connect()
         let thread = connection.thread(threadID)
         await connection.open(thread)
         return (connection, thread)
     }
 
+    /// The chat as `host` reads it and subscribes to it.
+    private func serve(_ host: FakeHost, status: ThreadStatus = .idle, items: [Item]? = nil, historySeq: Int? = 100) {
+        host.queue("thread/read", ThreadReadResult(items: items ?? transcript, turns: [], historySeq: historySeq, hasMore: false))
+        host.queue("thread/subscribe", ThreadSubscribeResult(
+            thread: .init(threadId: threadID, status: status, cwd: "/repo", lastSeq: historySeq ?? 0), replayed: 0, gap: false))
+    }
+
     @Test func leavingAnIdleLiveChatKeepsItsLastPageAndItsSubscription() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host)
         #expect(connection.isLoaded(thread))
         #expect(thread.items.count == 60)
 
@@ -149,17 +156,17 @@ struct LettingChatsGoTests {
         #expect(thread.items.map(\.id) == transcript.suffix(50).map(\.id))
         #expect(thread.hasMoreHistory)
         #expect(connection.isLoaded(thread))
-        #expect(await !daemon.script.calls.contains { $0.method == "thread/unsubscribe" })
+        #expect(host.count("thread/unsubscribe") == 0)
 
         // Live events still arrive, after the last one seen.
-        daemon.emit("item/started", encoded(ItemStartedNotification(threadId: threadID, seq: 101, item: message(61))))
+        host.emit("item/started", json(ItemStartedNotification(threadId: threadID, seq: 101, item: message(61))))
         try await eventually { thread.items.last?.id == "m61" }
 
         // Shown again and scrolled up, the page let go comes back, before the first item held.
         await connection.open(thread)
-        await daemon.script.queue("thread/read", ThreadReadResult(items: Array(transcript.prefix(10)), turns: [], hasMore: false))
+        host.queue("thread/read", ThreadReadResult(items: Array(transcript.prefix(10)), turns: [], hasMore: false))
         await connection.loadOlderHistory(thread)
-        let older = await daemon.script.params(of: "thread/read").last
+        let older = host.calls(of: "thread/read").last
         #expect(older?["before"]?.stringValue == "m10")
         #expect(older?["limit"]?.intValue == HostConnection.olderHistoryPageSize)
         #expect(thread.items.map(\.id) == transcript.map(\.id) + ["m61"])
@@ -170,23 +177,23 @@ struct LettingChatsGoTests {
     /// A page that arrives after the chat was trimmed under it would leave a gap: it's dropped,
     /// and asked for again from what's held now.
     @Test func aPageForItemsLetGoMeanwhileIsDropped() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host)
         connection.leave(thread)
         await connection.open(thread)
         #expect(thread.items.first?.id == "m10")
 
-        await daemon.script.hold("thread/read")
-        await daemon.script.queue("thread/read", ThreadReadResult(items: Array(transcript.prefix(10)), turns: [], hasMore: false))
+        host.hold("thread/read")
+        host.queue("thread/read", ThreadReadResult(items: Array(transcript.prefix(10)), turns: [], hasMore: false))
         let loading = Task { await connection.loadOlderHistory(thread) }
-        try await eventually { await daemon.script.params(of: "thread/read").count == 2 }
+        try await eventually { host.calls(of: "thread/read").count == 2 }
         for (n, seq) in zip(61...65, 101...) {
-            daemon.emit("item/started", encoded(ItemStartedNotification(threadId: threadID, seq: seq, item: message(n))))
+            host.emit("item/started", json(ItemStartedNotification(threadId: threadID, seq: seq, item: message(n))))
         }
         try await eventually { thread.items.last?.id == "m65" }
         connection.leave(thread)
         #expect(thread.items.first?.id == "m15")
-        await daemon.script.release("thread/read")
+        host.release("thread/read")
         _ = await loading.value
 
         #expect(thread.items.first?.id == "m15")
@@ -197,12 +204,12 @@ struct LettingChatsGoTests {
     }
 
     @Test func aChatLeftWhileRunningKeepsOnlyItsLastPageAfterItsTurn() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon, status: .running)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host, status: .running)
         connection.leave(thread)
         #expect(thread.items.count == 60)
 
-        daemon.emit("thread/status/changed", ["threadId": .string(threadID), "seq": 101, "status": "idle"])
+        host.emit("thread/status/changed", ["threadId": .string(threadID), "seq": 101, "status": "idle"])
         try await eventually { thread.status == .idle }
         connection.afterTurn()
 
@@ -210,13 +217,13 @@ struct LettingChatsGoTests {
         #expect(thread.lastSeq == 101)
         #expect(connection.isLoaded(thread))
         // The chat list isn't asked for again: the daemon tells of what changed in it.
-        #expect(await daemon.script.params(of: "thread/list").count == 1)
+        #expect(host.calls(of: "thread/list").count == 1)
         await connection.disconnect()
     }
 
     @Test func aChatOnScreenKeepsEverythingAfterATurn() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host)
         _ = thread.rows(.summarized)
         connection.afterTurn()
         #expect(thread.items.count == 60)
@@ -227,8 +234,8 @@ struct LettingChatsGoTests {
     /// A chat read from disk alone has no stream to keep a place in: it's let go as a followed one
     /// is, keeping its last page to show until it's read again.
     @Test func leavingAChatWithNoStreamLetsItGo() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon, historySeq: nil)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host, historySeq: nil)
         #expect(thread.historyLoaded)
         let held = thread.itemsHeld
         connection.leave(thread)
@@ -241,8 +248,8 @@ struct LettingChatsGoTests {
     /// Nothing is subscribed while the host is down: a live chat isn't mistaken for one with no
     /// stream, and is still there to resubscribe when it comes back.
     @Test func leavingWhileDisconnectedLetsNothingGo() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host)
         await connection.disconnect()
         connection.leave(thread)
         #expect(thread.historyLoaded)
@@ -253,8 +260,8 @@ struct LettingChatsGoTests {
 
     /// A page's edits are its calls' own: its turns' edits are drawn from them, a subagent's included.
     @Test func aPagesEditsAreItsCalls() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host)
         guard case .turnEdits(let edits)? = thread.rows(.summarized).first(where: { $0.id == "edits-m50" }) else {
             Issue.record("no edits for the turn from m50"); return
         }

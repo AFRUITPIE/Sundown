@@ -39,9 +39,15 @@ let package = Package(
         .target(name: "SundownUI", dependencies: [
             "SundownKit", "SundownFixtures", .product(name: "Markdown", package: "swift-markdown"),
         ]),
-        .testTarget(name: "SundownKitTests", dependencies: ["SundownKit", "SundownFixtures"], resources: [.copy("Fixtures")]),
+        // What both test targets share: waiting, observing, building items. Tests only.
+        .target(name: "SundownTestSupport", dependencies: [
+            "SundownKit", "SundownFixtures", .product(name: "TetherProtocol", package: "tether-server"),
+        ]),
+        .testTarget(name: "SundownKitTests", dependencies: ["SundownKit", "SundownFixtures", "SundownTestSupport"],
+                    resources: [.copy("Fixtures")]),
         .testTarget(name: "SundownUITests", dependencies: [
-            "SundownUI", "SundownKit", "SundownFixtures", .product(name: "TetherProtocol", package: "tether-server"),
+            "SundownUI", "SundownKit", "SundownFixtures", "SundownTestSupport",
+            .product(name: "TetherProtocol", package: "tether-server"),
         ]),
     ]
 )

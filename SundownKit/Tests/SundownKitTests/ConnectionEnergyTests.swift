@@ -2,82 +2,33 @@ import Foundation
 import Testing
 import TetherProtocol
 @testable import SundownKit
+import SundownFixtures
+import SundownTestSupport
 
-/// A daemon for connection tests: canned answers by method, every call counted, and a switch to
-/// make the next connections fail.
-private actor ScriptedDaemon {
-    typealias Reply = ScriptedReply
-
-    private(set) var calls: [String] = []
-    private(set) var connects = 0
-    private var replies: [String: Reply] = [:]
-    /// Answers given once each, in order, before `replies`.
-    private var queued: [String: [Reply]] = [:]
-    /// The daemon's process: a new one says the daemon restarted.
-    var pid = 1
-    /// While true, a connection can't be made.
-    var refusesConnections = false
-    private var live: [ScriptedTransport] = []
-
-    init() {
-        replies["model/list"] = .result(encoded(ModelListResult(models: [.init(value: "sonnet", displayName: "Sonnet", description: "")])))
-        replies["thread/list"] = .result(["threads": []])
-        replies["account/read"] = .error(code: -1, message: "No account in the fixture")
-        replies["command/list"] = .result(encoded(CommandListResult(commands: [.init(name: "review", description: "Review")])))
-    }
-
-    func set(_ method: String, _ reply: Reply) { replies[method] = reply }
-    func enqueue(_ method: String, _ reply: Reply) { queued[method, default: []].append(reply) }
-    func setPID(_ value: Int) { pid = value }
-    func setRefusesConnections(_ value: Bool) { refusesConnections = value }
-    func count(_ method: String) -> Int { calls.filter { $0 == method }.count }
-    func resetCalls() { calls = [] }
-
-    /// The transport for the next connection, or a failure while connections are refused.
-    func connect() throws -> any Transport {
-        connects += 1
-        if refusesConnections { throw TransportError.launchFailed("The fixture refuses connections") }
-        let transport = ScriptedTransport { [self] method, params in await reply(method: method, params: params) }
-        live.append(transport)
-        return transport
-    }
-
-    /// The current connection, to push notifications down.
-    func latest() -> ScriptedTransport? { live.last }
-
-    func reply(method: String, params: JSONValue) -> Reply {
-        calls.append(method)
-        if method == "initialize" {
-            return .result(encoded(InitializeResult(
-                serverInfo: .init(name: "tether-server", version: "test"),
-                protocolVersion: tetherProtocolVersion,
-                host: .init(hostname: "fixture", platform: "linux", arch: "arm64", home: "/home/dev", pid: pid, mode: .daemon),
-                claude: .init(path: "/usr/bin/claude", version: "test"))))
-        }
-        if var next = queued[method], !next.isEmpty {
-            let reply = next.removeFirst()
-            queued[method] = next
-            return reply
-        }
-        return replies[method] ?? .error(code: -32601, message: "Not in the fixture")
-    }
+/// A daemon for connection tests: a model, no account, and a command.
+private func makeDaemon() -> FakeHost {
+    let host = FakeHost(hostname: "fixture")
+    host.answer("model/list", with: ModelListResult(models: [.init(value: "sonnet", displayName: "Sonnet", description: "")]))
+    host.fail("account/read", code: -1, "No account in the fixture")
+    host.answer("command/list", with: CommandListResult(commands: [.init(name: "review", description: "Review")]))
+    return host
 }
 
 private let sshHost = HostConfig(name: "Build box", kind: .ssh(destination: "build-box"))
 
 @MainActor
-private func connection(_ daemon: ScriptedDaemon, host: HostConfig = sshHost, network: NetworkPath? = nil) -> HostConnection {
-    HostConnection(host: host, network: network, transportProvider: { _ in try await daemon.connect() })
+private func connection(_ daemon: FakeHost, host: HostConfig = sshHost, network: NetworkPath? = nil) -> HostConnection {
+    daemon.connection(host: host, network: network)
 }
 
 private func summary(_ id: String, cwd: String) -> ThreadSummary {
     .init(threadId: id, title: id, cwd: cwd, updatedAt: 1, status: .idle)
 }
 
-private func page(_ texts: [String], hasMore: Bool) -> ScriptedReply {
-    .result(encoded(ThreadReadResult(
+private func page(_ texts: [String], hasMore: Bool) -> FakeHost.Answer {
+    .result(ThreadReadResult(
         items: texts.map { .agentMessage(.init(id: $0, createdAt: 1, text: $0)) },
-        turns: [], summary: nil, historySeq: nil, hasMore: hasMore)))
+        turns: [], summary: nil, historySeq: nil, hasMore: hasMore))
 }
 
 @Suite
@@ -108,8 +59,8 @@ struct ReconnectBackoffTests {
 struct NetworkRetryTests {
     /// Off the network an SSH host isn't tried on a timer; it's tried as soon as the network is back.
     @Test func anSSHHostWaitsForTheNetworkRatherThanATimer() async throws {
-        let daemon = ScriptedDaemon()
-        await daemon.setRefusesConnections(true)
+        let daemon = makeDaemon()
+        daemon.refusesConnections = true
         let path = NetworkPath(monitoring: false)
         path.update(satisfied: false)
         let c = connection(daemon, network: path)
@@ -119,48 +70,48 @@ struct NetworkRetryTests {
         #expect(c.log.last == "Waiting for the network")
         #expect(c.reconnectAttempt == 0)
 
-        await daemon.setRefusesConnections(false)
+        daemon.refusesConnections = false
         path.update(satisfied: true, interfaces: ["en0"])
         try await eventually(timeout: .seconds(3)) { c.state == .connected }
-        #expect(await daemon.connects == 2)
+        #expect(daemon.connects == 2)
         await c.disconnect()
     }
 
     /// A dropped connection waits before trying again; waking the Mac or Reconnect tries at once
     /// and starts the backoff over.
     @Test func retryNowTriesAtOnceAndStartsTheBackoffOver() async throws {
-        let daemon = ScriptedDaemon()
+        let daemon = makeDaemon()
         let c = connection(daemon)
         await c.connect()
         #expect(c.state == .connected)
 
-        await daemon.setRefusesConnections(true)
-        await daemon.latest()?.drop()
+        daemon.refusesConnections = true
+        daemon.drop()
         try await eventually(timeout: .seconds(3)) { if case .failed = c.state { true } else { false } }
         #expect(c.reconnectAttempt == 1)
         #expect(c.log.last?.hasPrefix("Trying again in") == true)
 
         c.retryNow()
-        try await eventually(timeout: .seconds(3)) { await daemon.connects == 2 }
+        try await eventually(timeout: .seconds(3)) { daemon.connects == 2 }
         try await eventually(timeout: .seconds(3)) { if case .failed = c.state { true } else { false } }
         // Started over: one failure since, not two.
         #expect(c.reconnectAttempt == 1)
 
-        await daemon.setRefusesConnections(false)
+        daemon.refusesConnections = false
         c.retryNow()
         try await eventually(timeout: .seconds(3)) { c.state == .connected }
         #expect(c.reconnectAttempt == 0)
         // Nothing to retry on a connection that's up.
         c.retryNow()
         try await Task.sleep(for: .milliseconds(50))
-        #expect(await daemon.connects == 3)
+        #expect(daemon.connects == 3)
         await c.disconnect()
     }
 
     /// This Mac's daemon is a process away: the network doesn't hold it back.
     @Test func thisMacDoesntWaitForTheNetwork() async throws {
-        let daemon = ScriptedDaemon()
-        await daemon.setRefusesConnections(true)
+        let daemon = makeDaemon()
+        daemon.refusesConnections = true
         let path = NetworkPath(monitoring: false)
         path.update(satisfied: false)
         let c = connection(daemon, host: .local, network: path)
@@ -177,34 +128,34 @@ struct CatalogRefreshTests {
     /// Back on the same daemon, only the chats are asked for again: models and the account start
     /// a Claude Code process. A restarted daemon gets all of it. Nothing reads every session.
     @Test func reconnectingToTheSameDaemonAsksOnlyForTheChats() async throws {
-        let daemon = ScriptedDaemon()
+        let daemon = makeDaemon()
         let c = connection(daemon)
         await c.connect()
-        #expect(await daemon.count("model/list") == 1)
+        #expect(daemon.count("model/list") == 1)
         #expect(!c.models.isEmpty)
 
-        await daemon.resetCalls()
+        daemon.forgetCalls()
         await c.reconnect()
-        #expect(await daemon.count("thread/list") == 1)
-        #expect(await daemon.count("model/list") == 0)
-        #expect(await daemon.count("account/read") == 0)
+        #expect(daemon.count("thread/list") == 1)
+        #expect(daemon.count("model/list") == 0)
+        #expect(daemon.count("account/read") == 0)
 
-        await daemon.setPID(2)
+        daemon.pid = 2
         await c.reconnect()
-        #expect(await daemon.count("model/list") == 1)
+        #expect(daemon.count("model/list") == 1)
         await c.disconnect()
     }
 
     /// New Chat's directories are the chats' own, those started while the app was away included:
     /// nothing reads every session on the host for them.
     @Test func directoriesComeFromTheChats() async throws {
-        let daemon = ScriptedDaemon()
+        let daemon = makeDaemon()
         let c = connection(daemon)
         await c.connect()
-        await daemon.set("thread/list", .result(encoded(ThreadListResult(threads: [summary("new", cwd: "/work/new")]))))
+        daemon.answer("thread/list", with: ThreadListResult(threads: [summary("new", cwd: "/work/new")]))
         await c.reconnect()
         #expect(c.directories == ["/work/new"])
-        #expect(await daemon.count("project/list") == 0)
+        #expect(daemon.count("project/list") == 0)
         await c.disconnect()
     }
 }
@@ -215,8 +166,8 @@ struct CommandCacheTests {
     /// Showing chats asks for no commands; looking for one asks once per folder, however many chats
     /// there are in it and however many ask at the same time.
     @Test func commandsAreAskedForOncePerFolderAndNeverForShowingAChat() async throws {
-        let daemon = ScriptedDaemon()
-        await daemon.set("thread/read", page(["m"], hasMore: false))
+        let daemon = makeDaemon()
+        daemon.answer("thread/read", page(["m"], hasMore: false))
         let c = connection(daemon, host: .local)
         await c.connect()
         let a = c.thread("a"), b = c.thread("b"), other = c.thread("other")
@@ -228,27 +179,27 @@ struct CommandCacheTests {
             await c.open(chat)
             c.leave(chat)
         }
-        #expect(await daemon.count("command/list") == 0)
+        #expect(daemon.count("command/list") == 0)
         #expect(c.cachedCommands(cwd: a.cwd, thread: a) == nil)
 
         async let first = c.commands(cwd: a.cwd, thread: a)
         async let second = c.commands(cwd: b.cwd, thread: b)
         let lists = await [first, second]
         #expect(lists.allSatisfy { $0.map(\.name) == ["review"] })
-        #expect(await daemon.count("command/list") == 1)
+        #expect(daemon.count("command/list") == 1)
         #expect(c.cachedCommands(cwd: b.cwd, thread: b)?.map(\.name) == ["review"])
 
         _ = await c.commands(cwd: a.cwd, thread: a)
-        #expect(await daemon.count("command/list") == 1)
+        #expect(daemon.count("command/list") == 1)
         _ = await c.commands(cwd: other.cwd, thread: other)
-        #expect(await daemon.count("command/list") == 2)
+        #expect(daemon.count("command/list") == 2)
         await c.disconnect()
     }
 
     /// A turn can add a command, and a new connection may be to a new daemon: either lets the
     /// lists go.
     @Test func aFinishedTurnOrAReconnectAsksAgain() async throws {
-        let daemon = ScriptedDaemon()
+        let daemon = makeDaemon()
         let c = connection(daemon, host: .local)
         await c.connect()
         let a = c.thread("a"), other = c.thread("other")
@@ -256,30 +207,30 @@ struct CommandCacheTests {
         other.setSummary(summary("other", cwd: "/work/server"))
         _ = await c.commands(cwd: a.cwd, thread: a)
         _ = await c.commands(cwd: other.cwd, thread: other)
-        #expect(await daemon.count("command/list") == 2)
+        #expect(daemon.count("command/list") == 2)
 
-        await daemon.latest()?.emit(method: "turn/completed", params: [
+        daemon.emit("turn/completed", [
             "threadId": "a", "seq": 1,
-            "turn": encoded(Turn(id: "t1", status: .completed, startedAt: 1, completedAt: 2)),
+            "turn": json(Turn(id: "t1", status: .completed, startedAt: 1, completedAt: 2)),
         ])
         try await eventually(timeout: .seconds(3)) { c.cachedCommands(cwd: a.cwd, thread: a) == nil }
         // Only that chat's folder.
         #expect(c.cachedCommands(cwd: other.cwd, thread: other) != nil)
         _ = await c.commands(cwd: a.cwd, thread: a)
-        #expect(await daemon.count("command/list") == 3)
+        #expect(daemon.count("command/list") == 3)
 
         await c.reconnect()
         #expect(c.cachedCommands(cwd: a.cwd, thread: a) == nil)
         _ = await c.commands(cwd: a.cwd, thread: a)
-        #expect(await daemon.count("command/list") == 4)
+        #expect(daemon.count("command/list") == 4)
 
         await c.disconnect()
     }
 
     /// A failed request isn't kept: the next look asks again.
     @Test func aFailureIsNotKept() async throws {
-        let daemon = ScriptedDaemon()
-        await daemon.enqueue("command/list", .error(code: -1, message: "Claude Code didn't start"))
+        let daemon = makeDaemon()
+        daemon.once("command/list", .error(code: -1, "Claude Code didn't start"))
         let c = connection(daemon, host: .local)
         await c.connect()
         #expect(await c.commands(cwd: "/work/app").isEmpty)
@@ -294,8 +245,8 @@ struct CommandCacheTests {
 struct OlderHistoryTests {
     /// Each ask for an older page says how it went, so the transcript knows whether to ask again.
     @Test func anOlderPageSaysHowItWent() async throws {
-        let daemon = ScriptedDaemon()
-        await daemon.enqueue("thread/read", page(["m3"], hasMore: true))
+        let daemon = makeDaemon()
+        daemon.once("thread/read", page(["m3"], hasMore: true))
         let c = connection(daemon, host: .local)
         await c.connect()
         let t = c.thread("t")
@@ -303,7 +254,7 @@ struct OlderHistoryTests {
         await c.open(t)
         #expect(t.hasMoreHistory)
 
-        await daemon.enqueue("thread/read", .error(code: -1, message: "The host is busy"))
+        daemon.once("thread/read", .error(code: -1, "The host is busy"))
         #expect(await c.loadOlderHistory(t) == .failed)
         #expect(t.hasMoreHistory)
 
@@ -315,7 +266,7 @@ struct OlderHistoryTests {
         #expect(await c.loadOlderHistory(t) == .unavailable)
 
         await c.connect()
-        await daemon.enqueue("thread/read", page(["m2"], hasMore: false))
+        daemon.once("thread/read", page(["m2"], hasMore: false))
         #expect(await c.loadOlderHistory(t) == .loaded)
         #expect(t.items.map(\.id) == ["m2", "m3"])
         #expect(await c.loadOlderHistory(t) == .complete)

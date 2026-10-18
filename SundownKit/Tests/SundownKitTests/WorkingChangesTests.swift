@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import TetherProtocol
 @testable import SundownKit
+import SundownFixtures
 
 /// The Changes pane's working tree is one `git/changes` call, its lines numbered here for comments.
 @MainActor
@@ -29,26 +30,14 @@ struct WorkingChangesTests {
     /// One call, and what it says: the repository's top, the branch as git's header names it, and
     /// the new files the daemon left uncounted.
     @Test func oneCallReadsTheWorkingTree() async throws {
-        let calls = Calls()
-        let connection = HostConnection(host: HostConfig(name: "Git fixture", kind: .ssh(destination: "git-box")),
-                                        transportProvider: { [edited] _ in ScriptedTransport { method, params in
-            await calls.note(method)
-            switch method {
-            case "initialize":
-                return .result(encoded(InitializeResult(
-                    serverInfo: .init(name: "tether-server", version: "test"), protocolVersion: tetherProtocolVersion,
-                    host: .init(hostname: "git-box", platform: "linux", arch: "arm64", home: "/home/dev", pid: 1, mode: .daemon),
-                    claude: .init(path: "/usr/bin/claude", version: "test"))))
-            case "model/list": return .result(["models": []])
-            case "thread/list": return .result(["threads": []])
-            case "git/changes":
-                let inRepo = params["cwd"]?.stringValue == "/work/project/Sources"
-                return .result(encoded(GitChangesResult(isRepo: inRepo, root: inRepo ? "/work/project" : nil,
-                                                        branch: inRepo ? "No commits yet on main" : nil,
-                                                        files: inRepo ? [edited] : [], omittedFiles: inRepo ? 50 : 0)))
-            default: return .error(code: -32601, message: "Not in the script: \(method)")
-            }
-        } })
+        let host = FakeHost(hostname: "git-box")
+        host.answer("git/changes") { [edited] call in
+            let inRepo = call.params["cwd"]?.stringValue == "/work/project/Sources"
+            return .result(GitChangesResult(isRepo: inRepo, root: inRepo ? "/work/project" : nil,
+                                            branch: inRepo ? "No commits yet on main" : nil,
+                                            files: inRepo ? [edited] : [], omittedFiles: inRepo ? 50 : 0))
+        }
+        let connection = host.connection(host: HostConfig(name: "Git fixture", kind: .ssh(destination: "git-box")))
         await connection.connect()
         let changes = try #require(try await connection.workingChanges(cwd: "/work/project/Sources"))
         #expect(changes.root == "/work/project")
@@ -57,12 +46,7 @@ struct WorkingChangesTests {
         #expect(changes.omittedFiles == 50)
         #expect(changes.added == 2 && changes.removed == 1)
         #expect(try await connection.workingChanges(cwd: "/tmp") == nil)
-        #expect(await calls.methods.filter { $0.hasPrefix("git/") || $0.hasPrefix("fs/") } == ["git/changes", "git/changes"])
+        #expect(host.calls.map(\.method).filter { $0.hasPrefix("git/") || $0.hasPrefix("fs/") } == ["git/changes", "git/changes"])
         await connection.disconnect()
     }
-}
-
-private actor Calls {
-    private(set) var methods: [String] = []
-    func note(_ method: String) { methods.append(method) }
 }

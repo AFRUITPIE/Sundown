@@ -3,6 +3,7 @@ import Observation
 import Testing
 import TetherProtocol
 @testable import SundownKit
+import SundownTestSupport
 
 /// `ThreadModel.rows(_:)` keeps the turns before the last one and folds the last again. Whatever it
 /// keeps, it must return what folding and decorating every item at once returns, at every step of a
@@ -204,10 +205,8 @@ struct IncrementalRowsTests: TimedItems {
     @Test func aSubagentsStepsLeaveTheTranscriptAlone() throws {
         let thread = ThreadModel(id: threadID)
         thread.loadHistory(items: [prompt("p1", 0), subagent("s1", 1, status: .running)], turns: [], seq: 1)
-        let transcript = Changed()
-        withObservationTracking { _ = thread.rows(.summarized) } onChange: { transcript.happened = true }
-        let card = Changed()
-        withObservationTracking { _ = thread.children(of: "s1") } onChange: { card.happened = true }
+        let transcript = observing { _ = thread.rows(.summarized) }
+        let card = observing { _ = thread.children(of: "s1") }
 
         thread.apply(.itemStarted(.init(threadId: threadID, seq: 2, item: call("s1-read", 2, kind: .fileRead, status: .running, parent: "s1"))))
         thread.apply(.itemCompleted(.init(threadId: threadID, seq: 3, item: call("s1-read", 2, kind: .fileRead, parent: "s1"))))
@@ -224,8 +223,7 @@ struct IncrementalRowsTests: TimedItems {
         let thread = ThreadModel(id: threadID)
         thread.loadHistory(items: [prompt("p1", 0), subagent("s1", 1, status: .completed), reply("a1", 2)], turns: [], seq: 1)
         _ = thread.rows(.summarized)
-        let transcript = Changed()
-        withObservationTracking { _ = thread.rows(.summarized) } onChange: { transcript.happened = true }
+        let transcript = observing { _ = thread.rows(.summarized) }
 
         thread.apply(.itemCompleted(.init(threadId: threadID, seq: 2, item: edit("s1-edit", 1.5, parent: "s1"))))
 

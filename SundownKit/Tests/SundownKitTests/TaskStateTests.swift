@@ -1,9 +1,9 @@
 import Foundation
-import Observation
 @testable import SundownFixtures
 import Testing
 import TetherProtocol
 @testable import SundownKit
+import SundownTestSupport
 
 /// A chat's tasks as the daemon states them: whole, replaced by id, in the order first seen, and
 /// assigned only when one changes, so the Tasks tab and the rows that read them redraw only then.
@@ -43,12 +43,12 @@ struct TaskStateTests {
         let thread = ThreadModel(id: threadID)
         thread.loadHistory(items: [], turns: [], seq: 1, tasks: [task("wf", call: "wf", kind: .workflow)])
         #expect(thread.callTasks.keys.sorted() == ["wf"])
-        let rows = Changed()
-        withObservationTracking { _ = thread.callTasks } onChange: { rows.happened = true }
-        thread.apply(updated(task("wf/agent/1", kind: .workflowAgent, parent: "wf"), 2))
-        thread.apply(updated(task("schedule:c", kind: .schedule), 3))
-        #expect(!rows.happened)
+        expectUnchanged(reading: { _ = thread.callTasks }) {
+            thread.apply(updated(task("wf/agent/1", kind: .workflowAgent, parent: "wf"), 2))
+            thread.apply(updated(task("schedule:c", kind: .schedule), 3))
+        }
         #expect(thread.tasks.count == 3)
+        let rows = observing { _ = thread.callTasks }
         thread.apply(updated(task("wf", .done, call: "wf", kind: .workflow), 4))
         #expect(rows.happened)
         #expect(thread.callTasks["wf"]?.status == .done)
@@ -58,12 +58,13 @@ struct TaskStateTests {
     @Test func anUnchangedTaskIsNotAssignedAgain() {
         let thread = ThreadModel(id: threadID)
         thread.loadHistory(items: [], turns: [], seq: 1, tasks: [task("a", call: "a")])
-        let observed = Changed()
-        withObservationTracking { _ = thread.tasks; _ = thread.callTasks } onChange: { observed.happened = true }
-        thread.apply(updated(task("a", call: "a"), 2))
-        thread.setTasks([task("a", call: "a")])
-        thread.apply(.itemStarted(.init(threadId: threadID, seq: 3, item: .agentMessage(.init(id: "m", createdAt: 1, text: "")))))
-        #expect(!observed.happened)
+        func read() { _ = thread.tasks; _ = thread.callTasks }
+        expectUnchanged(reading: read) {
+            thread.apply(updated(task("a", call: "a"), 2))
+            thread.setTasks([task("a", call: "a")])
+            thread.apply(.itemStarted(.init(threadId: threadID, seq: 3, item: .agentMessage(.init(id: "m", createdAt: 1, text: "")))))
+        }
+        let observed = observing(read)
         thread.apply(updated(task("a", .done, call: "a"), 4))
         #expect(observed.happened)
     }

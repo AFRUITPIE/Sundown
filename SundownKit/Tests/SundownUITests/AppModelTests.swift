@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 @testable import SundownFixtures
+import SundownTestSupport
 import Testing
 import SundownKit
 @testable import SundownUI
@@ -235,12 +236,10 @@ struct WindowModelTests {
         let file = draftsFile()
         defer { try? FileManager.default.removeItem(at: file) }
         let app = appModel(draftsAt: file)
-        let observed = Flag()
-        withObservationTracking { _ = app.draft(for: "a"); _ = app.draftDeliveries } onChange: { observed.raised = true }
-
-        app.setDraft("half", for: "a")
+        expectUnchanged(reading: { _ = app.draft(for: "a"); _ = app.draftDeliveries }) {
+            app.setDraft("half", for: "a")
+        }
         #expect(app.draft(for: "a") == "half")
-        #expect(!observed.raised)
         #expect(appModel(draftsAt: file).draft(for: "a") == "")
 
         app.saveDrafts()
@@ -255,10 +254,9 @@ struct WindowModelTests {
         #expect(first?.text == "Summarize the diff")
         #expect(app.draft(for: "new-chat:x") == "Summarize the diff")
 
-        let observed = Flag()
-        withObservationTracking { _ = app.draftDeliveries } onChange: { observed.raised = true }
+        let observed = observing { _ = app.draftDeliveries }
         app.deliverDraft("Summarize the diff", for: "new-chat:x")
-        #expect(observed.raised)
+        #expect(observed.happened)
         #expect(app.draftDeliveries["new-chat:x"]?.id != first?.id)
     }
 
@@ -470,11 +468,6 @@ struct SettingsDestinationTests {
     @Test func unknownOrMalformedDestinationFallsBackToGeneral() {
         #expect(SettingsDestination(storedValue: "unknown") == .general)
     }
-}
-
-/// Observation's `onChange` is `@Sendable`, so the flag it raises needs a reference to live in.
-private final class Flag: @unchecked Sendable {
-    var raised = false
 }
 
 @MainActor

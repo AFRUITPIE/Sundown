@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 @testable import SundownFixtures
 import Synchronization
+import SundownTestSupport
 import Testing
 import SundownKit
 @testable import SundownUI

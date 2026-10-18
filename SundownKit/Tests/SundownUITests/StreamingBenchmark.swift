@@ -1,6 +1,7 @@
 #if DEBUG
 import Foundation
 @testable import SundownFixtures
+import SundownTestSupport
 import Testing
 import TetherProtocol
 import XCTest
@@ -19,10 +20,9 @@ final class StreamingBenchmark: XCTestCase {
     @MainActor
     func testReplayingALongReplyIntoALongTranscript() throws {
         try Bench.skipUnlessEnabled()
-        let lines = try Self.reply.map { try JSONEncoder().encode(["method": .string($0.method), "params": $0.params] as JSONValue) }
         measure(metrics: Bench.metrics, options: Bench.manually) {
             let replay = Replay()
-            let client = RPCClient(transport: Lines(lines))
+            let client = RPCClient(transport: Self.host(sending: Self.reply))
             let done = expectation(description: "replayed")
             startMeasuring()
             Task { @MainActor in
@@ -45,11 +45,10 @@ final class StreamingBenchmark: XCTestCase {
     @MainActor
     func testRoutingALiveTurnIntoALongTranscript() throws {
         try Bench.skipUnlessEnabled()
-        let lines = try Self.liveTurn.map { try JSONEncoder().encode(["method": .string($0.method), "params": $0.params] as JSONValue) }
         measure(metrics: Bench.metrics, options: Bench.manually) {
             let connection = HostConnection(host: HostConfig(name: "bench", kind: .local))
             let replay = Replay(connection.thread("perf"))
-            let client = RPCClient(transport: Lines(lines))
+            let client = RPCClient(transport: Self.host(sending: Self.liveTurn))
             let done = expectation(description: "replayed")
             startMeasuring()
             Task { @MainActor in
@@ -64,6 +63,15 @@ final class StreamingBenchmark: XCTestCase {
             stopMeasuring()
             XCTAssertEqual(replay.thread.status, .idle)
         }
+    }
+
+    /// A host that has sent every one of `notifications`, then hung up.
+    private static func host(sending notifications: [(method: String, params: JSONValue)]) -> any Transport {
+        let host = FakeHost()
+        let link = try! host.connect()
+        for n in notifications { host.emit(n.method, n.params) }
+        host.hangUp()
+        return link
     }
 
     fileprivate static let reply = PerformanceTranscript.reply(threadID: "perf", firstSeq: 2, turn: 1)
@@ -149,19 +157,4 @@ private final class Replay {
     }
 }
 
-/// A host that sends every line at once, then hangs up.
-private final class Lines: Transport, @unchecked Sendable {
-    private let queued: [Data]
-    init(_ lines: [Data]) { queued = lines }
-
-    func lines() -> AsyncThrowingStream<Data, any Error> {
-        AsyncThrowingStream { continuation in
-            for line in queued { continuation.yield(line) }
-            continuation.finish()
-        }
-    }
-
-    func send(_ line: Data) async throws {}
-    func close() async {}
-}
 #endif

@@ -1,28 +1,5 @@
-import Testing
 import TetherProtocol
 @testable import SundownUI
-
-/// Waits for what the app does on its own time. A timeout is recorded at the call site and ends
-/// the test, rather than letting it run on against state that never arrived.
-func eventually(
-    isolation: isolated (any Actor)? = #isolation,
-    timeout: Duration = .seconds(3),
-    interval: Duration = .milliseconds(10),
-    fileID: String = #fileID, filePath: String = #filePath, line: Int = #line, column: Int = #column,
-    _ condition: () async -> Bool
-) async throws {
-    let deadline = ContinuousClock.now + timeout
-    while await !condition() {
-        if ContinuousClock.now > deadline {
-            Issue.record("Timed out waiting for a condition",
-                         sourceLocation: SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column))
-            throw EventuallyTimedOut()
-        }
-        try await Task.sleep(for: interval)
-    }
-}
-
-struct EventuallyTimedOut: Error {}
 
 // Test-only views of the enums' cases, so a test can `try #require` one rather than `guard case`.
 
@@ -38,18 +15,4 @@ extension Composer.Attachment.Kind {
 extension Composer.Prepared {
     var attachment: Composer.Attachment? { if case .attachment(let attachment) = self { attachment } else { nil } }
     var mention: String? { if case .mention(let path) = self { path } else { nil } }
-}
-
-// A chat with no tasks, as most tests' are: reads and subscriptions say so.
-
-extension ThreadReadResult {
-    init(items: [Item], turns: [Turn], summary: ThreadSummary? = nil, historySeq: Int? = nil, hasMore: Bool? = nil) {
-        self.init(items: items, turns: turns, summary: summary, historySeq: historySeq, hasMore: hasMore, tasks: [])
-    }
-}
-
-extension ThreadSubscribeResult {
-    init(thread: ThreadInfo, replayed: Int, gap: Bool) {
-        self.init(thread: thread, replayed: replayed, gap: gap, tasks: [])
-    }
 }

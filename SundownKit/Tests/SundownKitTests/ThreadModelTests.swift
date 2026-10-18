@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import Testing
+import SundownTestSupport
 import TetherProtocol
 @testable import SundownKit
 
@@ -44,17 +45,14 @@ struct ThreadModelTests {
         thread.apply(started(userMessage("Rebuild the window layout"), seq: 1))
         #expect(thread.title == "Rebuild the window layout")
 
-        let observed = Invalidation()
         // The Tasks tab's list, too: streamed text is not a task change.
-        withObservationTracking { _ = thread.title; _ = thread.tasks } onChange: { observed.happened = true }
-
-        thread.apply(started(.agentMessage(.init(id: "a1", createdAt: 0, text: "")), seq: 2))
-        for (offset, delta) in ["On ", "it", "."].enumerated() {
-            thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 3 + offset, itemId: "a1", delta: delta)))
+        expectUnchanged(reading: { _ = thread.title; _ = thread.tasks }) {
+            thread.apply(started(.agentMessage(.init(id: "a1", createdAt: 0, text: "")), seq: 2))
+            for (offset, delta) in ["On ", "it", "."].enumerated() {
+                thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 3 + offset, itemId: "a1", delta: delta)))
+            }
+            thread.apply(.itemToolCallProgress(.init(threadId: threadID, seq: 6, itemId: "a1", elapsedSeconds: 2)))
         }
-        thread.apply(.itemToolCallProgress(.init(threadId: threadID, seq: 6, itemId: "a1", elapsedSeconds: 2)))
-
-        #expect(!observed.happened)
         #expect(thread.title == "Rebuild the window layout")
     }
 
@@ -73,10 +71,8 @@ struct ThreadModelTests {
         thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 5, itemId: "a1", delta: "It ")))
         #expect(!thread.isThinking)
 
-        let transcript = Invalidation()
-        withObservationTracking { _ = thread.rows(.summarized); _ = thread.items } onChange: { transcript.happened = true }
-        let row = Invalidation()
-        withObservationTracking { _ = box.item } onChange: { row.happened = true }
+        let transcript = observing { _ = thread.rows(.summarized); _ = thread.items }
+        let row = observing { _ = box.item }
         for (offset, delta) in ["folds ", "items."].enumerated() {
             thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 6 + offset, itemId: "a1", delta: delta)))
         }
@@ -154,12 +150,11 @@ struct ThreadModelTests {
         thread.apply(started(reply(""), seq: 4))
         #expect(thread.streamingReplyID == "a1")
 
-        let observed = Invalidation()
-        withObservationTracking { _ = thread.streamingReplyID } onChange: { observed.happened = true }
-        for (offset, delta) in ["It ", "works."].enumerated() {
-            thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 5 + offset, itemId: "a1", delta: delta)))
+        expectUnchanged(reading: { _ = thread.streamingReplyID }) {
+            for (offset, delta) in ["It ", "works."].enumerated() {
+                thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 5 + offset, itemId: "a1", delta: delta)))
+            }
         }
-        #expect(!observed.happened)
 
         thread.apply(.itemCompleted(.init(threadId: threadID, seq: 7, item: reply("It works."))))
         #expect(thread.streamingReplyID == nil)
@@ -200,18 +195,13 @@ struct ThreadModelTests {
     }
 }
 
-/// Observation's `onChange` is `@Sendable`, so the flag it sets needs a reference to live in.
-private final class Invalidation: @unchecked Sendable {
-    var happened = false
-
-    @Test func aRewindResultReadsTheSDKsAnswer() {
-        let r = RewindResult(["canRewind": true, "filesChanged": ["/a.swift", "/b.swift"], "insertions": 4, "deletions": 1])
-        #expect(r.canRewind)
-        #expect(r.files == ["/a.swift", "/b.swift"])
-        #expect(r.insertions == 4 && r.deletions == 1)
-        let no = RewindResult(["canRewind": false, "error": "No checkpoint"])
-        #expect(!no.canRewind && no.error == "No checkpoint" && no.files.isEmpty)
-    }
+@Test func aRewindResultReadsTheSDKsAnswer() {
+    let r = RewindResult(["canRewind": true, "filesChanged": ["/a.swift", "/b.swift"], "insertions": 4, "deletions": 1])
+    #expect(r.canRewind)
+    #expect(r.files == ["/a.swift", "/b.swift"])
+    #expect(r.insertions == 4 && r.deletions == 1)
+    let no = RewindResult(["canRewind": false, "error": "No checkpoint"])
+    #expect(!no.canRewind && no.error == "No checkpoint" && no.files.isEmpty)
 }
 
 @Test func aRateLimitReadsTheSDKsInfo() {
