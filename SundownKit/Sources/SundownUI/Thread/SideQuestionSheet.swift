@@ -1,3 +1,4 @@
+import SundownFixtures
 import SwiftUI
 import SundownKit
 
@@ -75,7 +76,7 @@ struct SideQuestionSheet: View {
             exchanges.append(Exchange(question: q, answer: answer))
             asking = false
             // Arrives while the reader is in the field; said, so it isn't missed.
-            AccessibilityNotification.Announcement(MarkdownView.plainText(answer)).post()
+            AccessibilityNotification.Announcement(MarkdownBuilder.plainText(answer)).post()
         }
     }
 }

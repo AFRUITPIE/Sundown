@@ -62,27 +62,12 @@ struct MarkdownTextTests {
     }
 
     @Test func copyIsPlainText() {
-        let theme = MarkdownTheme.standard
-        let blocks: [MarkdownView.Block] = [
-            .paragraph("Intro"), .bullet(indent: 0, marker: "•", text: "one"), .bullet(indent: 1, marker: "2.", text: "two"),
-            .rule, .table([["A", "B"], ["1", "2"]]), .code(lang: "swift", body: "let x = 1"),
-        ]
-        let text = NSMutableAttributedString()
-        for (i, block) in blocks.enumerated() {
-            let rendered = MarkdownView.Rendered(id: i, block: block, inline: block.inlineText.map { AttributedString($0) })
-            let spacing = i == 0 ? 0 : MarkdownBuilder.spacing(after: blocks[i - 1], before: block)
-            text.append(MarkdownBuilder.build(rendered, leading: i > 0, spacing: spacing, widestMarker: nil, theme: theme))
-        }
-        let plain = MarkdownNSTextView.plain(text, in: NSRange(location: 0, length: text.length))
-        #expect(plain == "Intro\n\n• one\n  2. two\n\n\n\nA\tB\n1\t2\n\nlet x = 1")
+        let markdown = "Intro\n\n- one\n\n  2. two\n\n---\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```swift\nlet x = 1\n```"
+        #expect(MarkdownBuilder.plainText(markdown) == "Intro\n\n• one\n  2. two\n\n\n\nA\tB\n1\t2\n\nlet x = 1")
     }
 
     @Test func emptyTableCellsKeepTheirColumns() {
-        let theme = MarkdownTheme.standard
-        let block = MarkdownView.Block.table([["A", "B", "C"], ["a", "", ""]])
-        let text = MarkdownBuilder.build(MarkdownView.Rendered(id: 0, block: block, inline: block.inlineText.map { AttributedString($0) }),
-                                         leading: false, spacing: 0, widestMarker: nil, theme: theme)
-        #expect(MarkdownNSTextView.plain(text, in: NSRange(location: 0, length: text.length)) == "A\tB\tC\na\t\t")
+        #expect(MarkdownBuilder.plainText("| A | B | C |\n|---|---|---|\n| a | | |") == "A\tB\tC\na\t\t")
     }
 }
 #endif

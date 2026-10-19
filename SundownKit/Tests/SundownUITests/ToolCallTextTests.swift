@@ -1,3 +1,4 @@
+@testable import SundownFixtures
 import Testing
 import SundownKit
 import TetherProtocol
@@ -35,12 +36,37 @@ struct ToolCallTextTests {
         #expect(ToolCallText.reason(call(.bash, ["command": "make"])) == nil)
     }
 
-    /// A workflow is called by its script's name, in its run's tense: its call comes back at once.
+    /// An agent's row says how its task stands, as the daemon states it.
+    @MainActor
+    @Test func anAgentReadsAsItsTask() {
+        let agent = call(.subagent, ["subagent_type": "Explore", "description": "Find every SwiftUI view"], status: .running,
+                         name: "Task")
+        func state(_ status: TaskStatus, backgrounded: Bool? = nil) -> TaskState {
+            TaskState(id: agent.id, toolUseId: agent.id, taskId: "task-explore", kind: .agent, title: "Find every SwiftUI view",
+                      status: status, backgrounded: backgrounded)
+        }
+        let thread = ThreadModel(id: "t")
+        thread.loadHistory(items: [.toolCall(agent)], turns: [], seq: 1, tasks: [state(.running)])
+        #expect(SubagentLifecycle.title(call: agent, task: thread.callTasks[agent.id]) == "Agent running")
+        thread.apply(.taskUpdated(.init(threadId: thread.id, seq: 20, task: state(.running, backgrounded: true))))
+        #expect(SubagentLifecycle.title(call: agent, task: thread.callTasks[agent.id]) == "Agent running in background")
+        #expect(thread.callTasks[agent.id]?.isInBackground == true)
+        thread.apply(.taskUpdated(.init(threadId: thread.id, seq: 21, task: state(.done, backgrounded: true))))
+        #expect(SubagentLifecycle.title(call: agent, task: thread.callTasks[agent.id]) == "Agent finished")
+        #expect(thread.callTasks[agent.id]?.isInBackground == false)
+        #expect(SubagentLifecycle.title(call: agent, task: state(.failed)) == "Agent failed")
+        #expect(SubagentLifecycle.title(call: agent, task: state(.stopped)) == "Agent stopped")
+        // With no task, the call says it.
+        #expect(SubagentLifecycle.title(call: agent, task: nil) == "Agent running")
+    }
+
+    /// A workflow is called by the name the daemon gives its run, in its run's tense: its call comes
+    /// back at once.
     @Test func aWorkflowReadsAsItsRun() {
         let script = "export const meta = { name: 'review-diff', description: 'Review', phases: [] }"
         let workflow = call(.other, ["script": .string(script)], name: "Workflow")
-        let running = WorkflowRun(call: workflow, task: .init(threadId: "t", seq: 1, event: "progress", taskId: "w",
-                                                             toolUseId: "c", status: "running", data: ["task_type": "local_workflow"]))
+        let running = TaskState(id: "c", toolUseId: "c", taskId: "w", kind: .workflow, title: "review-diff", status: .running,
+                                workflow: .init(name: "review-diff", phases: []))
         #expect(ToolCallText.verb(workflow, workflow: running) == "Running workflow")
         #expect(ToolCallText.object(workflow, workflow: running) == "review-diff")
         // Without its run, what the call says, never its script read here.

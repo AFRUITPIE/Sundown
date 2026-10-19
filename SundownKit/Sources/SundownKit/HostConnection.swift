@@ -3,11 +3,11 @@ import Observation
 import os
 import TetherProtocol
 
-/// Live connection to one host's Sundown daemon, plus that host's projects and threads.
+/// Live connection to one host's Sundown daemon, plus that host's chats and the directories they're in.
 @MainActor
 @Observable
 public final class HostConnection: Identifiable {
-    typealias TransportProvider = @Sendable (HostConfig) async throws -> any Transport
+    package typealias TransportProvider = @Sendable (HostConfig) async throws -> any Transport
     public enum State: Equatable {
         case disconnected
         case connecting(String)
@@ -23,9 +23,10 @@ public final class HostConnection: Identifiable {
     public private(set) var serverInfo: InitializeResult?
     public private(set) var account: AccountInfo?
     public private(set) var models: [ModelInfo] = []
-    public private(set) var projects: [ProjectListResult.Project] = []
     /// All chats on this host, most recent first (across every directory).
     public private(set) var chats: [ThreadModel] = []
+    /// The directories the chats work in, most recent first: what New Chat offers.
+    public private(set) var directories: [String] = []
     public private(set) var log: [String] = []
 
     private var threads: [String: ThreadModel] = [:]
@@ -46,12 +47,9 @@ public final class HostConnection: Identifiable {
     private var openRequested = Set<String>()
     /// Followed chats let go when no window showed them: unloaded until opened again.
     private var letGo = Set<String>()
-    private var chatsRefreshTask: Task<Void, Never>?
-    /// While a chat this client doesn't follow has background work, the list is asked for again
-    /// now and then: nothing else would say when that work ends.
-    private var backgroundRefreshTask: Task<Void, Never>?
-    /// How long until then; a test shortens it.
-    @ObservationIgnored var backgroundRefreshInterval: Duration = .seconds(30)
+    /// Chats deleted here: a summary of one still on its way doesn't bring it back.
+    @ObservationIgnored private var deleted = Set<String>()
+    private var afterTurnTask: Task<Void, Never>?
     @ObservationIgnored private let transportProvider: TransportProvider?
 
     /// Reported to the daemon on connect.
@@ -65,18 +63,13 @@ public final class HostConnection: Identifiable {
     /// The designated init, and the test seam for reconnect/replay coverage. `network` is the path
     /// a test drives; without one the host never waits for the network. Without a
     /// `transportProvider` the host runs its server with `npx`, or over `ssh`.
-    init(host: HostConfig, network: NetworkPath? = nil, transportProvider: TransportProvider?) {
+    package init(host: HostConfig, network: NetworkPath? = nil, transportProvider: TransportProvider?) {
         self.host = host
         self.id = host.id
         self.transportProvider = transportProvider
         self.network = network
         network?.watch(self)
     }
-
-    /// Reads the host's environment values the first time it connects: they're in the Keychain,
-    /// which isn't asked at launch, and only `initialize` needs them. Called once; nil when there's
-    /// nothing to read.
-    @ObservationIgnored public var loadEnvironment: (@MainActor () async -> [String: String]?)?
 
     public func update(host: HostConfig) {
         let needsReconnect = host.kind != self.host.kind || host.env != self.host.env || host.serverCommand != self.host.serverCommand
@@ -112,10 +105,6 @@ public final class HostConnection: Identifiable {
             // screen creates another host while the fixture app is running.
             if ProcessInfo.processInfo.environment["SUNDOWN_UI_TEST_MODE"] == "1", transportProvider == nil {
                 throw TransportError.launchFailed("UI test host has no fixture transport")
-            }
-            if let load = loadEnvironment {
-                loadEnvironment = nil
-                if let env = await load() { host.env = env }
             }
             let transport: any Transport
             var env = host.env
@@ -156,11 +145,10 @@ public final class HostConnection: Identifiable {
             if initResult.protocolVersion < Self.minServerProtocol {
                 throw Incompatible(message: "\(host.name) runs Sundown \(initResult.serverInfo.version), which is too old for this app. Update the server there.")
             }
-            // The same daemon still running: what it said about models, the account and projects
-            // still holds, and asking again started a Claude Code process for models and account.
+            // The same daemon still running: what it said about models and the account still holds,
+            // and asking again started a Claude Code process for them.
             let sameDaemon = serverInfo.map { Self.isSameDaemon($0, initResult) } ?? false
             serverInfo = initResult
-            workflowMethodsMissing = false
             appendLog("Connected: \(initResult.host.hostname), claude \(initResult.claude.version) at \(initResult.claude.path)")
             state = .connected
             reconnectAttempt = 0
@@ -189,8 +177,9 @@ public final class HostConnection: Identifiable {
             && old.serverInfo.version == new.serverInfo.version
     }
 
-    /// The oldest server protocol this app talks to.
-    static let minServerProtocol = 1
+    /// The oldest server protocol this app talks to: 2, whose tasks, edits, working-tree changes
+    /// and chat-list notifications the app reads as they come, with no fallbacks for protocol 1.
+    static let minServerProtocol = 2
 
     /// The app and the server can't talk to each other until one of them is updated.
     struct Incompatible: LocalizedError {
@@ -250,12 +239,14 @@ public final class HostConnection: Identifiable {
     private func detach() {
         client = nil
         subscribed.removeAll()
-        chatsRefreshTask?.cancel()
-        chatsRefreshTask = nil
-        backgroundRefreshTask?.cancel()
-        backgroundRefreshTask = nil
+        afterTurnTask?.cancel()
+        afterTurnTask = nil
         notificationTask?.cancel()
         for t in threads.values { t.clearPending() }
+        // A start whose prompt hadn't come in by then moves to its chat as it is: nothing more
+        // comes on this connection.
+        for waiting in awaitingEcho.values { waiting.op.markReady(echo: nil) }
+        awaitingEcho = [:]
     }
 
     /// Tries again after `ReconnectBackoff`'s wait, or, for an SSH host while the Mac is off the
@@ -300,59 +291,16 @@ public final class HostConnection: Identifiable {
         }
     }
 
-    /// A batch, in order. A reply's text deltas go in as one, where nothing else for its chat comes
-    /// between them: its text grows once per batch, and its row updates once.
+    /// A batch, in order, one notification at a time: a reply's text is appended where it is, so a
+    /// delta costs its own length.
     func route(_ batch: [ServerNotification]) {
         Signposts.flushed(batch.count)
-        for run in Self.textRuns(in: batch) {
-            guard run.count > 1 else {
-                apply(run[0])
-                continue
-            }
-            let deltas = run.compactMap { n -> ItemAgentMessageDeltaNotification? in
-                if case .itemAgentMessageDelta(let d) = n { d } else { nil }
-            }
-            if let joined = Self.joining(deltas, after: thread(deltas[0].threadId).lastSeq) {
-                apply(.itemAgentMessageDelta(joined))
-            }
-        }
-    }
-
-    /// The batch in order, each notification on its own, except that a reply's text deltas are
-    /// gathered at the first one's place for as long as nothing else for their chat comes between
-    /// them. Other chats' notifications don't order against them: each chat is applied on its own.
-    nonisolated static func textRuns(in batch: [ServerNotification]) -> [[ServerNotification]] {
-        var runs: [[ServerNotification]] = []
-        var gathered = [Bool](repeating: false, count: batch.count)
-        for i in batch.indices where !gathered[i] {
-            var run = [batch[i]]
-            if case .itemAgentMessageDelta(let first) = batch[i] {
-                for j in batch.indices.dropFirst(i + 1) where !gathered[j] && batch[j].threadId == first.threadId {
-                    guard case .itemAgentMessageDelta(let next) = batch[j], next.itemId == first.itemId else { break }
-                    run.append(batch[j])
-                    gathered[j] = true
-                }
-            }
-            runs.append(run)
-        }
-        return runs
-    }
-
-    /// One reply's deltas as one: their text in order and the last seq, leaving out any at or
-    /// below the chat's `lastSeq` as `ThreadModel.apply` would one at a time. Nil when none is new.
-    nonisolated static func joining(_ deltas: [ItemAgentMessageDeltaNotification], after lastSeq: Int) -> ItemAgentMessageDeltaNotification? {
-        var seen = lastSeq
-        var fresh: [ItemAgentMessageDeltaNotification] = []
-        for d in deltas where seen == 0 || d.seq > seen {
-            fresh.append(d)
-            seen = d.seq
-        }
-        guard var joined = fresh.last else { return nil }
-        joined.delta = fresh.count == 1 ? joined.delta : fresh.map(\.delta).joined()
-        return joined
+        for n in batch { apply(n) }
     }
 
     private func apply(_ n: ServerNotification) {
+        // Host-wide: what the chat list shows of a chat, whether this client follows it or not.
+        if case .threadSummaryChanged(let e) = n { return summaryChanged(e.summary) }
         guard let tid = n.threadId else { return }
         let model = thread(tid)
         // A followed chat let go keeps no items until it's opened again; an item already on its
@@ -360,8 +308,11 @@ public final class HostConnection: Identifiable {
         if letGo.contains(tid), n.isItemContent { return }
         guard model.apply(n) else { return }
         // A chat started from New Chat, whose window moves to it once it has the prompt's echo.
-        if let op = awaitingEcho[tid], noteReadiness(op, in: model) { awaitingEcho[tid] = nil }
-        if case .threadStarted(let e) = n { attach(model, toProject: e.thread.cwd) }
+        if let waiting = awaitingEcho[tid], model.itemIndex(of: waiting.messageId) != nil {
+            awaitingEcho[tid] = nil
+            waiting.op.markReady(echo: waiting.messageId)
+        }
+        if case .threadStarted = n { attach(model) }
         // Its query is gone. The next send resumes it with history rather than streaming into a
         // subscription to the process that ended.
         if case .threadClosed = n { subscribed.remove(tid) }
@@ -370,11 +321,10 @@ public final class HostConnection: Identifiable {
             NotificationCenter.default.post(name: .sundownRequestResolved, object: self,
                                             userInfo: ["threadId": tid, "requestId": e.requestId])
         }
-        // Claude's name for a session only appears in thread/list; nothing announces it.
         if case .turnCompleted(let e) = n {
             // A reply nobody has seen: the sidebar's green dot, until a window shows the chat.
             if e.turn.status == .completed, !openRequested.contains(tid) { model.noteUnseenReply() }
-            scheduleChatsRefresh()
+            scheduleAfterTurn()
             // A turn can have added commands (a file in .claude/commands).
             forgetCommands(after: tid)
             NotificationCenter.default.post(name: .sundownTurnFinished, object: self,
@@ -382,14 +332,29 @@ public final class HostConnection: Identifiable {
         }
     }
 
-    private func scheduleChatsRefresh() {
-        guard chatsRefreshTask == nil else { return }
-        chatsRefreshTask = Task { [weak self] in
+    private func scheduleAfterTurn() {
+        guard afterTurnTask == nil else { return }
+        afterTurnTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             guard let self, !Task.isCancelled else { return }
-            self.chatsRefreshTask = nil
-            await self.afterTurn()
+            self.afterTurnTask = nil
+            self.afterTurn()
         }
+    }
+
+    /// A chat's summary as the daemon now has it (its title, tag, status or background count
+    /// changed), coalesced there: the list takes it in place of asking for itself again, at its
+    /// place by when it last changed, below the chats not written yet.
+    private func summaryChanged(_ summary: ThreadSummary) {
+        guard !deleted.contains(summary.threadId) else { return }
+        let model = thread(summary.threadId)
+        model.setSummary(summary)
+        var next = chats.filter { $0 !== model }
+        let at = next.firstIndex { $0.summary.map { $0.updatedAt < summary.updatedAt } ?? false } ?? next.count
+        next.insert(model, at: at)
+        // The sidebar regroups whenever this is set.
+        if !next.elementsEqual(chats, by: ===) { chats = next }
+        refreshDirectories()
     }
 
     /// After reconnecting, catch every open thread up from its last seen seq (the daemon kept running).
@@ -408,11 +373,12 @@ public final class HostConnection: Identifiable {
         do {
             let r = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: model.lastSeq))
             if r.gap || r.thread.lastSeq < model.lastSeq {
-                // Server restarted or buffer overflowed: reload the transcript, and its runs.
-                forgetWorkflows(of: model.id)
+                // Server restarted or buffer overflowed: reload the transcript.
                 try await loadHistory(model, force: true, keepingHeld: true)
             } else {
                 model.setInfo(r.thread)
+                // As they stand now, after anything replayed.
+                model.setTasks(r.tasks)
             }
             subscribed.insert(model.id)
         } catch let e as RPCError where e.code == RPCError.threadNotLoaded {
@@ -451,50 +417,32 @@ public final class HostConnection: Identifiable {
 
     // MARK: catalog
 
-    /// Projects, chats, models and the account. Not `full` (back on the same daemon), only the chats:
-    /// models and the account start a Claude Code process to ask, and listing projects reads every
-    /// session on the host. Folders new since are taken from the chats instead.
+    /// Chats, models and the account. Not `full` (back on the same daemon), only the chats: models
+    /// and the account start a Claude Code process to ask.
     public func refreshCatalog(full: Bool = true) async {
         guard let client else { return }
         guard full else {
             await loadChats()
-            addProjectsFromChats()
             return
         }
-        async let projectsR = client.call(Methods.ProjectList.self, .init(limit: 200))
         async let modelsR = client.call(Methods.ModelList.self, .init())
         async let accountR = client.call(Methods.AccountRead.self, .init())
-        if let p = try? await projectsR { projects = p.projects }
         await loadChats()
         if let m = try? await modelsR { models = m.models }
         if let a = try? await accountR { account = a.account }
     }
 
-    /// Folders of chats started while this app was away, most recent first with the rest.
-    private func addProjectsFromChats() {
-        var known = Set(projects.map(\.cwd))
-        var added: [ProjectListResult.Project] = []
-        for chat in chats {
-            guard let cwd = chat.cwd, known.insert(cwd).inserted else { continue }
-            added.append(.init(cwd: cwd, lastActivity: chat.summary?.updatedAt ?? 0, threadCount: 1))
-        }
-        guard !added.isEmpty else { return }
-        projects = (projects + added).sorted { $0.lastActivity > $1.lastActivity }
-    }
-
-    /// How many chats the refresh after a turn asks for: the ones that just changed are the latest.
-    static let recentChatsLimit = 5
-
-    /// After a turn: the few most recent chats, for Claude's names for them and their new order,
-    /// merged into the list held rather than fetching all of it again.
-    func refreshRecentChats() async {
-        await loadChats(limit: Self.recentChatsLimit, recentOnly: true)
+    /// The directories of the chats held, most recent first.
+    private func refreshDirectories() {
+        var seen = Set<String>()
+        let next = chats.compactMap { chat in chat.cwd.flatMap { seen.insert($0).inserted ? $0 : nil } }
+        if next != directories { directories = next }
     }
 
     /// The host's chats, most recent first: the list the host has now, which drops chats deleted
-    /// elsewhere or past the limit. `recentOnly`: only the latest came back, so the rest of the
-    /// list held keeps its places.
-    public func loadChats(limit: Int = 200, recentOnly: Bool = false) async {
+    /// elsewhere or past the limit. Asked for on connecting and after an explicit action; between,
+    /// `thread/summaryChanged` keeps it current.
+    public func loadChats(limit: Int = 200) async {
         guard let client else { return }
         do {
             let r = try await client.call(Methods.ThreadList.self, .init(limit: limit))
@@ -506,28 +454,12 @@ public final class HostConnection: Identifiable {
                 listed.append(m)
             }
             // Live chats that are not persisted yet (no first message on disk), on top.
-            var next = chats.filter { $0.summary == nil && !ids.contains($0.id) } + listed
-            // Only the most recent came back: the rest keep their places below them.
-            if recentOnly { next += chats.filter { $0.summary != nil && !ids.contains($0.id) } }
+            let next = chats.filter { $0.summary == nil && !ids.contains($0.id) } + listed
             // The sidebar regroups whenever this is set.
             if !next.elementsEqual(chats, by: ===) { chats = next }
-            scheduleBackgroundRefresh()
+            refreshDirectories()
         } catch {
             appendLog("thread/list failed: \(error.localizedDescription)")
-        }
-    }
-
-    /// Asks for the list again in a while if a chat whose status nothing streams here has
-    /// background work; a subscribed chat hears when its count changes.
-    private func scheduleBackgroundRefresh() {
-        guard backgroundRefreshTask == nil,
-              chats.contains(where: { $0.hasBackgroundWork && !subscribed.contains($0.id) }) else { return }
-        let interval = backgroundRefreshInterval
-        backgroundRefreshTask = Task { [weak self] in
-            try? await Task.sleep(for: interval)
-            guard let self, !Task.isCancelled else { return }
-            self.backgroundRefreshTask = nil
-            await self.loadChats()
         }
     }
 
@@ -540,11 +472,10 @@ public final class HostConnection: Identifiable {
         return t
     }
 
-    private func attach(_ model: ThreadModel, toProject cwd: String) {
+    /// A chat started now, at the top of the list, its directory the most recent.
+    private func attach(_ model: ThreadModel) {
         if !chats.contains(where: { $0 === model }) { chats.insert(model, at: 0) }
-        if !projects.contains(where: { $0.cwd == cwd }) {
-            projects.insert(.init(cwd: cwd, lastActivity: Date().timeIntervalSince1970 * 1000, threadCount: 1), at: 0)
-        }
+        refreshDirectories()
     }
 
     /// Load a thread's history and subscribe to it. Before the connection is up this defers to
@@ -595,11 +526,10 @@ public final class HostConnection: Identifiable {
         model.trim(toLast: Self.initialHistoryLimit)
     }
 
-    /// A couple of seconds after a turn ends: Claude's name for a session only appears in
-    /// thread/list, and the chats no window shows let go of what the turn added.
-    func afterTurn() async {
+    /// A couple of seconds after a turn ends, once the chat is idle: the chats no window shows let
+    /// go of what the turn added.
+    func afterTurn() {
         for model in threads.values where subscribed.contains(model.id) { trimIfOffScreen(model) }
-        await refreshRecentChats()
     }
 
     private func loadRequestedThread(_ model: ThreadModel) async {
@@ -641,20 +571,18 @@ public final class HostConnection: Identifiable {
             items.removeFirst(start)
             hasMore = true
         }
-        // Counted before the page goes in, so its first draw only looks them up. Events that land
-        // meanwhile are replayed by the subscription after `historySeq` below.
-        let changes = await FileChange.changes(ofCallsIn: items)
         if let s = r.summary { model.setSummary(s) }
         letGo.remove(model.id)
-        model.loadHistory(items: items, turns: r.turns, seq: r.historySeq, hasMore: hasMore, fileChanges: changes)
+        // Events that land meanwhile are replayed by the subscription after `historySeq` below.
+        model.loadHistory(items: items, turns: r.turns, seq: r.historySeq, hasMore: hasMore, tasks: r.tasks)
         if let seq = r.historySeq {
-            // Loaded in the daemon: stream everything after the snapshot.
+            // Loaded in the daemon: stream everything after the snapshot, and the tasks as they
+            // stand once it's replayed.
             let sub = try await client.call(Methods.ThreadSubscribe.self, .init(threadId: model.id, afterSeq: seq))
             model.setInfo(sub.thread)
+            model.setTasks(sub.tasks)
             subscribed.insert(model.id)
         }
-        // Task events aren't kept with history: a workflow's run is read on its own.
-        readWorkflows(of: model)
     }
 
     /// What a new chat in `cwd` starts with when nothing is chosen, as the host's Claude Code decides:
@@ -672,46 +600,32 @@ public final class HostConnection: Identifiable {
     }
 
     /// Starts a chat `prepareStart` made, with `thread/start` as ever: the host's chat, which is
-    /// the model its notifications already went to if any came first. A Stop pressed meanwhile
-    /// interrupts it now. The start is ready for its window once the chat shows the prompt's echo.
-    /// A failure isn't tried again: the host may have started the chat before the connection went.
+    /// the model its notifications already went to. A Stop pressed meanwhile interrupts it now.
+    /// The start is ready for its window once the chat holds the prompt the host says it made
+    /// (`messageId`), which the host sends before its answer. A failure isn't tried again: the
+    /// host may have started the chat before the connection went.
     public func start(_ op: PendingStart) async throws -> ThreadModel {
-        let model: ThreadModel
+        let started: (model: ThreadModel, messageId: String?)
         do {
-            model = try await startThread(cwd: op.cwd, input: op.input, options: op.options)
+            started = try await begin(cwd: op.cwd, input: op.input, options: op.options)
         } catch {
             op.resolve(.failure(error))
             throw error
         }
+        let model = started.model
         op.resolve(.success(model))
-        watchForEcho(op, in: model)
+        if let id = started.messageId, model.itemIndex(of: id) == nil {
+            // On the wire before the answer, but maybe not applied yet.
+            awaitingEcho[model.id] = (op, id)
+        } else {
+            op.markReady(echo: started.messageId)
+        }
         if op.interruptRequested { await interrupt(model) }
         return model
     }
 
-    /// Starts that are waiting for their chat's echo of the prompt, by the chat's id.
-    @ObservationIgnored private var awaitingEcho: [String: PendingStart] = [:]
-    /// How long a start waits for its echo before its window moves to the chat anyway.
-    @ObservationIgnored var echoWait: Duration = .seconds(2)
-
-    private func watchForEcho(_ op: PendingStart, in model: ThreadModel) {
-        if noteReadiness(op, in: model) { return }
-        awaitingEcho[model.id] = op
-        let wait = echoWait
-        Task { [weak self] in
-            try? await Task.sleep(for: wait)
-            guard let self, self.awaitingEcho[model.id] === op else { return }
-            self.awaitingEcho[model.id] = nil
-            op.markReady(echo: nil)
-        }
-    }
-
-    /// Marks the start ready once its chat shows enough to take the placeholder's place.
-    private func noteReadiness(_ op: PendingStart, in model: ThreadModel) -> Bool {
-        let readiness = op.readiness(of: model)
-        if readiness.ready { op.markReady(echo: readiness.echo) }
-        return readiness.ready
-    }
+    /// Starts whose chat hasn't applied the prompt's item yet, by the chat's id, with the item's.
+    @ObservationIgnored private var awaitingEcho: [String: (op: PendingStart, messageId: String)] = [:]
 
     /// Sent while a chat is starting: it goes to the chat once the host has started it. False,
     /// with nothing sent, when the start failed.
@@ -731,6 +645,11 @@ public final class HostConnection: Identifiable {
     }
 
     public func startThread(cwd: String, input: [UserInput], options: NewThreadOptions) async throws -> ThreadModel {
+        try await begin(cwd: cwd, input: input, options: options).model
+    }
+
+    /// `thread/start`: the chat, and the id of its prompt's item when there's a prompt.
+    private func begin(cwd: String, input: [UserInput], options: NewThreadOptions) async throws -> (model: ThreadModel, messageId: String?) {
         guard let client else { throw RPCError.notConnected }
         let r = try await client.call(Methods.ThreadStart.self, .init(
             cwd: cwd,
@@ -747,9 +666,9 @@ public final class HostConnection: Identifiable {
         model.setInfo(r.thread)
         model.loadHistory(items: model.items, turns: model.turns, seq: nil)
         subscribed.insert(model.id)
-        // In a worktree the chat's folder is the worktree's, not the one chosen.
-        attach(model, toProject: r.thread.cwd)
-        return model
+        // In a worktree the chat's directory is the worktree's, not the one chosen.
+        attach(model)
+        return (model, r.messageId)
     }
 
     /// Not loaded in the daemon, or only followed: resume it there. A follower numbers its events
@@ -767,7 +686,7 @@ public final class HostConnection: Identifiable {
             permissionMode: pending.permissionMode ?? model.info?.permissionMode,
             includeHistory: true, limit: Self.initialHistoryLimit))
         model.loadHistory(items: r.items ?? model.items, turns: r.turns ?? model.turns,
-                          seq: r.historySeq, hasMore: r.hasMore ?? false)
+                          seq: r.historySeq, hasMore: r.hasMore ?? false, tasks: r.tasks)
         model.setInfo(r.thread)
         subscribed.insert(model.id)
         try await apply(pending, to: model, over: r.thread, client)
@@ -876,9 +795,9 @@ public final class HostConnection: Identifiable {
         model.clearPending()
         chats.removeAll { $0 === model }
         threads.removeValue(forKey: model.id)
+        deleted.insert(model.id)
         openRequested.remove(model.id)
         subscribed.remove(model.id)
-        forgetWorkflows(of: model.id)
     }
 
     /// What asking for an older page came to, so a caller asking again knows whether to.
@@ -909,12 +828,10 @@ public final class HostConnection: Identifiable {
         do {
             let r = try await client.call(Methods.ThreadRead.self, .init(
                 threadId: model.id, cwd: model.cwd, limit: Self.olderHistoryPageSize, before: oldest))
-            let changes = await FileChange.changes(ofCallsIn: r.items)
             // Only onto what it was asked before: a chat trimmed or let go meanwhile would be left
             // with a gap between the page and what it now holds. Asked again, from what it holds.
             guard !Task.isCancelled, model.itemIndex(of: oldest) == 0 else { return .busy }
-            model.prependHistory(items: r.items, hasMore: r.hasMore ?? false, fileChanges: changes)
-            readWorkflows(of: model)
+            model.prependHistory(items: r.items, hasMore: r.hasMore ?? false)
             return .loaded
         } catch {
             appendLog("Loading older history for \(model.id) failed: \(error.localizedDescription)")
@@ -924,80 +841,14 @@ public final class HostConnection: Identifiable {
 
     // MARK: workflows
 
-    /// Runs being read, by chat and run id: one request in flight per run.
-    @ObservationIgnored private var workflowReads = Set<String>()
-    /// Finished runs already read, by chat and run id: what a reopened chat shows without asking.
-    @ObservationIgnored private var finishedWorkflows: [String: JSONValue] = [:]
-    /// The daemon doesn't know `workflow/read` or `workflow/agentItems` (one older than them):
-    /// not asked again on this connection.
-    @ObservationIgnored private var workflowMethodsMissing = false
-
-    /// Lets go of the finished runs read for a chat that's deleted, or reloaded after a gap. A chat
-    /// merely let go of (`leave`) keeps them: they're what it shows when it's reopened, without
-    /// asking again (`RPCBudgetTests`).
-    private func forgetWorkflows(of threadID: String) {
-        let prefix = "\(threadID)/"
-        finishedWorkflows = finishedWorkflows.filter { !$0.key.hasPrefix(prefix) }
-    }
-
-    /// Reads the run of each Workflow call with no live task, in the background.
-    private func readWorkflows(of model: ThreadModel) {
-        let runs = model.workflowsToRead
-        guard !runs.isEmpty, !workflowMethodsMissing else { return }
-        for run in runs {
-            if let known = finishedWorkflows["\(model.id)/\(run.runId)"] {
-                model.setLoadedWorkflow(known, for: run.toolUseId)
-                continue
-            }
-            Task { await loadWorkflow(model, toolUseId: run.toolUseId) }
-        }
-    }
-
-    /// Reads a workflow's run (`workflow/read`) when its call has no live task: after a reload, an
-    /// older page, or for the Tasks tab while a run goes on that this client isn't told about. One
-    /// request in flight per run; a finished run read once isn't read again.
-    public func loadWorkflow(_ model: ThreadModel, toolUseId: String) async {
-        guard let client, !workflowMethodsMissing,
-              let run = model.workflowsToRead.first(where: { $0.toolUseId == toolUseId }) else { return }
-        let key = "\(model.id)/\(run.runId)"
-        if let known = finishedWorkflows[key] {
-            model.setLoadedWorkflow(known, for: toolUseId)
-            return
-        }
-        guard workflowReads.insert(key).inserted else { return }
-        defer { workflowReads.remove(key) }
-        do {
-            let r = try await client.call(WorkflowMethods.Read.self, .init(threadId: model.id, runId: run.runId))
-            guard let snapshot = r.workflow else { return }
-            model.setLoadedWorkflow(snapshot, for: toolUseId)
-            // Kept only once it's over: an unknown run (history with nothing to say) may be going
-            // on still, and a paused one goes on, so both are read again.
-            if let status = snapshot["status"]?.stringValue, WorkflowRun.status(status).isSettled { finishedWorkflows[key] = snapshot }
-        } catch let e as RPCError where e.code == -32601 {
-            workflowMethodsMissing = true
-        } catch {
-            appendLog("Reading workflow \(run.runId) failed: \(error.localizedDescription)")
-        }
-    }
-
     /// One workflow agent's transcript (`workflow/agentItems`): its prompt, calls and replies. A
     /// finished agent's is kept with the chat until the chat is let go.
     public func workflowAgentItems(_ model: ThreadModel, runId: String, agentId: String, finished: Bool) async throws -> [Item] {
         if let known = model.workflowAgentTranscript(runId: runId, agentId: agentId) { return known }
         guard let client else { throw RPCError.notConnected }
-        if workflowMethodsMissing { throw Self.workflowAgentsUnavailable(-32601) }
-        do {
-            let r = try await client.call(WorkflowMethods.AgentItems.self, .init(threadId: model.id, runId: runId, agentId: agentId))
-            if finished { model.rememberWorkflowAgentTranscript(r.items, runId: runId, agentId: agentId) }
-            return r.items
-        } catch let e as RPCError where e.code == -32601 {
-            workflowMethodsMissing = true
-            throw Self.workflowAgentsUnavailable(e.code)
-        }
-    }
-
-    private static func workflowAgentsUnavailable(_ code: Int) -> RPCError {
-        RPCError(code: code, message: "This host’s server can’t read workflow agents.")
+        let r = try await client.call(Methods.WorkflowAgentItems.self, .init(threadId: model.id, runId: runId, agentId: agentId))
+        if finished { model.rememberWorkflowAgentTranscript(r.items, runId: runId, agentId: agentId) }
+        return r.items
     }
 
     /// Throws so the Context popover can explain a thread the daemon hasn't loaded.
@@ -1090,38 +941,11 @@ public final class HostConnection: Identifiable {
     }
 
     /// Everything that differs from the last commit in `cwd`: staged and unstaged edits, and new
-    /// files git doesn't track yet (their whole content, as added). Nil when `cwd` isn't a repository.
+    /// files git doesn't track yet (their whole content, as added), as the daemon reads them (at
+    /// most 200 new files, each kept to 5,000 lines). Nil when `cwd` isn't a repository.
     public func workingChanges(cwd: String) async throws -> WorkingChanges? {
         guard let client else { throw RPCError.notConnected }
-        let status = try await client.call(Methods.GitStatus.self, .init(cwd: cwd))
-        guard status.isRepo else { return nil }
-        async let unstaged = client.call(Methods.GitDiff.self, .init(cwd: cwd))
-        async let staged = client.call(Methods.GitDiff.self, .init(cwd: cwd, staged: true))
-        // New files, read eight at a time rather than one after another, and only so many: a
-        // build folder missing from .gitignore can hold thousands. The rest are counted.
-        let new = status.files.filter { $0.status == "??" && !$0.path.hasSuffix("/") }.map(\.path)
-        var paths = new.prefix(WorkingChanges.maxUntrackedFiles).makeIterator()
-        let untracked = await withTaskGroup(of: (path: String, content: String?).self) { group in
-            func readNext() {
-                guard let path = paths.next() else { return }
-                let full = (cwd as NSString).appendingPathComponent(path)
-                group.addTask {
-                    let read = try? await client.call(Methods.FsRead.self, .init(path: full, maxBytes: 64 * 1024))
-                    return (path, read.flatMap { $0.encoding == .utf8 ? $0.content : nil })
-                }
-            }
-            for _ in 0..<8 { readNext() }
-            var untracked: [(path: String, content: String?)] = []
-            for await file in group {
-                untracked.append(file)
-                readNext()
-            }
-            return untracked
-        }
-        let stagedDiff = try await staged.diff, unstagedDiff = try await unstaged.diff
-        let files = await UnifiedDiff.workingTree(staged: stagedDiff, unstaged: unstagedDiff, untracked: untracked)
-        return WorkingChanges(branch: status.branchName, files: files,
-                              omittedFiles: max(new.count - WorkingChanges.maxUntrackedFiles, 0))
+        return await WorkingChanges.make(try await client.call(Methods.GitChanges.self, .init(cwd: cwd)))
     }
 
     /// Whether `cwd` is in a git repository and what is checked out there (`branchName`), for New
@@ -1195,36 +1019,10 @@ public struct NewThreadOptions: Sendable {
 }
 
 extension GitStatusResult {
-    /// The branch from the header of `git status -b`, which the daemon passes on as git wrote it:
-    /// "main", "No commits yet on main" in a new repository, and "HEAD (no branch)" when detached,
-    /// which has no branch to name.
+    /// The branch checked out, as `gitBranchName` reads git's header; nil when detached.
     public var branchName: String? {
-        guard isRepo, let branch, !branch.isEmpty, branch != "HEAD (no branch)" else { return nil }
-        for prefix in ["No commits yet on ", "Initial commit on "] where branch.hasPrefix(prefix) {
-            return String(branch.dropFirst(prefix.count))
-        }
-        return branch
-    }
-}
-
-public struct WorkingChanges: Sendable, Equatable {
-    public let branch: String?
-    public let files: [FileDiff]
-    /// Summed once, not per draw.
-    public let added: Int
-    public let removed: Int
-    /// New files past `maxUntrackedFiles`, counted but not read or listed.
-    public let omittedFiles: Int
-
-    /// New files read and listed, at most.
-    public static let maxUntrackedFiles = 200
-
-    public init(branch: String?, files: [FileDiff], omittedFiles: Int = 0) {
-        self.branch = branch
-        self.files = files
-        added = files.reduce(0) { $0 + $1.added }
-        removed = files.reduce(0) { $0 + $1.removed }
-        self.omittedFiles = omittedFiles
+        guard isRepo, let branch else { return nil }
+        return gitBranchName(branch)
     }
 }
 
@@ -1267,7 +1065,6 @@ extension HostConnection {
         serverInfo: InitializeResult? = nil,
         account: AccountInfo? = nil,
         models: [ModelInfo] = [],
-        projects: [ProjectListResult.Project] = [],
         chats: [ThreadModel] = []
     ) {
         self.state = state
@@ -1275,9 +1072,9 @@ extension HostConnection {
         self.serverInfo = serverInfo
         self.account = account
         self.models = models
-        self.projects = projects
         self.chats = chats
         for chat in chats { threads[chat.id] = chat }
+        refreshDirectories()
     }
 }
 #endif
@@ -1294,29 +1091,11 @@ private extension ServerNotification {
 }
 
 #if DEBUG
-/// Debug ▸ Stress: what the host does to a chat on its own, on demand, for hunting transcript bugs.
+/// For the UI tests' stress driver: what the host does to a chat on its own, on demand.
 extension HostConnection {
     /// As after a replay gap: the chat read again from its last page.
     public func stressReload(_ model: ThreadModel) async {
-        forgetWorkflows(of: model.id)
         try? await loadHistory(model, force: true)
-    }
-
-    /// As for a chat no window shows, once idle.
-    public func stressTrim(_ model: ThreadModel) { model.trim(toLast: Self.initialHistoryLimit) }
-
-    /// Let go of and read again, as a followed chat left and reopened.
-    public func stressUnloadAndReopen(_ model: ThreadModel) async {
-        model.unload()
-        try? await Task.sleep(for: .milliseconds(300))
-        await open(model)
-    }
-
-    /// The chat failing to open for a moment, then opening.
-    public func stressErrorFlash(_ model: ThreadModel) async {
-        model.lastError = "Stress: simulated failure"
-        try? await Task.sleep(for: .milliseconds(500))
-        model.lastError = nil
     }
 }
 #endif

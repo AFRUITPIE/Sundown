@@ -1,5 +1,7 @@
 #if DEBUG
 import Foundation
+@testable import SundownFixtures
+import SundownTestSupport
 import Testing
 import TetherProtocol
 import XCTest
@@ -18,10 +20,9 @@ final class StreamingBenchmark: XCTestCase {
     @MainActor
     func testReplayingALongReplyIntoALongTranscript() throws {
         try Bench.skipUnlessEnabled()
-        let lines = try Self.reply.map { try JSONEncoder().encode(["method": .string($0.method), "params": $0.params] as JSONValue) }
         measure(metrics: Bench.metrics, options: Bench.manually) {
             let replay = Replay()
-            let client = RPCClient(transport: Lines(lines))
+            let client = RPCClient(transport: Self.host(sending: Self.reply))
             let done = expectation(description: "replayed")
             startMeasuring()
             Task { @MainActor in
@@ -38,8 +39,66 @@ final class StreamingBenchmark: XCTestCase {
         }
     }
 
+    /// The same reply as a turn of the chat's own, running from its prompt to its end, routed as
+    /// the app routes a host's batches (`HostConnection.route`): the running turn's rows fold live
+    /// at each call that starts and finishes, and its last turn folds again when it ends.
+    @MainActor
+    func testRoutingALiveTurnIntoALongTranscript() throws {
+        try Bench.skipUnlessEnabled()
+        measure(metrics: Bench.metrics, options: Bench.manually) {
+            let connection = HostConnection(host: HostConfig(name: "bench", kind: .local))
+            let replay = Replay(connection.thread("perf"))
+            let client = RPCClient(transport: Self.host(sending: Self.liveTurn))
+            let done = expectation(description: "replayed")
+            startMeasuring()
+            Task { @MainActor in
+                await client.start()
+                for await batch in client.notifications {
+                    connection.route(batch)
+                    replay.read()
+                }
+                done.fulfill()
+            }
+            wait(for: [done], timeout: 60)
+            stopMeasuring()
+            XCTAssertEqual(replay.thread.status, .idle)
+        }
+    }
+
+    /// A host that has sent every one of `notifications`, then hung up.
+    private static func host(sending notifications: [(method: String, params: JSONValue)]) -> any Transport {
+        let host = FakeHost()
+        let link = try! host.connect()
+        for n in notifications { host.emit(n.method, n.params) }
+        host.hangUp()
+        return link
+    }
+
     fileprivate static let reply = PerformanceTranscript.reply(threadID: "perf", firstSeq: 2, turn: 1)
         .map { (method: $0.0, params: $0.1) }
+
+    /// The reply inside a turn: the chat running, the turn started, the prompt, the reply, the turn
+    /// completed and the chat idle again.
+    fileprivate static let liveTurn: [(method: String, params: JSONValue)] = {
+        let turn = Turn(id: "perf-turn", status: .inProgress, startedAt: 1_800_000_000_000)
+        let prompt = Item.userMessage(.init(id: "perf-live-prompt", createdAt: 1_799_999_999_000,
+                                            content: [.text(.init(text: "Tighten the renderer once more."))]))
+        let body = PerformanceTranscript.reply(threadID: "perf", firstSeq: 5, turn: 1).map { (method: $0.0, params: $0.1) }
+        var seq = 5 + body.count
+        func next() -> Int { seq += 1; return seq - 1 }
+        var done = turn
+        done.status = .completed
+        let start: [(method: String, params: JSONValue)] = [
+            ("thread/status/changed", json(ThreadStatusChangedNotification(threadId: "perf", seq: 2, status: .running))),
+            ("turn/started", json(TurnStartedNotification(threadId: "perf", seq: 3, turn: turn))),
+            ("item/started", json(ItemStartedNotification(threadId: "perf", seq: 4, item: prompt))),
+        ]
+        let end: [(method: String, params: JSONValue)] = [
+            ("turn/completed", json(TurnCompletedNotification(threadId: "perf", seq: next(), turn: done))),
+            ("thread/status/changed", json(ThreadStatusChangedNotification(threadId: "perf", seq: next(), status: .idle))),
+        ]
+        return start + body + end
+    }()
 }
 
 /// Each frame's own work, timed one by one: a frame at 120 Hz is 8.3 ms and SwiftUI needs most of
@@ -70,43 +129,32 @@ struct StreamingFrameTests {
 /// The long chat, and what the transcript and its streaming row read once per frame.
 @MainActor
 private final class Replay {
-    let thread = ThreadModel(id: "perf")
-    let markdown = MarkdownCache()
-    /// Building the streaming block's text, as `MarkdownTextView` does for its changed tail.
+    let thread: ThreadModel
+    /// The streaming reply's text, built as `MarkdownView` builds its tail.
+    var markdown = MarkdownStream()
+    let text = NSMutableAttributedString()
     let theme = MarkdownTheme.standard
     var fading = Duration.zero
 
-    init() {
+    init(_ thread: ThreadModel = ThreadModel(id: "perf")) {
+        self.thread = thread
         thread.loadHistory(items: PerformanceTranscript.history, turns: [], seq: 1)
     }
 
     func frame(_ n: ServerNotification) {
         thread.apply(n)
+        read()
+    }
+
+    /// What a frame reads once its notifications are in.
+    func read() {
         _ = thread.rows(.summarized)
         if case .agentMessage(let m) = thread.box(for: thread.items.last!).item {
-            let blocks = markdown.blocks(for: m.text)
-            if let last = blocks.last {
-                let clock = ContinuousClock(), fadeStart = clock.now
-                _ = MarkdownBuilder.build(last, leading: blocks.count > 1, spacing: 12, widestMarker: nil, theme: theme)
-                fading += clock.now - fadeStart
-            }
+            let clock = ContinuousClock(), start = clock.now
+            _ = markdown.update(text, to: m.text, theme: theme, streaming: true)
+            fading += clock.now - start
         }
     }
 }
 
-/// A host that sends every line at once, then hangs up.
-private final class Lines: Transport, @unchecked Sendable {
-    private let queued: [Data]
-    init(_ lines: [Data]) { queued = lines }
-
-    func lines() -> AsyncThrowingStream<Data, any Error> {
-        AsyncThrowingStream { continuation in
-            for line in queued { continuation.yield(line) }
-            continuation.finish()
-        }
-    }
-
-    func send(_ line: Data) async throws {}
-    func close() async {}
-}
 #endif

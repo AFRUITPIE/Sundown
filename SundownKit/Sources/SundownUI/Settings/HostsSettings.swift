@@ -1,3 +1,4 @@
+import SundownFixtures
 import SwiftUI
 import SundownKit
 
@@ -76,9 +77,6 @@ struct HostsSettings: View {
             HostDetail(host: host, connection: app.connection(host.id)) { app.updateHost($0) }
                 // A different host gets its own fields, so a part-typed name can't land on it.
                 .id(host.id)
-                // Its environment values are read from the Keychain when it connects; one that
-                // hasn't yet has them read here, so they don't show as None.
-                .task(id: host.id) { _ = await app.loadEnvironment(for: host.id) }
         } else {
             ContentUnavailableView("No Hosts", systemImage: "network")
         }

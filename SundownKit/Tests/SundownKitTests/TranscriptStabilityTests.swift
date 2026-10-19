@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import TetherProtocol
 @testable import SundownKit
+import SundownTestSupport
 
 /// What a bounce or a blank transcript needs from the rows: a reader's rows keep their ids and order
 /// when the chat under them reloads, grows, gets an older page, is trimmed and restored, or has a
@@ -33,16 +34,6 @@ struct TranscriptStabilityTests: TimedItems {
             items.append(reply("\(tag)a\(i)", m + 4, text: "Reply \(i)"))
         }
         return items
-    }
-
-    /// The rows as they were made before: every item folded and decorated at once.
-    private func fromScratch(_ thread: ThreadModel, _ folding: TranscriptFolding) -> [TranscriptRow] {
-        let items = thread.items
-        let top = items.filter { $0.parentToolUseId == nil }
-        let running = thread.isRunning
-        let folded = foldTranscriptRows(top, folding: folding, lastTurnRunning: running)
-        return decorateTranscriptRows(folded, dates: DateSeparators.prompts(in: top),
-                                      edits: turnEdits(in: items, lastTurnRunning: running))
     }
 
     // MARK: 1. a reload with the same items
@@ -140,10 +131,39 @@ struct TranscriptStabilityTests: TimedItems {
 
     // MARK: 5. random interleavings
 
+    /// How often the walk asks for the rows, and in which folding.
+    enum Asking: Sendable { case everyStep, nowAndThen, switchingFolding }
+
     /// Incremental rows equal a full refold after any interleaving of what a live chat does. Seeded,
     /// so a failure names the seed and step to replay.
     @Test(arguments: [TranscriptFolding.summarized, .everyCall, .workedFor], [UInt64(1), 7, 42, 2026])
     func randomInterleavingsFoldAsAllAtOnce(_ folding: TranscriptFolding, seed: UInt64) {
+        walk(folding, seed: seed, asking: .everyStep)
+    }
+
+    /// Asked for only now and then, the rows fold again from the earliest change since.
+    @Test(arguments: [TranscriptFolding.summarized, .workedFor], [UInt64(3), 11])
+    func askedNowAndThenTheyFoldAsAllAtOnce(_ folding: TranscriptFolding, seed: UInt64) {
+        walk(folding, seed: seed, asking: .nowAndThen)
+    }
+
+    /// A change of Tool Calls setting folds everything its way; the previous folding isn't kept.
+    @Test(arguments: [UInt64(5), 13])
+    func switchingFoldingFoldsAsAllAtOnce(seed: UInt64) {
+        walk(.summarized, seed: seed, asking: .switchingFolding)
+    }
+
+    private func write(_ id: String, _ minutes: Double, parent: String? = nil) -> Item {
+        .toolCall(Item.ToolCall(id: id, parentToolUseId: parent, createdAt: at(minutes), name: "Write", kind: .fileWrite,
+                                input: ["file_path": .string("/repo/\(id).swift"), "content": "a\nb\n"], status: .completed)
+            .withComparedEdit)
+    }
+
+    /// A chat's life at random: turns that complete or are interrupted, calls, edits and writes,
+    /// replies streamed, reasoning, a subagent's own calls, replies and edits, background commands,
+    /// subagents and their edits finishing after their turn, a finished call updated to failed, a
+    /// synthetic prompt, a prompt with no time, notices and errors, trims, older pages and reloads.
+    private func walk(_ base: TranscriptFolding, seed: UInt64, asking: Asking) {
         var rng = StabilityRNG(seed: seed)
         let thread = ThreadModel(id: threadID)
         var seq = 1
@@ -153,49 +173,79 @@ struct TranscriptStabilityTests: TimedItems {
         var turnOpen = false
         var turnID = ""
         var openReply: String?
+        var subagents: [String] = [] // running subagents
+        var later: [Item] = []       // started, finishing whenever: background commands, subagents and their edits
+        var finished: [(id: String, at: Double)] = []
+        var reached = Set<String>()  // dates, a turn's edits of several files, Worked For
+        var step = 0
 
         func nextID(_ prefix: String) -> String { counter += 1; return "\(prefix)\(counter)" }
         func send(_ n: (Int) -> ServerNotification) { seq += 1; thread.apply(n(seq)) }
         func started(_ item: Item) { send { .itemStarted(.init(threadId: threadID, seq: $0, item: item)) } }
         func completed(_ item: Item) { send { .itemCompleted(.init(threadId: threadID, seq: $0, item: item)) } }
-        func endTurn() {
+        func endTurn(_ status: TurnStatus = .completed) {
             if let id = openReply {
                 completed(reply(id, clock, text: "Done."))
                 openReply = nil
             }
-            send { .turnCompleted(.init(threadId: threadID, seq: $0, turn: Turn(id: turnID, status: .completed, startedAt: 0))) }
+            send { .turnCompleted(.init(threadId: threadID, seq: $0, turn: Turn(id: turnID, status: status, startedAt: 0))) }
             send { .threadStatusChanged(.init(threadId: threadID, seq: $0, status: .idle)) }
             turnOpen = false
         }
         /// A streamed delta leaves the rows as they were: each row draws its reply's text from the
-        /// item's box, so only the ids are compared after one (as `IncrementalRowsTests` does).
+        /// item's box, so only the ids are compared after one, and the reply being streamed into is
+        /// compared without its text (a subagent's step, after a delta, folds nothing again).
         /// A prompt that once had its date keeps it, which folding from scratch can't know: dates
         /// are compared apart, the held rows having at least every date the scratch fold has.
         func undated(_ rows: [TranscriptRow]) -> [TranscriptRow] {
-            rows.filter { if case .dateSeparator = $0 { false } else { true } }
+            rows.compactMap { row -> TranscriptRow? in
+                switch row {
+                case .dateSeparator:
+                    return nil
+                case .item(.agentMessage(var streaming)) where streaming.id == openReply:
+                    streaming.text = ""
+                    return .item(.agentMessage(streaming))
+                case .turnWork(let id, let rows, let durationMs):
+                    return .turnWork(id: id, rows: undated(rows), durationMs: durationMs)
+                default:
+                    return row
+                }
+            }
         }
         func dates(_ rows: [TranscriptRow]) -> Set<String> {
             Set(rows.compactMap { if case .dateSeparator = $0 { $0.id } else { nil } })
         }
-        func check(_ step: String, deltaOnly: Bool = false) {
-            let expected = fromScratch(thread, folding)
+        func check(_ name: String, deltaOnly: Bool = false, always: Bool = false) {
+            if asking == .nowAndThen, !always, step % 4 != 0 { return }
+            let folding = asking == .switchingFolding ? foldings[step % foldings.count] : base
+            let expected = rowsFromScratch(thread, folding)
             let held = thread.rows(folding)
-            #expect(dates(expected).isSubset(of: dates(held)), "dates, seed \(seed), \(folding), after \(step)")
+            #expect(dates(expected).isSubset(of: dates(held)), "dates, seed \(seed), \(folding), after \(name)")
+            if asking == .switchingFolding { #expect(thread.foldingsHeld == [folding], "seed \(seed), after \(name)") }
+            for row in held {
+                switch row {
+                case .dateSeparator: reached.insert("dates")
+                case .turnEdits(let edits) where edits.files.count > 1: reached.insert("edits")
+                case .turnWork: reached.insert("worked for")
+                default: break
+                }
+            }
             if deltaOnly {
-                #expect(undated(held).map(\.id) == undated(expected).map(\.id), "ids, seed \(seed), \(folding), after \(step)")
+                #expect(undated(held).map(\.id) == undated(expected).map(\.id), "ids, seed \(seed), \(folding), after \(name)")
                 return
             }
-            #expect(undated(held) == undated(expected), "seed \(seed), \(folding), after \(step)")
-            #expect(thread.prompts(folding) == TranscriptPrompt.list(in: expected), "prompts, seed \(seed), after \(step)")
+            #expect(undated(held) == undated(expected), "seed \(seed), \(folding), after \(name)")
+            #expect(thread.prompts(folding) == TranscriptPrompt.list(in: expected), "prompts, seed \(seed), after \(name)")
         }
 
         thread.loadHistory(items: chat(turns: 3, tag: "base"), turns: [], seq: seq, hasMore: true)
-        check("first page")
+        check("first page", always: true)
 
-        for step in 0..<200 {
+        for n in 0..<200 {
+            step = n
             clock += rng.below(4) == 0 ? 90 : 1
             let name: String
-            switch rng.below(10) {
+            switch rng.below(18) {
             case 0, 1:
                 name = "turn"
                 if turnOpen { endTurn() }
@@ -209,6 +259,7 @@ struct TranscriptStabilityTests: TimedItems {
                 let id = nextID("c")
                 started(call(id, clock, status: .running))
                 completed(call(id, clock))
+                finished.append((id, clock))
             case 3:
                 name = "edit"
                 completed(edit(nextID("e"), clock, path: "/repo/f\(rng.below(3)).swift"))
@@ -225,29 +276,91 @@ struct TranscriptStabilityTests: TimedItems {
                 if let id = openReply { completed(reply(id, clock, text: "Done.")); openReply = nil }
             case 7:
                 name = "end turn"
-                if turnOpen { endTurn() }
+                if turnOpen { endTurn(rng.below(4) == 0 ? .interrupted : .completed) }
             case 8:
                 name = "trim"
                 // As `HostConnection` does: only a chat no window shows, idle, with nothing pending.
                 guard !turnOpen, thread.items.count > 8 else { continue }
                 thread.trim(toLast: 4 + rng.below(20))
-            default:
+            case 9:
                 name = "prepend"
                 guard thread.hasMoreHistory else { continue }
-                let n = 1 + rng.below(4)
-                let base = older - 3 * Double(n)
-                let page = (0..<n).map { i -> Item in
-                    i == 0 ? prompt(nextID("o"), base) : call(nextID("oc"), base + 3 * Double(i))
+                let count = 1 + rng.below(4)
+                let base = older - 3 * Double(count)
+                let page = (0..<count).map { i -> Item in
+                    i == 0 ? prompt(nextID("o"), base)
+                        : rng.below(3) == 0 ? edit(nextID("oe"), base + 3 * Double(i)) : call(nextID("oc"), base + 3 * Double(i))
                 }
                 older = base
                 thread.prependHistory(items: page, hasMore: rng.below(2) == 0)
+            case 10:
+                name = "subagent"
+                let id = nextID("s")
+                started(subagent(id, clock, status: .running))
+                subagents.append(id)
+                later.append(subagent(id, clock, status: .completed))
+            case 11:
+                name = "subagent's step"
+                guard !subagents.isEmpty else { continue }
+                let parent = subagents[rng.below(subagents.count)]
+                switch rng.below(3) {
+                case 0:
+                    let id = nextID("sc")
+                    started(call(id, clock, kind: .fileRead, status: .running, parent: parent))
+                    completed(call(id, clock, kind: .fileRead, parent: parent))
+                case 1:
+                    let id = nextID("sa")
+                    started(reply(id, clock, text: "", parent: parent))
+                    completed(reply(id, clock, text: "Found it.", parent: parent))
+                default:
+                    let id = nextID("se")
+                    started(edit(id, clock, status: .running, parent: parent))
+                    later.append(edit(id, clock, parent: parent))
+                }
+            case 12:
+                name = "finish later"
+                guard !later.isEmpty else { continue }
+                let item = later.remove(at: rng.below(later.count))
+                completed(item)
+                subagents.removeAll { $0 == item.id }
+                if case .toolCall(let done) = item, done.kind == .bash { finished.append((done.id, (done.createdAt - t0) / 60_000)) }
+            case 13:
+                name = "background command"
+                let id = nextID("bg")
+                started(call(id, clock, status: .running))
+                later.append(call(id, clock))
+            case 14:
+                name = "reasoning"
+                started(.reasoning(.init(id: nextID("r"), createdAt: at(clock), text: "Thinking it over")))
+            case 15:
+                name = "update"
+                guard !finished.isEmpty else { continue }
+                let done = finished[rng.below(finished.count)]
+                send { .itemUpdated(.init(threadId: threadID, seq: $0, item: call(done.id, done.at, status: .failed))) }
+            case 16:
+                name = "aside"
+                switch rng.below(4) {
+                case 0: started(prompt(nextID("sp"), clock, synthetic: true))
+                case 1: started(.userMessage(.init(id: nextID("tp"), createdAt: 0, content: [.text(.init(text: "Timeless"))])))
+                case 2: started(.notice(.init(id: nextID("n"), createdAt: at(clock), kind: "info", text: "Compacted")))
+                default: started(.error(.init(id: nextID("x"), createdAt: at(clock), message: "Overloaded")))
+                }
+            default:
+                name = "write"
+                completed(write(nextID("w"), clock))
             }
             if rng.below(6) == 0 {
                 thread.loadHistory(items: thread.items, turns: thread.turns, seq: seq, hasMore: thread.hasMoreHistory)
-                check("step \(step) \(name), then reload")
+                check("step \(n) \(name), then reload")
             } else {
-                check("step \(step) \(name)", deltaOnly: name == "stream")
+                check("step \(n) \(name)", deltaOnly: name == "stream")
             }
+        }
+        check("the end", always: true)
+        // The walk reached everything it's meant to: dates, a turn's edits, Worked For.
+        if asking == .everyStep {
+            #expect(reached.isSuperset(of: ["dates", "edits"]), "seed \(seed) reached only \(reached)")
+            if base == .workedFor { #expect(reached.contains("worked for"), "seed \(seed) reached only \(reached)") }
         }
     }
 
@@ -286,147 +399,7 @@ struct TranscriptStabilityTests: TimedItems {
         held("the turn's end")
     }
 
-    // MARK: 7. what a turn's end changes
-
-    /// Records which row ids go, and which come, when a running turn ends. Not a failure on its
-    /// own: a row vanishing at the bottom is a candidate for the bounce. The reply must stay.
-    @Test(arguments: [TranscriptFolding.summarized, .everyCall, .workedFor])
-    func rowIdsThatChangeWhenATurnEndsAreReported(_ folding: TranscriptFolding) {
-        let thread = ThreadModel(id: threadID)
-        thread.loadHistory(items: chat(turns: 2), turns: [], seq: 1)
-        var seq = 1
-        func send(_ n: (Int) -> ServerNotification) { seq += 1; thread.apply(n(seq)) }
-        send { .threadStatusChanged(.init(threadId: threadID, seq: $0, status: .running)) }
-        send { .turnStarted(.init(threadId: threadID, seq: $0, turn: Turn(id: "live-t", status: .inProgress, startedAt: 0))) }
-        send { .itemStarted(.init(threadId: threadID, seq: $0, item: prompt("live-p", 500))) }
-        for id in ["live-c1", "live-c2", "live-c3"] {
-            send { .itemStarted(.init(threadId: threadID, seq: $0, item: call(id, 501, status: .running))) }
-            send { .itemCompleted(.init(threadId: threadID, seq: $0, item: call(id, 501))) }
-        }
-        send { .itemCompleted(.init(threadId: threadID, seq: $0, item: edit("live-e1", 502))) }
-        send { .itemStarted(.init(threadId: threadID, seq: $0, item: reply("live-a", 503, text: "Working."))) }
-        let running = thread.rows(folding).map(\.id)
-
-        send { .turnCompleted(.init(threadId: threadID, seq: $0, turn: Turn(id: "live-t", status: .completed, startedAt: 0))) }
-        send { .threadStatusChanged(.init(threadId: threadID, seq: $0, status: .idle)) }
-        let done = thread.rows(folding).map(\.id)
-
-        let gone = running.filter { !done.contains($0) }
-        let arrived = done.filter { !running.contains($0) }
-        print("TURN END \(folding): running last \(running.last ?? "-"), done last \(done.last ?? "-")")
-        print("TURN END \(folding): gone \(gone), arrived \(arrived)")
-        #expect(done.contains("live-a"), "the reply's row is lost when the turn ends, \(folding)")
-    }
-
-    // MARK: 9. a followed chat let go
-
-    /// A followed chat (in the daemon, not loaded) left is unsubscribed but keeps its last page, so
-    /// going back to it, host up or not, shows it at once; opened again, it's read afresh.
-    @Test func aFollowedChatLeftKeepsItsLastPageUntilItIsReadAgain() async throws {
-        let daemon = FakeDaemon()
-        let items = chat(turns: 30)
-        #expect(items.count > HostConnection.initialHistoryLimit)
-        await daemon.script.queue("thread/read", ThreadReadResult(items: items, turns: [], historySeq: 100, hasMore: false))
-        await daemon.script.queue("thread/subscribe", ThreadSubscribeResult(
-            thread: .init(threadId: threadID, status: .notLoaded, cwd: "/repo", lastSeq: 100), replayed: 0, gap: false))
-        let connection = daemon.connection()
-        await connection.connect()
-        let thread = connection.thread(threadID)
-        await connection.open(thread)
-        #expect(thread.isFollowed)
-
-        connection.leave(thread)
-        #expect(thread.historyLoaded, "a chat left went blank")
-        #expect(thread.items.map(\.id) == items.suffix(HostConnection.initialHistoryLimit).map(\.id))
-        #expect(thread.hasMoreHistory)
-        try await eventually { await daemon.script.params(of: "thread/unsubscribe").count == 1 }
-
-        // Opened again, it's read afresh, with what came meanwhile.
-        let later = items + [prompt("later", 9_000), reply("later-a", 9_001)]
-        await daemon.script.queue("thread/read", ThreadReadResult(items: later, turns: [], historySeq: 120, hasMore: false))
-        await daemon.script.queue("thread/subscribe", ThreadSubscribeResult(
-            thread: .init(threadId: threadID, status: .notLoaded, cwd: "/repo", lastSeq: 120), replayed: 0, gap: false))
-        await connection.open(thread)
-        #expect(thread.items.last?.id == "later-a")
-        #expect(thread.lastSeq == 120)
-        #expect(await daemon.script.params(of: "thread/subscribe").count == 2)
-        await connection.disconnect()
-    }
-
-    /// A reconnect resubscribes the chats on screen and the live ones, not those let go: each
-    /// subscription to a followed chat costs the daemon a file watcher and its parsed transcript.
-    @Test func aReconnectDoesNotResubscribeAChatLetGo() async throws {
-        let first = FakeDaemon()
-        await first.script.queue("thread/read", ThreadReadResult(items: chat(turns: 30), turns: [], historySeq: 100, hasMore: false))
-        await first.script.queue("thread/subscribe", ThreadSubscribeResult(
-            thread: .init(threadId: threadID, status: .notLoaded, cwd: "/repo", lastSeq: 100), replayed: 0, gap: false))
-        let second = FakeDaemon()
-        let transports = StabilityTransports([first, second])
-        let connection = HostConnection(host: HostConfig(name: "Fake", kind: .ssh(destination: "fake")),
-                                        transportProvider: { _ in await transports.next() })
-        await connection.connect()
-        let thread = connection.thread(threadID)
-        await connection.open(thread)
-        connection.leave(thread)
-
-        await connection.reconnect()
-        #expect(await second.script.params(of: "thread/subscribe").isEmpty)
-        #expect(thread.historyLoaded, "the page it kept went with the reconnect")
-        await connection.disconnect()
-    }
-
-    /// Opened again while the host is down, a chat let go shows the page it kept, and is read
-    /// afresh and subscribed once the host is back.
-    @Test func aChatLetGoOpenedWhileDisconnectedIsReadOnceConnected() async throws {
-        let first = FakeDaemon()
-        await first.script.queue("thread/read", ThreadReadResult(items: chat(turns: 30), turns: [], historySeq: 100, hasMore: false))
-        await first.script.queue("thread/subscribe", ThreadSubscribeResult(
-            thread: .init(threadId: threadID, status: .notLoaded, cwd: "/repo", lastSeq: 100), replayed: 0, gap: false))
-        let second = FakeDaemon()
-        let later = chat(turns: 30) + [prompt("later", 9_000), reply("later-a", 9_001)]
-        await second.script.queue("thread/read", ThreadReadResult(items: later, turns: [], historySeq: 120, hasMore: false))
-        await second.script.queue("thread/subscribe", ThreadSubscribeResult(
-            thread: .init(threadId: threadID, status: .notLoaded, cwd: "/repo", lastSeq: 120), replayed: 0, gap: false))
-        let transports = StabilityTransports([first, second])
-        let connection = HostConnection(host: HostConfig(name: "Fake", kind: .ssh(destination: "fake")),
-                                        transportProvider: { _ in await transports.next() })
-        await connection.connect()
-        let thread = connection.thread(threadID)
-        await connection.open(thread)
-        connection.leave(thread)
-        await connection.disconnect()
-
-        await connection.open(thread)
-        #expect(thread.items.count == HostConnection.initialHistoryLimit, "nothing to show while the host is down")
-        await connection.connect()
-        #expect(thread.items.last?.id == "later-a")
-        #expect(await second.script.params(of: "thread/subscribe").count == 1)
-        await connection.disconnect()
-    }
-
-    /// An event in flight when a followed chat is let go would land in the page it kept, past a gap.
-    /// A chat let go drops item events until it's read again.
-    @Test func anEventAfterLeavingAFollowedChatIsDropped() async throws {
-        let daemon = FakeDaemon()
-        await daemon.script.queue("thread/read", ThreadReadResult(items: chat(turns: 10), turns: [], historySeq: 100, hasMore: false))
-        await daemon.script.queue("thread/subscribe", ThreadSubscribeResult(
-            thread: .init(threadId: threadID, status: .notLoaded, cwd: "/repo", lastSeq: 100), replayed: 0, gap: false))
-        let connection = daemon.connection()
-        await connection.connect()
-        let thread = connection.thread(threadID)
-        await connection.open(thread)
-        connection.leave(thread)
-
-        daemon.emit("item/started", encoded(ItemStartedNotification(threadId: threadID, seq: 101, item: prompt("late", 900))))
-        // A status change after it, which still reaches the chat: once it has, the item was routed too.
-        daemon.emit("thread/status/changed", ["threadId": .string(threadID), "seq": 102, "status": "idle"])
-        try await eventually { thread.lastSeq == 102 }
-
-        #expect(!thread.items.contains { $0.id == "late" }, "a chat let go took an item past its gap")
-        await connection.disconnect()
-    }
-
-    // MARK: 10. date separators and the clock
+    // MARK: 7. date separators and the clock
 
     /// A date separator's id is its prompt's, never the time: the same prompt keeps its separator's
     /// id as the clock moves on, and the rows don't depend on when they're asked for.
@@ -443,79 +416,19 @@ struct TranscriptStabilityTests: TimedItems {
         // Asked again with nothing changed, the same rows, however much time has passed.
         #expect(thread.rows(.summarized) == rows)
     }
+}
 
-    // MARK: 11. replay gap reload on a reconnect
-
-    /// Two connections to one chat: the first holds its last page and an older page the reader
-    /// scrolled to; after a reconnect whose subscription reports a gap, the chat reloads its last
-    /// page only, so the older page's rows went. Every row the reader held survives the reload.
-    @Test func aGapReconnectKeepsTheOlderRowsTheReaderHeld() async throws {
-        let (before, after, _) = try await reconnectAfterOlderPage(gap: true)
-        #expect(after.count == before.count, "a gap reload dropped \(before.count - after.count) rows the reader held")
-        #expect(Set(before).isSubset(of: Set(after)))
-    }
-
-    /// Without a gap, the reconnect keeps everything the chat held (the control for the test above).
-    @Test func aReconnectWithoutAGapKeepsEveryRow() async throws {
-        let (before, after, _) = try await reconnectAfterOlderPage(gap: false)
-        #expect(after == before)
-    }
-
-    /// Loads a 120-item chat as its last page of 50 and an older page of 70, then reconnects to the
-    /// same daemon state with the subscription reporting `gap`. Returns the row ids before and after.
-    private func reconnectAfterOlderPage(gap: Bool) async throws -> ([String], [String], Int) {
-        func message(_ n: Int) -> Item {
-            n % 10 == 0
-                ? .userMessage(.init(id: "m\(n)", createdAt: Double(1_000 + n), content: [.text(.init(text: "Prompt \(n)"))]))
-                : .agentMessage(.init(id: "m\(n)", createdAt: Double(1_000 + n), text: "Reply \(n)"))
-        }
-        let all = (0..<120).map(message)
-        let tail = Array(all.suffix(50)), head = Array(all.prefix(70))
-        let id = threadID
-        func subscription(_ gap: Bool) -> ThreadSubscribeResult {
-            ThreadSubscribeResult(thread: .init(threadId: id, status: .idle, cwd: "/repo", lastSeq: 200), replayed: 0, gap: gap)
-        }
-
-        let first = FakeDaemon()
-        await first.script.queue("thread/read", ThreadReadResult(items: tail, turns: [], historySeq: 200, hasMore: true))
-        await first.script.queue("thread/subscribe", subscription(false))
-        await first.script.queue("thread/read", ThreadReadResult(items: head, turns: [], hasMore: false))
-
-        let second = FakeDaemon()
-        if gap {
-            await second.script.queue("thread/subscribe", subscription(true))
-            // The reload asks for at least as much as the chat held; the daemon answers with that
-            // many from the end (here the whole chat).
-            await second.script.queue("thread/read", ThreadReadResult(items: all, turns: [], historySeq: 200, hasMore: false))
-            await second.script.queue("thread/subscribe", subscription(false))
-        } else {
-            await second.script.queue("thread/subscribe", subscription(false))
-        }
-
-        let transports = StabilityTransports([first, second])
-        let connection = HostConnection(host: HostConfig(name: "Fake", kind: .ssh(destination: "fake")),
-                                        transportProvider: { _ in await transports.next() })
-        await connection.connect()
-        let thread = connection.thread(threadID)
-        await connection.open(thread)
-        await connection.loadOlderHistory(thread)
-        let before = thread.rows(.summarized).map(\.id)
-        #expect(thread.items.count == 120)
-
-        await connection.reconnect()
-        let after = thread.rows(.summarized).map(\.id)
-        await connection.disconnect()
-        return (before, after, thread.items.count)
-    }
-
-    // MARK: test support
-
-    /// Each connection's daemon, in the order the connections are made.
-    private actor StabilityTransports {
-        private var queued: [any Transport]
-        init(_ transports: [any Transport]) { queued = transports }
-        func next() -> any Transport { queued.removeFirst() }
-    }
+/// The rows as they were made before: every item folded and decorated at once.
+@MainActor
+func rowsFromScratch(_ thread: ThreadModel, _ folding: TranscriptFolding) -> [TranscriptRow] {
+    let items = thread.items
+    let top = items.filter { $0.parentToolUseId == nil }
+    let running = thread.isRunning
+    let folded = foldTranscriptRows(top, folding: folding, lastTurnRunning: running)
+    return decorateTranscriptRows(folded, dates: DateSeparators.prompts(in: top),
+                                  edits: editedFiles(in: items, lastTurnRunning: running,
+                                                     totals: Dictionary(thread.turns.compactMap { t in t.edits.map { (t.id, $0) } },
+                                                                        uniquingKeysWith: { _, b in b })))
 }
 
 /// A seeded generator (SplitMix64), so a random walk replays the same way every run.

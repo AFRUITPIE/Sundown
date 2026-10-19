@@ -1,4 +1,5 @@
 import Foundation
+@testable import SundownFixtures
 import Testing
 import SundownKit
 import TetherProtocol
@@ -90,7 +91,7 @@ struct HostSecretsTests {
     private func defaults() -> UserDefaults { UserDefaults(suiteName: "sundown.tests.\(UUID().uuidString)")! }
 
     /// A host's environment values are kept apart from the defaults file's hosts, and come back
-    /// when the host connects.
+    /// as the first host connects.
     @Test func environmentValuesAreKeptApartAndRestored() async throws {
         let store = defaults()
         let app = AppModel(defaults: store)
@@ -101,23 +102,8 @@ struct HostSecretsTests {
         let raw = try #require(store.data(forKey: "sundown.hosts.v1"))
         #expect(!String(decoding: raw, as: UTF8.self).contains("sk-test"))
         let restored = AppModel(defaults: store)
-        #expect(await restored.loadEnvironment(for: host.id) == ["ANTHROPIC_API_KEY": "sk-test"])
+        await restored.environmentLoaded()
         #expect(restored.hosts.first { $0.id == host.id }?.env == ["ANTHROPIC_API_KEY": "sk-test"])
-    }
-
-    /// A store from before keeps its values inline; the next save moves them out.
-    @Test func inlineValuesMoveOnTheNextSave() async throws {
-        let store = defaults()
-        let id = UUID()
-        let old = #"{"hosts":[{"id":"\#(id.uuidString)","name":"box","kind":{"ssh":{"destination":"box"}},"env":{"AWS_PROFILE":"dev"}}]}"#
-        store.set(Data(old.utf8), forKey: "sundown.hosts.v1")
-        let app = AppModel(defaults: store)
-        #expect(app.hosts.first { $0.id == id }?.env == ["AWS_PROFILE": "dev"])
-
-        app.transcriptWidth = .wide
-        let raw = try #require(store.data(forKey: "sundown.hosts.v1"))
-        #expect(!String(decoding: raw, as: UTF8.self).contains("AWS_PROFILE"))
-        #expect(await AppModel(defaults: store).loadEnvironment(for: id) == ["AWS_PROFILE": "dev"])
     }
 
     /// A Keychain that refuses the values leaves them in the defaults file rather than nowhere; the
@@ -139,7 +125,9 @@ struct HostSecretsTests {
         app.transcriptWidth = .medium
         raw = try #require(store.data(forKey: "sundown.hosts.v1"))
         #expect(!String(decoding: raw, as: UTF8.self).contains("AWS_PROFILE"))
-        #expect(await AppModel(defaults: store, secrets: keychain).loadEnvironment(for: id) == ["AWS_PROFILE": "dev"])
+        let restored = AppModel(defaults: store, secrets: keychain)
+        await restored.environmentLoaded()
+        #expect(restored.hosts.first { $0.id == id }?.env == ["AWS_PROFILE": "dev"])
     }
 }
 

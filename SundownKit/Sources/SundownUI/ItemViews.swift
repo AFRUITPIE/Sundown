@@ -1,4 +1,5 @@
 import ImageIO
+import SundownFixtures
 import SwiftUI
 import SundownKit
 import TetherProtocol
@@ -22,7 +23,7 @@ struct ItemView: View {
         switch item {
         case .userMessage(let m) where m.origin == "wakeup" && m.parentToolUseId == nil:
             // A scheduled job firing: where its turn starts, a quiet line, never a message.
-            WakeupLine(message: m, fromLoop: thread.scheduledWork.loopWakeups.contains(m.id))
+            WakeupLine(message: m, fromLoop: m.fromLoop == true)
         case .userMessage(let m) where m.synthetic == true || m.parentToolUseId != nil || m.origin == "workflow":
             // Not typed here (Claude Code's, a subagent's, another session's): a quiet line in the
             // middle, not a prompt on the person's side.
@@ -194,7 +195,7 @@ private struct MessageMenu: ViewModifier {
     private func copyText() {
         guard isMarkdown else { Clipboard.copy(text); return }
         let markdown = place?.isEnd == true ? turnText?() ?? text : text
-        Clipboard.copy(MarkdownView.plainText(markdown))
+        Clipboard.copy(MarkdownBuilder.plainText(markdown))
     }
 }
 

@@ -2,6 +2,14 @@ import Foundation
 import Testing
 import TetherProtocol
 @testable import SundownKit
+import SundownFixtures
+import SundownTestSupport
+
+extension LineSplitter {
+    mutating func split(_ chunk: Data, _ line: (Data) -> Void) {
+        chunk.withUnsafeBytes { split($0, line) }
+    }
+}
 
 /// Lines from the daemon, as the transport splits them.
 @Suite
@@ -138,18 +146,16 @@ struct WireMessageTests {
 @Suite(.timeLimit(.minutes(1)))
 struct RPCClientTests {
     @Test func aCallSendsItsTypedParamsAndDecodesItsResult() async throws {
-        let transport = WireTransport { method, params in
-            guard method == "thread/list" else { return nil }
-            return ["threads": [["threadId": "a", "cwd": "/w", "updatedAt": 5, "status": "idle", "title": "One"]]]
-        }
-        let client = RPCClient(transport: transport)
+        let host = FakeHost()
+        host.answer("thread/list", .result(["threads": [["threadId": "a", "cwd": "/w", "updatedAt": 5, "status": "idle", "title": "One"]]]))
+        let client = RPCClient(transport: try host.connect())
         await client.start()
 
         let result = try await client.call(Methods.ThreadList.self, .init(limit: 20))
 
         #expect(result.threads.map(\.threadId) == ["a"])
         #expect(result.threads.first?.title == "One")
-        let sent = try #require(await transport.sent.first)
+        let sent = try #require(host.received.first)
         #expect(sent["id"]?.intValue == 1)
         #expect(sent["method"]?.stringValue == "thread/list")
         #expect(sent["params"]?["limit"]?.intValue == 20)
@@ -157,21 +163,21 @@ struct RPCClientTests {
     }
 
     @Test func anErrorResponseThrowsItsCodeAndMessage() async throws {
-        let transport = WireTransport { _, _ in nil }
-        let client = RPCClient(transport: transport)
+        let host = FakeHost()
+        let client = RPCClient(transport: try host.connect())
         await client.start()
 
         let error = await #expect(throws: RPCError.self) {
             _ = try await client.call(Methods.ThreadDelete.self, .init(threadId: "gone"))
         }
         #expect(error?.code == -32601)
-        #expect(error?.message == "not scripted")
+        #expect(error?.message == "Not in the script: thread/delete")
         await client.close()
     }
 
     @Test func aServerRequestIsAnsweredWithItsOwnID() async throws {
-        let transport = WireTransport { _, _ in nil }
-        let client = RPCClient(transport: transport)
+        let host = FakeHost()
+        let client = RPCClient(transport: try host.connect())
         let received = Received<ServerRequest>()
         await client.setServerRequestHandler { request in
             await received.append(request)
@@ -179,9 +185,9 @@ struct RPCClientTests {
         }
         await client.start()
 
-        transport.emit(#"{"id":"req-7","method":"permission/request","params":{"threadId":"t","requestId":"r","toolUseId":"u","toolName":"Bash","input":{"command":"ls"}}}"#)
-        transport.emit(#"{"id":8,"method":"something/new","params":{"threadId":"t","requestId":"r2"}}"#)
-        try await eventually { await transport.sent.count == 2 }
+        host.emit(line: #"{"id":"req-7","method":"permission/request","params":{"threadId":"t","requestId":"r","toolUseId":"u","toolName":"Bash","input":{"command":"ls"}}}"#)
+        host.emit(line: #"{"id":8,"method":"something/new","params":{"threadId":"t","requestId":"r2"}}"#)
+        try await eventually { host.received.count == 2 }
 
         let requests = await received.values
         let p = try #require(requests.first?.permissionRequest, "expected a permission request, got \(requests)")
@@ -189,7 +195,7 @@ struct RPCClientTests {
         let unknown = try #require(requests.last?.unknown, "expected an unknown request, got \(requests)")
         #expect(unknown.method == "something/new")
         #expect(unknown.params["requestId"]?.stringValue == "r2")
-        let answers = await transport.sent
+        let answers = host.received
         #expect(Set(answers.compactMap { $0["id"] }) == [.string("req-7"), .number(8)])
         #expect(answers.allSatisfy { $0["result"]?["behavior"]?.stringValue == "allow" && $0["method"] == nil })
         await client.close()
@@ -197,16 +203,16 @@ struct RPCClientTests {
 
     /// Streamed output waits for its frame; anything else goes at once and takes it along, in order.
     @Test func streamedOutputWaitsAndAnythingElseTakesItAlong() async throws {
-        let transport = WireTransport { _, _ in nil }
+        let host = FakeHost()
         // Longer than the test: only something other than streamed output sends a batch.
-        let client = RPCClient(transport: transport, batchInterval: .seconds(60))
+        let client = RPCClient(transport: try host.connect(), batchInterval: .seconds(60))
         for line in [
             delta(seq: 2, "Hel"), delta(seq: 3, "lo"),
             #"{"method":"thread/status/changed","params":{"threadId":"t","seq":4,"status":"idle"}}"#,
             delta(seq: 5, "!"),
             #"{"method":"item/toolCall/progress","params":{"threadId":"t","seq":6,"itemId":"c","toolName":"Bash","elapsedSeconds":2}}"#,
             #"{"method":"something/new","params":{"threadId":"t","seq":7}}"#,
-        ] { transport.emit(line) }
+        ] { host.emit(line: line) }
         await client.start()
 
         var batches: [[ServerNotification]] = []
@@ -222,9 +228,9 @@ struct RPCClientTests {
     }
 
     @Test func streamedOutputGoesOnItsOwnAfterAFrame() async throws {
-        let transport = WireTransport { _, _ in nil }
-        let client = RPCClient(transport: transport, batchInterval: .milliseconds(5))
-        transport.emit(delta(seq: 2, "Hi"))
+        let host = FakeHost()
+        let client = RPCClient(transport: try host.connect(), batchInterval: .milliseconds(5))
+        host.emit(line: delta(seq: 2, "Hi"))
         await client.start()
 
         let batch = await firstBatch(client.notifications, within: .seconds(2))
@@ -234,18 +240,18 @@ struct RPCClientTests {
 
     /// A caller, or a prompt, sees everything the daemon sent before it.
     @Test func aResponseOrARequestTakesTheOutputBeforeItAlong() async throws {
-        let transport = WireTransport { method, _ in method == "thread/list" ? ["threads": []] : nil }
-        let client = RPCClient(transport: transport, batchInterval: .seconds(60))
+        let host = FakeHost()
+        let client = RPCClient(transport: try host.connect(), batchInterval: .seconds(60))
         await client.setServerRequestHandler { _ in nil }
         await client.start()
         let notifications = client.notifications
 
-        transport.emit(delta(seq: 2, "a"))
+        host.emit(line: delta(seq: 2, "a"))
         _ = try await client.call(Methods.ThreadList.self, .init())
         #expect(await firstBatch(notifications, within: .seconds(2))?.map(\.seq) == [2])
 
-        transport.emit(delta(seq: 3, "b"))
-        transport.emit(#"{"id":"r","method":"question/request","params":{"threadId":"t","requestId":"r","questions":[]}}"#)
+        host.emit(line: delta(seq: 3, "b"))
+        host.emit(line: #"{"id":"r","method":"question/request","params":{"threadId":"t","requestId":"r","questions":[]}}"#)
         #expect(await firstBatch(notifications, within: .seconds(2))?.map(\.seq) == [3])
         await client.close()
     }
@@ -268,78 +274,6 @@ struct RPCClientTests {
             group.cancelAll()
             return first
         }
-    }
-}
-
-/// A batch's text deltas for one reply go in as one; nothing else moves.
-@MainActor
-@Suite
-struct DeltaJoiningTests {
-    private func delta(_ thread: String = "t", item: String = "a", seq: Int, _ text: String) -> ServerNotification {
-        .itemAgentMessageDelta(.init(threadId: thread, seq: seq, itemId: item, delta: text))
-    }
-
-    private func status(_ thread: String = "t", seq: Int, _ status: ThreadStatus) -> ServerNotification {
-        .threadStatusChanged(.init(threadId: thread, seq: seq, status: status))
-    }
-
-    @Test func runsGatherOneReplysDeltasUntilSomethingElseForItsChat() {
-        let batch = [
-            delta(seq: 1, "a"), delta(seq: 2, "b"), delta("other", seq: 1, "x"), delta(seq: 3, "c"),
-            status(seq: 4, .idle), delta(seq: 5, "d"), delta(item: "z", seq: 6, "e"), delta(seq: 7, "f"),
-            delta("other", seq: 2, "y"),
-        ]
-        let runs = HostConnection.textRuns(in: batch).map { $0.map { "\($0.threadId!):\($0.seq!)" } }
-        #expect(runs == [["t:1", "t:2", "t:3"], ["other:1", "other:2"], ["t:4"], ["t:5"], ["t:6"], ["t:7"]])
-    }
-
-    @Test func joiningKeepsTheOrderAndTheLastSeq() throws {
-        let deltas = (1...4).map { ItemAgentMessageDeltaNotification(threadId: "t", seq: $0 + 10, itemId: "a", delta: "\($0)") }
-        let joined = try #require(HostConnection.joining(deltas, after: 10))
-        #expect(joined.delta == "1234")
-        #expect(joined.seq == 14)
-        #expect(joined.itemId == "a")
-        // Those it has already seen are left out, as one at a time would.
-        #expect(HostConnection.joining(deltas, after: 12)?.delta == "34")
-        #expect(HostConnection.joining(deltas, after: 14) == nil)
-        #expect(HostConnection.joining(deltas, after: 0)?.delta == "1234")
-        let unordered = [11, 9, 12].map { ItemAgentMessageDeltaNotification(threadId: "t", seq: $0, itemId: "a", delta: "\($0)") }
-        #expect(HostConnection.joining(unordered, after: 0)?.delta == "1112")
-    }
-
-    /// Applied as a batch, the reply ends as it would have one notification at a time.
-    @Test func aBatchEndsAsOneAtATimeWould() {
-        let batch = [
-            .itemStarted(.init(threadId: "t", seq: 1, item: .agentMessage(.init(id: "a", createdAt: 1, text: "")))),
-            delta(seq: 2, "Hel"), delta(seq: 3, "lo"), delta("other", seq: 1, "?"), delta(seq: 4, " you"),
-            .itemUpdated(.init(threadId: "t", seq: 5, item: .agentMessage(.init(id: "a", createdAt: 1, text: "Hi")))),
-            delta(seq: 6, " there"), status(seq: 7, .running), delta(seq: 8, "!"),
-            // A replay's overlap is dropped, as ever.
-            delta(seq: 8, "!"),
-        ]
-        let batched = HostConnection(host: HostConfig(name: "wire", kind: .local))
-        batched.route(batch)
-        let single = HostConnection(host: HostConfig(name: "wire", kind: .local))
-        for n in batch { single.route([n]) }
-
-        for connection in [batched, single] {
-            let thread = connection.thread("t")
-            #expect(text(of: "a", in: thread) == "Hi there!")
-            #expect(thread.lastSeq == 8)
-            #expect(thread.status == .running)
-            #expect(thread.streamingReplyID == "a")
-            #expect(text(of: "a", in: thread) == textInBox(of: "a", in: thread))
-        }
-    }
-
-    private func text(of id: String, in thread: ThreadModel) -> String? {
-        for case .agentMessage(let m) in thread.items where m.id == id { return m.text }
-        return nil
-    }
-
-    private func textInBox(of id: String, in thread: ThreadModel) -> String? {
-        guard let item = thread.items.first(where: { $0.id == id }), case .agentMessage(let m) = thread.box(for: item).item else { return nil }
-        return m.text
     }
 }
 
@@ -380,11 +314,11 @@ struct StreamedTextTests {
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct HostWireTests {
     @Test func itOptsOutOfWhatNothingReads() async throws {
-        let transport = WireTransport(responder: daemon)
-        let connection = connection(transport)
+        let host = FakeHost(hostname: "wire")
+        let connection = connection(host)
         await connection.connect()
 
-        let initialize = try #require(await transport.sent.first { $0["method"]?.stringValue == "initialize" })
+        let initialize = try #require(host.received.first { $0["method"]?.stringValue == "initialize" })
         let optedOut = initialize["params"]?["capabilities"]?["optOutNotificationMethods"]?.arrayValue?.compactMap(\.stringValue)
         #expect(Set(optedOut ?? []) == [
             "item/reasoning/delta", "item/toolCall/inputDelta", "thread/tokenUsage/updated", "thread/queuedInput",
@@ -395,13 +329,13 @@ struct HostWireTests {
 
     /// What the daemon leaves out still takes its seqs: the next one a chat gets skips them.
     @Test func aChatTakesTheSeqsSkippedForIt() async throws {
-        let transport = WireTransport(responder: daemon)
-        let connection = connection(transport)
+        let host = FakeHost(hostname: "wire")
+        let connection = connection(host)
         await connection.connect()
         let thread = connection.thread("t")
 
-        transport.emit(["method": "thread/status/changed", "params": ["threadId": "t", "seq": 3, "status": "running"]])
-        transport.emit(["method": "thread/status/changed", "params": ["threadId": "t", "seq": 9, "status": "idle"]])
+        host.emit("thread/status/changed", ["threadId": "t", "seq": 3, "status": "running"])
+        host.emit("thread/status/changed", ["threadId": "t", "seq": 9, "status": "idle"])
         try await eventually { thread.lastSeq == 9 }
 
         #expect(thread.status == .idle)
@@ -411,11 +345,12 @@ struct HostWireTests {
     /// A prompt still waiting in a deleted chat is let go: its answer task in the client ends, and
     /// a late answer goes nowhere.
     @Test func deletingAChatLetsGoOfItsPrompt() async throws {
-        let transport = WireTransport(responder: daemon)
-        let connection = connection(transport)
+        let host = FakeHost(hostname: "wire")
+        host.answer("thread/delete", .result([:]))
+        let connection = connection(host)
         await connection.connect()
         let thread = connection.thread("t")
-        transport.emit(#"{"id":"req-1","method":"permission/request","params":{"threadId":"t","requestId":"p","toolUseId":"u","toolName":"Bash","input":{}}}"#)
+        host.emit(line: #"{"id":"req-1","method":"permission/request","params":{"threadId":"t","requestId":"p","toolUseId":"u","toolName":"Bash","input":{}}}"#)
         try await eventually { thread.pending.count == 1 }
         let prompt = thread.pending[0]
 
@@ -425,68 +360,12 @@ struct HostWireTests {
         #expect(!connection.chats.contains { $0 === thread })
         prompt.respond(["behavior": "allow"])
         try await Task.sleep(for: .milliseconds(100))
-        #expect(await !transport.sent.contains { $0["id"] == .string("req-1") })
+        #expect(!host.received.contains { $0["id"] == .string("req-1") })
         await connection.disconnect()
     }
 
-    private func connection(_ transport: WireTransport) -> HostConnection {
-        HostConnection(host: HostConfig(name: "wire", kind: .ssh(destination: "wire")), transportProvider: { _ in transport })
-    }
-}
-
-/// Enough of a daemon for a connection to come up.
-@Sendable private func daemon(_ method: String, _ params: JSONValue) -> JSONValue? {
-    switch method {
-    case "initialize":
-        let result = InitializeResult(
-            serverInfo: .init(name: "tether", version: "test"),
-            protocolVersion: tetherProtocolVersion,
-            host: .init(hostname: "wire", platform: "linux", arch: "arm64", home: "/home/dev", pid: 1, mode: .daemon),
-            claude: .init(path: "/usr/bin/claude", version: "test"))
-        return try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(result))
-    case "thread/list": return ["threads": []]
-    case "project/list": return ["projects": []]
-    case "model/list": return ["models": []]
-    case "thread/delete": return [:]
-    default: return nil
-    }
-}
-
-/// Lines in and out: what the client sent, and a responder for its calls (nil answers with an error).
-private actor WireTransport: Transport {
-    typealias Responder = @Sendable (_ method: String, _ params: JSONValue) -> JSONValue?
-
-    private let responder: Responder
-    private let stream: AsyncThrowingStream<Data, any Error>
-    private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
-    private(set) var sent: [JSONValue] = []
-
-    init(responder: @escaping Responder) {
-        self.responder = responder
-        (stream, continuation) = AsyncThrowingStream.makeStream()
-    }
-
-    nonisolated func lines() -> AsyncThrowingStream<Data, any Error> { stream }
-
-    func send(_ line: Data) async throws {
-        let message = try JSONDecoder().decode(JSONValue.self, from: line)
-        sent.append(message)
-        guard let id = message["id"], let method = message["method"]?.stringValue else { return }
-        if let result = responder(method, message["params"] ?? [:]) {
-            emit(["id": id, "result": result])
-        } else {
-            emit(["id": id, "error": ["code": -32601, "message": "not scripted"]])
-        }
-    }
-
-    func close() async { continuation.finish() }
-
-    nonisolated func emit(_ line: String) {
-        continuation.yield(Data(line.utf8))
-    }
-
-    nonisolated func emit(_ message: JSONValue) {
-        continuation.yield(try! JSONEncoder().encode(message))
+    private func connection(_ host: FakeHost) -> HostConnection {
+        host.connection(host: HostConfig(name: "wire", kind: .ssh(destination: "wire")))
     }
 }
 

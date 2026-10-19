@@ -2,6 +2,8 @@ import Foundation
 import Testing
 import TetherProtocol
 @testable import SundownKit
+import SundownFixtures
+import SundownTestSupport
 
 @MainActor
 @Suite(.serialized)
@@ -9,23 +11,15 @@ struct ReattachTests {
     private let threadID = "long-running-ssh-thread"
 
     @Test func reconnectSubscribesAfterLastSeenSequenceAndKeepsModelIdentity() async throws {
-        let firstScript = ReattachScript(
-            reads: [readResult(text: "before", sequence: 40)],
-            subscriptions: [subscribeResult(lastSequence: 40)]
-        )
-        let secondScript = ReattachScript(
-            reads: [],
-            subscriptions: [subscribeResult(lastSequence: 43)]
-        )
-        let firstTransport = ScriptedTransport(script: firstScript)
-        let secondTransport = ScriptedTransport(script: secondScript)
-        let connection = makeConnection(transports: [firstTransport, secondTransport])
+        let first = host(reads: [readResult(text: "before", sequence: 40)], subscriptions: [subscribeResult(lastSequence: 40)])
+        let second = host(reads: [], subscriptions: [subscribeResult(lastSequence: 43)])
+        let connection = makeConnection([first, second])
 
         await connection.connect()
         let thread = connection.thread(threadID)
         thread.setSummary(summary())
         await connection.open(thread)
-        firstTransport.emit(method: "item/agentMessage/delta", params: [
+        first.emit("item/agentMessage/delta", [
             "threadId": .string(threadID), "seq": 41, "itemId": "answer", "delta": " during",
         ])
         try await eventually { thread.lastSeq == 41 }
@@ -34,12 +28,12 @@ struct ReattachTests {
         await connection.reconnect()
 
         #expect(ObjectIdentifier(connection.thread(threadID)) == originalIdentity)
-        #expect(await secondScript.subscriptionSequences() == [41])
+        #expect(afterSeqs(second) == [41])
 
-        secondTransport.emit(method: "item/agentMessage/delta", params: [
+        second.emit("item/agentMessage/delta", [
             "threadId": .string(threadID), "seq": 42, "itemId": "answer", "delta": " after",
         ])
-        secondTransport.emit(method: "thread/status/changed", params: [
+        second.emit("thread/status/changed", [
             "threadId": .string(threadID), "seq": 43, "status": "idle",
         ])
         try await eventually { thread.lastSeq == 43 }
@@ -51,79 +45,50 @@ struct ReattachTests {
     }
 
     @Test func restartedFollowerReloadsSnapshotBeforeResubscribing() async throws {
-        let firstScript = ReattachScript(
-            reads: [readResult(text: "before", sequence: 40)],
-            subscriptions: [subscribeResult(lastSequence: 40)]
-        )
-        let restartedScript = ReattachScript(
-            reads: [readResult(text: "complete remote transcript", sequence: 100)],
-            subscriptions: [subscribeResult(lastSequence: 0), subscribeResult(lastSequence: 100)]
-        )
-        let firstTransport = ScriptedTransport(script: firstScript)
-        let restartedTransport = ScriptedTransport(script: restartedScript)
-        let connection = makeConnection(transports: [firstTransport, restartedTransport])
+        let first = host(reads: [readResult(text: "before", sequence: 40)], subscriptions: [subscribeResult(lastSequence: 40)])
+        let restarted = host(reads: [readResult(text: "complete remote transcript", sequence: 100)],
+                             subscriptions: [subscribeResult(lastSequence: 0), subscribeResult(lastSequence: 100)])
+        let connection = makeConnection([first, restarted])
 
         await connection.connect()
         let thread = connection.thread(threadID)
         thread.setSummary(summary())
         await connection.open(thread)
-        firstTransport.emit(method: "item/agentMessage/delta", params: [
+        first.emit("item/agentMessage/delta", [
             "threadId": .string(threadID), "seq": 41, "itemId": "answer", "delta": " during",
         ])
         try await eventually { thread.lastSeq == 41 }
 
         await connection.reconnect()
 
-        #expect(await restartedScript.subscriptionSequences() == [41, 100])
+        #expect(afterSeqs(restarted) == [41, 100])
         #expect(thread.lastSeq == 100)
         #expect(agentText(in: thread) == "complete remote transcript")
         #expect(thread.items.filter { $0.id == "answer" }.count == 1)
         await connection.disconnect()
     }
 
-    @Test func leavingAFollowedThreadReleasesIt() async throws {
-        let script = ReattachScript(
-            reads: [readResult(text: "watched", sequence: 12)],
-            subscriptions: [subscribeResult(lastSequence: 12, status: .notLoaded)]
-        )
-        let connection = makeConnection(transports: [ScriptedTransport(script: script)])
-        await connection.connect()
-        let thread = connection.thread(threadID)
-        await connection.open(thread)
-        #expect(thread.isFollowed)
-        #expect(!connection.isLoaded(thread))
-
-        connection.leave(thread)
-
-        // Unsubscribed, keeping its last page to show until it's read again.
-        #expect(thread.historyLoaded)
-        #expect(!thread.items.isEmpty)
-            try await eventually { await script.calls().contains("thread/unsubscribe") }
-        await connection.disconnect()
-    }
-
     @Test func sendingIntoAFollowedThreadResumesItInItsOwnSequence() async throws {
-        let script = ReattachScript(
+        let script = host(
             reads: [readResult(text: "watched", sequence: 500)],
             subscriptions: [subscribeResult(lastSequence: 500, status: .notLoaded)],
             resume: .init(thread: .init(threadId: threadID, status: .idle, cwd: "/work/project", lastSeq: 3),
                           items: [.agentMessage(.init(id: "answer", createdAt: 1, text: "resumed"))],
                           turns: [], historySeq: 3, hasMore: true)
         )
-        let transport = ScriptedTransport(script: script)
-        let connection = makeConnection(transports: [transport])
+        let connection = makeConnection([script])
         await connection.connect()
         let thread = connection.thread(threadID)
         await connection.open(thread)
 
         await connection.send(thread, input: [.text(.init(text: "hi"))])
 
-        #expect(await script.resumeLimits() == [HostConnection.initialHistoryLimit])
+        #expect(script.calls(of: "thread/resume").map { $0["limit"]?.intValue } == [HostConnection.initialHistoryLimit])
         #expect(thread.lastSeq == 3)
         #expect(thread.hasMoreHistory)
         #expect(!thread.isFollowed)
         // The live thread's events start after 3, far below the follower's 500.
-        transport.emit(method: "thread/status/changed", params: [
+        script.emit("thread/status/changed", [
             "threadId": .string(threadID), "seq": 4, "status": "running",
         ])
         try await eventually { thread.status == .running }
@@ -135,26 +100,25 @@ struct ReattachTests {
     /// to the process that ended and dropping every event of the new one.
     @Test func aThreadWhoseQueryEndedResumesOnTheNextSend() async throws {
         let newStream = 1_790_000_000_000_000
-        let script = ReattachScript(
+        let script = host(
             reads: [readResult(text: "before", sequence: 40)],
             subscriptions: [subscribeResult(lastSequence: 40, status: .idle)],
             resume: .init(thread: .init(threadId: threadID, status: .idle, cwd: "/work/project", lastSeq: newStream + 2),
                           items: [.agentMessage(.init(id: "answer", createdAt: 1, text: "before"))],
                           turns: [], historySeq: newStream + 2)
         )
-        let transport = ScriptedTransport(script: script)
-        let connection = makeConnection(transports: [transport])
+        let connection = makeConnection([script])
         await connection.connect()
         let thread = connection.thread(threadID)
         await connection.open(thread)
-        transport.emit(method: "thread/closed", params: ["threadId": .string(threadID), "seq": 41])
+        script.emit("thread/closed", ["threadId": .string(threadID), "seq": 41])
         try await eventually { thread.status == .closed }
 
         await connection.send(thread, input: [.text(.init(text: "again"))])
 
-        #expect(await script.calls().contains("thread/resume"))
+        #expect(script.count("thread/resume") > 0)
         #expect(thread.lastSeq == newStream + 2)
-        transport.emit(method: "thread/status/changed", params: [
+        script.emit("thread/status/changed", [
             "threadId": .string(threadID), "seq": .number(Double(newStream + 3)), "status": "running",
         ])
         try await eventually { thread.status == .running }
@@ -165,19 +129,16 @@ struct ReattachTests {
     /// neither reads as closed nor resumes on the next send, which would reload it under a live
     /// turn (#35).
     @Test func aStaleStreamsCloseChangesNothing() async throws {
-        let script = ReattachScript(
-            reads: [readResult(text: "before", sequence: 40)],
-            subscriptions: [subscribeResult(lastSequence: 40, status: .idle)]
-        )
-        let transport = ScriptedTransport(script: script)
-        let connection = makeConnection(transports: [transport])
+        let script = host(reads: [readResult(text: "before", sequence: 40)],
+                          subscriptions: [subscribeResult(lastSequence: 40, status: .idle)])
+        let connection = makeConnection([script])
         await connection.connect()
         let thread = connection.thread(threadID)
         await connection.open(thread)
-        transport.emit(method: "thread/closed", params: ["threadId": .string(threadID), "seq": 12])
+        script.emit("thread/closed", ["threadId": .string(threadID), "seq": 12])
         // Something after it on the live stream that leaves the status alone, so the close has
         // surely been read.
-        transport.emit(method: "thread/promptSuggestion", params: [
+        script.emit("thread/promptSuggestion", [
             "threadId": .string(threadID), "seq": 41, "suggestion": "Run the tests",
         ])
         try await eventually { thread.lastSeq == 41 }
@@ -185,21 +146,20 @@ struct ReattachTests {
 
         await connection.send(thread, input: [.text(.init(text: "again"))])
 
-        let calls = await script.calls()
-        #expect(!calls.contains("thread/resume"), "A stale stream's close made the next send resume the chat")
-        #expect(calls.contains("turn/start"))
+        #expect(script.count("thread/resume") == 0, "A stale stream's close made the next send resume the chat")
+        #expect(script.count("turn/start") > 0)
         await connection.disconnect()
     }
 
     @Test func settingsChosenForAnUnloadedThreadApplyWhenItResumes() async throws {
-        let script = ReattachScript(
+        let script = host(
             reads: [readResult(text: "watched", sequence: 7)],
             subscriptions: [subscribeResult(lastSequence: 7, status: .notLoaded)],
             resume: .init(thread: .init(threadId: threadID, status: .idle, cwd: "/work/project",
                                         model: "claude-sonnet-5", lastSeq: 1),
                           items: [], turns: [], historySeq: 1)
         )
-        let connection = makeConnection(transports: [ScriptedTransport(script: script)])
+        let connection = makeConnection([script])
         await connection.connect()
         let thread = connection.thread(threadID)
         await connection.open(thread)
@@ -210,23 +170,95 @@ struct ReattachTests {
         #expect(thread.lastError == nil)
         #expect(thread.model == "claude-sonnet-5")
         #expect(thread.effort == .low)
-        #expect(!(await script.calls().contains("thread/setModel")))
+        #expect(script.count("thread/setModel") == 0)
 
         await connection.send(thread, input: [.text(.init(text: "hi"))])
 
-        #expect(await script.resumeParams().first?["model"]?.stringValue == "claude-sonnet-5")
-        #expect(await script.resumeParams().first?["effort"]?.stringValue == "low")
+        #expect(script.calls(of: "thread/resume").first?["model"]?.stringValue == "claude-sonnet-5")
+        #expect(script.calls(of: "thread/resume").first?["effort"]?.stringValue == "low")
         #expect(thread.pendingSettings == PendingSettings())
         await connection.disconnect()
     }
 
-    private func makeConnection(transports: [ScriptedTransport]) -> HostConnection {
-        let queue = TransportQueue(transports)
-        return HostConnection(
-            host: HostConfig(name: "SSH fixture", kind: .ssh(destination: "claude-box")),
-            transportProvider: { _ in try await queue.next() }
-        )
+    // MARK: a replay gap on reconnecting
+
+    /// Two connections to one chat: the first holds its last page and an older page the reader
+    /// scrolled to; after a reconnect whose subscription reports a gap, the chat reloads, reading
+    /// back as far as it held: every row the reader held survives the reload.
+    @Test func aGapReconnectKeepsTheOlderRowsTheReaderHeld() async throws {
+        let (before, after) = try await reconnectAfterOlderPage(gap: true)
+        #expect(after.count == before.count, "a gap reload dropped \(before.count - after.count) rows the reader held")
+        #expect(Set(before).isSubset(of: Set(after)))
     }
+
+    /// Without a gap, the reconnect keeps everything the chat held (the control for the test above).
+    @Test func aReconnectWithoutAGapKeepsEveryRow() async throws {
+        let (before, after) = try await reconnectAfterOlderPage(gap: false)
+        #expect(after == before)
+    }
+
+    /// Loads a 120-item chat as its last page of 50 and an older page of 70, then reconnects to the
+    /// same daemon state with the subscription reporting `gap`. Returns the row ids before and after.
+    private func reconnectAfterOlderPage(gap: Bool) async throws -> ([String], [String]) {
+        func message(_ n: Int) -> Item {
+            n % 10 == 0
+                ? .userMessage(.init(id: "m\(n)", createdAt: Double(1_000 + n), content: [.text(.init(text: "Prompt \(n)"))]))
+                : .agentMessage(.init(id: "m\(n)", createdAt: Double(1_000 + n), text: "Reply \(n)"))
+        }
+        let all = (0..<120).map(message)
+        let tail = Array(all.suffix(50)), head = Array(all.prefix(70))
+        let id = threadID
+        func subscription(_ gap: Bool) -> ThreadSubscribeResult {
+            ThreadSubscribeResult(thread: .init(threadId: id, status: .idle, cwd: "/repo", lastSeq: 200), replayed: 0, gap: gap)
+        }
+
+        let first = FakeHost()
+        first.queue("thread/read", ThreadReadResult(items: tail, turns: [], historySeq: 200, hasMore: true))
+        first.queue("thread/subscribe", subscription(false))
+        first.queue("thread/read", ThreadReadResult(items: head, turns: [], hasMore: false))
+
+        let second = FakeHost()
+        if gap {
+            second.queue("thread/subscribe", subscription(true))
+            // The reload asks for at least as much as the chat held; the daemon answers with that
+            // many from the end (here the whole chat).
+            second.queue("thread/read", ThreadReadResult(items: all, turns: [], historySeq: 200, hasMore: false))
+            second.queue("thread/subscribe", subscription(false))
+        } else {
+            second.queue("thread/subscribe", subscription(false))
+        }
+
+        let connection = FakeHost.connection(to: [first, second])
+        await connection.connect()
+        let thread = connection.thread(threadID)
+        await connection.open(thread)
+        await connection.loadOlderHistory(thread)
+        let before = thread.rows(.summarized).map(\.id)
+        #expect(thread.items.count == 120)
+
+        await connection.reconnect()
+        let after = thread.rows(.summarized).map(\.id)
+        await connection.disconnect()
+        return (before, after)
+    }
+
+    /// A daemon on claude-box with each read and subscription given once, in turn (a call past
+    /// them is an error), and `resume` for every resume.
+    private func host(reads: [ThreadReadResult], subscriptions: [ThreadSubscribeResult], resume: ThreadResumeResult? = nil) -> FakeHost {
+        let host = FakeHost(hostname: "claude-box")
+        for read in reads { host.once("thread/read", with: read) }
+        for subscription in subscriptions { host.once("thread/subscribe", with: subscription) }
+        if let resume { host.answer("thread/resume", with: resume) }
+        host.answer("turn/start", with: TurnStartResult(turnId: "t", messageId: "m", queued: false))
+        return host
+    }
+
+    /// A connection to each of `hosts` in turn.
+    private func makeConnection(_ hosts: [FakeHost]) -> HostConnection {
+        FakeHost.connection(to: hosts, host: HostConfig(name: "SSH fixture", kind: .ssh(destination: "claude-box")))
+    }
+
+    private func afterSeqs(_ host: FakeHost) -> [Int?] { host.calls(of: "thread/subscribe").map { $0["afterSeq"]?.intValue } }
 
     private func summary() -> ThreadSummary {
         .init(threadId: threadID, title: "Long-running remote work", cwd: "/work/project",
@@ -250,79 +282,4 @@ struct ReattachTests {
         }.first
     }
 
-}
-
-private enum ReattachTestError: Error {
-    case noTransport
-}
-
-private actor TransportQueue {
-    private var transports: [ScriptedTransport]
-
-    init(_ transports: [ScriptedTransport]) {
-        self.transports = transports
-    }
-
-    func next() throws -> any Transport {
-        guard !transports.isEmpty else { throw ReattachTestError.noTransport }
-        return transports.removeFirst()
-    }
-}
-
-private actor ReattachScript {
-    private var reads: [ThreadReadResult]
-    private var subscriptions: [ThreadSubscribeResult]
-    private var afterSequences: [Int?] = []
-    private var resume: ThreadResumeResult?
-    private var resumeLimitValues: [Int?] = []
-    private var resumeParamValues: [JSONValue] = []
-    private var methods: [String] = []
-
-    init(reads: [ThreadReadResult], subscriptions: [ThreadSubscribeResult], resume: ThreadResumeResult? = nil) {
-        self.reads = reads
-        self.subscriptions = subscriptions
-        self.resume = resume
-    }
-
-    func reply(method: String, params: JSONValue) -> ScriptedReply {
-        methods.append(method)
-        switch method {
-        case "initialize":
-            return .result(encoded(InitializeResult(
-                serverInfo: .init(name: "tether-server", version: "test"),
-                protocolVersion: tetherProtocolVersion,
-                host: .init(hostname: "claude-box", platform: "linux", arch: "arm64", home: "/home/dev", pid: 1, mode: .daemon),
-                claude: .init(path: "/usr/bin/claude", version: "test")
-            )))
-        case "thread/read":
-            guard !reads.isEmpty else { return .error(code: -1, message: "Unexpected thread/read") }
-            return .result(encoded(reads.removeFirst()))
-        case "thread/subscribe":
-            afterSequences.append(params["afterSeq"]?.intValue)
-            guard !subscriptions.isEmpty else { return .error(code: -1, message: "Unexpected thread/subscribe") }
-            return .result(encoded(subscriptions.removeFirst()))
-        case "thread/unsubscribe": return .result([:])
-        case "thread/resume":
-            resumeLimitValues.append(params["limit"]?.intValue)
-            resumeParamValues.append(params)
-            guard let resume else { return .error(code: -1, message: "Unexpected thread/resume") }
-            return .result(encoded(resume))
-        case "turn/start": return .result(encoded(TurnStartResult(turnId: "t", messageId: "m", queued: false)))
-        case "project/list": return .result(["projects": []])
-        case "model/list": return .result(["models": []])
-        case "thread/list": return .result(["threads": []])
-        default: return .error(code: -32601, message: "Not implemented in fixture")
-        }
-    }
-
-    func subscriptionSequences() -> [Int?] { afterSequences }
-    func resumeLimits() -> [Int?] { resumeLimitValues }
-    func calls() -> [String] { methods }
-    func resumeParams() -> [JSONValue] { resumeParamValues }
-}
-
-private extension ScriptedTransport {
-    convenience init(script: ReattachScript) {
-        self.init { await script.reply(method: $0, params: $1) }
-    }
 }

@@ -1,3 +1,4 @@
+import SundownFixtures
 import SwiftUI
 import SundownKit
 import TetherProtocol
@@ -49,7 +50,7 @@ struct ToolCallView: View {
         if call.isWorkflow {
             // A workflow's agents and result are in the Tasks tab; its script and launch receipt
             // are nothing to read.
-            WorkflowCallView(call: call, run: thread.workflowRuns[call.id])
+            WorkflowCallView(call: call, task: thread.callTasks[call.id])
         } else if call.kind == .subagent {
             // A subagent opens in the Tasks tab instead of here, behind the same chevron as a row that
             // opens in place.
@@ -85,7 +86,7 @@ struct ToolCallView: View {
                 // Running, it shimmers as the turn's work row does, rather than spinning: while
                 // something is still doing it (its turn, or the background task it became).
                 ActivityLabel(text: subtitle.isEmpty ? title : "\(title) \(subtitle)",
-                              live: thread.isRunning || thread.isTaskBackgrounded(toolUseId: call.id))
+                              live: thread.isRunning || thread.callTasks[call.id]?.isInBackground == true)
             } else {
                 Text(title)
                 if !subtitle.isEmpty {
@@ -129,11 +130,7 @@ struct ToolCallView: View {
 
     private var title: String {
         guard call.kind == .subagent else { return ToolCallText.verb(call) }
-        return SubagentLifecycle.title(
-            call: call,
-            task: thread.taskEvent(forToolUseId: call.id),
-            isBackgrounded: thread.isTaskBackgrounded(toolUseId: call.id)
-        )
+        return SubagentLifecycle.title(call: call, task: thread.callTasks[call.id])
     }
 
     private var subtitle: String { ToolCallText.object(call) }
@@ -156,7 +153,10 @@ struct ToolCallView: View {
             }
         case .fileEdit:
             Text("Changes").scaledFont(.caption, weight: .semibold).foregroundStyle(.secondary)
-            if let old = input.string("old_string"), let new = input.string("new_string") {
+            if let edit = call.edit {
+                // What it changed, as Claude Code reported it.
+                FileEditDiff(edit: edit)
+            } else if let old = input.string("old_string"), let new = input.string("new_string") {
                 DiffView(old: old, new: new)
             } else if let edits = input["edits"]?.arrayValue {
                 VStack(alignment: .leading) {
@@ -172,7 +172,7 @@ struct ToolCallView: View {
             TodoListView(todos: input["todos"]?.arrayValue ?? [])
         case .skill:
             // What the skill told Claude, which Claude Code put in the chat as a message of its own.
-            if let body = thread.skillBodies[call.id], !body.isEmpty {
+            if let body = call.skillInstructions, !body.isEmpty {
                 CodeBlock(code: body, language: "Instructions", lineLimit: 14)
             } else {
                 output
@@ -200,22 +200,22 @@ extension EnvironmentValues {
 }
 
 enum SubagentLifecycle {
-    static func title(call: Item.ToolCall, task: TaskEventNotification?, isBackgrounded: Bool = false) -> String {
-        let state = (task?.status ?? task?.event ?? call.status.rawValue).lowercased()
-        if isBackgrounded || state.contains("background") { return "Agent running in background" }
-        if state.contains("fail") { return "Agent failed" }
-        if state.contains("stop") || state.contains("interrupt") { return "Agent stopped" }
-        if state.contains("complete") || state.contains("finish") { return "Agent finished" }
-        if state.contains("start") || state.contains("progress") || state.contains("running") || state.contains("pending") {
-            return "Agent running"
+    /// How an agent stands, as its row says it: its task's state, else its call's.
+    static func title(call: Item.ToolCall, task: TaskState?) -> String {
+        switch task?.status {
+        case .running?, .waiting?: return task?.backgrounded == true ? "Agent running in background" : "Agent running"
+        case .failed?: return "Agent failed"
+        case .stopped?: return "Agent stopped"
+        case .done?: return "Agent finished"
+        default: break
         }
-        return "Agent"
-    }
-
-    static func isRunning(call: Item.ToolCall?, task: TaskEventNotification?) -> Bool {
-        let state = (task?.status ?? task?.event ?? call?.status.rawValue ?? "").lowercased()
-        return !state.contains("complete") && !state.contains("finish") && !state.contains("fail")
-            && !state.contains("stop") && !state.contains("interrupt") && state != ""
+        switch call.status {
+        case .running, .pending: return "Agent running"
+        case .failed: return "Agent failed"
+        case .interrupted: return "Agent stopped"
+        case .completed: return "Agent finished"
+        default: return "Agent"
+        }
     }
 }
 
@@ -339,7 +339,7 @@ struct ToolCallGroupView: View {
     let calls: [Item.ToolCall]
     /// The turn's edits, when they come right after this run: said in its line and listed under
     /// its calls.
-    var edits: TurnEdits? = nil
+    var edits: EditedFiles? = nil
     let thread: ThreadModel
     /// The transcript row's id, so Find in Chat opens the group when it's the current match.
     var rowID: String?
@@ -486,17 +486,46 @@ struct TodoListView: View {
     }
 }
 
-/// Line diff between two strings (removed in red, added in green); collapses past `lineLimit` lines.
-/// Each run of lines of one kind is one text on one tint, not a view per line.
+/// What one finished edit changed: each hunk as a diff of its own, and a note for lines past what's
+/// kept.
+struct FileEditDiff: View {
+    let edit: FileEdit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(edit.hunks.enumerated()), id: \.offset) { _, hunk in
+                DiffView(hunk: hunk)
+            }
+            if let more = edit.truncatedLines, more > 0 {
+                Text("\(more.formatted()) more lines aren’t shown.")
+                    .scaledFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// A line diff (removed in red, added in green): a hunk the daemon diffed, or two strings compared
+/// here (a request's proposed edit, a call still running); collapses past `lineLimit` lines. Each
+/// run of lines of one kind is one text on one tint, not a view per line.
 struct DiffView: View {
-    let old: String
-    let new: String
+    let key: Key
     var lineLimit = 24
     @State private var expanded = false
-    /// A large diff, worked out off the main actor: it's O(old × new).
+    /// A large diff, worked out off the main actor: comparing two texts is O(old × new).
     @State private var loaded: Loaded?
     // Cached: the transcript redraws on every streamed delta.
     @State private var cache = DiffCache()
+
+    init(old: String, new: String, lineLimit: Int = 24) {
+        key = .texts(old: old, new: new)
+        self.lineLimit = lineLimit
+    }
+
+    init(hunk: DiffHunk, lineLimit: Int = 24) {
+        key = .hunk(hunk)
+        self.lineLimit = lineLimit
+    }
 
     struct Line: Hashable { let sign: Character; let text: String }
 
@@ -517,9 +546,9 @@ struct DiffView: View {
         let collapsed: [Run]
     }
 
-    struct Key: Equatable, Sendable {
-        let old: String
-        let new: String
+    enum Key: Equatable, Sendable {
+        case texts(old: String, new: String)
+        case hunk(DiffHunk)
     }
 
     private struct Loaded {
@@ -528,9 +557,13 @@ struct DiffView: View {
         let diff: Diff
     }
 
-    /// The same comparison the edited-files row counts with (`LineDiff`), as signed lines.
+    /// Two texts compared (`LineDiff`), as signed lines.
     nonisolated static func diff(old: String, new: String) -> [Line] {
-        LineDiff.lines(old: old, new: new).map { line in
+        signed(LineDiff.lines(old: old, new: new))
+    }
+
+    nonisolated static func signed(_ lines: [LineDiff.Line]) -> [Line] {
+        lines.map { line in
             switch line.kind {
             case .removed: Line(sign: "-", text: line.text)
             case .added: Line(sign: "+", text: line.text)
@@ -558,7 +591,10 @@ struct DiffView: View {
     }
 
     nonisolated static func diff(_ key: Key, lineLimit: Int) -> Diff {
-        let lines = diff(old: key.old, new: key.new)
+        let lines = switch key {
+        case .texts(let old, let new): diff(old: old, new: new)
+        case .hunk(let hunk): signed(hunk.diffLines)
+        }
         return Diff(lineCount: lines.count, all: runs(lines), collapsed: runs(lines.prefix(lineLimit)))
     }
 
@@ -567,12 +603,16 @@ struct DiffView: View {
         diff(key, lineLimit: lineLimit)
     }
 
-    /// Nearly every edit is a few lines, worked out at once so it's drawn with its row; a larger one
-    /// is worked out off the main actor.
-    private static func isSmall(_ key: Key) -> Bool { key.old.utf8.count + key.new.utf8.count <= 16 * 1024 }
+    /// Nearly every edit is a few lines, worked out at once so it's drawn with its row; two large
+    /// texts are compared off the main actor. A hunk is already a diff.
+    private static func isSmall(_ key: Key) -> Bool {
+        switch key {
+        case .texts(let old, let new): old.utf8.count + new.utf8.count <= 16 * 1024
+        case .hunk: true
+        }
+    }
 
     var body: some View {
-        let key = Key(old: old, new: new)
         let diff = Self.isSmall(key) ? cache.diff(key, lineLimit: lineLimit)
             : loaded.flatMap { $0.lineLimit == lineLimit && $0.key == key ? $0.diff : nil }
         VStack(alignment: .leading, spacing: 0) {

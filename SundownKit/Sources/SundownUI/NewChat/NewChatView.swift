@@ -1,3 +1,4 @@
+import SundownFixtures
 import SwiftUI
 import SundownKit
 import TetherProtocol
@@ -83,10 +84,10 @@ struct NewChatView: View {
                 if let folder = urls.first(where: \.hasDirectoryPath) { choose(folder.path) }
             }
             .accessibilityDropPoint(.center, description: Text("Work in Directory"))
-            // `AppModel` seeds the folder with the host's first project; these fill it when the
-            // projects arrived after that.
-            .onAppear { useFirstProjectIfUnset() }
-            .onChange(of: connection?.projects.first?.cwd) { useFirstProjectIfUnset() }
+            // `AppModel` seeds the directory with the host's most recent one; these fill it when the
+            // chats arrived after that.
+            .onAppear { useRecentDirectoryIfUnset() }
+            .onChange(of: connection?.directories.first) { useRecentDirectoryIfUnset() }
             // Read again when the window comes back to the front, since the branch may have been
             // switched in a terminal meanwhile.
             .task(id: GitKey(folder: window.draftDirectory, connected: connection?.state == .connected, active: appearsActive)) {
@@ -183,10 +184,10 @@ struct NewChatView: View {
         let folder = window.draftDirectory
         return Menu {
             Picker("Directory", selection: Binding(get: { window.draftDirectory }, set: { choose($0) })) {
-                ForEach(connection.projects.prefix(15), id: \.cwd) { p in
-                    Text(p.cwd.abbreviatingHome).tag(Optional(p.cwd))
+                ForEach(connection.directories.prefix(15), id: \.self) { directory in
+                    Text(directory.abbreviatingHome).tag(Optional(directory))
                 }
-                if let folder, !connection.projects.contains(where: { $0.cwd == folder }) {
+                if let folder, !connection.directories.contains(folder) {
                     Text(folder.abbreviatingHome).tag(Optional(folder))
                 }
             }
@@ -223,9 +224,9 @@ struct NewChatView: View {
         window.draftError = nil
     }
 
-    private func useFirstProjectIfUnset() {
+    private func useRecentDirectoryIfUnset() {
         guard window.draftDirectory == nil, window.app.appearance.newChatFolder == .recent else { return }
-        window.draftDirectory = connection?.projects.first?.cwd
+        window.draftDirectory = connection?.directories.first
     }
 }
 

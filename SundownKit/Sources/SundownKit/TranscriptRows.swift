@@ -8,13 +8,13 @@ public indirect enum TranscriptRow: Sendable, Equatable {
     case item(Item)
     /// A run of calls; `edits`, when the turn's edits come right after it, are the turn's too
     /// ("Ran a command and edited 3 files").
-    case toolGroup([Item.ToolCall], edits: TurnEdits? = nil)
+    case toolGroup([Item.ToolCall], edits: EditedFiles? = nil)
     /// Everything a finished turn did before its last message, as one "Worked for" line
     /// (View ▸ Tool Calls ▸ Worked For). `durationMs` runs from the prompt to that
     /// message, when both are known.
     case turnWork(id: String, rows: [TranscriptRow], durationMs: Double?)
     /// The files a finished turn edited, after its last row.
-    case turnEdits(TurnEdits)
+    case turnEdits(EditedFiles)
     /// When a prompt was sent, above it, where the chat picks up after a break (`DateSeparators`).
     case dateSeparator(promptID: String, ms: Double)
 
@@ -201,9 +201,9 @@ private extension Item {
 }
 
 /// Folded rows with what goes between turns: a date above each prompt in `dates` (by prompt id,
-/// from `DateSeparators.prompts`), and each turn's edits in `edits` (from `turnEdits`) after the
+/// from `DateSeparators.prompts`), and each turn's edits in `edits` (from `editedFiles`) after the
 /// turn's last row, before the next prompt's date.
-public func decorateTranscriptRows(_ rows: [TranscriptRow], dates: [String: Double], edits: [String: TurnEdits]) -> [TranscriptRow] {
+public func decorateTranscriptRows(_ rows: [TranscriptRow], dates: [String: Double], edits: [String: EditedFiles]) -> [TranscriptRow] {
     guard !dates.isEmpty || !edits.isEmpty else { return rows }
     var out: [TranscriptRow] = []
     out.reserveCapacity(rows.count + dates.count + edits.count)
@@ -261,7 +261,7 @@ public enum DateSeparators {
         public init() {}
     }
 
-    /// The same for items that follow others, so a chat's dates can be worked out a turn at a time:
+    /// The same for items that follow others, so a chat's dates can be worked out in parts:
     /// `carry` says what came before them, and is left saying what they end with.
     public static func prompts(in items: some Sequence<Item>, after carry: inout Carry,
                                calendar: Calendar = .current) -> [String: Double] {
@@ -281,23 +281,25 @@ public enum DateSeparators {
     }
 }
 
-/// One turn's rows as drawn: `items` run from a prompt of the chat's own up to the next one, or
-/// are what comes before the first prompt held. The same as that turn's part of folding and
-/// decorating the whole transcript at once, which cuts at the same places: a prompt ends any run of
-/// tool calls, starts a Worked For turn and a turn's edits. `running` is for the chat's last turn
-/// while it runs, and `dates` carries the date separators from one turn to the next.
-func transcriptRows(ofTurn items: ArraySlice<Item>, folding: TranscriptFolding, running: Bool,
-                    dates: inout DateSeparators.Carry, changes: (Item.ToolCall) -> [FileChange]) -> [TranscriptRow] {
+/// The transcript's rows as drawn: `items` (the chat's own and its subagents') folded as `folding`
+/// says, with the date above each prompt after a break and each finished turn's edits after it
+/// (`totals`: each turn's own, by its id).
+/// `running` is for the chat's last turn while it runs. Items that begin at a prompt can be folded
+/// apart from those before them, cut where folding the whole chat cuts (a prompt ends any run of
+/// calls, starts a Worked For turn and a turn's edits): `dates` carries the date separators across.
+/// `dated` holds the prompts that have had a date, and each keeps it, though an older page going in
+/// above has put it right after another: taking it away moved every row under it while the reader
+/// looked at the top.
+func transcriptRows(_ items: ArraySlice<Item>, folding: TranscriptFolding, running: Bool, dates carry: inout DateSeparators.Carry,
+                    dated: inout Set<String>, totals: [String: TurnEdits]) -> [TranscriptRow] {
     let top = items.filter { $0.parentToolUseId == nil }
-    let folded = foldTranscriptRows(top, folding: folding, lastTurnRunning: running)
-    let promptDates = DateSeparators.prompts(in: top, after: &dates)
-    var edits: [String: TurnEdits] = [:]
-    // A subagent's edits count too, so they're read from every item of the turn, not only the top.
-    if !running, case .userMessage(let prompt)? = items.first, prompt.parentToolUseId == nil,
-       let e = TurnEdits.summarize(promptID: prompt.id, items.dropFirst(), changes: changes) {
-        edits[prompt.id] = e
+    var dates = DateSeparators.prompts(in: top, after: &carry)
+    for case .userMessage(let m) in top where m.createdAt > 0 && dates[m.id] == nil && dated.contains(m.id) {
+        dates[m.id] = m.createdAt
     }
-    return decorateTranscriptRows(folded, dates: promptDates, edits: edits)
+    dated.formUnion(dates.keys)
+    return decorateTranscriptRows(foldTranscriptRows(top, folding: folding, lastTurnRunning: running), dates: dates,
+                                  edits: editedFiles(in: Array(items), lastTurnRunning: running, totals: totals))
 }
 
 /// One of the reader's own prompts, for VoiceOver's Prompts rotor: its row's id and its first words.
@@ -365,26 +367,24 @@ public enum PromptNavigation {
 
 extension TranscriptRow {
     /// What Find in Chat matches against: what the row shows or holds — a message's text, a tool
-    /// call's input values and output — as one string.
-    public var searchText: String {
+    /// call's input values and output — as one string. `workflowNames`: the names the daemon gives
+    /// the chat's workflows, by their calls' ids (`ThreadModel.workflowNames`), which a workflow's
+    /// row shows.
+    public func searchText(workflowNames: [String: String] = [:]) -> String {
         switch self {
-        case .item(let item): return item.searchText
-        case .toolGroup(let calls, _): return calls.map { Item.toolCall($0).searchText }.joined(separator: "\n")
-        case .turnWork(_, let rows, _): return rows.map(\.searchText).joined(separator: "\n")
+        case .item(let item): return item.searchText(workflowNames: workflowNames)
+        case .toolGroup(let calls, _):
+            return calls.map { Item.toolCall($0).searchText(workflowNames: workflowNames) }.joined(separator: "\n")
+        case .turnWork(_, let rows, _): return rows.map { $0.searchText(workflowNames: workflowNames) }.joined(separator: "\n")
         // Their files are in the calls, which match already.
         case .turnEdits, .dateSeparator: return ""
         }
     }
 
     /// Whether the row matches `query`, case- and diacritic-insensitively.
-    public func matches(_ query: String) -> Bool {
-        !query.isEmpty && Self.text(searchText, matches: query)
-    }
-
-    /// Whether `text`, a row's `searchText`, holds `query` as `matches` compares them, for a caller
-    /// that keeps rows' search text rather than making it again for every query.
-    public static func text(_ text: String, matches query: String) -> Bool {
-        !query.isEmpty && text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+    public func matches(_ query: String, workflowNames: [String: String] = [:]) -> Bool {
+        !query.isEmpty && searchText(workflowNames: workflowNames)
+            .range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
     }
 }
 
@@ -399,15 +399,14 @@ extension Item.UserMessage {
 }
 
 extension Item {
-    var searchText: String {
+    func searchText(workflowNames: [String: String]) -> String {
         switch self {
         case .userMessage(let m):
             return m.texts.joined(separator: "\n")
         case .agentMessage(let m): return m.text
-        // A workflow's row shows its name, not its script or launch receipt: the name the call
-        // gives, or its script's as already read, never reading the script here.
+        // A workflow's row shows its name, not its script or launch receipt.
         case .toolCall(let t) where t.isWorkflow:
-            return [t.name, WorkflowScript.searchName(t) ?? ""].joined(separator: "\n")
+            return [t.name, workflowNames[t.id] ?? t.workflowCallName ?? ""].joined(separator: "\n")
         // An agent's result row says only that it returned one; the result is in its detail.
         case .toolCall(let t) where t.isStructuredOutput:
             return "Returned its result\n" + t.input.strings.joined(separator: "\n")

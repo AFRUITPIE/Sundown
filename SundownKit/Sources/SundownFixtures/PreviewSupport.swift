@@ -1,11 +1,12 @@
-// Sample data for `#Preview`s across SundownKit and SundownUI. None of this runs in a release
-// build — the whole file compiles out. Everything below builds instances through the same
+// Sample data for SundownUI's `#Preview`s and the tests. None of this runs in a release build —
+// the whole file compiles out. Everything below builds instances through the same
 // reducer methods live data goes through (`loadHistory`, `setInfo`, `addPending`, `apply`, …)
 // so previews stay honest about what the app can actually produce; `HostConnection.previewSeed`
 // in HostConnection.swift is the one exception, needed only because its stored properties are
 // `private(set)` to that file.
 #if DEBUG
 import Foundation
+import SundownKit
 import TetherProtocol
 
 /// A millisecond timestamp `seconds` in the past, so relative-time labels read naturally.
@@ -53,12 +54,15 @@ extension Item.ToolCall {
         outputText: String? = nil,
         isError: Bool? = nil,
         elapsedSeconds: Double? = nil,
+        skillInstructions: String? = nil,
         parentToolUseId: String? = nil,
         secondsAgo: Double
     ) -> Item.ToolCall {
-        .init(id: id, parentToolUseId: parentToolUseId, createdAt: preview(secondsAgo: secondsAgo),
-              name: name, kind: kind, input: input, status: status, outputText: outputText,
-              isError: isError, elapsedSeconds: elapsedSeconds)
+        // An edit's change, as the daemon sends it with the finished call.
+        Item.ToolCall(id: id, parentToolUseId: parentToolUseId, createdAt: preview(secondsAgo: secondsAgo),
+                      name: name, kind: kind, input: input, status: status, outputText: outputText,
+                      isError: isError, elapsedSeconds: elapsedSeconds, skillInstructions: skillInstructions)
+            .withComparedEdit
     }
 }
 
@@ -201,7 +205,7 @@ extension ThreadModel {
         items: [Item] = [],
         turns: [Turn] = [],
         pending: [PendingRequest] = [],
-        tasks: [TaskEventNotification] = [],
+        tasks: [TaskState] = [],
         mcpServers: [McpServerStatus]? = nil,
         backgroundTasks: Int? = nil,
         lastError: String? = nil
@@ -217,7 +221,7 @@ extension ThreadModel {
                                     backgroundTasks: backgroundTasks))
         }
         for p in pending { thread.addPending(p) }
-        for t in tasks { thread.apply(.taskEvent(t)) }
+        thread.setTasks(tasks)
         if let lastError { thread.lastError = lastError }
         return thread
     }
@@ -278,14 +282,10 @@ extension ThreadModel {
             title: "Audit the SwiftUI views",
             status: .running,
             tasks: [
-                .init(threadId: "preview-thread", seq: 1, event: "task_started", taskId: "task-1",
-                      description: "Explore the inspector column", status: "running", data: [:]),
-                .init(threadId: "preview-thread", seq: 2, event: "task_started", taskId: "task-2",
-                      description: "Check every pane for empty states", status: "running", data: [:]),
-                .init(threadId: "preview-thread", seq: 3, event: "task_completed", taskId: "task-3",
-                      description: "Read the HIG pages on pop-up buttons", status: "completed", data: [:]),
-                .init(threadId: "preview-thread", seq: 4, event: "task_failed", taskId: "task-4",
-                      description: "Render every inspector pane", status: "failed", data: [:]),
+                .init(id: "task:task-1", taskId: "task-1", kind: .agent, title: "Explore the inspector column", status: .running),
+                .init(id: "task:task-2", taskId: "task-2", kind: .agent, title: "Check every pane for empty states", status: .running),
+                .init(id: "task:task-3", taskId: "task-3", kind: .agent, title: "Read the HIG pages on pop-up buttons", status: .done),
+                .init(id: "task:task-4", taskId: "task-4", kind: .agent, title: "Render every inspector pane", status: .failed),
             ],
             mcpServers: [
                 .init(name: "xcode", status: "connected", toolCount: 24),
@@ -297,13 +297,15 @@ extension ThreadModel {
 
     /// One of each kind of task, as the SDK reports them: a workflow, an agent that started an agent
     /// and a background command of its own, a monitor and an MCP tool, running and finished.
+    /// The UI-test fixture's `tasks` scenario's live chat.
     public static func sampleWithTaskKinds() -> ThreadModel {
-        sample(
+        let chat = FixtureScenario.tasks.chats.first { $0.id == UITestFixture.threadID }!
+        return sample(
             title: "Review the Markdown changes",
             status: .running,
-            items: TaskTranscript.items(),
+            items: chat.items(),
             turns: [.sample(status: .inProgress, secondsAgo: 400)],
-            tasks: TaskTranscript.events(threadID: "preview-thread", firstSeq: 1))
+            tasks: chat.tasks())
     }
 
     /// A /loop and a /goal as Claude Code 2.1.291 ran them (the loop-goal capture): the loop's job
@@ -315,7 +317,7 @@ extension ThreadModel {
         let condition = "notes.md in this directory has no spelling mistakes"
         func wakeup(_ id: String, secondsAgo: Double) -> Item {
             .userMessage(.init(id: id, createdAt: preview(secondsAgo: secondsAgo), content: [.text(.init(text: prompt))],
-                               synthetic: true, origin: "wakeup"))
+                               synthetic: true, origin: "wakeup", fromLoop: true))
         }
         func date(_ secondsAgo: Double, _ time: String) -> [Item] {
             [.toolCall(.sample(name: "Bash", kind: .bash, input: ["command": "date +%H:%M:%S", "description": "Get current time"],
@@ -361,12 +363,21 @@ extension ThreadModel {
         let turns: [Turn] = [.sample(secondsAgo: 295), .sample(secondsAgo: 237), .sample(secondsAgo: 177),
                              .sample(status: finished ? .completed : .inProgress, secondsAgo: 97)]
             + (finished ? [.sample(secondsAgo: 56)] : [])
-        let thread = sample(title: "Loop and goal", status: finished ? .idle : .running, items: items, turns: turns)
-        // What the session's Stop hook last said will wake it, as the daemon sends it.
-        var info = thread.info!
-        info.sessionCrons = finished ? [] : [.init(id: "6db9ae9a", schedule: "*/1 * * * *", recurring: true, prompt: prompt)]
-        thread.apply(.threadUpdated(.init(threadId: thread.id, seq: 1, thread: info)))
-        return thread
+        // The job and the goal as the daemon works them out of those items.
+        let tasks: [TaskState] = [
+            .init(id: "schedule:cron-create", toolUseId: "cron-create", kind: .schedule, title: prompt,
+                  status: finished ? .stopped : .running, startedAt: preview(secondsAgo: 297),
+                  endedAt: finished ? preview(secondsAgo: 58) : nil,
+                  schedule: .init(jobId: "6db9ae9a", cron: "*/1 * * * *", description: "Every minute", prompt: prompt,
+                                  recurring: true, durable: false, wakeup: false, fromLoop: true, firedCount: 2,
+                                  lastFiredAt: preview(secondsAgo: 180), ended: finished ? .deleted : nil)),
+            .init(id: "goal:goal-set", kind: .goal, title: condition, status: finished ? .done : .running,
+                  startedAt: preview(secondsAgo: 120), endedAt: finished ? preview(secondsAgo: 97) : nil,
+                  goal: .init(condition: condition, checks: finished ? 2 : 1, lastCheck: finished
+                      ? .init(met: true, reason: "The assistant corrected every misspelling and re-read the file.")
+                      : .init(met: false, reason: "Line 2 still says “tommorow”."))),
+        ]
+        return sample(title: "Loop and goal", status: finished ? .idle : .running, items: items, turns: turns, tasks: tasks)
     }
 
     /// A dynamic workflow as Claude Code runs one: its call back at once with the launch receipt,
@@ -378,8 +389,7 @@ extension ThreadModel {
             title: "Review the diff",
             items: WorkflowSample.items(now: now, running: running),
             turns: running ? [.sample(secondsAgo: 288)] : [.sample(secondsAgo: 288), .sample(secondsAgo: 50)],
-            tasks: WorkflowSample.events(threadID: "preview-thread", firstSeq: 1, now: now, running: running)
-                + WorkflowSample.agentCommandEvents(threadID: "preview-thread", firstSeq: 100, running: running))
+            tasks: WorkflowSample.tasks(now: now, running: running) + [WorkflowSample.agentCommand(now: now, running: running)])
         for agent in ["a1f09c3e2b7d", "a4b7c2d9e8f0"] {
             thread.rememberWorkflowAgentTranscript(WorkflowSample.agentItems(agentId: agent, now: now),
                                                    runId: WorkflowSample.runID, agentId: agent)
@@ -463,7 +473,9 @@ extension ThreadModel {
                 .toolCall(.sample(name: "NotebookRead", kind: .other, input: ["notebook_path": "/Users/hayden/Code/tether-app/notes.ipynb"],
                                 status: .denied, secondsAgo: 50)),
             ],
-            turns: [.sample(secondsAgo: 40)]
+            turns: [.sample(secondsAgo: 40)],
+            tasks: [.init(id: subagentId, toolUseId: subagentId, taskId: "task-explore", kind: .agent, taskType: "local_agent",
+                          title: "Find every SwiftUI view in SundownUI", status: .running, startedAt: preview(secondsAgo: 170))]
         )
     }
 
@@ -622,8 +634,8 @@ I've added `PreviewSupport.swift` so every `SundownUI` view can now preview agai
 // MARK: - HostConnection scenarios
 
 extension HostConnection {
-    /// A connected "This Mac" host with a model catalog, a couple of projects, and a spread of
-    /// chats for the sidebar. Never touches the network or spawns a process.
+    /// A connected "This Mac" host with a model catalog and a spread of chats, in a few
+    /// directories, for the sidebar. Never touches the network or spawns a process.
     public static func sample() -> HostConnection {
         let day: Double = 86_400
         let chats = [
@@ -653,10 +665,6 @@ extension HostConnection {
                 claude: .init(path: "/opt/homebrew/bin/claude", version: "2.1.4")),
             account: .init(email: "hello@haydenhong.com", organization: "Personal", subscriptionType: "max", tokenSource: "keychain", apiProvider: "firstParty"),
             models: ModelInfo.sampleCatalog,
-            projects: [
-                .init(cwd: "/Users/hayden/Code/tether-app", lastActivity: preview(secondsAgo: 40), threadCount: 4),
-                .init(cwd: "/Users/hayden/Code/tether-server", lastActivity: preview(secondsAgo: 3_600), threadCount: 2),
-            ],
             chats: chats)
         return connection
     }

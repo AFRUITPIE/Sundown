@@ -8,8 +8,9 @@ import TetherProtocol
 /// it was sent and saying Starting session. The placeholder is never one of the host's chats: it
 /// isn't in `HostConnection`'s threads, gets no sequence numbers, is never subscribed, and nothing
 /// but the window that sent it shows it. The host's chat is its own model, made as any other is
-/// (often by the notifications that come before the answer), and the window moves to it once its
-/// prompt's echo is there (`isReady`), so the two are never on screen together.
+/// (by the notifications that come before the answer), and the window moves to it once it holds the
+/// prompt the host made (`thread/start`'s `messageId`, `isReady`), so the two are never on screen
+/// together.
 @MainActor
 @Observable
 public final class PendingStart: Identifiable {
@@ -27,8 +28,8 @@ public final class PendingStart: Identifiable {
 
     /// How the start came out: the host's chat, or why there isn't one.
     public private(set) var result: Result<ThreadModel, any Error>?
-    /// The host's chat shows the prompt as the host echoed it (`echoID`), or, without an echo,
-    /// enough of the chat to take the placeholder's place. Set only after `result` is a success.
+    /// The host's chat holds the prompt as the host made it (`echoID`). Set only after `result` is
+    /// a success.
     public private(set) var isReady = false
     /// The echo of the prompt sent, in the host's chat: the prompt the window already showed, so
     /// it isn't shown arriving again.
@@ -100,31 +101,6 @@ public final class PendingStart: Identifiable {
     private func resumeReady() {
         for waiter in readyWaiters { waiter.resume() }
         readyWaiters = []
-    }
-
-    /// Whether the host's chat shows enough to take the placeholder's place, and its echo of the
-    /// prompt if it has one. The first prompt a person sent in it is the echo when it says what was
-    /// sent. Without one, a turn that has ended, or a chat that has closed, will do.
-    func readiness(of chat: ThreadModel) -> (ready: Bool, echo: String?) {
-        let first = chat.items.lazy.compactMap { item -> Item.UserMessage? in
-            guard case .userMessage(let m) = item, m.parentToolUseId == nil, m.synthetic != true, m.origin == nil else { return nil }
-            return m
-        }.first
-        if let first { return (true, Self.says(first.content, as: input) ? first.id : nil) }
-        let ended = chat.turns.contains { $0.status != .inProgress } || chat.status == .closed
-        return (ended, nil)
-    }
-
-    /// Whether an echoed prompt says what was sent: the same words, or, for a prompt with none, the
-    /// same number of attachments.
-    static func says(_ echoed: [UserInput], as sent: [UserInput]) -> Bool {
-        func words(_ parts: [UserInput]) -> String {
-            parts.compactMap { if case .text(let t) = $0 { t.text } else { nil } }
-                .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        let sentWords = words(sent)
-        guard sentWords.isEmpty else { return words(echoed) == sentWords }
-        return echoed.count == sent.count
     }
 }
 

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SundownFixtures
 import SwiftUI
 import SundownKit
 import TetherProtocol
@@ -18,14 +19,6 @@ public struct WindowTarget: Codable, Hashable, Sendable {
         self.hostID = hostID
         self.threadID = threadID
         self.id = id
-    }
-
-    /// A value saved before `id` existed still restores its window.
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        hostID = try c.decode(UUID.self, forKey: .hostID)
-        threadID = try c.decodeIfPresent(String.self, forKey: .threadID)
-        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
     }
 
     /// A window is its own, whatever it shows: Open in New Window opens a second window on a chat
@@ -103,8 +96,6 @@ public final class WindowModel {
     /// Whether this is the key window, for deciding whether a chat is in front of you. Unobserved:
     /// nothing on screen depends on it.
     @ObservationIgnored var isKey = false
-    /// Where the reader was in each chat, for the Chat tab to go back to after Tasks or Diff.
-    @ObservationIgnored let transcriptPlaces = TranscriptPlaces()
     /// Which host `selectedThread` came from, so it is let go on the right connection.
     private var selectedThreadHost: UUID?
 
@@ -128,8 +119,8 @@ public final class WindowModel {
     public var draftFastMode = false
     /// Start the chat in a new git worktree, so it doesn't share a checkout with other chats.
     public var draftWorktree = false
-    /// The New Chat folder: the host's most recent project until one is chosen, nil before the
-    /// projects arrive.
+    /// The New Chat directory: the one the host's most recent chat is in until one is chosen, nil
+    /// before the chats arrive.
     public var draftDirectory: String?
     /// Why the New Chat draft couldn't start, cleared with the draft.
     var draftError: String?
@@ -398,7 +389,7 @@ public final class WindowModel {
         draftPermissionMode = nil
         draftFastMode = false
         draftWorktree = app.appearance.worktreeByDefault
-        draftDirectory = app.appearance.newChatFolder == .recent ? app.connections[hostID]?.projects.first?.cwd : nil
+        draftDirectory = app.appearance.newChatFolder == .recent ? app.connections[hostID]?.directories.first : nil
         draftError = nil
     }
 
@@ -413,8 +404,6 @@ public final class WindowModel {
             selectedThreadHost = nil
         }
         guard previous !== selectedThread else { return }
-        // A chat chosen opens at its end; only coming back from another tab goes back to a place.
-        if let id = selectedThread?.id { transcriptPlaces.rows[id] = nil }
         app.retain(selectedThread)
         app.release(previous, on: previousHost)
     }

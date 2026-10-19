@@ -5,7 +5,7 @@ import Foundation
 /// nothing is installed beside npm's cache.
 public enum ServerRelease {
     /// Moves with the protocol package's pin, which is the server this app was built against.
-    public static let version = "0.5.22"
+    public static let version = "0.6.0"
 
     /// What connecting runs on a host. Not `--prefer-offline`: npm then trusts a cached list of the
     /// package's versions, which a new app's version isn't in yet.
@@ -50,7 +50,7 @@ public struct HostBootstrapper: Sendable {
     /// login shell `connectCommand` runs isn't one, since whatever an rc file prints would land in
     /// the JSON-RPC stream. Here it can print what it likes: the PATH is between two markers.
     func shellPathCommand(for host: HostConfig) -> (executable: String, arguments: [String]) {
-        let probe = "printf %s \(Self.pathMarker); printenv PATH; printf %s \(Self.pathMarker)"
+        let probe = "printf %s \(Self.pathMarker); printenv PATH; echo \(Self.pathMarker)"
         switch host.kind {
         case .local: return (Self.loginShell, ["-ilc", probe])
         case .ssh(let dest):
@@ -84,8 +84,8 @@ public struct HostBootstrapper: Sendable {
     /// when `ssh` couldn't reach the host, which connecting would say again after as long a wait.
     func interactivePath(for host: HostConfig, timeout: Duration = .seconds(10)) async throws -> String? {
         let cmd = shellPathCommand(for: host)
-        let run = ShellRun(executable: cmd.executable, arguments: cmd.arguments, environment: Self.serverEnvironment())
-        let result = await run.result(timeout: timeout) { Self.shellPath(in: $0) != nil }
+        let result = await runBriefly(cmd.executable, cmd.arguments, environment: Self.serverEnvironment(),
+                                      timeout: timeout) { Self.shellPath(in: $0) != nil }
         if let path = Self.shellPath(in: result.output) { return path }
         if case .ssh = host.kind, result.status == 255 {
             throw TransportError.closed(exitCode: 255, stderr: result.errors)
@@ -119,74 +119,28 @@ public struct HostBootstrapper: Sendable {
     }
 }
 
-/// One short command, its output gathered until it has exited and closed its output, `done` says
-/// it has said enough (a shell can leave a child holding its output open), or the timeout.
-final class ShellRun: @unchecked Sendable {
-    private let process = Process()
-    private let lock = NSLock()
-    private var out = Data()
-    private var err = Data()
-    private var continuation: CheckedContinuation<Void, Never>?
-    private var finished = false
-    private var closed = false
-    private var status: Int32?
-
-    init(executable: String, arguments: [String], environment: [String: String]? = nil) {
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        if let environment { process.environment = environment }
-        process.standardInput = FileHandle.nullDevice
-    }
-
-    /// `status` is nil when it hadn't exited, or never started.
-    func result(timeout: Duration, done: @escaping @Sendable (String) -> Bool) async -> (status: Int32?, output: String, errors: String) {
-        let stdout = Pipe(), stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        stderr.fileHandleForReading.readabilityHandler = { [weak self] h in
-            let d = h.availableData
-            guard let self, !d.isEmpty else { h.readabilityHandler = nil; return }
-            self.lock.withLock { if self.err.count < 64_000 { self.err.append(d) } }
-        }
-        stdout.fileHandleForReading.readabilityHandler = { [weak self] h in
-            let d = h.availableData
-            guard let self else { return }
-            guard !d.isEmpty else {
-                h.readabilityHandler = nil
-                self.finish { $0.closed = true }
-                return
+/// Runs a short command, its stdin empty, until it exits, `done` says its output is enough (a child
+/// it started can hold the output open), or the timeout, and then stops it. `status` is nil when it
+/// was stopped, or never started; `errors` are said only when it exited.
+func runBriefly(_ executable: String, _ arguments: [String], environment: [String: String]? = nil, timeout: Duration,
+                done: @escaping @Sendable (String) -> Bool) async -> (status: Int32?, output: String, errors: String) {
+    let transport = ProcessTransport(executable: executable, arguments: arguments, environment: environment)
+    transport.endInput()
+    let reading = Task { () -> (status: Int32?, output: String, errors: String) in
+        var output = ""
+        do {
+            for try await line in transport.lines() {
+                if output.utf8.count < 1_000_000 { output += String(decoding: line, as: UTF8.self) + "\n" }
+                if done(output) { break }
             }
-            let text = self.lock.withLock { () -> String? in
-                guard self.out.count < 1_000_000 else { return nil }
-                self.out.append(d)
-                return String(decoding: self.out, as: UTF8.self)
-            }
-            if let text, done(text) { self.finish { $0.finished = true } }
-        }
-        process.terminationHandler = { [weak self] p in self?.finish { $0.status = p.terminationStatus } }
-        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            lock.withLock { continuation = c }
-            do { try process.run() } catch { finish { $0.finished = true }; return }
-            Task { [weak self] in
-                try? await Task.sleep(for: timeout)
-                self?.finish { $0.finished = true }
-            }
-        }
-        stdout.fileHandleForReading.readabilityHandler = nil
-        stderr.fileHandleForReading.readabilityHandler = nil
-        if process.isRunning { process.terminate() }
-        return lock.withLock { (status, String(decoding: out, as: UTF8.self), String(decoding: err, as: UTF8.self)) }
+        } catch TransportError.closed(let status, let errors) {
+            return (status, output, errors)
+        } catch {}
+        // Said enough, out of time (cancelled), or never started.
+        await transport.close()
+        return (nil, output, "")
     }
-
-    /// Records what happened, and resumes once it's done: `finished`, or exited with its output closed.
-    private func finish(_ change: (ShellRun) -> Void) {
-        let c = lock.withLock { () -> CheckedContinuation<Void, Never>? in
-            change(self)
-            guard finished || (closed && status != nil), let c = continuation else { return nil }
-            continuation = nil
-            finished = true
-            return c
-        }
-        c?.resume()
-    }
+    let deadline = Task { try await Task.sleep(for: timeout); reading.cancel() }
+    defer { deadline.cancel() }
+    return await reading.value
 }

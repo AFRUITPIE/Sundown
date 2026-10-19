@@ -1,4 +1,6 @@
 import Foundation
+import Subprocess
+import System
 
 /// A bidirectional line-oriented byte channel to a Sundown server.
 public protocol Transport: Sendable {
@@ -22,74 +24,111 @@ public enum TransportError: LocalizedError {
     }
 }
 
-/// Runs a command (local shell or `ssh`) and speaks JSONL over its stdin/stdout.
-public final class ProcessTransport: Transport, @unchecked Sendable {
-    private let process = Process()
+/// Runs a command (local shell or `ssh`), from when it's made, and speaks JSONL over its stdin and
+/// stdout. Subprocess's handles on a process are good only inside its `run`, so a task holds that
+/// for the process's life; cancelled, Subprocess stops the process.
+public final class ProcessTransport: Transport {
+    private let output: AsyncThrowingStream<Data, any Error>
     private let stdin = Pipe()
-    private let stdout = Pipe()
-    private let stderr = Pipe()
-    private let lock = NSLock()
-    private var stderrBuffer = Data()
-    /// Only touched from stdout's readabilityHandler, which the system serializes.
-    private var stdoutLines = LineSplitter()
+    private let task: Task<Void, Never>
 
     public init(executable: String, arguments: [String], environment: [String: String]? = nil) {
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        if let environment { process.environment = environment }
-        process.standardInput = stdin
-        process.standardOutput = stdout
-        process.standardError = stderr
-    }
-
-    public var stderrText: String {
-        lock.withLock { String(decoding: stderrBuffer, as: UTF8.self) }
-    }
-
-    public func lines() -> AsyncThrowingStream<Data, any Error> {
-        AsyncThrowingStream { continuation in
-            stderr.fileHandleForReading.readabilityHandler = { [weak self] h in
-                let d = h.availableData
-                guard let self, !d.isEmpty else { return }
-                self.lock.withLock {
-                    self.stderrBuffer.append(d)
-                    if self.stderrBuffer.count > 256_000 { self.stderrBuffer.removeFirst(self.stderrBuffer.count - 128_000) }
-                }
-            }
-            stdout.fileHandleForReading.readabilityHandler = { [weak self] h in
-                let chunk = h.availableData
-                guard let self, !chunk.isEmpty else {
-                    h.readabilityHandler = nil
-                    return
-                }
-                self.stdoutLines.split(chunk) { continuation.yield($0) }
-            }
-            process.terminationHandler = { [weak self] p in
-                self?.stdout.fileHandleForReading.readabilityHandler = nil
-                self?.stderr.fileHandleForReading.readabilityHandler = nil
-                continuation.finish(throwing: TransportError.closed(exitCode: p.terminationStatus, stderr: self?.stderrText ?? ""))
-            }
-            continuation.onTermination = { [weak self] _ in
-                guard let self else { return }
-                if self.process.isRunning { self.process.terminate() }
-            }
+        var options = PlatformOptions()
+        options.teardownSequence = [.gracefulShutDown(allowedDurationToNextStep: .seconds(2))]
+        let custom = environment.map { Dictionary(uniqueKeysWithValues: $0.map { (Environment.Key(rawValue: $0)!, $1) }) }
+        let configuration = Configuration(executable: .path(FilePath(executable)), arguments: Arguments(arguments),
+                                          environment: custom.map(Environment.custom) ?? .inherit, platformOptions: options)
+        let (output, lines) = AsyncThrowingStream<Data, any Error>.makeStream()
+        let (stdin, stdout) = (stdin, Pipe())
+        // Once the process has gone, a write fails rather than raising SIGPIPE, which would end the app.
+        _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        task = Task {
             do {
-                try process.run()
+                let (childIn, childOut) = (FileDescriptor(rawValue: stdin.fileHandleForReading.fileDescriptor),
+                                           FileDescriptor(rawValue: stdout.fileHandleForWriting.fileDescriptor))
+                let result = try await run(configuration, input: .fileDescriptor(childIn, closeAfterSpawningProcess: false),
+                                           output: .fileDescriptor(childOut, closeAfterSpawningProcess: false),
+                                           error: .sequence) { execution in
+                    // The child's ends, now its own.
+                    try? stdin.fileHandleForReading.close()
+                    try? stdout.fileHandleForWriting.close()
+                    // Its last 128,000 to 256,000 bytes.
+                    async let errors = (try? await execution.standardError.reduce(into: Data()) { data, chunk in
+                        chunk.withUnsafeBytes { data.append(contentsOf: $0) }
+                        if data.count > 256_000 { data.removeFirst(data.count - 128_000) }
+                    }) ?? Data()
+                    await Self.readLines(from: stdout.fileHandleForReading, of: execution.processIdentifier.value, into: lines)
+                    // Both outputs have closed: it has exited, or can say nothing more and is stopped.
+                    let stderr = await errors
+                    await execution.teardown(using: configuration.platformOptions.teardownSequence)
+                    return stderr
+                }
+                let code = switch result.terminationStatus { case .exited(let code), .signaled(let code): code }
+                lines.finish(throwing: TransportError.closed(exitCode: code, stderr: String(decoding: result.closureResult, as: UTF8.self)))
             } catch {
-                continuation.finish(throwing: TransportError.launchFailed(error.localizedDescription))
+                try? stdin.fileHandleForWriting.close()
+                lines.finish(throwing: TransportError.launchFailed(String(describing: error)))
             }
         }
+        self.output = output
+        // The reader has stopped reading.
+        lines.onTermination = { [task] _ in task.cancel() }
     }
+
+    /// Ends with `TransportError.closed` when it exits, or `.launchFailed`. Stopping reading stops it.
+    public func lines() -> AsyncThrowingStream<Data, any Error> { output }
 
     public func send(_ line: Data) async throws {
-        var data = line
-        data.append(0x0A)
-        try stdin.fileHandleForWriting.write(contentsOf: data)
+        try stdin.fileHandleForWriting.write(contentsOf: line + [0x0A])
     }
 
-    public func close() async {
+    /// Closes its stdin, leaving it running.
+    func endInput() {
         try? stdin.fileHandleForWriting.close()
-        if process.isRunning { process.terminate() }
+    }
+
+    /// Closes its stdin and stops it: SIGTERM, then SIGKILL 2 s later.
+    public func close() async {
+        endInput()
+        task.cancel()
+    }
+
+    /// Stdout's lines as they come, until it closes or the process exits (a child may hold it open),
+    /// with what was in the pipe then. A dispatch source reads into one buffer and splits on its queue:
+    /// Subprocess's `.sequence` made a stream and a zeroed buffer per read and woke a task for each.
+    private static func readLines(from handle: FileHandle, of pid: pid_t,
+                                  into lines: AsyncThrowingStream<Data, any Error>.Continuation) async {
+        let fd = handle.fileDescriptor
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+        let queue = DispatchQueue(label: "com.haydenhong.Sundown.transport")
+        await withCheckedContinuation { (finished: CheckedContinuation<Void, Never>) in
+            let reading = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+            // Told even of one that had exited before it was made, which isn't reaped until this returns.
+            let exit = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: queue)
+            let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: 65_536, alignment: 1)
+            var splitter = LineSplitter()
+            /// Reads all there is now; false once nothing more ever will be.
+            func drain() -> Bool {
+                var count: Int
+                repeat {
+                    count = read(fd, buffer.baseAddress, buffer.count)
+                    if count > 0 { splitter.split(UnsafeRawBufferPointer(rebasing: buffer[..<count])) { lines.yield($0) } }
+                } while count > 0 || (count < 0 && errno == EINTR)
+                return count < 0 && errno == EAGAIN
+            }
+            reading.setEventHandler { if !drain() { reading.cancel() } }
+            exit.setEventHandler { _ = drain(); reading.cancel() }
+            reading.setCancelHandler {
+                // A last line without its newline.
+                if !splitter.partial.isEmpty { lines.yield(splitter.partial) }
+                exit.cancel()
+                buffer.deallocate()
+                try? handle.close()
+                finished.resume()
+            }
+            reading.activate()
+            exit.activate()
+        }
     }
 }
 
@@ -101,24 +140,22 @@ struct LineSplitter {
     private(set) var partial = Data()
 
     /// Calls `line` with each complete, non-empty line the chunk ends, in order.
-    mutating func split(_ chunk: Data, _ line: (Data) -> Void) {
-        chunk.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
-            guard let base = bytes.baseAddress else { return }
-            var start = 0
-            while start < bytes.count, let found = memchr(base + start, 0x0A, bytes.count - start) {
-                let end = base.distance(to: UnsafeRawPointer(found))
-                if partial.isEmpty {
-                    if end > start { line(Data(bytes: base + start, count: end - start)) }
-                } else {
-                    partial.append(base.assumingMemoryBound(to: UInt8.self) + start, count: end - start)
-                    line(partial)
-                    partial = Data()
-                }
-                start = end + 1
+    mutating func split(_ bytes: UnsafeRawBufferPointer, _ line: (Data) -> Void) {
+        guard let base = bytes.baseAddress else { return }
+        var start = 0
+        while start < bytes.count, let found = memchr(base + start, 0x0A, bytes.count - start) {
+            let end = base.distance(to: UnsafeRawPointer(found))
+            if partial.isEmpty {
+                if end > start { line(Data(bytes: base + start, count: end - start)) }
+            } else {
+                partial.append(base.assumingMemoryBound(to: UInt8.self) + start, count: end - start)
+                line(partial)
+                partial = Data()
             }
-            if start < bytes.count {
-                partial.append(base.assumingMemoryBound(to: UInt8.self) + start, count: bytes.count - start)
-            }
+            start = end + 1
+        }
+        if start < bytes.count {
+            partial.append(base.assumingMemoryBound(to: UInt8.self) + start, count: bytes.count - start)
         }
     }
 }

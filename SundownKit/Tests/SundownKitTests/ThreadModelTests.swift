@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import Testing
+import SundownTestSupport
 import TetherProtocol
 @testable import SundownKit
 
@@ -15,110 +16,6 @@ struct ThreadModelTests {
 
     private func started(_ item: Item, seq: Int) -> ServerNotification {
         .itemStarted(.init(threadId: threadID, seq: seq, item: item))
-    }
-
-    /// A skill's instructions, which Claude Code puts in the chat as a message of their own right
-    /// after the call, belong to the call: neither a message nor a turn of their own, live or read.
-    @Test func aSkillsInstructionsGoToItsCall() {
-        let skill = Item.toolCall(.init(id: "skill-1", createdAt: 1, name: "Skill", kind: .skill,
-                                        input: ["skill": "shadcn"], status: .completed, outputText: "Launching skill: shadcn"))
-        let body = userMessage("Base directory for this skill: /x\n\n# shadcn/ui", id: "u2", synthetic: true)
-        let after = userMessage("Thanks", id: "u3")
-
-        let live = ThreadModel(id: threadID)
-        live.loadHistory(items: [userMessage("Use shadcn")], turns: [], seq: 0)
-        live.apply(started(skill, seq: 1))
-        live.apply(started(body, seq: 2))
-        // The daemon sends the instructions again as they complete (a real session's order).
-        live.apply(.itemCompleted(.init(threadId: threadID, seq: 3, item: body)))
-        live.apply(started(after, seq: 4))
-        #expect(live.items.map(\.id) == ["u1", "skill-1", "u3"])
-        #expect(live.skillBodies["skill-1"]?.hasPrefix("Base directory for this skill") == true)
-
-        let read = ThreadModel(id: threadID)
-        read.loadHistory(items: [userMessage("Use shadcn"), skill, body, after], turns: [], seq: 4)
-        #expect(read.items.map(\.id) == ["u1", "skill-1", "u3"])
-        #expect(read.skillBodies["skill-1"] == live.skillBodies["skill-1"])
-
-        // Anything else synthetic after a call stays a message.
-        let other = ThreadModel(id: threadID)
-        other.loadHistory(items: [userMessage("Go"), body], turns: [], seq: 1)
-        #expect(other.items.count == 2)
-    }
-
-    /// The same in an older page: a skill call and its instructions arriving together above the
-    /// reader go to the call, not a "Message from Claude Code" of their own (#107).
-    @Test func aSkillsInstructionsInAnOlderPageGoToItsCall() {
-        let skill = Item.toolCall(.init(id: "skill-1", createdAt: 1, name: "Skill", kind: .skill,
-                                        input: ["skill": "shadcn"], status: .completed, outputText: "Launching skill: shadcn"))
-        let body = userMessage("Base directory for this skill: /x\n\n# shadcn/ui", id: "u2", synthetic: true)
-        let thread = ThreadModel(id: threadID)
-        thread.loadHistory(items: [userMessage("Thanks", id: "u3")], turns: [], seq: 4, hasMore: true)
-
-        thread.prependHistory(items: [userMessage("Use shadcn"), skill, body], hasMore: false)
-
-        #expect(thread.items.map(\.id) == ["u1", "skill-1", "u3"], "the instructions were left in the transcript")
-        #expect(thread.skillBodies["skill-1"]?.hasPrefix("Base directory for this skill") == true)
-    }
-
-    /// Only `started` says what a task is, and a later `updated` patch can leave out its tool call.
-    @Test func laterTaskEventsKeepWhatEarlierOnesSaid() {
-        let thread = ThreadModel(id: threadID)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1",
-                                      toolUseId: "toolu_1", description: "Sleep then echo", data: [:])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 2, event: "updated", taskId: "b1",
-                                      status: "completed", data: [:])))
-
-        let task = thread.tasks["b1"]
-        #expect(task?.event == "updated")
-        #expect(task?.status == "completed")
-        #expect(task?.toolUseId == "toolu_1")
-        #expect(task?.description == "Sleep then echo")
-    }
-
-    @Test func aTaskRunsUntilItsNotificationOrAFinalStatus() {
-        let thread = ThreadModel(id: threadID)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1", data: [:])))
-        #expect(thread.taskEntries.first?.isTaskRunning == true)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 2, event: "updated", taskId: "b1", status: "stopped", data: [:])))
-        #expect(thread.taskEntries.first?.isTaskRunning == false)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 3, event: "started", taskId: "b2", data: [:])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 4, event: "notification", taskId: "b2", data: [:])))
-        #expect(thread.taskEntries.first { $0.task?.taskId == "b2" }?.isTaskRunning == false)
-    }
-
-    @Test func aFinalStatusSurvivesALaterUpdateWithoutOne() {
-        let thread = ThreadModel(id: threadID)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1", toolUseId: "toolu_1",
-                                      data: ["task_type": "local_bash"])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 2, event: "updated", taskId: "b1", status: "completed", data: [:])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 3, event: "updated", taskId: "b1", data: ["patch": [:]])))
-        #expect(thread.taskEntries.first?.isTaskRunning == false)
-        #expect(thread.tasks["b1"]?.data["task_type"]?.stringValue == "local_bash")
-    }
-
-    /// The thread's process ended: nothing it ran is running any more, and nothing offers to stop it.
-    @Test func closingAThreadSettlesItsTasks() {
-        let thread = ThreadModel(id: threadID)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1", toolUseId: "toolu_1",
-                                      data: ["task_type": "local_bash"])))
-        thread.apply(.taskBackgroundChanged(.init(threadId: threadID, seq: 2, tasks: [["task_id": "b1"]])))
-        #expect(thread.taskEntries.first?.isTaskRunning == true)
-
-        thread.apply(.threadClosed(.init(threadId: threadID, seq: 3)))
-
-        #expect(thread.taskEntries.first?.isTaskRunning == false)
-        #expect(thread.backgroundTaskIDs.isEmpty)
-    }
-
-    @Test func onlyACommandOrAgentCanMoveToTheBackground() {
-        let thread = ThreadModel(id: threadID)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "started", taskId: "b1", toolUseId: "toolu_1",
-                                      data: ["task_type": "local_bash"])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 2, event: "started", taskId: "w1", toolUseId: "toolu_2",
-                                      data: ["task_type": "local_workflow"])))
-        #expect(thread.taskEntries.first { $0.task?.taskId == "b1" }?.canMoveToBackground == true)
-        #expect(thread.taskEntries.first { $0.task?.taskId == "w1" }?.canMoveToBackground == false)
     }
 
     @Test func theOpeningPromptNamesAnUnnamedThread() {
@@ -148,17 +45,14 @@ struct ThreadModelTests {
         thread.apply(started(userMessage("Rebuild the window layout"), seq: 1))
         #expect(thread.title == "Rebuild the window layout")
 
-        let observed = Invalidation()
         // The Tasks tab's list, too: streamed text is not a task change.
-        withObservationTracking { _ = thread.title; _ = thread.taskEntries } onChange: { observed.happened = true }
-
-        thread.apply(started(.agentMessage(.init(id: "a1", createdAt: 0, text: "")), seq: 2))
-        for (offset, delta) in ["On ", "it", "."].enumerated() {
-            thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 3 + offset, itemId: "a1", delta: delta)))
+        expectUnchanged(reading: { _ = thread.title; _ = thread.tasks }) {
+            thread.apply(started(.agentMessage(.init(id: "a1", createdAt: 0, text: "")), seq: 2))
+            for (offset, delta) in ["On ", "it", "."].enumerated() {
+                thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 3 + offset, itemId: "a1", delta: delta)))
+            }
+            thread.apply(.itemToolCallProgress(.init(threadId: threadID, seq: 6, itemId: "a1", elapsedSeconds: 2)))
         }
-        thread.apply(.itemToolCallProgress(.init(threadId: threadID, seq: 6, itemId: "a1", elapsedSeconds: 2)))
-
-        #expect(!observed.happened)
         #expect(thread.title == "Rebuild the window layout")
     }
 
@@ -177,10 +71,8 @@ struct ThreadModelTests {
         thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 5, itemId: "a1", delta: "It ")))
         #expect(!thread.isThinking)
 
-        let transcript = Invalidation()
-        withObservationTracking { _ = thread.rows(.summarized); _ = thread.items } onChange: { transcript.happened = true }
-        let row = Invalidation()
-        withObservationTracking { _ = box.item } onChange: { row.happened = true }
+        let transcript = observing { _ = thread.rows(.summarized); _ = thread.items }
+        let row = observing { _ = box.item }
         for (offset, delta) in ["folds ", "items."].enumerated() {
             thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 6 + offset, itemId: "a1", delta: delta)))
         }
@@ -231,22 +123,6 @@ struct ThreadModelTests {
         .agentMessage(.init(id: id, parentToolUseId: parent, createdAt: 0, text: text))
     }
 
-    @Test func taskEntriesFollowTaskEventsWithoutAnyItemChange() {
-        let thread = ThreadModel(id: threadID)
-        #expect(thread.taskEntries.isEmpty)
-        let itemsVersion = thread.itemsVersion
-
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 1, event: "task_started", taskId: "task-1",
-                                      description: "Explore the inspector", status: "running", data: [:])))
-        #expect(thread.taskEntries.map(\.id) == ["task:task-1"])
-        #expect(thread.taskEntries.first?.isBackgrounded == false)
-
-        thread.apply(.taskBackgroundChanged(.init(threadId: threadID, seq: 2, tasks: [["task_id": "task-1"]])))
-        #expect(thread.taskEntries.first?.isBackgrounded == true)
-
-        #expect(thread.itemsVersion == itemsVersion)
-    }
-
     /// Only the reply being streamed into fades its text in: from its start until it completes or
     /// its turn ends, and never a subagent's words. Its deltas don't change which reply it is.
     @Test func theStreamingReplyIsTheOneBeingStreamedInto() {
@@ -258,12 +134,11 @@ struct ThreadModelTests {
         thread.apply(started(reply(""), seq: 4))
         #expect(thread.streamingReplyID == "a1")
 
-        let observed = Invalidation()
-        withObservationTracking { _ = thread.streamingReplyID } onChange: { observed.happened = true }
-        for (offset, delta) in ["It ", "works."].enumerated() {
-            thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 5 + offset, itemId: "a1", delta: delta)))
+        expectUnchanged(reading: { _ = thread.streamingReplyID }) {
+            for (offset, delta) in ["It ", "works."].enumerated() {
+                thread.apply(.itemAgentMessageDelta(.init(threadId: threadID, seq: 5 + offset, itemId: "a1", delta: delta)))
+            }
         }
-        #expect(!observed.happened)
 
         thread.apply(.itemCompleted(.init(threadId: threadID, seq: 7, item: reply("It works."))))
         #expect(thread.streamingReplyID == nil)
@@ -304,18 +179,13 @@ struct ThreadModelTests {
     }
 }
 
-/// Observation's `onChange` is `@Sendable`, so the flag it sets needs a reference to live in.
-private final class Invalidation: @unchecked Sendable {
-    var happened = false
-
-    @Test func aRewindResultReadsTheSDKsAnswer() {
-        let r = RewindResult(["canRewind": true, "filesChanged": ["/a.swift", "/b.swift"], "insertions": 4, "deletions": 1])
-        #expect(r.canRewind)
-        #expect(r.files == ["/a.swift", "/b.swift"])
-        #expect(r.insertions == 4 && r.deletions == 1)
-        let no = RewindResult(["canRewind": false, "error": "No checkpoint"])
-        #expect(!no.canRewind && no.error == "No checkpoint" && no.files.isEmpty)
-    }
+@Test func aRewindResultReadsTheSDKsAnswer() {
+    let r = RewindResult(["canRewind": true, "filesChanged": ["/a.swift", "/b.swift"], "insertions": 4, "deletions": 1])
+    #expect(r.canRewind)
+    #expect(r.files == ["/a.swift", "/b.swift"])
+    #expect(r.insertions == 4 && r.deletions == 1)
+    let no = RewindResult(["canRewind": false, "error": "No checkpoint"])
+    #expect(!no.canRewind && no.error == "No checkpoint" && no.files.isEmpty)
 }
 
 @Test func aRateLimitReadsTheSDKsInfo() {

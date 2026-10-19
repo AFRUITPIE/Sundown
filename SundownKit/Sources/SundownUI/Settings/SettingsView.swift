@@ -1,3 +1,4 @@
+import SundownFixtures
 import SwiftUI
 import SundownKit
 
@@ -45,15 +46,14 @@ public struct SettingsView: View {
     }
 }
 
-/// The selected pane, persisted. Stores written by older builds named panes this window no longer
-/// has ("chats", "newChats", "appearance", "host:<uuid>"); each one lands on the pane that absorbed it.
+/// The selected pane, persisted; a stored name that isn't one of these opens General.
 enum SettingsDestination: String {
     case general
     case notifications
     case hosts
 
     init(storedValue: String) {
-        self = Self(rawValue: storedValue) ?? (storedValue.hasPrefix("host:") ? .hosts : .general)
+        self = Self(rawValue: storedValue) ?? .general
     }
 
     var storedValue: String { rawValue }

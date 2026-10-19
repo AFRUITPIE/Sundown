@@ -2,6 +2,8 @@ import Foundation
 import Testing
 import TetherProtocol
 @testable import SundownKit
+import SundownFixtures
+import SundownTestSupport
 
 /// A chat no window shows holds only its last page, and nothing worked out from it, without losing
 /// its place in the stream.
@@ -17,8 +19,10 @@ struct LettingChatsGoTests {
     }
 
     private func edit(_ id: String, _ n: Int, parent: String? = nil, status: ToolStatus = .completed) -> Item {
-        .toolCall(.init(id: id, parentToolUseId: parent, createdAt: Double(1_000 + n), name: "Edit", kind: .fileEdit,
-                        input: ["file_path": "/repo/a.swift", "old_string": "a\nb\nc", "new_string": "a\nB\nc\nd"], status: status))
+        // With its change, as the daemon sends a finished one.
+        .toolCall(Item.ToolCall(id: id, parentToolUseId: parent, createdAt: Double(1_000 + n), name: "Edit", kind: .fileEdit,
+                                input: ["file_path": "/repo/a.swift", "old_string": "a\nb\nc", "new_string": "a\nB\nc\nd"],
+                                status: status).withComparedEdit)
     }
 
     private func subagent(_ id: String, _ n: Int) -> Item {
@@ -64,7 +68,6 @@ struct LettingChatsGoTests {
         #expect(thread.historyLoaded && thread.hasMoreHistory)
         #expect(thread.turns.map(\.id) == ["t1"])
         #expect(thread.foldingsHeld.isEmpty)
-        #expect(thread.fileChanges["edit-early"] == nil)
         #expect(thread.children(of: "agent").map(\.id) == ["agent-edit"])
 
         // The stream goes on from where it was: a replay of what's held is refused, the next event
@@ -96,27 +99,6 @@ struct LettingChatsGoTests {
         #expect(thread.title == "Prompt 0")
     }
 
-    /// As with a page loaded afresh, a finished task whose call was let go isn't listed; a running
-    /// one still is, so it can be stopped.
-    @Test func trimmingLetsGoOfFinishedTasksWhoseCallWent() {
-        let thread = ThreadModel(id: threadID)
-        var items = transcript
-        items[2] = subagent("early-agent", 2)
-        thread.loadHistory(items: items, turns: [], seq: 60)
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 61, event: "started", taskId: "done", toolUseId: "early-agent",
-                                      status: "completed", data: [:])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 62, event: "started", taskId: "going", toolUseId: "m4",
-                                      status: "running", data: [:])))
-        thread.apply(.taskEvent(.init(threadId: threadID, seq: 63, event: "started", taskId: "late", toolUseId: "agent",
-                                      status: "completed", data: [:])))
-
-        thread.trim(toLast: 50)
-
-        #expect(Set(thread.tasks.keys) == ["going", "late"])
-        #expect(thread.taskEntries.map(\.id) == ["agent", "task:going"])
-        #expect(thread.taskEvent(forToolUseId: "agent")?.taskId == "late")
-    }
-
     /// A background command's call on a page not held, finishing now: the page brings it when it
     /// loads. Appended, it read as the chat's latest.
     @Test func anItemFromAPageNotHeldIsLeftToThatPage() {
@@ -130,21 +112,26 @@ struct LettingChatsGoTests {
 
     // MARK: the connection
 
-    private func connect(_ daemon: FakeDaemon, status: ThreadStatus = .idle, items: [Item]? = nil,
+    private func connect(_ host: FakeHost, status: ThreadStatus = .idle, items: [Item]? = nil,
                          historySeq: Int? = 100) async -> (HostConnection, ThreadModel) {
-        await daemon.script.queue("thread/read", ThreadReadResult(items: items ?? transcript, turns: [], historySeq: historySeq, hasMore: false))
-        await daemon.script.queue("thread/subscribe", ThreadSubscribeResult(
-            thread: .init(threadId: threadID, status: status, cwd: "/repo", lastSeq: historySeq ?? 0), replayed: 0, gap: false))
-        let connection = daemon.connection()
+        serve(host, status: status, items: items, historySeq: historySeq)
+        let connection = host.connection()
         await connection.connect()
         let thread = connection.thread(threadID)
         await connection.open(thread)
         return (connection, thread)
     }
 
+    /// The chat as `host` reads it and subscribes to it.
+    private func serve(_ host: FakeHost, status: ThreadStatus = .idle, items: [Item]? = nil, historySeq: Int? = 100) {
+        host.queue("thread/read", ThreadReadResult(items: items ?? transcript, turns: [], historySeq: historySeq, hasMore: false))
+        host.queue("thread/subscribe", ThreadSubscribeResult(
+            thread: .init(threadId: threadID, status: status, cwd: "/repo", lastSeq: historySeq ?? 0), replayed: 0, gap: false))
+    }
+
     @Test func leavingAnIdleLiveChatKeepsItsLastPageAndItsSubscription() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host)
         #expect(connection.isLoaded(thread))
         #expect(thread.items.count == 60)
 
@@ -153,17 +140,17 @@ struct LettingChatsGoTests {
         #expect(thread.items.map(\.id) == transcript.suffix(50).map(\.id))
         #expect(thread.hasMoreHistory)
         #expect(connection.isLoaded(thread))
-        #expect(await !daemon.script.calls.contains { $0.method == "thread/unsubscribe" })
+        #expect(host.count("thread/unsubscribe") == 0)
 
         // Live events still arrive, after the last one seen.
-        daemon.emit("item/started", encoded(ItemStartedNotification(threadId: threadID, seq: 101, item: message(61))))
+        host.emit("item/started", json(ItemStartedNotification(threadId: threadID, seq: 101, item: message(61))))
         try await eventually { thread.items.last?.id == "m61" }
 
         // Shown again and scrolled up, the page let go comes back, before the first item held.
         await connection.open(thread)
-        await daemon.script.queue("thread/read", ThreadReadResult(items: Array(transcript.prefix(10)), turns: [], hasMore: false))
+        host.queue("thread/read", ThreadReadResult(items: Array(transcript.prefix(10)), turns: [], hasMore: false))
         await connection.loadOlderHistory(thread)
-        let older = await daemon.script.params(of: "thread/read").last
+        let older = host.calls(of: "thread/read").last
         #expect(older?["before"]?.stringValue == "m10")
         #expect(older?["limit"]?.intValue == HostConnection.olderHistoryPageSize)
         #expect(thread.items.map(\.id) == transcript.map(\.id) + ["m61"])
@@ -174,23 +161,23 @@ struct LettingChatsGoTests {
     /// A page that arrives after the chat was trimmed under it would leave a gap: it's dropped,
     /// and asked for again from what's held now.
     @Test func aPageForItemsLetGoMeanwhileIsDropped() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host)
         connection.leave(thread)
         await connection.open(thread)
         #expect(thread.items.first?.id == "m10")
 
-        await daemon.script.hold("thread/read")
-        await daemon.script.queue("thread/read", ThreadReadResult(items: Array(transcript.prefix(10)), turns: [], hasMore: false))
+        host.hold("thread/read")
+        host.queue("thread/read", ThreadReadResult(items: Array(transcript.prefix(10)), turns: [], hasMore: false))
         let loading = Task { await connection.loadOlderHistory(thread) }
-        try await eventually { await daemon.script.params(of: "thread/read").count == 2 }
+        try await eventually { host.calls(of: "thread/read").count == 2 }
         for (n, seq) in zip(61...65, 101...) {
-            daemon.emit("item/started", encoded(ItemStartedNotification(threadId: threadID, seq: seq, item: message(n))))
+            host.emit("item/started", json(ItemStartedNotification(threadId: threadID, seq: seq, item: message(n))))
         }
         try await eventually { thread.items.last?.id == "m65" }
         connection.leave(thread)
         #expect(thread.items.first?.id == "m15")
-        await daemon.script.release("thread/read")
+        host.release("thread/read")
         _ = await loading.value
 
         #expect(thread.items.first?.id == "m15")
@@ -201,28 +188,28 @@ struct LettingChatsGoTests {
     }
 
     @Test func aChatLeftWhileRunningKeepsOnlyItsLastPageAfterItsTurn() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon, status: .running)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host, status: .running)
         connection.leave(thread)
         #expect(thread.items.count == 60)
 
-        daemon.emit("thread/status/changed", ["threadId": .string(threadID), "seq": 101, "status": "idle"])
+        host.emit("thread/status/changed", ["threadId": .string(threadID), "seq": 101, "status": "idle"])
         try await eventually { thread.status == .idle }
-        await connection.afterTurn()
+        connection.afterTurn()
 
         #expect(thread.items.count == 50)
         #expect(thread.lastSeq == 101)
         #expect(connection.isLoaded(thread))
-        // And the chat list is refreshed with the latest few.
-        #expect(await daemon.script.params(of: "thread/list").last?["limit"]?.intValue == HostConnection.recentChatsLimit)
+        // The chat list isn't asked for again: the daemon tells of what changed in it.
+        #expect(host.calls(of: "thread/list").count == 1)
         await connection.disconnect()
     }
 
     @Test func aChatOnScreenKeepsEverythingAfterATurn() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host)
         _ = thread.rows(.summarized)
-        await connection.afterTurn()
+        connection.afterTurn()
         #expect(thread.items.count == 60)
         #expect(thread.foldingsHeld == [.summarized])
         await connection.disconnect()
@@ -231,8 +218,8 @@ struct LettingChatsGoTests {
     /// A chat read from disk alone has no stream to keep a place in: it's let go as a followed one
     /// is, keeping its last page to show until it's read again.
     @Test func leavingAChatWithNoStreamLetsItGo() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon, historySeq: nil)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host, historySeq: nil)
         #expect(thread.historyLoaded)
         let held = thread.itemsHeld
         connection.leave(thread)
@@ -245,52 +232,119 @@ struct LettingChatsGoTests {
     /// Nothing is subscribed while the host is down: a live chat isn't mistaken for one with no
     /// stream, and is still there to resubscribe when it comes back.
     @Test func leavingWhileDisconnectedLetsNothingGo() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon)
+        let host = FakeHost()
+        let (connection, thread) = await connect(host)
         await connection.disconnect()
         connection.leave(thread)
         #expect(thread.historyLoaded)
         #expect(thread.items.count == 60)
     }
 
-    // MARK: edits counted off the main actor
+    // MARK: a followed chat let go
 
-    /// A page's edits are counted before it goes in, so drawing its rows only looks them up.
-    @Test func aPagesEditsAreCountedBeforeItsFirstDraw() async throws {
-        let daemon = FakeDaemon()
-        let (connection, thread) = await connect(daemon)
-        #expect(Set(thread.fileChanges.keys) == ["edit-early", "agent-edit", "edit-late"])
-        #expect(thread.fileChanges["edit-late"] == FileChange.changes(of: {
-            guard case .toolCall(let c) = edit("edit-late", 57) else { fatalError() }
-            return c
-        }()))
-        _ = thread.rows(.summarized)
-        #expect(thread.rows(.summarized).contains { $0.id == "edits-m50" })
-        #expect(thread.changesCountedOnMainActor == 0)
+    /// A followed chat (in the daemon, not loaded) left is unsubscribed but keeps its last page, so
+    /// going back to it, host up or not, shows it at once; opened again, it's read afresh.
+    @Test func aFollowedChatLeftKeepsItsLastPageUntilItIsReadAgain() async throws {
+        let host = FakeHost()
+        #expect(transcript.count > HostConnection.initialHistoryLimit)
+        let (connection, thread) = await connect(host, status: .notLoaded)
+        #expect(thread.isFollowed)
 
-        await daemon.script.queue("thread/read", ThreadReadResult(items: [edit("edit-older", -5)], turns: [], hasMore: false))
         connection.leave(thread)
+        #expect(thread.historyLoaded, "a chat left went blank")
+        #expect(thread.items.map(\.id) == transcript.suffix(HostConnection.initialHistoryLimit).map(\.id))
+        #expect(thread.hasMoreHistory)
+        try await eventually { host.calls(of: "thread/unsubscribe").count == 1 }
+
+        // Opened again, it's read afresh, with what came meanwhile.
+        serve(host, status: .notLoaded, items: transcript + [message(60), message(61)], historySeq: 120)
         await connection.open(thread)
-        await connection.loadOlderHistory(thread)
-        #expect(thread.fileChanges["edit-older"] != nil)
+        #expect(thread.items.last?.id == "m61")
+        #expect(thread.lastSeq == 120)
+        #expect(host.calls(of: "thread/subscribe").count == 2)
         await connection.disconnect()
     }
 
-    /// An edit finishing live is counted off the main actor too, by the time its turn ends.
-    @Test func aFinishedEditIsCountedOffTheMainActor() async throws {
+    /// A reconnect resubscribes the chats on screen and the live ones, not those let go: each
+    /// subscription to a followed chat costs the daemon a file watcher and its parsed transcript.
+    @Test func aReconnectDoesNotResubscribeAChatLetGo() async throws {
+        let first = FakeHost(), second = FakeHost()
+        serve(first, status: .notLoaded)
+        let connection = FakeHost.connection(to: [first, second])
+        await connection.connect()
+        let thread = connection.thread(threadID)
+        await connection.open(thread)
+        connection.leave(thread)
+
+        await connection.reconnect()
+        #expect(second.calls(of: "thread/subscribe").isEmpty)
+        #expect(thread.historyLoaded, "the page it kept went with the reconnect")
+        await connection.disconnect()
+    }
+
+    /// Opened again while the host is down, a chat let go shows the page it kept, and is read
+    /// afresh and subscribed once the host is back.
+    @Test func aChatLetGoOpenedWhileDisconnectedIsReadOnceConnected() async throws {
+        let first = FakeHost(), second = FakeHost()
+        serve(first, status: .notLoaded)
+        serve(second, status: .notLoaded, items: transcript + [message(60), message(61)], historySeq: 120)
+        let connection = FakeHost.connection(to: [first, second])
+        await connection.connect()
+        let thread = connection.thread(threadID)
+        await connection.open(thread)
+        connection.leave(thread)
+        await connection.disconnect()
+
+        await connection.open(thread)
+        #expect(thread.items.count == HostConnection.initialHistoryLimit, "nothing to show while the host is down")
+        await connection.connect()
+        #expect(thread.items.last?.id == "m61")
+        #expect(second.calls(of: "thread/subscribe").count == 1)
+        await connection.disconnect()
+    }
+
+    /// An event in flight when a followed chat is let go would land in the page it kept, past a gap.
+    /// A chat let go drops item events until it's read again.
+    @Test func anEventAfterLeavingAFollowedChatIsDropped() async throws {
+        let host = FakeHost()
+        let (connection, thread) = await connect(host, status: .notLoaded)
+        connection.leave(thread)
+
+        host.emit("item/started", json(ItemStartedNotification(threadId: threadID, seq: 101, item: message(60))))
+        // A status change after it, which still reaches the chat: once it has, the item was routed too.
+        host.emit("thread/status/changed", ["threadId": .string(threadID), "seq": 102, "status": "idle"])
+        try await eventually { thread.lastSeq == 102 }
+
+        #expect(!thread.items.contains { $0.id == "m60" }, "a chat let go took an item past its gap")
+        await connection.disconnect()
+    }
+
+    // MARK: edits
+
+    /// A page's edits are its calls' own: its turns' edits are drawn from them, a subagent's included.
+    @Test func aPagesEditsAreItsCalls() async throws {
+        let host = FakeHost()
+        let (connection, thread) = await connect(host)
+        guard case .turnEdits(let edits)? = thread.rows(.summarized).first(where: { $0.id == "edits-m50" }) else {
+            Issue.record("no edits for the turn from m50"); return
+        }
+        #expect(edits.files.map(\.path) == ["/repo/a.swift"])
+        #expect(edits.files.first?.edits.count == 2)
+        await connection.disconnect()
+    }
+
+    /// An edit finishing live goes with its turn's last call once the turn ends.
+    @Test func aFinishedEditIsInItsTurnsLastRow() async throws {
         let thread = ThreadModel(id: threadID)
         thread.loadHistory(items: [message(0)], turns: [], seq: 1)
         thread.apply(.threadStatusChanged(.init(threadId: threadID, seq: 2, status: .running)))
         thread.apply(.itemStarted(.init(threadId: threadID, seq: 3, item: edit("live-edit", 1, status: .running))))
-        #expect(thread.fileChanges["live-edit"] == nil)
         thread.apply(.itemCompleted(.init(threadId: threadID, seq: 4, item: edit("live-edit", 1))))
-        try await eventually { thread.fileChanges["live-edit"] != nil }
         thread.apply(.threadStatusChanged(.init(threadId: threadID, seq: 5, status: .idle)))
         // The turn ends with the edit, so its edits are that call's row.
         guard case .toolGroup(let calls, let edits?)? = thread.rows(.summarized).last else {
             Issue.record("the turn's edits aren't with its last call"); return
         }
         #expect(calls.map(\.id) == ["live-edit"] && edits.promptID == "m0")
-        #expect(thread.changesCountedOnMainActor == 0)
     }
 }

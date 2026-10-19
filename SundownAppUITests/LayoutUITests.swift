@@ -26,10 +26,12 @@ final class LayoutUITests: SundownUITestCase {
         chooseMenuItem("View", "Every Call")
         XCTAssertTrue(groups.firstMatch.disappears(timeout: 5), "Every Call left calls folded")
         XCTAssertTrue(showsSomething(), "the chat is blank after Every Call")
+        // At the end it stays there, though the list is made again at a very different height.
+        XCTAssertTrue(waitUntil(5) { self.isOnScreen(end) }, "Every Call left the end: the last reply isn't on screen")
         chooseMenuItem("View", "Summarized")
         XCTAssertTrue(end.appears(timeout: 5), "the chat lost its end after Summarized")
         XCTAssertTrue(groups.firstMatch.appears(timeout: 5), "Summarized didn't fold the calls again")
-        XCTAssertTrue(waitUntil(5) { self.isOnScreen(end) }, "the chat is blank: its last reply is at \(end.frame), not in \(mainWindow().frame)")
+        XCTAssertTrue(waitUntil(5) { self.isOnScreen(end) }, "the chat lost its end after Summarized: its last reply is at \(String(describing: try? end.snapshot().frame)), not in \(mainWindow().frame)")
 
         // Worked For folds each finished turn's work behind one line, which opens to show it.
         chooseMenuItem("View", "Worked For")
@@ -50,9 +52,18 @@ final class LayoutUITests: SundownUITestCase {
 
         // Scrolled into the middle of the chat, switching doesn't blank it either, and the end is
         // there to go back to.
+        // The message at the top stays on screen through each.
         mainWindow().coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)).scroll(byDeltaX: 0, deltaY: 4000)
-        chooseMenuItem("View", "Every Call")
-        chooseMenuItem("View", "Summarized")
+        var place = topMessage(in: messageTops())
+        XCTAssertNotNil(place, "no message on screen after scrolling into the middle")
+        for display in ["Every Call", "Summarized"] {
+            chooseMenuItem("View", display)
+            let tops = messageTops()
+            if let place {
+                XCTAssertTrue(isVisible(place.key, in: tops), "\(display) in the middle lost the reader's place: \(place.key) isn't on screen, \(tops)")
+            }
+            place = topMessage(in: tops)
+        }
         let jump = app.buttons["Jump to Latest"]
         if jump.appears(timeout: 3) { jump.click() }
         XCTAssertTrue(waitUntil(5) { self.isOnScreen(end) }, "the chat is blank after switching in its middle")
