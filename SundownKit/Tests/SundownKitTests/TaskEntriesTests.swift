@@ -4,7 +4,7 @@ import Testing
 import TetherProtocol
 @testable import SundownKit
 
-/// The Tasks inspector's list is kept as subagent calls and task events arrive, not rebuilt from
+/// The Tasks tab's list is kept as subagent calls and task events arrive, not rebuilt from
 /// every item, and set only when it changes.
 @MainActor
 @Suite

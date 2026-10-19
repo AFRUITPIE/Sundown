@@ -6,8 +6,10 @@ public struct RPCError: LocalizedError, Sendable {
     public let message: String
     public var errorDescription: String? { message }
 
+    /// A call made while the host has no connection.
+    public static let notConnected = RPCError(code: -1, message: "Not connected")
+
     public static let threadNotLoaded = -32011
-    public static let threadNotFound = -32010
     /// The server no longer serves this app's protocol.
     public static let incompatibleProtocol = -32004
     /// `git/removeWorktree`: the worktree has uncommitted changes; retry with `force`.
@@ -122,8 +124,9 @@ public actor RPCClient {
     /// cost three passes over every token.
     private func handle(line: Data) {
         guard let message = WireMessage(line) else { return }
+        let id = message.id.flatMap { try? decoder.decode(JSONValue.self, from: $0) }
         if let method = message.method {
-            if let id = message.id.flatMap({ try? decoder.decode(JSONValue.self, from: $0) }), !id.isNull {
+            if let id, !id.isNull {
                 // Server → client request (approval, question, …): answer asynchronously.
                 let params = message.params ?? Self.emptyObject
                 flushBatch()
@@ -131,8 +134,7 @@ public actor RPCClient {
             } else if let notification = notification(method, params: message.params) {
                 deliver(notification)
             }
-        } else if let id = message.id.flatMap({ try? decoder.decode(JSONValue.self, from: $0) })?.intValue,
-                  let cont = pending.removeValue(forKey: id) {
+        } else if let id = id?.intValue, let cont = pending.removeValue(forKey: id) {
             // The caller sees what came before its answer.
             flushBatch()
             if let err = message.error.flatMap({ try? decoder.decode([String: JSONValue].self, from: $0) }) {
@@ -223,18 +225,8 @@ struct WireMessage {
     var result: Data?
     var error: Data?
 
-    enum Member: CaseIterable {
+    enum Member: String, CaseIterable {
         case id, method, params, result, error
-
-        var spelling: String {
-            switch self {
-            case .id: "id"
-            case .method: "method"
-            case .params: "params"
-            case .result: "result"
-            case .error: "error"
-            }
-        }
     }
 
     /// Nil when the line isn't one JSON object.
@@ -367,9 +359,9 @@ private struct JSONScanner {
         if name.contains(UInt8(ascii: "\\")) {
             // Spelled with escapes: read as JSON reads it.
             guard let key = Self.string(Data(UnsafeRawBufferPointer(rebasing: bytes[key]))) else { return nil }
-            return WireMessage.Member.allCases.first { $0.spelling == key }
+            return WireMessage.Member.allCases.first { $0.rawValue == key }
         }
-        return WireMessage.Member.allCases.first { name.elementsEqual($0.spelling.utf8) }
+        return WireMessage.Member.allCases.first { name.elementsEqual($0.rawValue.utf8) }
     }
 
     /// A JSON string's value; nil for anything else.

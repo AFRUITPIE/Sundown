@@ -62,7 +62,7 @@ struct MarkdownTextTests {
     }
 
     @Test func copyIsPlainText() {
-        let theme = MarkdownTheme(style: .reply, scale: 1, increasedContrast: false)
+        let theme = MarkdownTheme.standard
         let blocks: [MarkdownView.Block] = [
             .paragraph("Intro"), .bullet(indent: 0, marker: "•", text: "one"), .bullet(indent: 1, marker: "2.", text: "two"),
             .rule, .table([["A", "B"], ["1", "2"]]), .code(lang: "swift", body: "let x = 1"),
@@ -78,7 +78,7 @@ struct MarkdownTextTests {
     }
 
     @Test func emptyTableCellsKeepTheirColumns() {
-        let theme = MarkdownTheme(style: .reply, scale: 1, increasedContrast: false)
+        let theme = MarkdownTheme.standard
         let block = MarkdownView.Block.table([["A", "B", "C"], ["a", "", ""]])
         let text = MarkdownBuilder.build(MarkdownView.Rendered(id: 0, block: block, inline: block.inlineText.map { AttributedString($0) }),
                                          leading: false, spacing: 0, widestMarker: nil, theme: theme)

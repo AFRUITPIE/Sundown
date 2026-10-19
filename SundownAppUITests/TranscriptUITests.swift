@@ -85,13 +85,11 @@ final class TranscriptUITests: SundownUITestCase {
         let height = latest.frame.height
         let rowHeight = sidebarRow.frame.height
         chooseMenuItem("View", "Bigger")
-        let bigger = Date().addingTimeInterval(3)
-        while latest.frame.height <= height && Date() < bigger { Thread.sleep(forTimeInterval: 0.1) }
+        waitUntil(3) { latest.frame.height > height }
         XCTAssertGreaterThan(latest.frame.height, height, "Bigger didn't scale the transcript")
         XCTAssertEqual(sidebarRow.frame.height, rowHeight, accuracy: 0.5, "Bigger scaled the sidebar")
         app.typeKey("0", modifierFlags: .command)
-        let back = Date().addingTimeInterval(3)
-        while abs(latest.frame.height - height) > 0.5 && Date() < back { Thread.sleep(forTimeInterval: 0.1) }
+        waitUntil(3) { abs(latest.frame.height - height) <= 0.5 }
         XCTAssertEqual(latest.frame.height, height, accuracy: 0.5, "Actual Size didn't put it back")
 
         // Chat ▸ Previous Prompt (⌥⌘↑) brings the prompt above the reader's place to the top, one at
@@ -127,9 +125,7 @@ final class TranscriptUITests: SundownUITestCase {
             var prompts: [(top: CGFloat, number: Int)] = []
             func walk(_ element: any XCUIElementSnapshot) {
                 if element.elementType == .scrollView, element.identifier != "composer.scroll" { scrollViews.append(element.frame) }
-                // A prompt is a text view holding its text; the message field isn't one.
-                if element.elementType == .staticText || element.elementType == .textView && element.identifier != "composer.input",
-                   let words = element.value as? String, words.hasPrefix("Step "),
+                if let words = element.messageWords, words.hasPrefix("Step "),
                    let number = Int(words.dropFirst(5).prefix { $0.isNumber }) {
                     prompts.append((element.frame.minY, number))
                 }
@@ -249,8 +245,7 @@ final class TranscriptUITests: SundownUITestCase {
         let calls = app.disclosureTriangles.matching(identifier: "transcript.toolCall")
         let before = calls.count
         group.click()
-        let deadline = Date().addingTimeInterval(8)
-        while calls.count < before + 2 && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+        waitUntil(8) { calls.count >= before + 2 }
         XCTAssertGreaterThanOrEqual(calls.count, before + 2, "the opened group shows no calls")
         let expand = app.buttons["transcript.expandTools"].firstMatch
         XCTAssertTrue(expand.appears(timeout: 3), "an open group offers no Expand All")

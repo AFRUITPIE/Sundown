@@ -100,8 +100,7 @@ final class MessagesUITests: SundownUITestCase {
         let answer = text(fixtureAnswer)
         answer.hover()
         app.buttons["message.fork.fixture-answer"].click()
-        let deadline = Date().addingTimeInterval(5)
-        while rows.count < 2 && Date() < deadline { Thread.sleep(forTimeInterval: 0.2) }
+        waitUntil(5) { rows.count >= 2 }
         XCTAssertEqual(rows.count, 2, "Fork from Here made no chat")
         // The fork is the newer chat, so it heads the list, and it's the one showing.
         XCTAssertTrue(rows.element(boundBy: 0).isSelected, "the fork isn't the chat showing")

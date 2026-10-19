@@ -9,41 +9,11 @@ import TetherProtocol
 /// reader or leave it empty.
 @MainActor
 @Suite(.serialized)
-struct TranscriptStabilityTests {
+struct TranscriptStabilityTests: TimedItems {
     private let threadID = "stability"
-    /// A Monday morning, in ms, as in `IncrementalRowsTests`.
-    private let t0: Double = 1_790_000_000_000
     private let foldings: [TranscriptFolding] = [.summarized, .everyCall, .workedFor]
 
     // MARK: items
-
-    private func at(_ minutes: Double) -> Double { t0 + minutes * 60_000 }
-
-    private func prompt(_ id: String, _ minutes: Double) -> Item {
-        .userMessage(.init(id: id, createdAt: at(minutes), content: [.text(.init(text: "Prompt \(id), with more words after it"))]))
-    }
-
-    private func reply(_ id: String, _ minutes: Double, text: String = "Done.", parent: String? = nil) -> Item {
-        .agentMessage(.init(id: id, parentToolUseId: parent, createdAt: at(minutes), text: text))
-    }
-
-    private func call(_ id: String, _ minutes: Double, kind: ToolKind = .bash, status: ToolStatus = .completed,
-                      parent: String? = nil) -> Item {
-        .toolCall(.init(id: id, parentToolUseId: parent, createdAt: at(minutes), name: "Bash", kind: kind,
-                        input: ["command": .string("echo \(id)")], status: status))
-    }
-
-    private func edit(_ id: String, _ minutes: Double, path: String = "/repo/a.swift", status: ToolStatus = .completed,
-                      parent: String? = nil) -> Item {
-        .toolCall(.init(id: id, parentToolUseId: parent, createdAt: at(minutes), name: "Edit", kind: .fileEdit,
-                        input: ["file_path": .string(path), "old_string": "one\ntwo\nthree", "new_string": .string("one\n\(id)\nthree\nfour")],
-                        status: status))
-    }
-
-    private func subagent(_ id: String, _ minutes: Double, status: ToolStatus) -> Item {
-        .toolCall(.init(id: id, createdAt: at(minutes), name: "Task", kind: .subagent,
-                        input: ["description": "Look around"], status: status))
-    }
 
     /// A chat of `turns` turns, each a prompt, a command, an edit and a reply, with a subagent and
     /// its edit every fifth turn and a gap of hours every fourth. `chat(turns: 5)` is a prefix of

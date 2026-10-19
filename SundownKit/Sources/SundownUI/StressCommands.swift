@@ -43,6 +43,11 @@ public struct StressCommands: View {
     static var container: CGFloat = 0
 }
 
+extension NSApplication {
+    /// The window the debug tools measure and move: the first visible one with content.
+    @MainActor var contentWindow: NSWindow? { windows.first { $0.isVisible && $0.contentView != nil } }
+}
+
 extension Notification.Name {
     /// A scroll the driver asks of the transcript: userInfo "y" (an absolute offset) or "edge"
     /// ("top" or "bottom").
@@ -133,9 +138,9 @@ struct StressDriver: ViewModifier {
             }
         case "reconnect": if let connection { Task { await connection.reconnect() } }
         case "snap":
-            guard let screen = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }) else { return }
+            guard let frameWindow = NSApp.contentWindow else { return }
             let parts = arg.split(separator: " ")
-            guard let area = screen.screen?.visibleFrame, let side = parts.first else { BlankSampler.snapshot(); return }
+            guard let area = frameWindow.screen?.visibleFrame, let side = parts.first else { BlankSampler.snapshot(); return }
             let half = area.width / 2
             let frame: NSRect = switch side {
             case "left": NSRect(x: area.minX, y: area.minY, width: half, height: area.height)
@@ -143,7 +148,7 @@ struct StressDriver: ViewModifier {
             case "center": NSRect(x: area.midX - 500, y: area.midY - 370, width: 1000, height: 740)
             default: area
             }
-            screen.setFrame(frame, display: true, animate: parts.last != "now")
+            frameWindow.setFrame(frame, display: true, animate: parts.last != "now")
         case "shot": BlankSampler.snapshot()
         case "wait": try? await Task.sleep(for: .milliseconds(Int(arg) ?? 100))
         default: break

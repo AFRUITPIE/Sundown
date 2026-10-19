@@ -29,7 +29,6 @@ struct WorkflowRunTests {
         #expect(meta.name == "spec")
         #expect(meta.description == "Write the spec, then check it")
         #expect(meta.phases.map(\.title) == ["Draft", "Check"])
-        #expect(meta.phases.map(\.detail) == ["One writer", nil])
     }
 
     @Test func aScriptWithoutMetaHasNone() {
@@ -120,7 +119,6 @@ struct WorkflowRunTests {
         #expect(run.description == WorkflowSample.description)
         #expect(run.agents.count == 5 && run.agents.allSatisfy { $0.state == .done })
         #expect(run.usageText == "5 agents · 81,661 tokens · 25 tool uses · 3m 58s")
-        #expect(run.finishedCaption == "5 agents · 3m 58s")
         #expect(run.result?.contains("findings") == true)
     }
 
@@ -253,11 +251,6 @@ struct WorkflowRunTests {
 
     // MARK: folding
 
-    private func prompt(_ id: String, at ms: Double) -> Item {
-        .userMessage(.init(id: id, createdAt: ms, content: [.text(.init(text: id))]))
-    }
-
-    private func reply(_ id: String, at ms: Double) -> Item { .agentMessage(.init(id: id, createdAt: ms, text: id)) }
 
     private func bash(_ id: String, at ms: Double) -> Item {
         .toolCall(.init(id: id, createdAt: ms, name: "Bash", kind: .bash, input: [:], status: .completed))

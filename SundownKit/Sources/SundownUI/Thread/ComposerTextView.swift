@@ -165,23 +165,18 @@ struct ComposerTextView: NSViewRepresentable {
                 guard let view else { return false }
                 view.apply(ComposerEditing.newLine(in: view.string, selection: view.selectedRange()))
                 return true
-            case #selector(NSResponder.insertTab(_:)):
+            case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertBacktab(_:)):
                 guard let view else { return false }
-                // A completion or the suggested prompt first; then a list item steps in; otherwise
-                // Tab moves on, as in any field, rather than typing a tab.
-                if parent.onKey(.tab) { return true }
-                if let edit = ComposerEditing.indent(in: view.string, selection: view.selectedRange(), outward: false) {
+                let outward = selector == #selector(NSResponder.insertBacktab(_:))
+                // Tab: a completion or the suggested prompt first. Then a list item steps in (Shift-Tab:
+                // out); otherwise the key moves on, as in any field, rather than typing a tab.
+                if !outward, parent.onKey(.tab) { return true }
+                if let edit = ComposerEditing.indent(in: view.string, selection: view.selectedRange(), outward: outward) {
                     view.apply(edit)
+                } else if outward {
+                    textView.window?.selectPreviousKeyView(nil)
                 } else {
                     textView.window?.selectNextKeyView(nil)
-                }
-                return true
-            case #selector(NSResponder.insertBacktab(_:)):
-                guard let view else { return false }
-                if let edit = ComposerEditing.indent(in: view.string, selection: view.selectedRange(), outward: true) {
-                    view.apply(edit)
-                } else {
-                    textView.window?.selectPreviousKeyView(nil)
                 }
                 return true
             case #selector(NSResponder.moveUp(_:)): return parent.onKey(.up)
@@ -284,8 +279,9 @@ final class ComposerNSTextView: NSTextView {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         // Bold, italic and link, as Markdown editors have them. (⌘E is Use Selection for Find; a
         // backtick typed over a selection makes it code.)
+        guard window?.firstResponder === self else { return super.performKeyEquivalent(with: event) }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if window?.firstResponder === self, flags == .command, let key = event.charactersIgnoringModifiers?.lowercased() {
+        if flags == .command, let key = event.charactersIgnoringModifiers?.lowercased() {
             let selection = selectedRange()
             switch key {
             case "b": apply(ComposerEditing.wrap(in: string, selection: selection, open: "**", close: "**")); return true
@@ -296,8 +292,7 @@ final class ComposerNSTextView: NSTextView {
         }
         // ⌘Return isn't a text command; it's Send when Settings says so.
         // Return, or Enter on the keypad.
-        if window?.firstResponder === self, event.keyCode == 36 || event.keyCode == 76,
-           event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command),
+        if event.keyCode == 36 || event.keyCode == 76, flags.contains(.command),
            coordinator?.parent.onKey(.submit(EventModifiers(event.modifierFlags))) == true {
             return true
         }

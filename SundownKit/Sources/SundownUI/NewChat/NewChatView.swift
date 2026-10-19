@@ -7,34 +7,28 @@ import TetherProtocol
 struct NewChatView: View {
     @Bindable var window: WindowModel
     @State private var choosingFolder = false
-    /// What git says about the folder; nil until the host answers, or when it can't.
-    @State private var git: FolderGit?
+    /// The branch checked out in the directory; nil until the host answers, outside a repository,
+    /// or when HEAD is detached.
+    @State private var branch: String?
     @Environment(\.appearsActive) private var appearsActive
     @Environment(\.textScale) private var textScale
-    /// False when a preview seeded `git`: the preview host never answers.
+    /// False when a preview seeded `branch`: the preview host never answers.
     private let readsGit: Bool
 
-    /// Whether the folder is in a git repository, and the branch checked out there (nil when HEAD
-    /// is detached).
-    struct FolderGit: Equatable {
-        var isRepository: Bool
-        var branch: String?
-    }
-
     init(window: WindowModel) {
-        self.init(window: window, git: nil, readsGit: true)
+        self.init(window: window, branch: nil, readsGit: true)
     }
 
     #if DEBUG
-    /// For previews: the folder's git state as given, never asked of the host.
-    init(window: WindowModel, previewGit: FolderGit?) {
-        self.init(window: window, git: previewGit, readsGit: false)
+    /// For previews: the directory's branch as given, never asked of the host.
+    init(window: WindowModel, previewBranch: String?) {
+        self.init(window: window, branch: previewBranch, readsGit: false)
     }
     #endif
 
-    private init(window: WindowModel, git: FolderGit?, readsGit: Bool) {
+    private init(window: WindowModel, branch: String?, readsGit: Bool) {
         _window = Bindable(window)
-        _git = State(initialValue: git)
+        _branch = State(initialValue: branch)
         self.readsGit = readsGit
     }
 
@@ -64,11 +58,11 @@ struct NewChatView: View {
                             GlassEffectContainer(spacing: 10) {
                                 Composer(connection: connection, cwd: window.draftDirectory,
                                          thread: starting?.placeholder,
-                                         draftKey: "new-chat:\(window.hostID)",
+                                         draftKey: WindowModel.newChatDraftKey(window.hostID),
                                          placeholder: window.draftDirectory == nil ? "Choose a directory, then ask Claude…" : "Ask Claude…",
                                          focusRequested: window.composerFocusRequested,
                                          onStop: starting.map { _ in { window.stopStarting() } },
-                                         submit: { input in await start(connection, input) },
+                                         submit: { input in await window.startDraftChat(input) },
                                          onFocusChange: { if $0 { window.composerFocusRequested = false } },
                                          // Dropped on the field too, a directory is where the chat starts.
                                          takesDirectory: connection.host.isLocal && starting == nil ? { choose($0) } : nil)
@@ -84,13 +78,13 @@ struct NewChatView: View {
                 }
             }
             .directoryChooser(isPresented: $choosingFolder, connection: connection, current: window.draftDirectory) { choose($0) }
-            // `AppModel` seeds the folder with the host's first project; these fill it when the
-            // projects arrived after that.
             // A folder dragged from Finder is where the chat starts; this Mac's folders only.
             .dropDestination(for: URL.self, isEnabled: connection?.host.isLocal == true && starting == nil) { urls, _ in
                 if let folder = urls.first(where: \.hasDirectoryPath) { choose(folder.path) }
             }
             .accessibilityDropPoint(.center, description: Text("Work in Directory"))
+            // `AppModel` seeds the folder with the host's first project; these fill it when the
+            // projects arrived after that.
             .onAppear { useFirstProjectIfUnset() }
             .onChange(of: connection?.projects.first?.cwd) { useFirstProjectIfUnset() }
             // Read again when the window comes back to the front, since the branch may have been
@@ -141,13 +135,13 @@ struct NewChatView: View {
     private func readGit() async {
         guard readsGit, appearsActive else { return }
         guard let folder = window.draftDirectory, let connection, connection.state == .connected else {
-            git = nil
+            branch = nil
             return
         }
         // The previous folder's chips stay until this one's answer, so they don't blink.
         let status = await connection.gitStatus(cwd: folder)
         guard !Task.isCancelled else { return }
-        git = status.map { FolderGit(isRepository: $0.isRepo, branch: $0.branchName) }
+        branch = status?.branchName
     }
 
     /// Where the chat works, above the composer where a chat's status strip goes, lined up with
@@ -158,7 +152,7 @@ struct NewChatView: View {
         HStack(spacing: 8) {
             folderMenu(connection)
                 .layoutPriority(-1)
-            if let branch = git?.branch {
+            if let branch {
                 branchChip(branch)
                 Toggle("New Worktree", isOn: $window.draftWorktree)
                     .toggleStyle(.switch)
@@ -199,7 +193,7 @@ struct NewChatView: View {
             .pickerStyle(.inline)
             .labelsHidden()
             Divider()
-            Button("Choose Directory…", action: chooseFolder)
+            Button("Choose Directory…") { choosingFolder = true }
         } label: {
             chip(Label(folder.map { ($0 as NSString).lastPathComponent } ?? "Choose Directory", systemImage: "folder"))
         }
@@ -224,7 +218,6 @@ struct NewChatView: View {
             .accessibilityIdentifier("newChat.branch")
     }
 
-
     private func choose(_ directory: String?) {
         window.draftDirectory = directory
         window.draftError = nil
@@ -234,50 +227,38 @@ struct NewChatView: View {
         guard window.draftDirectory == nil, window.app.appearance.newChatFolder == .recent else { return }
         window.draftDirectory = connection?.projects.first?.cwd
     }
-
-    private func chooseFolder() {
-        choosingFolder = true
-    }
-
-    private func start(_ connection: HostConnection, _ input: [UserInput]) async -> Bool {
-        await window.startDraftChat(input)
-    }
 }
 
 #if DEBUG
 /// A window on New Chat, its folder the sample host's most recent project.
 @MainActor
-private func newChatPreview(worktree: Bool = false, folder: String? = nil,
-                            git: NewChatView.FolderGit?) -> some View {
+private func newChatPreview(worktree: Bool = false, folder: String? = nil, branch: String?,
+                            starting: Bool = false) -> some View {
     let window = WindowModel.sample()
     window.draftWorktree = worktree
     if let folder { window.draftDirectory = folder }
+    if starting { window.starting = .sample() }
     return NavigationStack {
-        NewChatView(window: window, previewGit: git)
+        NewChatView(window: window, previewBranch: branch)
     }
     .frame(width: 900, height: 500)
 }
 
 #Preview("NewChatView (repository)") {
-    newChatPreview(git: .init(isRepository: true, branch: "main"))
+    newChatPreview(branch: "main")
 }
 
 #Preview("NewChatView (not a repository)") {
-    newChatPreview(folder: NSHomeDirectory() + "/Downloads", git: .init(isRepository: false))
+    newChatPreview(folder: NSHomeDirectory() + "/Downloads", branch: nil)
 }
 
 #Preview("NewChatView (new worktree)") {
-    newChatPreview(worktree: true, git: .init(isRepository: true, branch: "feature/new-chat-chips"))
+    newChatPreview(worktree: true, branch: "feature/new-chat-chips")
 }
 
 /// Sent, before the host has started the session: the prompt, and Starting session under it.
 #Preview("Starting session") {
-    let window = WindowModel.sample()
-    window.starting = .sample()
-    return NavigationStack {
-        NewChatView(window: window, previewGit: .init(isRepository: true, branch: "main"))
-    }
-    .frame(width: 900, height: 500)
+    newChatPreview(branch: "main", starting: true)
 }
 
 #Preview("NewChatView (not connected)") {

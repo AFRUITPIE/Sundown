@@ -68,40 +68,6 @@ extension Item.Notice {
     }
 }
 
-extension Item {
-    public static func sampleUserMessage(_ text: String, secondsAgo: Double, synthetic: Bool = false, origin: String? = nil) -> Item {
-        .userMessage(.sample(text, secondsAgo: secondsAgo, synthetic: synthetic, origin: origin))
-    }
-
-    public static func sampleAgentMessage(_ text: String, secondsAgo: Double, parentToolUseId: String? = nil) -> Item {
-        .agentMessage(.sample(text, secondsAgo: secondsAgo, parentToolUseId: parentToolUseId))
-    }
-
-    public static func sampleReasoning(_ text: String, secondsAgo: Double) -> Item {
-        .reasoning(.sample(text, secondsAgo: secondsAgo))
-    }
-
-    public static func sampleToolCall(
-        id: String = "tool-\(UUID().uuidString)",
-        name: String,
-        kind: ToolKind,
-        input: JSONValue,
-        status: ToolStatus = .completed,
-        outputText: String? = nil,
-        isError: Bool? = nil,
-        elapsedSeconds: Double? = nil,
-        parentToolUseId: String? = nil,
-        secondsAgo: Double
-    ) -> Item {
-        .toolCall(.sample(id: id, name: name, kind: kind, input: input, status: status, outputText: outputText,
-                          isError: isError, elapsedSeconds: elapsedSeconds, parentToolUseId: parentToolUseId, secondsAgo: secondsAgo))
-    }
-
-    public static func sampleNotice(_ text: String, kind: String = "informational", level: Item.Notice.Level? = nil, secondsAgo: Double) -> Item {
-        .notice(.sample(text, kind: kind, level: level, secondsAgo: secondsAgo))
-    }
-}
-
 // MARK: - Turn builders
 
 extension TurnResult {
@@ -252,7 +218,7 @@ extension ThreadModel {
         }
         for p in pending { thread.addPending(p) }
         for t in tasks { thread.apply(.taskEvent(t)) }
-        if let lastError { thread.setError(lastError) }
+        if let lastError { thread.lastError = lastError }
         return thread
     }
 
@@ -271,13 +237,13 @@ extension ThreadModel {
                                origin: "subagent", originName: "ls after \(n) s"))
         }
         let done = 5 - running
-        var items: [Item] = [.sampleUserMessage("Delegate running ls to 5 background agents that wait 1–5 seconds.", secondsAgo: 70)]
+        var items: [Item] = [.userMessage(.sample("Delegate running ls to 5 background agents that wait 1–5 seconds.", secondsAgo: 70))]
         items += (1...5).map(agent)
-        items.append(.sampleAgentMessage("Five background agents are running, each waiting 1 to 5 seconds before listing `/home/user`.", secondsAgo: 58))
+        items.append(.agentMessage(.sample("Five background agents are running, each waiting 1 to 5 seconds before listing `/home/user`.", secondsAgo: 58)))
         for n in stride(from: 1, through: done, by: 1) {
             items.append(report(n))
             items.append(.notice(.sample("Agent \"ls after \(n) s\" finished", kind: "taskNotification", secondsAgo: Double(49 - n * 5))))
-            items.append(.sampleAgentMessage("The \(n)-second agent returned `Sundown/` and `tether-server/`.", secondsAgo: Double(48 - n * 5)))
+            items.append(.agentMessage(.sample("The \(n)-second agent returned `Sundown/` and `tether-server/`.", secondsAgo: Double(48 - n * 5))))
         }
         return sample(title: "Background agents", status: status, items: items, turns: [.sample()], backgroundTasks: running)
     }
@@ -302,11 +268,11 @@ extension ThreadModel {
     /// the read itself failed; without one the connection's own state has to explain it.
     public static func sampleUnloaded(lastError: String? = nil) -> ThreadModel {
         let thread = sampleListed(title: "Deploy to production", cwd: "/Users/hayden/Code/tether-app", secondsAgo: 300)
-        if let lastError { thread.setError(lastError) }
+        if let lastError { thread.lastError = lastError }
         return thread
     }
 
-    /// A chat with subagents running and MCP servers configured, for the inspector's panes.
+    /// A chat with subagents running and MCP servers configured, for the Tasks tab and the MCP popover.
     public static func sampleWithTasks() -> ThreadModel {
         sample(
             title: "Audit the SwiftUI views",
@@ -332,50 +298,12 @@ extension ThreadModel {
     /// One of each kind of task, as the SDK reports them: a workflow, an agent that started an agent
     /// and a background command of its own, a monitor and an MCP tool, running and finished.
     public static func sampleWithTaskKinds() -> ThreadModel {
-        let root = "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownUI/"
-        func started(_ seq: Int, _ id: String, _ type: String, _ description: String, toolUseId: String? = nil,
-                     extra: [String: JSONValue] = [:]) -> TaskEventNotification {
-            var data: [String: JSONValue] = ["task_type": .string(type)]
-            for (k, v) in extra { data[k] = v }
-            return .init(threadId: "preview-thread", seq: seq, event: "started", taskId: id, toolUseId: toolUseId,
-                         description: description, status: "running", data: .object(data))
-        }
-        return sample(
+        sample(
             title: "Review the Markdown changes",
             status: .running,
-            items: [
-                .sampleUserMessage("Review the Markdown changes before I merge, and find which views read thread.items.", secondsAgo: 400),
-                WorkflowSample.items(now: preview(secondsAgo: 80), running: true)[1],
-                .sampleToolCall(id: "agent-1", name: "Task", kind: .subagent, input: [
-                    "subagent_type": "Explore", "description": "Find every SwiftUI view in SundownUI",
-                    "prompt": "Find every SwiftUI view in SundownUI and list which read `thread.items`.",
-                ], status: .running, secondsAgo: 100),
-                .sampleToolCall(name: "Grep", kind: .grep, input: ["pattern": "thread\\.items", "path": .string(root)],
-                                outputText: "Thread/TranscriptFind.swift:88\nThread/ThreadView.swift:41", parentToolUseId: "agent-1", secondsAgo: 95),
-                .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptFind.swift")],
-                                parentToolUseId: "agent-1", secondsAgo: 90),
-                .sampleAgentMessage("Most views read `rows`, not `items`. Two exceptions so far:\n\n- `TranscriptFind` builds its search text from items.\n- `ThreadView` reads the last item for the Thinking line.",
-                                    secondsAgo: 80, parentToolUseId: "agent-1"),
-                .sampleToolCall(id: "bg-call", name: "Bash", kind: .bash, input: [
-                    "command": "swift test --package-path SundownKit", "description": "Run the package tests", "run_in_background": true,
-                ], status: .completed, outputText: "Command running in background", parentToolUseId: "agent-1", secondsAgo: 70),
-                .sampleToolCall(id: "agent-2", name: "Task", kind: .subagent, input: [
-                    "description": "Check how TranscriptFind reads items",
-                    "prompt": "Read TranscriptFind.swift and say exactly how it builds its search text.",
-                ], status: .running, parentToolUseId: "agent-1", secondsAgo: 34),
-                .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptFind.swift")],
-                                status: .running, parentToolUseId: "agent-2", secondsAgo: 5),
-            ],
+            items: TaskTranscript.items(),
             turns: [.sample(status: .inProgress, secondsAgo: 400)],
-            tasks: [
-                started(2, "agent-task-1", "local_agent", "Find every SwiftUI view in SundownUI", toolUseId: "agent-1"),
-                started(3, "bg-tests", "local_bash", "swift test --package-path SundownKit", toolUseId: "bg-call"),
-                started(4, "agent-task-2", "local_agent", "Check how TranscriptFind reads items", toolUseId: "agent-2"),
-                started(5, "monitor-1", "monitor", "Watch CI on the pull request"),
-                .init(threadId: "preview-thread", seq: 6, event: "notification", taskId: "mcp-1",
-                      description: "Run all tests in Xcode", status: "completed", summary: "412 tests passed, 3 skipped.",
-                      data: ["task_type": "mcp_task", "usage": ["duration_ms": 243_000, "total_tokens": 0, "tool_uses": 1]]),
-            ] + WorkflowSample.events(threadID: "preview-thread", firstSeq: 10, now: preview(secondsAgo: 0), running: true))
+            tasks: TaskTranscript.events(threadID: "preview-thread", firstSeq: 1))
     }
 
     /// A /loop and a /goal as Claude Code 2.1.291 ran them (the loop-goal capture): the loop's job
@@ -390,9 +318,9 @@ extension ThreadModel {
                                synthetic: true, origin: "wakeup"))
         }
         func date(_ secondsAgo: Double, _ time: String) -> [Item] {
-            [.sampleToolCall(name: "Bash", kind: .bash, input: ["command": "date +%H:%M:%S", "description": "Get current time"],
-                             outputText: time, secondsAgo: secondsAgo),
-             .sampleAgentMessage("It’s \(time).", secondsAgo: secondsAgo - 1)]
+            [.toolCall(.sample(name: "Bash", kind: .bash, input: ["command": "date +%H:%M:%S", "description": "Get current time"],
+                             outputText: time, secondsAgo: secondsAgo)),
+             .agentMessage(.sample("It’s \(time).", secondsAgo: secondsAgo - 1))]
         }
         func goal(_ event: GoalEvent, reason: String? = nil, secondsAgo: Double) -> Item {
             .notice(.init(id: "goal-\(event.rawValue)", createdAt: preview(secondsAgo: secondsAgo), kind: "goal",
@@ -405,21 +333,21 @@ extension ThreadModel {
                             input: ["cron": "*/1 * * * *", "prompt": .string(prompt), "recurring": true], status: .completed,
                             outputText: "Scheduled recurring job 6db9ae9a (Every minute). Session-only (not written to disk, dies when Claude exits). Auto-expires after 7 days. Use CronDelete to cancel sooner.",
                             output: ["id": "6db9ae9a", "humanSchedule": "Every minute", "recurring": true, "durable": false])),
-            .sampleAgentMessage("It’s 22:12:02.\n\nScheduled job `6db9ae9a` to run every minute. It lasts until you close this session.", secondsAgo: 295),
+            .agentMessage(.sample("It’s 22:12:02.\n\nScheduled job `6db9ae9a` to run every minute. It lasts until you close this session.", secondsAgo: 295)),
             wakeup("wakeup-1", secondsAgo: 240),
         ] + date(238, "22:13:14") + [
             wakeup("wakeup-2", secondsAgo: 180),
         ] + date(178, "22:14:15") + [
             .userMessage(.init(id: "goal-prompt", createdAt: preview(secondsAgo: 120), content: [.text(.init(text: "/goal \(condition)"))])),
             goal(.set, secondsAgo: 120),
-            .sampleAgentMessage("Goal acknowledged: make notes.md free of spelling mistakes. Let me read it.", secondsAgo: 118),
-            .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": "/tmp/wf-scratch/notes.md"], secondsAgo: 117),
-            .sampleToolCall(name: "Write", kind: .fileWrite, input: ["file_path": "/tmp/wf-scratch/notes.md",
-                                                                     "content": "The quick brown fox jumps over the lazy dog.\n"], secondsAgo: 115),
+            .agentMessage(.sample("Goal acknowledged: make notes.md free of spelling mistakes. Let me read it.", secondsAgo: 118)),
+            .toolCall(.sample(name: "Read", kind: .fileRead, input: ["file_path": "/tmp/wf-scratch/notes.md"], secondsAgo: 117)),
+            .toolCall(.sample(name: "Write", kind: .fileWrite, input: ["file_path": "/tmp/wf-scratch/notes.md",
+                                                                     "content": "The quick brown fox jumps over the lazy dog.\n"], secondsAgo: 115)),
             goal(.notMet, reason: "Line 2 still says “tommorow”.", secondsAgo: 110),
-            .sampleToolCall(name: "Edit", kind: .fileEdit, input: ["file_path": "/tmp/wf-scratch/notes.md",
-                                                                   "old_string": "tommorow", "new_string": "tomorrow"], secondsAgo: 100),
-            .sampleAgentMessage("I fixed every misspelling in `notes.md` and read it again.", secondsAgo: 98),
+            .toolCall(.sample(name: "Edit", kind: .fileEdit, input: ["file_path": "/tmp/wf-scratch/notes.md",
+                                                                   "old_string": "tommorow", "new_string": "tomorrow"], secondsAgo: 100)),
+            .agentMessage(.sample("I fixed every misspelling in `notes.md` and read it again.", secondsAgo: 98)),
         ]
         if finished {
             items += [
@@ -427,7 +355,7 @@ extension ThreadModel {
                 .userMessage(.init(id: "stop-prompt", createdAt: preview(secondsAgo: 60), content: [.text(.init(text: "stop the loop"))])),
                 .toolCall(.init(id: "cron-delete", createdAt: preview(secondsAgo: 58), name: "CronDelete", kind: .schedule,
                                 input: ["id": "6db9ae9a"], status: .completed, outputText: "Cancelled job 6db9ae9a.", output: ["id": "6db9ae9a"])),
-                .sampleAgentMessage("The loop is stopped. I cancelled job `6db9ae9a`, so nothing else will fire.", secondsAgo: 56),
+                .agentMessage(.sample("The loop is stopped. I cancelled job `6db9ae9a`, so nothing else will fire.", secondsAgo: 56)),
             ]
         }
         let turns: [Turn] = [.sample(secondsAgo: 295), .sample(secondsAgo: 237), .sample(secondsAgo: 177),
@@ -474,9 +402,9 @@ extension ThreadModel {
         sample(
             title: "Explain ThreadModel's turn tracking",
             items: [
-                .sampleUserMessage("Can you explain how ThreadModel tracks turns and items, then add #Preview support for the SundownUI views?", secondsAgo: 130),
-                .sampleReasoning("Let me check ThreadModel.swift and the SundownUI view files before answering, so this matches what's actually there.", secondsAgo: 122),
-                .sampleAgentMessage(sampleIdleChatReply, secondsAgo: 108),
+                .userMessage(.sample("Can you explain how ThreadModel tracks turns and items, then add #Preview support for the SundownUI views?", secondsAgo: 130)),
+                .reasoning(.sample("Let me check ThreadModel.swift and the SundownUI view files before answering, so this matches what's actually there.", secondsAgo: 122)),
+                .agentMessage(.sample(sampleIdleChatReply, secondsAgo: 108)),
             ],
             turns: [.sample(secondsAgo: 108, result: .sample(durationSeconds: 22, totalCostUsd: 0.21, inputTokens: 18_400, outputTokens: 910))]
         )
@@ -488,10 +416,10 @@ extension ThreadModel {
             title: "Add previews for SundownUI",
             status: .running,
             items: [
-                .sampleUserMessage("Add #Preview blocks to ToolCallView and wire up sample data for a running bash call.", secondsAgo: 40),
-                .sampleAgentMessage("Sure — I'll add a bash call that's still running so the composer switches to Stop.", secondsAgo: 30),
-                .sampleToolCall(name: "Bash", kind: .bash, input: ["command": "swift build --target SundownKit", "description": "Build SundownKit"],
-                                status: .running, elapsedSeconds: 6, secondsAgo: 8),
+                .userMessage(.sample("Add #Preview blocks to ToolCallView and wire up sample data for a running bash call.", secondsAgo: 40)),
+                .agentMessage(.sample("Sure — I'll add a bash call that's still running so the composer switches to Stop.", secondsAgo: 30)),
+                .toolCall(.sample(name: "Bash", kind: .bash, input: ["command": "swift build --target SundownKit", "description": "Build SundownKit"],
+                                status: .running, elapsedSeconds: 6, secondsAgo: 8)),
             ],
             turns: [.sample(status: .inProgress, secondsAgo: 30)]
         )
@@ -503,37 +431,37 @@ extension ThreadModel {
         return sample(
             title: "Tool call gallery",
             items: [
-                .sampleUserMessage("Run the tests, fix the failing diff, and look up how the subagent and MCP calls render.", secondsAgo: 240),
-                .sampleToolCall(name: "Bash", kind: .bash,
+                .userMessage(.sample("Run the tests, fix the failing diff, and look up how the subagent and MCP calls render.", secondsAgo: 240)),
+                .toolCall(.sample(name: "Bash", kind: .bash,
                                 input: ["command": "swift test --filter ThreadModelTests", "description": "Run ThreadModel tests"],
-                                status: .completed, outputText: "Test Suite 'ThreadModelTests' passed.\nExecuted 6 tests, with 0 failures.", secondsAgo: 220),
-                .sampleToolCall(name: "Read", kind: .fileRead,
+                                status: .completed, outputText: "Test Suite 'ThreadModelTests' passed.\nExecuted 6 tests, with 0 failures.", secondsAgo: 220)),
+                .toolCall(.sample(name: "Read", kind: .fileRead,
                                 input: ["file_path": "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownKit/ThreadModel.swift"],
-                                status: .completed, secondsAgo: 210),
-                .sampleToolCall(name: "Grep", kind: .grep, input: ["pattern": "upsertTurn", "path": "SundownKit/Sources/SundownKit"],
-                                status: .completed, outputText: "ThreadModel.swift:145:    private func upsertTurn(_ t: Turn) {", secondsAgo: 200),
-                .sampleToolCall(name: "Edit", kind: .fileEdit, input: [
+                                status: .completed, secondsAgo: 210)),
+                .toolCall(.sample(name: "Grep", kind: .grep, input: ["pattern": "upsertTurn", "path": "SundownKit/Sources/SundownKit"],
+                                status: .completed, outputText: "ThreadModel.swift:145:    private func upsertTurn(_ t: Turn) {", secondsAgo: 200)),
+                .toolCall(.sample(name: "Edit", kind: .fileEdit, input: [
                     "file_path": "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownKit/ThreadModel.swift",
                     "old_string": "    public private(set) var lastSeq = 0",
                     "new_string": "    public private(set) var lastSeq = 0\n    public private(set) var isPreview = false",
-                ], status: .completed, secondsAgo: 190),
-                .sampleToolCall(name: "TodoWrite", kind: .todoWrite, input: ["todos": [
+                ], status: .completed, secondsAgo: 190)),
+                .toolCall(.sample(name: "TodoWrite", kind: .todoWrite, input: ["todos": [
                     ["content": "Add PreviewSupport.swift", "activeForm": "Adding PreviewSupport.swift", "status": "completed"],
                     ["content": "Add #Preview blocks to every SundownUI view", "activeForm": "Adding #Preview blocks", "status": "in_progress"],
                     ["content": "Render every preview in Xcode and fix issues", "activeForm": "Rendering previews", "status": "pending"],
-                ]], status: .completed, secondsAgo: 180),
-                .sampleToolCall(id: subagentId, name: "Task", kind: .subagent, input: [
+                ]], status: .completed, secondsAgo: 180)),
+                .toolCall(.sample(id: subagentId, name: "Task", kind: .subagent, input: [
                     "subagent_type": "Explore", "description": "Find every SwiftUI view in SundownUI",
                     "prompt": "Search SundownKit/Sources/SundownUI for every top-level View and report its file.",
-                ], status: .running, elapsedSeconds: 9, secondsAgo: 170),
-                .sampleToolCall(name: "Grep", kind: .grep, input: ["pattern": "struct .*View"], status: .completed,
-                                outputText: "12 matches across 8 files", parentToolUseId: subagentId, secondsAgo: 168),
-                .sampleAgentMessage("Found 12 views across 8 files: RootView, ThreadView, Composer, ItemViews, ToolCallView, PromptViews, Markdown, SettingsView.",
-                                    secondsAgo: 166, parentToolUseId: subagentId),
-                .sampleToolCall(name: "mcp__xcode__RenderPreview", kind: .mcp, input: ["file": "ItemViews.swift", "preview": "Bash tool call"],
-                                status: .completed, outputText: "Rendered 1 preview.", secondsAgo: 60),
-                .sampleToolCall(name: "NotebookRead", kind: .other, input: ["notebook_path": "/Users/hayden/Code/tether-app/notes.ipynb"],
-                                status: .denied, secondsAgo: 50),
+                ], status: .running, elapsedSeconds: 9, secondsAgo: 170)),
+                .toolCall(.sample(name: "Grep", kind: .grep, input: ["pattern": "struct .*View"], status: .completed,
+                                outputText: "12 matches across 8 files", parentToolUseId: subagentId, secondsAgo: 168)),
+                .agentMessage(.sample("Found 12 views across 8 files: RootView, ThreadView, Composer, ItemViews, ToolCallView, PromptViews, Markdown, SettingsView.",
+                                    secondsAgo: 166, parentToolUseId: subagentId)),
+                .toolCall(.sample(name: "mcp__xcode__RenderPreview", kind: .mcp, input: ["file": "ItemViews.swift", "preview": "Bash tool call"],
+                                status: .completed, outputText: "Rendered 1 preview.", secondsAgo: 60)),
+                .toolCall(.sample(name: "NotebookRead", kind: .other, input: ["notebook_path": "/Users/hayden/Code/tether-app/notes.ipynb"],
+                                status: .denied, secondsAgo: 50)),
             ],
             turns: [.sample(secondsAgo: 40)]
         )
@@ -550,46 +478,46 @@ extension ThreadModel {
             "new_string": "        .frame(minWidth: 740)",
         ]
         var first: [Item] = [
-            .sampleUserMessage("Resizing the window with the inspector open stutters. Can you find out why?", secondsAgo: 900),
-            .sampleAgentMessage("I'll look at how the split view sets its widths.", secondsAgo: 895),
+            .userMessage(.sample("Resizing the window with the inspector open stutters. Can you find out why?", secondsAgo: 900)),
+            .agentMessage(.sample("I'll look at how the split view sets its widths.", secondsAgo: 895)),
         ]
-        first.append(.sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "RootView.swift")],
-                                     status: .completed, secondsAgo: 890))
-        first.append(.sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Inspector/InspectorView.swift")],
-                                     status: .completed, secondsAgo: 885))
-        first.append(.sampleToolCall(name: "Grep", kind: .grep, input: ["pattern": "minWidth"], status: .completed,
-                                     outputText: "RootView.swift:44\nRootView.swift:67", secondsAgo: 880))
-        first.append(.sampleToolCall(name: "Bash", kind: .bash, input: build, status: .failed,
-                                     outputText: "error: cannot find 'inspectorMinimum' in scope\n  --> RootView.swift:67:21", secondsAgo: 860))
-        first.append(.sampleAgentMessage("The build caught a name I got wrong. Fixing it.", secondsAgo: 850))
-        first.append(.sampleToolCall(name: "Edit", kind: .fileEdit, input: edit, status: .completed, secondsAgo: 840))
-        first.append(.sampleToolCall(name: "Edit", kind: .fileEdit, input: [
+        first.append(.toolCall(.sample(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "RootView.swift")],
+                                     status: .completed, secondsAgo: 890)))
+        first.append(.toolCall(.sample(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Inspector/InspectorView.swift")],
+                                     status: .completed, secondsAgo: 885)))
+        first.append(.toolCall(.sample(name: "Grep", kind: .grep, input: ["pattern": "minWidth"], status: .completed,
+                                     outputText: "RootView.swift:44\nRootView.swift:67", secondsAgo: 880)))
+        first.append(.toolCall(.sample(name: "Bash", kind: .bash, input: build, status: .failed,
+                                     outputText: "error: cannot find 'inspectorMinimum' in scope\n  --> RootView.swift:67:21", secondsAgo: 860)))
+        first.append(.agentMessage(.sample("The build caught a name I got wrong. Fixing it.", secondsAgo: 850)))
+        first.append(.toolCall(.sample(name: "Edit", kind: .fileEdit, input: edit, status: .completed, secondsAgo: 840)))
+        first.append(.toolCall(.sample(name: "Edit", kind: .fileEdit, input: [
             "file_path": .string(root + "RootView.swift"),
             "old_string": "    private var minWidth: CGFloat? {\n        guard showInspector else { return 740 }\n        return inspectorSettled ? 1000 : nil\n    }",
             "new_string": "    private var minWidth: CGFloat? {\n        guard showInspector else { return InspectorWidth.windowMinimum }\n        return inspectorSettled ? InspectorWidth.windowMinimum + InspectorWidth.column : nil\n    }",
-        ], status: .completed, secondsAgo: 835))
-        first.append(.sampleToolCall(name: "Write", kind: .fileWrite, input: [
+        ], status: .completed, secondsAgo: 835)))
+        first.append(.toolCall(.sample(name: "Write", kind: .fileWrite, input: [
             "file_path": .string(root + "Inspector/InspectorWidth.swift"),
             "content": "import CoreGraphics\n\n/// The widths the window's minimum is made of.\nenum InspectorWidth {\n    static let windowMinimum: CGFloat = 740\n    static let column: CGFloat = 260\n}\n",
-        ], status: .completed, secondsAgo: 830))
-        first.append(.sampleToolCall(name: "MultiEdit", kind: .fileEdit, input: [
+        ], status: .completed, secondsAgo: 830)))
+        first.append(.toolCall(.sample(name: "MultiEdit", kind: .fileEdit, input: [
             "file_path": .string(root + "Inspector/InspectorView.swift"),
             "edits": [
                 ["old_string": ".inspectorColumnWidth(min: 260, ideal: 300, max: 420)",
                  "new_string": ".inspectorColumnWidth(min: InspectorWidth.column, ideal: 300, max: 420)"],
             ],
-        ], status: .completed, secondsAgo: 825))
+        ], status: .completed, secondsAgo: 825)))
         // Failed, so it changed nothing and isn't counted.
-        first.append(.sampleToolCall(name: "Edit", kind: .fileEdit, input: [
+        first.append(.toolCall(.sample(name: "Edit", kind: .fileEdit, input: [
             "file_path": .string(root + "Thread/TranscriptView.swift"), "old_string": "minWidth", "new_string": "minimumWidth",
-        ], status: .failed, outputText: "<tool_use_error>String to replace not found in file.</tool_use_error>", secondsAgo: 820))
-        first.append(.sampleToolCall(name: "Bash", kind: .bash, input: build, status: .completed, outputText: "Build complete!", secondsAgo: 800))
-        first.append(.sampleAgentMessage("Opening the inspector raised the window's minimum width from 740 to 1000 halfway through its animation, so AppKit resized the window while the split view was still laying out. The minimum now stays at 740.", secondsAgo: 690))
-        var second: [Item] = [.sampleUserMessage("Does anything else change the width while it opens?", secondsAgo: 300)]
-        second.append(.sampleToolCall(name: "Grep", kind: .grep, input: ["pattern": "inspectorColumnWidth"], status: .completed, secondsAgo: 295))
-        second.append(.sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptView.swift")],
-                                      status: .completed, secondsAgo: 290))
-        second.append(.sampleAgentMessage("Only the column width itself, which is fixed at 260. The transcript re-measures its rows when its width changes, but it keeps its place.", secondsAgo: 270))
+        ], status: .failed, outputText: "<tool_use_error>String to replace not found in file.</tool_use_error>", secondsAgo: 820)))
+        first.append(.toolCall(.sample(name: "Bash", kind: .bash, input: build, status: .completed, outputText: "Build complete!", secondsAgo: 800)))
+        first.append(.agentMessage(.sample("Opening the inspector raised the window's minimum width from 740 to 1000 halfway through its animation, so AppKit resized the window while the split view was still laying out. The minimum now stays at 740.", secondsAgo: 690)))
+        var second: [Item] = [.userMessage(.sample("Does anything else change the width while it opens?", secondsAgo: 300))]
+        second.append(.toolCall(.sample(name: "Grep", kind: .grep, input: ["pattern": "inspectorColumnWidth"], status: .completed, secondsAgo: 295)))
+        second.append(.toolCall(.sample(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptView.swift")],
+                                      status: .completed, secondsAgo: 290)))
+        second.append(.agentMessage(.sample("Only the column width itself, which is fixed at 260. The transcript re-measures its rows when its width changes, but it keeps its place.", secondsAgo: 270)))
         return sample(title: "Smooth out the inspector resize", items: first + second,
                       turns: [.sample(secondsAgo: 690), .sample(secondsAgo: 270)])
     }
@@ -601,23 +529,23 @@ extension ThreadModel {
         let day: Double = 86_400
         let root = "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownUI/"
         let items: [Item] = [
-            .sampleUserMessage("Sketch how the transcript could mark where a chat picks up after a break.", secondsAgo: 8 * day),
-            .sampleAgentMessage("Messages puts the date above the first message after an hour's gap, and above every day change. The same rule suits a transcript.", secondsAgo: 8 * day - 40),
-            .sampleUserMessage("Let's do it. Start with the decision, and test it.", secondsAgo: 3 * day),
-            .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptView.swift")],
-                            status: .completed, secondsAgo: 3 * day - 20),
-            .sampleToolCall(name: "Edit", kind: .fileEdit, input: [
+            .userMessage(.sample("Sketch how the transcript could mark where a chat picks up after a break.", secondsAgo: 8 * day)),
+            .agentMessage(.sample("Messages puts the date above the first message after an hour's gap, and above every day change. The same rule suits a transcript.", secondsAgo: 8 * day - 40)),
+            .userMessage(.sample("Let's do it. Start with the decision, and test it.", secondsAgo: 3 * day)),
+            .toolCall(.sample(name: "Read", kind: .fileRead, input: ["file_path": .string(root + "Thread/TranscriptView.swift")],
+                            status: .completed, secondsAgo: 3 * day - 20)),
+            .toolCall(.sample(name: "Edit", kind: .fileEdit, input: [
                 "file_path": .string(root + "Thread/TranscriptView.swift"),
                 "old_string": "TranscriptRowView(row: row, thread: thread)",
                 "new_string": "TranscriptRowView(row: row, thread: thread)\n    // Dates come in as rows of their own.",
-            ], status: .completed, secondsAgo: 3 * day - 30),
-            .sampleAgentMessage("The decision is a pure function over the prompts' times, with tests for a day change and for an hour's gap.", secondsAgo: 3 * day - 60),
-            .sampleUserMessage("Does it use the reader's locale?", secondsAgo: day),
-            .sampleAgentMessage("Yes: the day and time come from the locale's own formats, and Today and Yesterday from its relative names.", secondsAgo: day - 20),
-            .sampleUserMessage("Ship it.", secondsAgo: 3 * 3_600),
-            .sampleAgentMessage("Committed.", secondsAgo: 3 * 3_600 - 30),
-            .sampleUserMessage("One more thing: does a follow-up a few minutes later get one too?", secondsAgo: 3 * 3_600 - 300),
-            .sampleAgentMessage("No. It's the same stretch of the chat, so it goes on without a date.", secondsAgo: 3 * 3_600 - 320),
+            ], status: .completed, secondsAgo: 3 * day - 30)),
+            .agentMessage(.sample("The decision is a pure function over the prompts' times, with tests for a day change and for an hour's gap.", secondsAgo: 3 * day - 60)),
+            .userMessage(.sample("Does it use the reader's locale?", secondsAgo: day)),
+            .agentMessage(.sample("Yes: the day and time come from the locale's own formats, and Today and Yesterday from its relative names.", secondsAgo: day - 20)),
+            .userMessage(.sample("Ship it.", secondsAgo: 3 * 3_600)),
+            .agentMessage(.sample("Committed.", secondsAgo: 3 * 3_600 - 30)),
+            .userMessage(.sample("One more thing: does a follow-up a few minutes later get one too?", secondsAgo: 3 * 3_600 - 300)),
+            .agentMessage(.sample("No. It's the same stretch of the chat, so it goes on without a date.", secondsAgo: 3 * 3_600 - 320)),
         ]
         return sample(title: "Date separators", items: items,
                       turns: [.sample(secondsAgo: 8 * day - 40), .sample(secondsAgo: 3 * day - 60), .sample(secondsAgo: day - 20),
@@ -627,52 +555,28 @@ extension ThreadModel {
     /// A thread waiting on a permission decision — `pending.first` replaces the composer.
     public static func samplePendingPermission() -> ThreadModel {
         sample(title: "Clean the build directory", status: .requiresAction, items: [
-            .sampleUserMessage("Can you clean the build directory before we test the release build?", secondsAgo: 20),
+            .userMessage(.sample("Can you clean the build directory before we test the release build?", secondsAgo: 20)),
         ], pending: [.samplePermission()])
-    }
-
-    /// A thread waiting on an AskUserQuestion answer.
-    public static func samplePendingQuestion() -> ThreadModel {
-        sample(title: "New Xcode target", status: .requiresAction, items: [
-            .sampleUserMessage("Add a new target for the CLI.", secondsAgo: 20),
-        ], pending: [.sampleQuestion()])
     }
 
     /// A thread waiting on plan approval (plan mode).
     public static func samplePendingPlan() -> ThreadModel {
         sample(title: "Previews for SundownUI", status: .requiresAction, permissionMode: .plan, items: [
-            .sampleUserMessage("Plan out how to add previews before touching any code.", secondsAgo: 60),
+            .userMessage(.sample("Plan out how to add previews before touching any code.", secondsAgo: 60)),
         ], pending: [.samplePlan()])
-    }
-
-    /// A thread waiting on an MCP elicitation.
-    public static func samplePendingElicitation() -> ThreadModel {
-        sample(title: "Deploy", status: .requiresAction, items: [
-            .sampleUserMessage("Deploy the latest build.", secondsAgo: 20),
-        ], pending: [.sampleElicitation()])
     }
 
     /// A turn that failed, with `thread.lastError` also set — exercises TurnOutcome and StatusStrip.
     public static func sampleErrorTurn() -> ThreadModel {
         sample(title: "Deploy to production", status: .error, items: [
-            .sampleUserMessage("Deploy the server changes to production.", secondsAgo: 90),
-            .sampleToolCall(name: "Bash", kind: .bash, input: ["command": "./scripts/deploy.sh production"], status: .failed,
-                            outputText: "Error: SSH connection to deploy-01 timed out", isError: true, secondsAgo: 70),
+            .userMessage(.sample("Deploy the server changes to production.", secondsAgo: 90)),
+            .toolCall(.sample(name: "Bash", kind: .bash, input: ["command": "./scripts/deploy.sh production"], status: .failed,
+                            outputText: "Error: SSH connection to deploy-01 timed out", isError: true, secondsAgo: 70)),
         ], turns: [
             .sample(status: .failed, secondsAgo: 65,
                     result: .sample(subtype: "error_during_execution", isError: true,
                                     errors: ["SSH connection to deploy-01 timed out"], durationSeconds: 25, totalCostUsd: 0.09)),
         ], lastError: "Not connected")
-    }
-
-    /// A turn the user interrupted mid-stream.
-    public static func sampleInterruptedTurn() -> ThreadModel {
-        sample(title: "Refactor HostConnection", status: .interrupted, items: [
-            .sampleUserMessage("Refactor HostConnection to split the reconnect logic out.", secondsAgo: 50),
-            .sampleAgentMessage("Starting by pulling scheduleReconnect into its own type…", secondsAgo: 40),
-        ], turns: [
-            .sample(status: .interrupted, secondsAgo: 38, result: .sample(durationSeconds: 12, totalCostUsd: 0.03)),
-        ])
     }
 
     /// A finished chat whose plan limit is `status` (`allowed_warning`, `rejected`), resetting
@@ -690,7 +594,7 @@ extension ThreadModel {
     /// A running turn stuck retrying the API — exercises StatusStrip's retry banner.
     public static func sampleApiRetry() -> ThreadModel {
         let thread = sample(title: "Long-running migration", status: .running, items: [
-            .sampleUserMessage("Keep going with the migration script.", secondsAgo: 20),
+            .userMessage(.sample("Keep going with the migration script.", secondsAgo: 20)),
         ], turns: [.sample(status: .inProgress, secondsAgo: 15)])
         thread.apply(.threadApiRetry(.init(threadId: thread.id, seq: 1, attempt: 2, maxRetries: 5, retryDelayMs: 4000, errorStatus: 529, error: "Overloaded")))
         return thread

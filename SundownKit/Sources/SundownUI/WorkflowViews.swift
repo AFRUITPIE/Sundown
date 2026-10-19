@@ -12,20 +12,14 @@ struct WorkflowCallView: View {
     /// The thread's run for the call (`ThreadModel.workflowRuns`). Nil only for a call the thread
     /// doesn't hold, which reads as its call says, never building a run (or reading its script) here.
     let run: WorkflowRun?
-    @Environment(\.inspectSubagent) private var inspectSubagent
-    @Environment(\.stopTask) private var stopTask
+    @Environment(\.windowRef) private var windowRef
 
     private var isRunning: Bool { run?.isRunning ?? (call.status == .running || call.status == .pending) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Button { inspectSubagent(call.id) } label: {
-                HStack(spacing: 6) {
-                    header
-                    DisclosureIndicator(expanded: false)
-                }
-                .padding(.vertical, 4)
-                .contentShape(Rectangle())
+            Button { windowRef.window?.inspectSubagent(call.id) } label: {
+                DisclosureRowLabel(expanded: false) { header }
             }
             .help(run?.description ?? "Show in Tasks")
             .buttonStyle(.plain)
@@ -36,14 +30,7 @@ struct WorkflowCallView: View {
             .accessibilityHint("Shows the workflow in Tasks")
             .accessibilityIdentifier("transcript.toolCall")
             .contextMenu { menu }
-            if let caption {
-                Text(caption)
-                    .scaledFont(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
-                    .monospacedDigit()
-                    .textSelection(.enabled)
-            }
+            if let caption { RowNote(caption).monospacedDigit() }
         }
     }
 
@@ -61,8 +48,8 @@ struct WorkflowCallView: View {
                     Text(object).lineLimit(1).truncationMode(.middle)
                 }
                 switch run?.status {
-                case .failed: Image(systemName: "exclamationmark.circle").foregroundStyle(.tertiary).scaledFont(.caption)
-                case .stopped: Image(systemName: "stop.circle").foregroundStyle(.tertiary).scaledFont(.caption)
+                case .failed: StatusGlyph("exclamationmark.circle")
+                case .stopped: StatusGlyph("stop.circle")
                 default: EmptyView()
                 }
             }
@@ -97,13 +84,13 @@ struct WorkflowCallView: View {
     /// Also the workflow's detail's controls in Tasks (Copy Script, Stop): a menu is never the only
     /// way to a command.
     @ViewBuilder private var menu: some View {
-        Button("Show in Tasks") { inspectSubagent(call.id) }
+        Button("Show in Tasks") { windowRef.window?.inspectSubagent(call.id) }
         if let script = call.workflowScript {
             Button("Copy Script") { Clipboard.copy(script) }
         }
         if let run, run.isRunning, let taskId = run.taskId {
             Divider()
-            Button("Stop Workflow") { stopTask(taskId) }
+            Button("Stop Workflow") { windowRef.window?.stopTask(taskId) }
         }
     }
 }
@@ -314,21 +301,13 @@ struct WorkflowAgentTranscript: View {
 }
 
 #if DEBUG
-#Preview("Workflow row (running)") {
-    let thread = ThreadModel.sampleWorkflow(running: true)
-    let call = thread.call("workflow-call")!
-    VStack(alignment: .leading) {
-        WorkflowCallView(call: call, run: thread.workflowRuns[call.id])
-    }
-    .padding()
-    .frame(width: 560)
-}
-
-#Preview("Workflow row (finished)") {
-    let thread = ThreadModel.sampleWorkflow(running: false)
-    let call = thread.call("workflow-call")!
-    VStack(alignment: .leading) {
-        WorkflowCallView(call: call, run: thread.workflowRuns[call.id])
+#Preview("Workflow rows (running, finished)") {
+    VStack(alignment: .leading, spacing: 12) {
+        ForEach([true, false], id: \.self) { running in
+            let thread = ThreadModel.sampleWorkflow(running: running)
+            let call = thread.call("workflow-call")!
+            WorkflowCallView(call: call, run: thread.workflowRuns[call.id])
+        }
     }
     .padding()
     .frame(width: 560)

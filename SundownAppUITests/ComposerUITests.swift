@@ -87,7 +87,6 @@ final class ComposerUITests: SundownUITestCase {
         input.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(text("Scripted response.").appears(timeout: 10), "Return didn't send")
         // Sending must finish: the new message's actions become usable after the spring settles.
-        let copy = app.buttons["message.copy.fixture-sent-1"]
         let message = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR value == %@", prompt, prompt)).firstMatch
         XCTAssertTrue(message.appears(timeout: 5), "the sent prompt isn't in the transcript")
         // The actions show while the pointer is over the message.

@@ -14,11 +14,11 @@ struct SubagentInspectorTests {
 
         #expect(entry?.call?.kind == .subagent)
         #expect(thread.children(of: "tool-subagent-explore").count == 2)
-        #expect(thread.rows.contains { row in
+        #expect(foldTranscriptRows(thread.topLevelItems).contains { row in
             if case .item(.toolCall(let call)) = row { return call.id == "tool-subagent-explore" }
             return false
         })
-        #expect(!thread.rows.contains { row in
+        #expect(!foldTranscriptRows(thread.topLevelItems).contains { row in
             thread.children(of: "tool-subagent-explore").contains { $0.id == row.id }
         })
     }

@@ -87,7 +87,6 @@ struct WorkflowCaptureTests {
         #expect(run.agents.map(\.label) == ["list-files", "review:math.swift", "review:README.md", "review:notes.md", "verify-1", "verify-2"])
         #expect(run.agents.map(\.phaseTitle) == ["Scan", "Review", "Review", "Review", "Verify", "Verify"])
         #expect(run.agents.allSatisfy { $0.state == .done })
-        #expect(run.finishedCaption == "6 agents · 32s")
         #expect(run.usageText == "6 agents · 77,475 tokens · 16 tool uses · 32s")
         #expect(thread.taskEntries.first?.workflow == run)
     }

@@ -52,13 +52,13 @@ struct BottomBar: View {
 /// suggestions: each opens New Chat with its prompt as a draft, to read before sending.
 struct SuggestedTasksBar: View {
     let thread: ThreadModel
-    @Environment(\.startSuggestedTask) private var start
+    @Environment(\.windowRef) private var windowRef
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(thread.suggestedTasks) { task in
                 HStack(spacing: 4) {
-                    Button { start(task, thread) } label: {
+                    Button { windowRef.window?.startSuggestedTask(task, from: thread) } label: {
                         Label(task.title, systemImage: "square.and.pencil").lineLimit(1)
                     }
                     .buttonStyle(.glass)
@@ -76,21 +76,6 @@ struct SuggestedTasksBar: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
-}
-
-/// Starts a suggested task as a new chat in the window. Holds the window, like the others.
-struct StartSuggestedTaskAction: Equatable {
-    weak var window: WindowModel?
-
-    @MainActor func callAsFunction(_ task: SuggestedTask, _ thread: ThreadModel) {
-        window?.startSuggestedTask(task, from: thread)
-    }
-
-    static func == (a: Self, b: Self) -> Bool { a.window === b.window }
-}
-
-extension EnvironmentValues {
-    @Entry var startSuggestedTask = StartSuggestedTaskAction()
 }
 
 /// What's going on that the transcript doesn't say: an error, a retry, compacting, a plan limit
@@ -175,16 +160,6 @@ struct AuthStatusView: View {
         BottomBar(thread: thread, connection: connection)
     }
     .frame(width: 900, height: 260)
-}
-
-#Preview("BottomBar (pending request)") {
-    let connection = HostConnection.sample()
-    let thread = ThreadModel.samplePendingPermission()
-    VStack {
-        Spacer()
-        BottomBar(thread: thread, connection: connection)
-    }
-    .frame(width: 900, height: 380)
 }
 
 /// Issue #3: the draft has to still be there under the prompt, with Send disabled until it is answered.

@@ -85,7 +85,7 @@ struct TaskTreeTests {
                 ["index": 3, "label": "review", "phaseIndex": 2, "state": "progress"],
             ],
         ]
-        let run = try #require(WorkflowRun(toolUseId: "wf", snapshot: snapshot))
+        let run = WorkflowRun(standingInFor: "wf", loaded: snapshot)
         let entry = InspectorTaskEntry(id: "wf", call: nil, task: nil, isBackgrounded: false, workflow: run)
         let workflow = try #require(TaskNode.tree([entry], call: { _ in nil }).first)
         #expect(workflow.children.map(\.title) == ["loose", "scan", "review"])

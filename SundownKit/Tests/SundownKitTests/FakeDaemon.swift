@@ -11,9 +11,7 @@ final class FakeDaemon: Transport, @unchecked Sendable {
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
 
     init() {
-        var continuation: AsyncThrowingStream<Data, any Error>.Continuation!
-        stream = AsyncThrowingStream { continuation = $0 }
-        self.continuation = continuation
+        (stream, continuation) = AsyncThrowingStream.makeStream()
     }
 
     /// A connection to this daemon.
@@ -40,6 +38,49 @@ final class FakeDaemon: Transport, @unchecked Sendable {
     func emit(_ method: String, _ params: JSONValue) {
         continuation.yield(try! JSONEncoder().encode(["method": .string(method), "params": params] as JSONValue))
     }
+}
+
+/// One answer to a call: a result, or the error code and message of a failure.
+enum ScriptedReply: Sendable {
+    case result(JSONValue)
+    case error(code: Int, message: String)
+}
+
+/// A transport that answers each call with what `responder` says for its method and params, and
+/// sends notifications (or drops the connection) when told.
+final class ScriptedTransport: Transport, @unchecked Sendable {
+    typealias Responder = @Sendable (_ method: String, _ params: JSONValue) async -> ScriptedReply
+
+    private let responder: Responder
+    private let stream: AsyncThrowingStream<Data, any Error>
+    private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
+
+    init(_ responder: @escaping Responder) {
+        self.responder = responder
+        (stream, continuation) = AsyncThrowingStream.makeStream()
+    }
+
+    func lines() -> AsyncThrowingStream<Data, any Error> { stream }
+
+    func send(_ line: Data) async throws {
+        let message = try JSONDecoder().decode(JSONValue.self, from: line)
+        guard let id = message["id"], let method = message["method"]?.stringValue else { return }
+        let response: JSONValue = switch await responder(method, message["params"] ?? [:]) {
+        case .result(let result): ["id": id, "result": result]
+        case .error(let code, let text): ["id": id, "error": ["code": .number(Double(code)), "message": .string(text)]]
+        }
+        continuation.yield(try JSONEncoder().encode(response))
+    }
+
+    func close() async { continuation.finish() }
+
+    func emit(method: String, params: JSONValue) {
+        let notification: JSONValue = ["method": .string(method), "params": params]
+        continuation.yield(try! JSONEncoder().encode(notification))
+    }
+
+    /// The connection drops, as when the daemon or the network goes away.
+    func drop() { continuation.finish(throwing: TransportError.launchFailed("Dropped")) }
 }
 
 actor DaemonScript {

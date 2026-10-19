@@ -3,7 +3,7 @@ import SundownKit
 import TetherProtocol
 
 /// One chat: its transcript, with the controls pinned to the bottom edge. Nothing else — the
-/// window's title, subtitle, toolbar and inspector belong to the shell.
+/// window's title, subtitle and toolbar belong to the shell.
 struct ThreadView: View {
     let thread: ThreadModel
     let connection: HostConnection
@@ -32,14 +32,13 @@ struct ThreadView: View {
 
 #if DEBUG
 #Preview("Idle chat") {
-    let connection = HostConnection.sample()
     NavigationStack {
-        ThreadView(thread: .sampleIdleChat(), connection: connection)
+        ThreadView(thread: .sampleIdleChat(), connection: .sample())
     }
     .frame(width: 900, height: 700)
 }
 
-/// View ▸ Tool Calls ▸ Every Call, and code that doesn't wrap.
+/// View ▸ Tool Calls ▸ Every Call.
 #Preview("Idle chat (every call)") {
     var appearance = Appearance()
     appearance.toolCalls = .everyCall
@@ -52,31 +51,22 @@ struct ThreadView: View {
 
 /// View ▸ Tool Calls, each way: runs summarized, each finished turn's work behind
 /// one line, and every call on its own.
-#Preview("Work (summarized)") {
-    NavigationStack {
-        ThreadView(thread: .sampleWorkChat(), connection: .sample())
-    }
-    .frame(width: 900, height: 800)
-}
+#Preview("Work (summarized)") { WorkChatPreview(toolCalls: .summarized) }
+#Preview("Work (worked for)") { WorkChatPreview(toolCalls: .workedFor) }
+#Preview("Work (every call)") { WorkChatPreview(toolCalls: .everyCall) }
 
-#Preview("Work (worked for)") {
-    var appearance = Appearance()
-    appearance.toolCalls = .workedFor
-    return NavigationStack {
-        ThreadView(thread: .sampleWorkChat(), connection: .sample())
-    }
-    .environment(\.appearance, appearance)
-    .frame(width: 900, height: 800)
-}
+private struct WorkChatPreview: View {
+    let toolCalls: Appearance.ToolCallDisplay
 
-#Preview("Work (every call)") {
-    var appearance = Appearance()
-    appearance.toolCalls = .everyCall
-    return NavigationStack {
-        ThreadView(thread: .sampleWorkChat(), connection: .sample())
+    var body: some View {
+        var appearance = Appearance()
+        appearance.toolCalls = toolCalls
+        return NavigationStack {
+            ThreadView(thread: .sampleWorkChat(), connection: .sample())
+        }
+        .environment(\.appearance, appearance)
+        .frame(width: 900, height: 800)
     }
-    .environment(\.appearance, appearance)
-    .frame(width: 900, height: 800)
 }
 
 #Preview("Running turn (code not wrapped)") {
@@ -97,19 +87,17 @@ struct ThreadView: View {
 }
 
 #Preview("Running turn") {
-    let connection = HostConnection.sample()
     NavigationStack {
-        ThreadView(thread: .sampleRunningTurn(), connection: connection)
+        ThreadView(thread: .sampleRunningTurn(), connection: .sample())
     }
     .frame(width: 900, height: 700)
 }
 
 #Preview("Thinking (nothing to show yet)") {
-    let connection = HostConnection.sample()
     NavigationStack {
         ThreadView(thread: .sample(status: .running, items: [
-            .sampleUserMessage("Why does opening a chat with the inspector open throw a constraints exception?", secondsAgo: 3),
-        ]), connection: connection)
+            .userMessage(.sample("Why does opening a chat with the inspector open throw a constraints exception?", secondsAgo: 3)),
+        ]), connection: .sample())
     }
     .frame(width: 900, height: 400)
 }
@@ -117,12 +105,12 @@ struct ThreadView: View {
 /// A background command settling between calls: one run of calls, the notice after it.
 #Preview("Task settles mid-run") {
     let items: [Item] = [
-        .sampleUserMessage("Run the tests in the background and keep going.", secondsAgo: 60),
-        .sampleToolCall(name: "Bash", kind: .bash, input: ["command": .string("swift test")], status: .completed, secondsAgo: 55),
-        .sampleToolCall(name: "Read", kind: .fileRead, input: ["file_path": .string("/tmp/App.swift")], status: .completed, secondsAgo: 50),
+        .userMessage(.sample("Run the tests in the background and keep going.", secondsAgo: 60)),
+        .toolCall(.sample(name: "Bash", kind: .bash, input: ["command": .string("swift test")], status: .completed, secondsAgo: 55)),
+        .toolCall(.sample(name: "Read", kind: .fileRead, input: ["file_path": .string("/tmp/App.swift")], status: .completed, secondsAgo: 50)),
         .notice(.sample("Background command \"Run the package tests\" completed (exit code 0)", kind: "taskNotification", secondsAgo: 45)),
-        .sampleToolCall(name: "Bash", kind: .bash, input: ["command": .string("git status")], status: .completed, secondsAgo: 40),
-        .sampleAgentMessage("The tests pass and the tree is clean.", secondsAgo: 30),
+        .toolCall(.sample(name: "Bash", kind: .bash, input: ["command": .string("git status")], status: .completed, secondsAgo: 40)),
+        .agentMessage(.sample("The tests pass and the tree is clean.", secondsAgo: 30)),
     ]
     NavigationStack {
         ThreadView(thread: .sample(title: "Task settles mid-run", items: items, turns: [.sample()]), connection: .sample())
@@ -150,12 +138,12 @@ struct ThreadView: View {
 /// in the chat right after the call, are the call's (opened), not a message from Claude Code.
 #Preview("Skill") {
     let items: [Item] = [
-        .sampleUserMessage("Run the Sundown demo skill.", secondsAgo: 30),
+        .userMessage(.sample("Run the Sundown demo skill.", secondsAgo: 30)),
         .toolCall(.sample(name: "Skill", kind: .skill, input: ["skill": "sundown-demo"], status: .completed,
                           outputText: "Launching skill: sundown-demo", secondsAgo: 28)),
-        .sampleUserMessage("Base directory for this skill: /tmp/skilldemo/.claude/skills/sundown-demo\n\n# Sundown demo skill\n\nWhen this skill is used, reply with exactly one line.",
-                           secondsAgo: 28, synthetic: true),
-        .sampleAgentMessage("The Sundown demo skill ran.", secondsAgo: 26),
+        .userMessage(.sample("Base directory for this skill: /tmp/skilldemo/.claude/skills/sundown-demo\n\n# Sundown demo skill\n\nWhen this skill is used, reply with exactly one line.",
+                           secondsAgo: 28, synthetic: true)),
+        .agentMessage(.sample("The Sundown demo skill ran.", secondsAgo: 26)),
     ]
     NavigationStack {
         ThreadView(thread: .sample(title: "Skill", items: items, turns: [.sample()]), connection: .sample())
@@ -173,7 +161,7 @@ struct ThreadView: View {
     }
     let command = Item.toolCall(.sample(id: "wc", name: "Bash", kind: .bash, input: ["command": "wc -l poem.md"],
                                         status: commandDone ? .completed : .running, secondsAgo: 2))
-    let items: [Item] = [.sampleUserMessage("Delegate ls to 3 background agents, then count the poem's lines.", secondsAgo: 30)] + agents + [command]
+    let items: [Item] = [.userMessage(.sample("Delegate ls to 3 background agents, then count the poem's lines.", secondsAgo: 30))] + agents + [command]
     VStack(spacing: 0) {
         Toggle("Command done", isOn: $commandDone).padding(8)
         NavigationStack {
@@ -186,9 +174,8 @@ struct ThreadView: View {
 }
 
 #Preview("Pending permission") {
-    let connection = HostConnection.sample()
     NavigationStack {
-        ThreadView(thread: .samplePendingPermission(), connection: connection)
+        ThreadView(thread: .samplePendingPermission(), connection: .sample())
     }
     .frame(width: 900, height: 700)
 }
@@ -209,7 +196,7 @@ struct ThreadView: View {
     .frame(width: 520, height: 348)
 }
 
-// The transcript alone; the inspector has its own previews in `Inspector/`.
+// The transcript alone; the Tasks and Diff tabs and the toolbar's popovers have their own previews in `Panes/`.
 #Preview("Tool call gallery") {
     NavigationStack {
         ThreadView(thread: .sampleToolCalls(), connection: .sample())

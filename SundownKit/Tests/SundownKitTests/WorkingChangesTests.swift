@@ -10,7 +10,7 @@ struct WorkingChangesTests {
     @Test func newFilesAreReadEightAtATimeAndCapped() async throws {
         let script = GitScript(untracked: WorkingChanges.maxUntrackedFiles + 50)
         let connection = HostConnection(host: HostConfig(name: "Git fixture", kind: .ssh(destination: "git-box")),
-                                        transportProvider: { _ in GitTransport(script: script) })
+                                        transportProvider: { _ in ScriptedTransport { method, _ in await script.reply(method: method) } })
         await connection.connect()
         let changes = try #require(try await connection.workingChanges(cwd: "/work/project"))
         #expect(changes.files.count == WorkingChanges.maxUntrackedFiles)
@@ -42,10 +42,22 @@ private actor GitScript {
 
     func endRead() { reading -= 1 }
 
-    func reply(method: String) -> JSONValue? {
+    func reply(method: String) async -> ScriptedReply {
+        if method == "fs/read" {
+            // Answered a moment later, as a host does, so reads can overlap.
+            startRead()
+            try? await Task.sleep(for: .milliseconds(2))
+            endRead()
+            return .result(["content": "one line\n", "encoding": "utf-8", "truncated": false])
+        }
+        guard let result = result(method: method) else { return .error(code: -32601, message: "Not implemented in fixture") }
+        return .result(result)
+    }
+
+    private func result(method: String) -> JSONValue? {
         switch method {
         case "initialize":
-            return json(InitializeResult(
+            return encoded(InitializeResult(
                 serverInfo: .init(name: "tether-server", version: "test"),
                 protocolVersion: tetherProtocolVersion,
                 host: .init(hostname: "git-box", platform: "linux", arch: "arm64", home: "/home/dev", pid: 1, mode: .daemon),
@@ -61,48 +73,4 @@ private actor GitScript {
         default: return nil
         }
     }
-}
-
-private final class GitTransport: Transport, @unchecked Sendable {
-    private let script: GitScript
-    private let stream: AsyncThrowingStream<Data, any Error>
-    private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
-
-    init(script: GitScript) {
-        self.script = script
-        var continuation: AsyncThrowingStream<Data, any Error>.Continuation!
-        stream = AsyncThrowingStream { continuation = $0 }
-        self.continuation = continuation
-    }
-
-    func lines() -> AsyncThrowingStream<Data, any Error> { stream }
-
-    func send(_ line: Data) async throws {
-        let message = try JSONDecoder().decode(JSONValue.self, from: line)
-        guard let id = message["id"], let method = message["method"]?.stringValue else { return }
-        let continuation = continuation, script = script
-        if method == "fs/read" {
-            // Answered a moment later, as a host does, so reads can overlap.
-            await script.startRead()
-            Task {
-                try? await Task.sleep(for: .milliseconds(2))
-                await script.endRead()
-                let response: JSONValue = ["id": id, "result": ["content": "one line\n", "encoding": "utf-8", "truncated": false]]
-                if let line = try? JSONEncoder().encode(response) { continuation.yield(line) }
-            }
-            return
-        }
-        let response: JSONValue = if let result = await script.reply(method: method) {
-            ["id": id, "result": result]
-        } else {
-            ["id": id, "error": ["code": -32601, "message": "Not implemented in fixture"]]
-        }
-        continuation.yield(try JSONEncoder().encode(response))
-    }
-
-    func close() async { continuation.finish() }
-}
-
-private func json<T: Encodable>(_ value: T) -> JSONValue {
-    try! JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value))
 }
