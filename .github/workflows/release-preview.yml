@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          version=$(grep -m1 'MARKETING_VERSION = ' Sundown.xcodeproj/project.pbxproj | sed 's/.*= \(.*\);/\1/')
+          version=$(sed -n 's/.*"MARKETING_VERSION": "\([^"]*\)".*/\1/p' Sundown.xcodeproj/project.xcproj | head -1)
           if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
             message="Merging this doesn't release: v$version is already out."
           else
