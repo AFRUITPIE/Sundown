@@ -41,7 +41,7 @@ struct TranscriptView: View {
 
     private var scrollView: some View {
         ScrollView {
-            TranscriptContent(thread: thread, connection: connection, position: $position, bottomRoom: bottomRoom)
+            TranscriptContent(thread: thread, connection: connection, position: $position, onScreen: onScreen, bottomRoom: bottomRoom)
                 // A different Tool Calls folding is a different list of rows, made new: the lazy
                 // stack kept the rows it had built for the old one, and once the content had shrunk
                 // to the new one's height they lay outside what it showed, so the transcript stayed
@@ -124,12 +124,13 @@ struct TranscriptView: View {
                 // The whole transcript within the container less its insets, so never while far
                 // from the end.
                 let room = g.containerSize.height - g.contentInsets.top - g.contentInsets.bottom
-                return ScrollPlace(far: far, atEnd: toEnd < 24,
+                return ScrollPlace(far: far, veryFar: toEnd > 3 * g.containerSize.height, atEnd: toEnd < 24,
                                    pastContent: g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height,
                                    fits: !far && g.contentSize.height <= room)
             } action: { _, place in
                 if farFromEnd != place.far { farFromEnd = place.far }
                 if !onScreen.resizing { onScreen.atEnd = place.atEnd }
+                onScreen.veryFar = place.veryFar
                 onScreen.fits = place.fits
                 if place.pastContent { checkShowingNothing("scrolled past the end of the content") }
             }
@@ -195,6 +196,10 @@ extension TranscriptView {
         var checking = false
         /// Counts requests to go to the end; a new one, or the reader scrolling, ends the last.
         var settling = 0
+        /// The end is more than a few screens away.
+        var veryFar = false
+        /// End rows the lazy stack has built: a different Tool Calls folding makes a new one.
+        var endRows = 0
         /// The whole transcript fits on screen: there's no end to go to.
         var fits = true
         /// The width is changing: `atEnd` and `topRow` keep what they were before it began.
@@ -211,7 +216,8 @@ extension TranscriptView {
     /// Previous and Next last went to is forgotten.
     private func jumpToEnd() {
         onScreen.lastPrompt = nil
-        withAnimation(motion) { scrollToEnd() }
+        // Not animated from far away: it crossed rows not built, blank, for as long as three seconds.
+        withAnimation(onScreen.veryFar ? nil : motion) { scrollToEnd() }
     }
 
     /// Back to where the reader was: the end, or the row that was at the top.
@@ -271,6 +277,7 @@ extension TranscriptView {
     /// screen away, and whether the view has been left below everything it holds.
     struct ScrollPlace: Equatable {
         let far: Bool
+        let veryFar: Bool
         let atEnd: Bool
         let pastContent: Bool
         let fits: Bool
@@ -341,6 +348,12 @@ extension TranscriptView {
     /// - the bottom edge, once the rows there are built and the edge is where they are: a position
     ///   held by a row's id keeps that row still, so streamed text grew below the window; held by
     ///   the edge, it follows the end.
+    /// With a very tall reply just above the end, the lazy stack can leave nothing built there: the
+    /// window stayed blank until the reader scrolled hundreds of points (macOS 27.2, 2026-11-06).
+    /// Going to the last row or the end row again didn't bring the rows back; going to a row
+    /// before the last did, so those steps run again from there, further up if that wasn't enough
+    /// (a row or two, in the chats measured). Only then, since on a healthy chat that row is a visible
+    /// step away.
     /// The end row was gone to twice more between them, for a transcript made again on coming back
     /// from Tasks; it stays mounted now, and the guards passed without them (2026-10-17).
     private func scrollToEnd() {
@@ -352,11 +365,30 @@ extension TranscriptView {
         if !fitsOnScreen { position.scrollTo(id: TranscriptContent.endID, anchor: .bottom) }
         onScreen.settling &+= 1
         let request = onScreen.settling
+        func going() -> Bool { onScreen.settling == request && !fitsOnScreen }
         Task {
             try? await Task.sleep(for: .milliseconds(60))
-            guard onScreen.settling == request, !fitsOnScreen else { return }
+            guard going() else { return }
             position.scrollTo(edge: .bottom)
+            for attempt in 0..<3 {
+                try? await Task.sleep(for: .milliseconds(120))
+                guard going(), blankAtEnd, let near = thread.rows(appearance.toolCalls.folding).dropLast(1 + attempt).last?.id else { return }
+                Signposts.transcriptLog.error("Transcript showed nothing (the end row not built). Went to the end.")
+                position.scrollTo(id: near, anchor: .bottom)
+                try? await Task.sleep(for: .milliseconds(40))
+                guard going() else { return }
+                position.scrollTo(id: TranscriptContent.endID, anchor: .bottom)
+                try? await Task.sleep(for: .milliseconds(60))
+                guard going() else { return }
+                position.scrollTo(edge: .bottom)
+            }
         }
+    }
+
+    /// The geometry says the end is on screen, and the lazy stack hasn't built the end row. The rows
+    /// listed on screen can't say this: blank or not, they stayed those of the first layout.
+    private var blankAtEnd: Bool {
+        onScreen.atEnd && !onScreen.fits && onScreen.endRows == 0
     }
 
     private func promptTarget(_ direction: PromptNavigation.Direction) -> String? {
@@ -378,6 +410,8 @@ private struct TranscriptContent: View {
     let connection: HostConnection?
     /// For the older-history row, which keeps the reader's place as a page goes in.
     @Binding var position: ScrollPosition
+    /// Told when the end row is built. Not observed: nothing here is drawn from it.
+    let onScreen: TranscriptView.OnScreenRows
     /// Room after the end, under the controls floating over it.
     var bottomRoom: CGFloat = 0
     @Environment(\.appearance) private var appearance
@@ -410,6 +444,8 @@ private struct TranscriptContent: View {
                 .frame(maxWidth: .infinity, minHeight: 1, alignment: .leading)
                 .padding(.bottom, bottomRoom + 2)
                 .id(Self.endID)
+                .onAppear { onScreen.endRows += 1 }
+                .onDisappear { onScreen.endRows -= 1 }
         }
         // Rows are scroll targets by their ids: Previous Prompt and Find scroll to them.
         .scrollTargetLayout()
