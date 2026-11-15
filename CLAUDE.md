@@ -2,4 +2,4 @@
 
 @AGENTS.md
 
-Treat `AGENTS.md` as the authoritative repository guide. In particular, perform app development and verification yourself through Xcode 27 MCP, use Xcode previews and the running app for visual checks, and follow the documented macOS/HIG decisions rather than older transcript or plan variants.
+`AGENTS.md` is the repository guide. In short: look at the running app after any UI change; UI tests type into whatever window is in front, so run them only when the Mac is free (CI runs them on every PR); tests marked as costing money (`SUNDOWN_E2E`, `SUNDOWN_NPX_E2E`, SSH) run only when asked.
