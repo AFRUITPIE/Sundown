@@ -18,7 +18,7 @@ struct ChatActionItems: View {
 
     var body: some View {
         item("Open in New Window", enabled: thread != nil) {
-            if let thread { openWindow(value: WindowTarget(hostID: window.hostID, threadID: thread.id)) }
+            if let thread { openWindow(value: WindowTarget(hostID: window.hostID, threadID: thread.id, hidesSidebar: true)) }
         }
         Divider()
         // Pinned in this app, per host; ⌥⌘P from the menu bar.

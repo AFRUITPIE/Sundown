@@ -52,7 +52,7 @@ struct SidebarView: View {
         .contextMenu(forSelectionType: String.self) { menu(for: $0, in: byID) } primaryAction: { ids in
             // Double-click, as Mail opens a message: in a window of its own.
             guard let id = ids.first else { return }
-            openWindow(value: WindowTarget(hostID: window.hostID, threadID: id))
+            openWindow(value: WindowTarget(hostID: window.hostID, threadID: id, hidesSidebar: true))
         }
         .overlay { emptyState(isEmpty: sections.isEmpty) }
         // A directory dragged from Finder onto the list starts a new chat in it; this Mac's only.

@@ -104,82 +104,95 @@ public struct RootView: View {
         }
     }
 
-    private var splitView: some View {
-        @Bindable var window = window
-        return NavigationSplitView(columnVisibility: $columns) {
-            SidebarView(window: window)
-                // Wider than the system's default, which cut most chats' titles short. Only what
-                // it opens at: no minimum or maximum, so it resizes as any sidebar does.
-                .navigationSplitViewColumnWidth(ideal: 240)
-        } detail: {
-            DetailView(window: window)
-                // Title, subtitle and toolbar belong to the container, not to whichever screen is inside
-                // it: every item is declared once and unconditionally, so nothing moves on selection.
-                .navigationTitle(window.title)
-                .navigationSubtitle(window.subtitle)
-                // Customizable (View ▸ Customize Toolbar…), so Plan Usage can be added. Every item
-                // is declared in every window, whatever it shows: an identified toolbar is kept in
-                // step across windows by AppKit, and two windows with different items made it throw.
-                .toolbar(id: "chat") {
-                    // Chat, Tasks and Diff. A segmented picker, not a `TabView`: in an active window a
-                    // `TabView`'s content lost the toolbar's scroll edge effect, and its tabs hid the
-                    // window's title.
-                    ToolbarItem(id: "tabs", placement: .principal) {
-                        Picker("View", selection: $window.tab) {
-                            ForEach(WindowTab.allCases) { Text($0.label).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                    }
-                    .customizationBehavior(.disabled)
-                    // Everything after the tabs has the default placement, so Customize Toolbar can
-                    // move it anywhere; spacers group items, and people can drag in more of their own.
-                    ToolbarSpacer(.flexible)
-                    // Model and effort as one popover, by name or (the default) as the sparkle, which
-                    // shares one capsule with Context and MCP; permissions a popover of its own,
-                    // hidden by default (Chat ▸ Permissions has it).
-                    ToolbarItem(id: "modelEffort") {
-                        modelEffort
-                    }
-                    .defaultCustomization(.hidden)
-                    ToolbarItem(id: "permissions") {
-                        permissions
-                    }
-                    .defaultCustomization(.hidden)
-                    ToolbarSpacer(.fixed)
-                    ToolbarItem(id: "modelEffortIcon") {
-                        ToolbarSessionControl(window: window) { ModelEffortButton(settings: $0, iconOnly: true) }
-                    }
-                    ToolbarItem(id: "context") { context }
-                    ToolbarItem(id: "mcp") { mcp }
-                    ToolbarItem(id: "planUsage") { planUsage }
-                        .defaultCustomization(.hidden)
-                    // The same controls as groups in one capsule, as Mail offers Reply, Reply All and
-                    // Forward both together and apart: in the palette only.
-                    ToolbarItem(id: "sessionGroup") {
-                        ControlGroup {
-                            modelEffort
-                            permissions
-                        } label: {
-                            Label("Session", systemImage: SessionSymbol.model)
-                        }
-                        // One capsule for the group, as Mail's Reply, Reply All and Forward share one.
-                        .controlGroupStyle(.navigation)
-                    }
-                    .defaultCustomization(.hidden)
-                    ToolbarItem(id: "chatInfoGroup") {
-                        ControlGroup {
-                            context
-                            planUsage
-                            mcp
-                        } label: {
-                            Label("Chat Info", systemImage: "info.circle")
-                        }
-                        .controlGroupStyle(.navigation)
-                    }
-                    .defaultCustomization(.hidden)
-                }
+    /// A window opened for one chat (Open in New Window) has no sidebar at all: no split view, so
+    /// no sidebar toggle, and View ▸ Show Sidebar has nothing to show. Every other window has one.
+    @ViewBuilder private var splitView: some View {
+        if window.opensWithoutSidebar {
+            detail
+        } else {
+            NavigationSplitView(columnVisibility: $columns) {
+                SidebarView(window: window)
+                    // Wider than the system's default, which cut most chats' titles short. Only what
+                    // it opens at: no minimum or maximum, so it resizes as any sidebar does.
+                    .navigationSplitViewColumnWidth(ideal: 240)
+            } detail: {
+                detail
+            }
         }
+    }
+
+    private var detail: some View {
+        @Bindable var window = window
+        return DetailView(window: window)
+            // Title, subtitle and toolbar belong to the container, not to whichever screen is inside
+            // it: every item is declared once and unconditionally, so nothing moves on selection.
+            .navigationTitle(window.title)
+            .navigationSubtitle(window.subtitle)
+            // Customizable (View ▸ Customize Toolbar…), so Plan Usage can be added. Every item
+            // is declared in every window, whatever it shows: an identified toolbar is kept in
+            // step across windows by AppKit, and two windows with different items made it throw.
+            // A window with no sidebar has a toolbar of its own: AppKit keeps toolbars of one
+            // identifier in step across windows, and with the split view's items in one and not
+            // the other, the Chat/Tasks/Diff picker went from both.
+            .toolbar(id: window.opensWithoutSidebar ? "chatWindow" : "chat") {
+                // Chat, Tasks and Diff. A segmented picker, not a `TabView`: in an active window a
+                // `TabView`'s content lost the toolbar's scroll edge effect, and its tabs hid the
+                // window's title.
+                ToolbarItem(id: "tabs", placement: .principal) {
+                    Picker("View", selection: $window.tab) {
+                        ForEach(WindowTab.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+                .customizationBehavior(.disabled)
+                // Everything after the tabs has the default placement, so Customize Toolbar can
+                // move it anywhere; spacers group items, and people can drag in more of their own.
+                ToolbarSpacer(.flexible)
+                // Model and effort as one popover, by name or (the default) as the sparkle, which
+                // shares one capsule with Context and MCP; permissions a popover of its own,
+                // hidden by default (Chat ▸ Permissions has it).
+                ToolbarItem(id: "modelEffort") {
+                    modelEffort
+                }
+                .defaultCustomization(.hidden)
+                ToolbarItem(id: "permissions") {
+                    permissions
+                }
+                .defaultCustomization(.hidden)
+                ToolbarSpacer(.fixed)
+                ToolbarItem(id: "modelEffortIcon") {
+                    ToolbarSessionControl(window: window) { ModelEffortButton(settings: $0, iconOnly: true) }
+                }
+                ToolbarItem(id: "context") { context }
+                ToolbarItem(id: "mcp") { mcp }
+                ToolbarItem(id: "planUsage") { planUsage }
+                    .defaultCustomization(.hidden)
+                // The same controls as groups in one capsule, as Mail offers Reply, Reply All and
+                // Forward both together and apart: in the palette only.
+                ToolbarItem(id: "sessionGroup") {
+                    ControlGroup {
+                        modelEffort
+                        permissions
+                    } label: {
+                        Label("Session", systemImage: SessionSymbol.model)
+                    }
+                    // One capsule for the group, as Mail's Reply, Reply All and Forward share one.
+                    .controlGroupStyle(.navigation)
+                }
+                .defaultCustomization(.hidden)
+                ToolbarItem(id: "chatInfoGroup") {
+                    ControlGroup {
+                        context
+                        planUsage
+                        mcp
+                    } label: {
+                        Label("Chat Info", systemImage: "info.circle")
+                    }
+                    .controlGroupStyle(.navigation)
+                }
+                .defaultCustomization(.hidden)
+            }
     }
 }
 
