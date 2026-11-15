@@ -25,27 +25,29 @@ struct ScrollKeeper: NSViewRepresentable {
 final class ScrollKeeperView: NSView {
     /// Where the clip view's origin goes (as the scroll geometry's `contentOffset`): at once if the
     /// document already holds it, else as the document is laid out anew (its frame changes as SwiftUI
-    /// lays the change out), checked again each turn of the run loop, and after a few turns as near
-    /// as it can. Settling on the first turn was too soon for a change that makes the content much
+    /// lays the change out), checked again each turn of the run loop, and after a second as near as
+    /// it can. Settling on the first turn was too soon for a change that makes the content much
     /// taller (Every Call in the middle of a chat): SwiftUI hadn't laid it out yet, and the reader
     /// was left at the old content's bottom (2026-11).
     var target: CGFloat? {
         didSet {
             guard target != nil else { return }
-            turns = 0
+            since = .now()
             apply(final: false)
             if target != nil { retry() }
         }
     }
 
-    private var turns = 0
-    private static let maxTurns = 8
+    private var since = DispatchTime.now()
+    /// How long to wait for the document to be laid out tall enough: a count of run-loop turns
+    /// was too short on CI's slower runner.
+    private static let patience: UInt64 = 1_000_000_000
 
     private func retry() {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.target != nil else { return }
-            self.turns += 1
-            self.apply(final: self.turns >= Self.maxTurns)
+            let waited = DispatchTime.now().uptimeNanoseconds - self.since.uptimeNanoseconds
+            self.apply(final: waited >= Self.patience)
             if self.target != nil { self.retry() }
         }
     }
