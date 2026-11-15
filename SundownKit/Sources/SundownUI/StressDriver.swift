@@ -4,15 +4,8 @@ import OSLog
 import SwiftUI
 import SundownKit
 
-/// The transcript's latest scroll geometry, for the driver's `scroll frac`, fed by `TranscriptView`
-/// only while the driver runs.
-@MainActor enum StressState {
-    static var content: CGFloat = 0
-    static var container: CGFloat = 0
-}
-
 extension Notification.Name {
-    /// A scroll the driver asks of the transcript: userInfo "y" (an absolute offset) or "edge"
+    /// A scroll the driver asks of the transcript: userInfo "frac" (0 the top, 1 the end) or "edge"
     /// ("top" or "bottom").
     static let stressScroll = Notification.Name("SundownStressScroll")
 }
@@ -28,6 +21,12 @@ extension Notification.Name {
 ///   tab chat | tasks | diff
 ///   snap left | right | full | center [now]    (the window tiled as ⌃⌥←, →, ↑ do; animated unless now)
 ///   wait <ms>
+///   resize <points> <steps> [tight]            (a live resize of the window's width, a step at a time)
+///   wheel <points>                             (the mouse's wheel over the transcript; positive is up)
+///   fold summarized | workedFor | everyCall    (View ▸ Tool Calls)
+///   prompt prev | next                         (Chat ▸ Previous and Next Prompt)
+///   find <query> | findnext                    (Find in Chat)
+///   probe                                      (logs the transcript's place and heights, `PROBE …`)
 struct StressDriver: ViewModifier {
     let window: WindowModel
     private static let log = Logger(subsystem: "com.haydenhong.Sundown", category: "Stress")
@@ -71,8 +70,7 @@ struct StressDriver: ViewModifier {
             switch args.first {
             case "top", "bottom": post(["edge": args[0]])
             case "frac":
-                let f = CGFloat(Double(args.dropFirst().first ?? "0") ?? 0)
-                post(["y": f * max(0, StressState.content - StressState.container)])
+                post(["frac": CGFloat(Double(args.dropFirst().first ?? "0") ?? 0)])
             default: break
             }
         case "reload": if let thread, let connection { await connection.stressReload(thread) }
@@ -100,10 +98,49 @@ struct StressDriver: ViewModifier {
             default: area
             }
             frameWindow.setFrame(frame, display: true, animate: args.last != "now")
-        case "wait": try? await Task.sleep(for: .milliseconds(Int(arg) ?? 100))
+        case "resize":
+            // A live resize, as dragging the window's edge makes one: the width changed a few
+            // points at a time, each step laid out and drawn. `resize <points> <steps> [tight]`:
+            // tight runs every step in one turn of the run loop, as AppKit's resize tracking does;
+            // otherwise a frame (8 ms) between steps.
+            guard let w = Self.window, args.count >= 2, let total = Double(args[0]), let steps = Int(args[1]), steps > 0 else { return }
+            let tight = args.count > 2 && args[2] == "tight"
+            for i in 1...steps {
+                var frame = w.frame
+                frame.size.width += total / Double(steps)
+                w.setFrame(frame, display: true, animate: false)
+                if !tight || i % 20 == 0 { try? await Task.sleep(for: .milliseconds(8)) }
+                _ = i
+            }
+        case "wheel":
+            // The reader's scroll wheel over the transcript, as a mouse's (positive is up): through
+            // the window, so it's hit-tested and reaches the scroll view as a real one does. Not a
+            // trackpad's phased events: a scroll view tracks those from the window server's own
+            // stream, and ignores them made in-process.
+            guard let w = Self.window, let total = Int32(arg) else { return }
+            let steps = max(1, Int(abs(total)) / 40)
+            for _ in 0..<steps {
+                guard let e = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+                                      wheel1: total / Int32(steps), wheel2: 0, wheel3: 0) else { return }
+                e.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+                // In-process its window is nil, so its location is taken as the window's: the
+                // transcript's middle, right of the reading column's center.
+                e.location = CGPoint(x: w.frame.width * 0.65, y: NSScreen.screens[0].frame.height - w.frame.height * 0.5)
+                if let ns = NSEvent(cgEvent: e) { w.sendEvent(ns) }
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        case "fold": if let d = Appearance.ToolCallDisplay(rawValue: arg) { window.app.appearance.toolCalls = d }
+        case "prompt": window.prompts.go(arg == "prev" ? .previous : .next)
+        case "find": window.find.show(query: arg)
+        case "findnext": window.find.next()
+        case "probe":
+            // The transcript's place and heights as they stand.
+            Self.log.error("PROBE \(TranscriptModel.current?.probe ?? "no transcript", privacy: .public)")
         default: break
         }
     }
+
+    @MainActor private static var window: NSWindow? { NSApp.windows.first { $0.isVisible && $0.contentView != nil } }
 
     private func post(_ info: [String: Any]) {
         NotificationCenter.default.post(name: .stressScroll, object: nil, userInfo: info)

@@ -56,6 +56,7 @@ struct MarkdownView: NSViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: MarkdownNSTextView, context: Context) -> CGSize? {
         setText(of: nsView, context)
+        context.environment.markdownWidthProbe?.widths.append(proposal.width ?? -1)
         guard let width = proposal.width, width.isFinite else {
             // Its ideal size: the text unwrapped.
             return nsView.measure(width: 10_000, natural: true)
@@ -122,13 +123,36 @@ struct MarkdownView: NSViewRepresentable {
             settled.setObject(built, forKey: key(text, theme), cost: built.length * 2)
         }
 
+        /// The views showing settled messages, by what they show, so the transcript can ask a
+        /// message on screen its height at a new width (`shown`) rather than lay its text out a
+        /// second time beside it.
+        private static let showing = NSMapTable<NSString, MarkdownNSTextView>(keyOptions: .strongMemory, valueOptions: .weakMemory)
+        private var shownText: String?
+
+        /// A view in a window showing exactly this message, settled.
+        static func shown(_ text: String, theme: MarkdownTheme) -> MarkdownNSTextView? {
+            let key = key(text, theme)
+            guard let view = showing.object(forKey: key), view.window != nil, view.shownKey == key else { return nil }
+            return view
+        }
+
+        private func show(_ text: String?, theme: MarkdownTheme) {
+            guard text != shownText else { return }
+            shownText = text
+            let key = text.map { Self.key($0, theme) }
+            view?.shownKey = key
+            if let key, let view { Self.showing.setObject(view, forKey: key) }
+        }
+
         func apply(_ text: String, theme: MarkdownTheme, streams: Bool) {
             guard let view, let storage = view.textStorage else { return }
             if theme != self.theme {
                 self.theme = theme
                 stream = MarkdownStream()
                 storage.setAttributedString(NSAttributedString())
+                shownText = nil
             }
+            defer { show(streams ? nil : text, theme: theme) }
             if storage.length == 0, !streams, text != stream.source, let cached = Self.built(text, theme: theme) {
                 storage.setAttributedString(cached)
                 stream = MarkdownStream(source: text)
@@ -319,6 +343,15 @@ struct MarkdownTheme: Equatable {
 extension EnvironmentValues {
     /// Find in Chat's query, set on the rows that match it, for their text to mark.
     @Entry var findQuery: String? = nil
+    /// Set only where the transcript measures its rows' chrome: the widths a message's text is
+    /// asked to lay out at.
+    @Entry var markdownWidthProbe: MarkdownWidthProbe? = nil
+}
+
+/// The widths a message's text was asked about, as SwiftUI sized the row holding it
+/// (`RowMeasurer.calibrate`): how much narrower than its row a message's text is.
+final class MarkdownWidthProbe {
+    var widths: [CGFloat] = []
 }
 
 private extension String {
@@ -351,6 +384,8 @@ final class MarkdownNSTextView: NSTextView {
     var theme = MarkdownTheme.standard {
         didSet { (layoutManager as? MarkdownLayoutManager)?.theme = theme }
     }
+    /// What it shows, while that's a settled message (`Coordinator.shown`).
+    var shownKey: NSString?
     /// Sizes measured, by width: SwiftUI asks about a few, the same ones again and again.
     private var measured: [CGFloat: CGSize] = [:]
     /// A Copy button for each code block, in the blocks' order.
@@ -396,17 +431,8 @@ final class MarkdownNSTextView: NSTextView {
         }
         let drawn = container.size.width
         container.size = NSSize(width: width, height: .greatestFiniteMagnitude)
-        layout.ensureLayout(for: container)
+        let height = Self.height(layout, container, storage, theme: theme)
         let used = layout.usedRect(for: container)
-        var height = used.maxY + textContainerInset.height
-        // A code block at the end draws its foot below its last line, and a table's last row its
-        // padding and border below its text.
-        switch decorationKind(at: storage.length - 1) {
-        case .code: height += theme.codeBottom
-        case .table: height += 6 * theme.scale
-        default: break
-        }
-        height = ceil(max(height, theme.body.pointSize))
         var size = CGSize(width: width, height: height)
         // A bubble hugs its widest line, unless a box (code, a table) spans it; the glyphs' own
         // bounds, since in a window the used rect can span the container, and a point to spare.
@@ -439,10 +465,55 @@ final class MarkdownNSTextView: NSTextView {
         super.viewWillDraw()
     }
 
+    // MARK: Measuring, shared with the transcript's height index
+
+    /// The height of `storage` laid out in `container` at its width, as this view draws it: the
+    /// text, the inset above a message starting with code, and a last code box's or table's foot.
+    /// What the view measures, and what the transcript predicts a row's height with off the main
+    /// thread (`predictedHeight`), so the two can't drift apart.
+    nonisolated static func height(_ layout: NSLayoutManager, _ container: NSTextContainer, _ storage: NSTextStorage,
+                                   theme: MarkdownTheme) -> CGFloat {
+        layout.ensureLayout(for: container)
+        let used = layout.usedRect(for: container)
+        var height = used.maxY + topInset(storage, theme: theme)
+        // A code block at the end draws its foot below its last line, and a table's last row its
+        // padding and border below its text.
+        switch decorationKind(storage, at: storage.length - 1) {
+        case .code: height += theme.codeBottom
+        case .table: height += 6 * theme.scale
+        default: break
+        }
+        return ceil(max(height, theme.body.pointSize))
+    }
+
+    /// The height a message's built text takes at `width`, laid out on its own as the view lays it
+    /// out (`make`, `measure`). Safe off the main thread: nothing here belongs to a view.
+    nonisolated static func predictedHeight(of text: NSAttributedString, theme: MarkdownTheme, width: CGFloat) -> CGFloat {
+        // As `measure`: a width too narrow to hold a word isn't laid out.
+        if width < theme.body.pointSize * 2 { return theme.body.pointSize * 10 }
+        let storage = NSTextStorage(attributedString: text)
+        let layout = NSLayoutManager()
+        layout.allowsNonContiguousLayout = false
+        storage.addLayoutManager(layout)
+        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        layout.addTextContainer(container)
+        return height(layout, container, storage, theme: theme)
+    }
+
+    /// TextKit gives the first paragraph no spacing before it, so a message starting with code
+    /// makes room for the box's header with an inset instead.
+    nonisolated static func topInset(_ storage: NSAttributedString, theme: MarkdownTheme) -> CGFloat {
+        if case .code? = decorationKind(storage, at: 0) { theme.codeHeader } else { 0 }
+    }
+
+    nonisolated private static func decorationKind(_ storage: NSAttributedString, at index: Int) -> MarkdownDecoration.Kind? {
+        guard index >= 0, index < storage.length else { return nil }
+        return (storage.attribute(.markdownDecoration, at: index, effectiveRange: nil) as? MarkdownDecoration)?.kind
+    }
+
     func textChanged() {
-        // TextKit gives the first paragraph no spacing before it, so a message starting with code
-        // makes room for the box's header with an inset instead.
-        let top = startsWithCode ? theme.codeHeader : 0
+        let top = textStorage.map { Self.topInset($0, theme: theme) } ?? 0
         if textContainerInset.height != top { textContainerInset = NSSize(width: 0, height: top) }
         measured = [:]
         // No layout asked for: the text is set while SwiftUI sizes the view, and a new value is
@@ -460,16 +531,6 @@ final class MarkdownNSTextView: NSTextView {
             }
         }
         return found
-    }
-
-    /// The kind of block drawn at a character of the text, if any.
-    private func decorationKind(at index: Int) -> MarkdownDecoration.Kind? {
-        guard let storage = textStorage, index >= 0, index < storage.length else { return nil }
-        return (storage.attribute(.markdownDecoration, at: index, effectiveRange: nil) as? MarkdownDecoration)?.kind
-    }
-
-    private var startsWithCode: Bool {
-        if case .code? = decorationKind(at: 0) { true } else { false }
     }
 
     override func drawBackground(in rect: NSRect) {
@@ -585,7 +646,21 @@ final class MarkdownLayoutManager: NSLayoutManager {
     }
 
     /// Its text view's, which the view hands it as it changes.
-    var theme = MarkdownTheme.standard
+    var theme = MarkdownTheme.standard {
+        didSet { if theme != oldValue { labels = [:] } }
+    }
+    /// Code boxes' language labels as drawn, by language: making the font and measuring the label
+    /// on every draw was a quarter of what drawing a scrolled message cost (2026-11).
+    private var labels: [String: (text: NSAttributedString, size: NSSize)] = [:]
+
+    private func label(_ language: String) -> (text: NSAttributedString, size: NSSize) {
+        if let label = labels[language] { return label }
+        let text = NSAttributedString(string: language.isEmpty ? "Code" : language,
+                                      attributes: [.font: theme.caption, .foregroundColor: theme.secondary])
+        let label = (text, text.size())
+        labels[language] = label
+        return label
+    }
 
     /// The rect of every line of the characters in `range`, joined.
     private func rect(for range: NSRange, in container: NSTextContainer) -> NSRect {
@@ -651,11 +726,8 @@ final class MarkdownLayoutManager: NSLayoutManager {
                 theme.codeStroke.setStroke()
                 path.lineWidth = 1
                 path.stroke()
-                let label = language.isEmpty ? "Code" : language
-                let attributes: [NSAttributedString.Key: Any] = [.font: theme.caption, .foregroundColor: theme.secondary]
-                let size = (label as NSString).size(withAttributes: attributes)
-                (label as NSString).draw(at: NSPoint(x: box.minX + theme.codeInset, y: box.minY + (theme.codeHeader - size.height) / 2),
-                                         withAttributes: attributes)
+                let label = label(language)
+                label.text.draw(at: NSPoint(x: box.minX + theme.codeInset, y: box.minY + (theme.codeHeader - label.size.height) / 2))
             case .quote:
                 let lines = rect(for: range, in: container).offsetBy(dx: origin.x, dy: origin.y)
                 theme.quoteBar.setFill()
@@ -668,11 +740,16 @@ final class MarkdownLayoutManager: NSLayoutManager {
                 NSRect(x: origin.x, y: lines.midY.rounded(), width: container.size.width, height: 1).fill()
             case .table:
                 // The cells' own bounds, joined: the table as TextKit laid it out.
+                // In a long reply TextKit lays text out as it's shown, and a cell not laid out yet
+                // has an empty rect at the origin: joined in, it stretched the fill from the
+                // table to the top of the message, one layer per table.
+                ensureLayout(forCharacterRange: range)
                 var table = NSRect.null
                 storage.enumerateAttribute(.paragraphStyle, in: range) { value, run, _ in
                     guard let block = (value as? NSParagraphStyle)?.textBlocks.first else { return }
                     let glyphs = glyphRange(forCharacterRange: run, actualCharacterRange: nil)
-                    table = table.union(boundsRect(for: block, glyphRange: glyphs))
+                    let cell = boundsRect(for: block, glyphRange: glyphs)
+                    if !cell.isEmpty { table = table.union(cell) }
                 }
                 guard !table.isNull else { break }
                 theme.tableFill.setFill()

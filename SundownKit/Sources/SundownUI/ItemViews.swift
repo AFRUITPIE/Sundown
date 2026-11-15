@@ -320,7 +320,7 @@ struct UserMessageView: View {
 /// and gray of a tool row, that opens to the message. Never a prompt on the person's side.
 struct SyntheticMessageView: View {
     let message: Item.UserMessage
-    @State private var isOpen = false
+    private var kept = KeptExpansion()
 
     /// Claude Code's own opening for the summary it writes when it compacts a chat.
     static let compactionSummaryOpening = "This session is being continued from a previous conversation"
@@ -351,7 +351,7 @@ struct SyntheticMessageView: View {
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isOpen) {
+        DisclosureGroup(isExpanded: kept("message-\(message.id)")) {
             VStack(alignment: .leading, spacing: 6) {
                 if let session = message.originSession { PeerSessionLink(sessionID: session) }
                 if message.origin == "workflow" {

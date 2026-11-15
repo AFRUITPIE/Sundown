@@ -11,20 +11,21 @@ struct TurnEditsView: View {
     let edits: EditedFiles
     /// The chat's directory, which each file's directory is shown relative to.
     let cwd: String?
-    @State private var expanded: Bool
+    private var kept: KeptExpansion
+    private var expanded: Binding<Bool> { kept("edits-\(edits.promptID)") }
     private let openFiles: Set<String>
 
     init(edits: EditedFiles, cwd: String?, expanded: Bool = false, openFiles: Set<String> = []) {
         self.edits = edits
         self.cwd = cwd
-        _expanded = State(initialValue: expanded)
+        kept = KeptExpansion(expanded)
         self.openFiles = openFiles
     }
 
     private var title: LocalizedStringKey { "Edited ^[\(edits.files.count) file](inflect: true)" }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        DisclosureGroup(isExpanded: expanded) {
             TurnEditsList(edits: edits, cwd: cwd, openFiles: openFiles)
         } label: {
             HStack(spacing: 8) {
@@ -45,6 +46,7 @@ struct TurnEditsList: View {
     let cwd: String?
     @State private var openFiles: Set<String>
     @Environment(\.windowRef) private var windowRef
+    @Environment(\.rowExpansion) private var expansion
 
     init(edits: EditedFiles, cwd: String?, openFiles: Set<String> = []) {
         self.edits = edits
@@ -52,12 +54,20 @@ struct TurnEditsList: View {
         _openFiles = State(initialValue: openFiles)
     }
 
+    /// A file's line open: kept by the transcript, as the row is, else here.
+    private func isOpen(_ path: String) -> Binding<Bool> {
+        if let expansion {
+            let box = expansion.box("edits-\(edits.promptID)-\(path)")
+            return Binding(get: { box.isOpen }, set: { box.isOpen = $0 })
+        }
+        return Binding(get: { openFiles.contains(path) },
+                       set: { open in if open { openFiles.insert(path) } else { openFiles.remove(path) } })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(edits.files) { file in
-                EditedFileRow(file: file, cwd: cwd, isOpen: Binding(
-                    get: { openFiles.contains(file.path) },
-                    set: { open in if open { openFiles.insert(file.path) } else { openFiles.remove(file.path) } }))
+                EditedFileRow(file: file, cwd: cwd, isOpen: isOpen(file.path))
             }
             Button("Restore Files…") { windowRef.window?.restoreCode(before: edits.promptID) }
                 .buttonStyle(.borderless)

@@ -248,7 +248,6 @@ public final class ThreadModel: Identifiable {
     /// the tasks with the ones it came with, which are as of `seq`.
     package func loadHistory(items newItems: [Item], turns newTurns: [Turn], seq: Int?, hasMore: Bool = false,
                      tasks newTasks: [TaskState]? = nil) {
-        reshaped(historyLoaded ? "reloaded \(newItems.count) items over \(storage.count)" : "loaded \(newItems.count) items")
         if let seq { lastSeq = seq }
         if let newTasks { setTasks(newTasks) }
         storage = newItems
@@ -259,18 +258,11 @@ public final class ThreadModel: Identifiable {
         if !historyLoaded { historyLoaded = true }
     }
 
-    /// The last time the items were replaced, cut or added to above, and how: what the transcript
-    /// logs if it finds itself showing no rows.
-    @ObservationIgnored public private(set) var lastReshape: (what: String, at: Date)?
-
-    private func reshaped(_ what: String) { lastReshape = (what, Date()) }
-
     /// Add an older page to the front.
     func prependHistory(items older: [Item], hasMore: Bool) {
         if hasMoreHistory != hasMore { hasMoreHistory = hasMore }
         let fresh = older.filter { index[$0.id] == nil }
         guard !fresh.isEmpty else { return }
-        reshaped("an older page of \(fresh.count) items")
         storage.insert(contentsOf: fresh, at: 0)
         reindex()
     }
@@ -306,7 +298,6 @@ public final class ThreadModel: Identifiable {
 
     /// Drops the transcript so the next open reads it afresh.
     func unload() {
-        reshaped("unloaded")
         started = [:]
         openingPrompt = nil
         storage = []
@@ -329,7 +320,6 @@ public final class ThreadModel: Identifiable {
         // What's worked out from the items is made again when it's next asked for.
         defer { folded = nil }
         guard historyLoaded, storage.count > count else { return }
-        reshaped("trimmed \(storage.count) items to \(count)")
         // Its title stays the prompt it opened with, until Claude names it.
         if openingPrompt == nil { openingPrompt = Self.firstPrompt(in: storage) }
         storage.removeFirst(storage.count - count)
