@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/AFRUITPIE/tether-server.git",
       "state" : {
-        "revision" : "a80b2c744f7d3aee4224c7c4a16f300f6e9ae589",
-        "version" : "0.6.0"
+        "revision" : "2e2972174aba5d5e259d691f1867edd882ebbee7",
+        "version" : "0.6.1"
       }
     }
   ],
