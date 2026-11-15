@@ -15,10 +15,16 @@ public struct WindowTarget: Codable, Hashable, Sendable {
     /// Tells apart windows that show no chat.
     public var id: UUID
 
-    public init(hostID: UUID, threadID: String? = nil, id: UUID = UUID()) {
+    /// A window for one chat (Open in New Window): it opens without the sidebar, which the
+    /// toolbar's toggle and View ▸ Show Sidebar bring back. Optional, so a window saved before
+    /// this was here still restores.
+    public var hidesSidebar: Bool?
+
+    public init(hostID: UUID, threadID: String? = nil, id: UUID = UUID(), hidesSidebar: Bool = false) {
         self.hostID = hostID
         self.threadID = threadID
         self.id = id
+        self.hidesSidebar = hidesSidebar ? true : nil
     }
 
     /// A window is its own, whatever it shows: Open in New Window opens a second window on a chat
@@ -50,6 +56,8 @@ extension EnvironmentValues {
 @Observable
 public final class WindowModel {
     public let app: AppModel
+    /// Opened for one chat (Open in New Window): its sidebar starts hidden.
+    public let opensWithoutSidebar: Bool
 
     /// The host the sidebar is showing. Changing it starts a new chat there.
     public var hostID: UUID {
@@ -226,6 +234,7 @@ public final class WindowModel {
         self.app = app
         self.hostID = target.hostID
         self.threadID = target.threadID
+        self.opensWithoutSidebar = target.hidesSidebar == true
     }
 
     /// Shows the chat and seeds the draft. Called once the window is on screen, with the tab the
@@ -266,7 +275,9 @@ public final class WindowModel {
     public var connection: HostConnection? { app.connections[hostID] }
 
     /// What the window shows, as its scene value: `id` keeps a window on New Chat itself.
-    public func target(keeping id: UUID) -> WindowTarget { WindowTarget(hostID: hostID, threadID: threadID, id: id) }
+    public func target(keeping id: UUID) -> WindowTarget {
+        WindowTarget(hostID: hostID, threadID: threadID, id: id, hidesSidebar: opensWithoutSidebar)
+    }
 
     /// The window's subtitle: the chat's directory name, or the New Chat draft's; the full path is in
     /// the directory menu on New Chat. Prefixed with the host when there is
