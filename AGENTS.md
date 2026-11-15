@@ -147,5 +147,4 @@ CI (`ui-tests.yml`, on pull requests) runs the package tests, then the UI tests,
   the task there. Reference it from the commit (`Fixes #12`).
 - Commits and PRs carry no agent attribution: no `Co-Authored-By`, no "generated with". The author is the repository owner.
 - Don't run paid tests, delete sessions, stop the user's app or daemon, or change host configuration unless asked.
-- Keep this guide short and true. Behavior belongs in code comments and tests; history and measurements go in
-  [docs/notes.md](docs/notes.md), which isn't loaded automatically and may be stale.
+- Keep this guide short and true. Behavior, history and measurements belong in code comments and tests.
