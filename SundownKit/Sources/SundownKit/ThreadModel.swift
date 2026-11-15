@@ -387,8 +387,6 @@ public final class ThreadModel: Identifiable {
                 setStreamingReply(e.itemId)
             }
             appendReplyText(e.delta, to: e.itemId)
-        case .itemReasoningDelta(let e):
-            mutate(e.itemId) { if case .reasoning(var m) = $0 { m.text += e.delta; $0 = .reasoning(m) } }
         case .itemToolCallProgress(let e):
             mutate(e.itemId) { if case .toolCall(var t) = $0 { t.elapsedSeconds = e.elapsedSeconds; $0 = .toolCall(t) } }
         case .taskUpdated(let e): updateTask(e.task)

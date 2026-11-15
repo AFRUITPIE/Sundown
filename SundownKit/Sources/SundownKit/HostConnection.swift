@@ -138,7 +138,7 @@ public final class HostConnection: Identifiable {
             let initResult = try await client.call(Methods.Initialize.self, .init(
                 clientInfo: .init(name: "sundown-app", title: "Sundown", version: Self.appVersion),
                 protocolVersion: tetherProtocolVersion,
-                capabilities: .init(experimentalApi: true, optOutNotificationMethods: Self.unreadNotifications),
+                capabilities: .init(experimentalApi: true),
                 env: env.isEmpty ? nil : env))
             try await client.notify("initialized")
             signpost.event("Handshake")
@@ -269,15 +269,6 @@ public final class HostConnection: Identifiable {
             if case .failed = self.state { await self.connect() }
         }
     }
-
-    /// Notifications nothing here reads, which the daemon then doesn't send: reasoning isn't shown,
-    /// a tool's input comes whole with its call rather than per token, and the rest go unused. A
-    /// chat's seqs skip them, which `ThreadModel.apply` takes in its stride: it drops only a seq it
-    /// has already seen.
-    static let unreadNotifications = [
-        "item/reasoning/delta", "item/toolCall/inputDelta", "thread/tokenUsage/updated", "thread/queuedInput",
-        "thread/commandsChanged", "thread/notification", "thread/hook", "thread/rawEvent", "thread/stderr",
-    ]
 
     private func startNotificationPump(_ client: RPCClient) {
         notificationTask?.cancel()
@@ -1083,7 +1074,7 @@ private extension ServerNotification {
     /// Adds to or changes a chat's items, rather than saying how the chat stands.
     var isItemContent: Bool {
         switch self {
-        case .itemStarted, .itemUpdated, .itemCompleted, .itemAgentMessageDelta, .itemReasoningDelta, .itemToolCallProgress:
+        case .itemStarted, .itemUpdated, .itemCompleted, .itemAgentMessageDelta, .itemToolCallProgress:
             true
         default: false
         }

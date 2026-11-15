@@ -190,7 +190,7 @@ extension ServerNotification {
     /// for the rest of its frame.
     var isStreamed: Bool {
         switch self {
-        case .itemAgentMessageDelta, .itemReasoningDelta, .itemToolCallInputDelta, .itemToolCallProgress: true
+        case .itemAgentMessageDelta, .itemToolCallProgress: true
         default: false
         }
     }

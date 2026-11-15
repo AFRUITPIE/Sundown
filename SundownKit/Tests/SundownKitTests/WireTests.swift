@@ -313,20 +313,6 @@ struct StreamedTextTests {
 @MainActor
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct HostWireTests {
-    @Test func itOptsOutOfWhatNothingReads() async throws {
-        let host = FakeHost(hostname: "wire")
-        let connection = connection(host)
-        await connection.connect()
-
-        let initialize = try #require(host.received.first { $0["method"]?.stringValue == "initialize" })
-        let optedOut = initialize["params"]?["capabilities"]?["optOutNotificationMethods"]?.arrayValue?.compactMap(\.stringValue)
-        #expect(Set(optedOut ?? []) == [
-            "item/reasoning/delta", "item/toolCall/inputDelta", "thread/tokenUsage/updated", "thread/queuedInput",
-            "thread/commandsChanged", "thread/notification", "thread/hook", "thread/rawEvent", "thread/stderr",
-        ])
-        await connection.disconnect()
-    }
-
     /// What the daemon leaves out still takes its seqs: the next one a chat gets skips them.
     @Test func aChatTakesTheSeqsSkippedForIt() async throws {
         let host = FakeHost(hostname: "wire")
