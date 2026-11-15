@@ -53,14 +53,17 @@ extension TranscriptModel {
         case .top(let y): scroll(toVisibleTop: y, keeping: true)
         case .live(let o): scroll(toVisibleTop: liveTop + o, keeping: true)
         case .row(let id, let item, var offset, let was):
-            let i = index.index(of: id) ?? item.flatMap { item in settled.firstIndex { $0.row.holds(itemID: item) } }
+            let same = index.index(of: id)
+            let i = same ?? item.flatMap { item in settled.firstIndex { $0.row.holds(itemID: item) } }
             guard let i else {
                 Signposts.transcriptLog.error("Transcript lost the reader's row; went to the end")
                 goToEnd(reader: false)
                 return
             }
             let now = index.height(i)
-            if offset > 0, was > 0, abs(now - was) >= 0.5 { offset *= now / was }
+            // The same row at a new height (its text wrapping anew): as far down it in proportion.
+            // Another row holding the item (a different folding) keeps the offset as it was.
+            if same != nil, offset > 0, was > 0, abs(now - was) >= 0.5 { offset *= now / was }
             scroll(toVisibleTop: historyTop + index.top(i) + min(offset, now), keeping: true)
         }
     }
