@@ -10,7 +10,8 @@ import TetherProtocol
 struct ToolCallView: View {
     let call: Item.ToolCall
     let thread: ThreadModel
-    @State private var expanded = false
+    private var kept = KeptExpansion()
+    private var expanded: Binding<Bool> { kept("call-\(call.id)") }
     /// A group-level action can open every call without repeated disclosure clicks.
     var expandDetails = false
     @Environment(\.windowRef) private var windowRef
@@ -65,7 +66,7 @@ struct ToolCallView: View {
                 if let reason = ToolCallText.reason(call) { RowNote(reason) }
             }
         } else {
-            DisclosureGroup(isExpanded: $expanded) {
+            DisclosureGroup(isExpanded: expanded) {
                 detail
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
@@ -74,7 +75,9 @@ struct ToolCallView: View {
             }
             .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.toolCall", value: statusDescription,
                                                             note: ToolCallText.reason(call)))
-            .onChange(of: expandDetails, initial: true) { _, open in expanded = open }
+            // A group's Expand All and Collapse All; built under an expanded group, open.
+            .onChange(of: expandDetails) { _, open in expanded.wrappedValue = open }
+            .onAppear { if expandDetails { expanded.wrappedValue = true } }
         }
     }
 
@@ -343,7 +346,8 @@ struct ToolCallGroupView: View {
     let thread: ThreadModel
     /// The transcript row's id, so Find in Chat opens the group when it's the current match.
     var rowID: String?
-    @State private var expanded = false
+    private var kept = KeptExpansion()
+    private var expanded: Binding<Bool> { kept(rowID ?? "group-\(calls.first?.id ?? "")") }
     @State private var expandAll = false
 
     /// While the run is the turn's work in progress, what it's doing now: the running call's words,
@@ -365,7 +369,7 @@ struct ToolCallGroupView: View {
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        DisclosureGroup(isExpanded: expanded) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("^[\(calls.count) Tool Call](inflect: true)").scaledFont(.caption).foregroundStyle(.secondary)
@@ -398,7 +402,7 @@ struct ToolCallGroupView: View {
             .transcriptLine()
         }
         .disclosureGroupStyle(TranscriptDisclosureStyle(identifier: "transcript.toolGroup", value: liveTitle == nil ? nil : "Running"))
-        .modifier(OpensForFind(rowID: rowID, expanded: $expanded,
+        .modifier(OpensForFind(rowID: rowID, expanded: expanded,
                                matches: { TranscriptRow.toolGroup(calls).matches($0) }))
     }
 }
@@ -412,7 +416,8 @@ struct TurnWorkView: View {
     let thread: ThreadModel
     /// The transcript row's id, so Find in Chat opens the work when it's the current match.
     var rowID: String?
-    @State private var expanded = false
+    private var kept = KeptExpansion()
+    private var expanded: Binding<Bool> { kept(rowID) }
 
     private var title: String {
         guard let durationMs, durationMs >= 1000 else { return "Worked" }
@@ -420,7 +425,7 @@ struct TurnWorkView: View {
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
+        DisclosureGroup(isExpanded: expanded) {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(rows, id: \.id) { TranscriptRowView(row: $0, thread: thread) }
                     // A run of calls in here that holds the match opens too.
@@ -430,7 +435,7 @@ struct TurnWorkView: View {
             Text(title).transcriptLine()
         }
         .disclosureGroupStyle(TranscriptDisclosureStyle(spacing: 10, identifier: "transcript.turnWork"))
-        .modifier(OpensForFind(rowID: rowID, expanded: $expanded))
+        .modifier(OpensForFind(rowID: rowID, expanded: expanded))
     }
 }
 
