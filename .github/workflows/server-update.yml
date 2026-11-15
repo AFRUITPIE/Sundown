@@ -48,11 +48,11 @@ jobs:
           done
 
           # The app's next patch version, and its next build.
-          project=Sundown.xcodeproj/project.pbxproj
-          app=$(grep -m1 'MARKETING_VERSION = ' "$project" | sed 's/.*= \(.*\);/\1/')
-          build=$(grep -m1 'CURRENT_PROJECT_VERSION = ' "$project" | sed 's/.*= \(.*\);/\1/')
+          project=Sundown.xcodeproj/project.xcproj
+          app=$(sed -n 's/.*"MARKETING_VERSION": "\([^"]*\)".*/\1/p' "$project" | head -1)
+          build=$(sed -n 's/.*"CURRENT_PROJECT_VERSION": "\([^"]*\)".*/\1/p' "$project" | head -1)
           next=$(echo "$app" | awk -F. '{ if (NF < 3) print $0 ".1"; else { $NF = $NF + 1; print } }' OFS=.)
-          sed -i "s/MARKETING_VERSION = $app;/MARKETING_VERSION = $next;/; s/CURRENT_PROJECT_VERSION = $build;/CURRENT_PROJECT_VERSION = $((build + 1));/" "$project"
+          sed -i "s/\"MARKETING_VERSION\": \"$app\"/\"MARKETING_VERSION\": \"$next\"/; s/\"CURRENT_PROJECT_VERSION\": \"$build\"/\"CURRENT_PROJECT_VERSION\": \"$((build + 1))\"/" "$project"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
