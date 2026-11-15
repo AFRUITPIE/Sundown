@@ -112,6 +112,9 @@ public struct RootView: View {
         } else {
             NavigationSplitView(columnVisibility: $columns) {
                 SidebarView(window: window)
+                    // Wider than the system's default, which cut most chats' titles short. Only what
+                    // it opens at: no minimum or maximum, so it resizes as any sidebar does.
+                    .navigationSplitViewColumnWidth(ideal: 240)
             } detail: {
                 detail
             }

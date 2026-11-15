@@ -455,9 +455,13 @@ private struct Writer {
         let string = text.string
         guard string.contains("://") || string.contains("www.") || string.contains("@"), let detector = Self.detector else { return }
         for match in detector.matches(in: string, range: NSRange(location: 0, length: text.length)) {
-            guard let url = match.url else { continue }
-            let found = (string as NSString).substring(with: match.range).lowercased()
+            guard var url = match.url else { continue }
+            let address = (string as NSString).substring(with: match.range)
+            let found = address.lowercased()
             guard url.scheme == "mailto" || ["http://", "https://", "ftp://", "www."].contains(where: found.hasPrefix) else { continue }
+            // GitHub links a bare `www.` address with `http://`; the link detector, since macOS 27,
+            // with `https://`.
+            if found.hasPrefix("www."), let http = URL(string: "http://" + address) { url = http }
             var taken = false
             text.enumerateAttributes(in: match.range) { attributes, _, stop in
                 if attributes[.link] != nil || attributes[.markdownInlineCode] != nil { taken = true; stop.pointee = true }
