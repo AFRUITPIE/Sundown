@@ -94,9 +94,15 @@ final class TranscriptBlankUITests: SundownUITestCase {
     @MainActor
     func testOlderPageKeepsThePlace() throws {
         try launchVaried()
-        run("scroll top", "wait 2500")
+        run("scroll top")
         let bar = app.scrollViews["Transcript"].scrollBars.element(boundBy: 0)
-        let place = try XCTUnwrap((bar.value as? NSNumber)?.doubleValue, "no scroll bar value")
+        // The page's rows are measured before they go in, which takes a few seconds on a slow
+        // runner: waited for, rather than a fixed time.
+        var place = 0.0
+        waitUntil(15) {
+            place = (bar.value as? NSNumber)?.doubleValue ?? 0
+            return place > 0.5
+        }
         XCTAssertGreaterThan(place, 0.5, "the reader lost their place as an older page went in: the scroll bar is at \(place)")
     }
 

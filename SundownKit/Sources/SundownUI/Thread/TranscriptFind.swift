@@ -150,7 +150,13 @@ struct FindBar: View {
         // Typing goes straight into the field: ⌘F is how people start a search, even from the
         // message field.
         .defaultFocus($focused, true, priority: .userInitiated)
-        .onChange(of: find.focusRequest, initial: true) { focused = true }
+        .onChange(of: find.focusRequest, initial: true) {
+            focused = true
+            // And again once the bar is in the window: asked only as it was added, the request was
+            // sometimes lost (after Jump to Latest, the field stayed unfocused and typing went to
+            // the message field; 2026-11).
+            DispatchQueue.main.async { focused = true }
+        }
         // Where Next and Previous landed, said, since the match moves out of sight of the field.
         .onChange(of: find.moves) { AccessibilityNotification.Announcement(status).post() }
     }
