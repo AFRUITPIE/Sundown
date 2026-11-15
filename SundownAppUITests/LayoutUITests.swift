@@ -53,8 +53,15 @@ final class LayoutUITests: SundownUITestCase {
         // Scrolled into the middle of the chat, switching doesn't blank it either, and the end is
         // there to go back to.
         // The message at the top stays on screen through each.
-        mainWindow().coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)).scroll(byDeltaX: 0, deltaY: 4000)
+        let middle = mainWindow().coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
+        middle.scroll(byDeltaX: 0, deltaY: 4000)
+        // Somewhere with a prompt or heading in view to keep: one long reply can fill the window,
+        // and where a fixed scroll lands depends on the replies' heights.
         var place = topMessage(in: messageTops())
+        for _ in 0..<4 where place == nil {
+            middle.scroll(byDeltaX: 0, deltaY: 300)
+            place = topMessage(in: messageTops())
+        }
         XCTAssertNotNil(place, "no message on screen after scrolling into the middle")
         for display in ["Every Call", "Summarized"] {
             chooseMenuItem("View", display)
