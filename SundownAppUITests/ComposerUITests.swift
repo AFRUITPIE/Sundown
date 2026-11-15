@@ -67,7 +67,10 @@ final class ComposerUITests: SundownUITestCase {
         visibleMenuItem("Attach Files…").click()
         let panel = app.sheets.firstMatch
         XCTAssertTrue(panel.appears(timeout: 5) || app.dialogs.firstMatch.appears(timeout: 1), "no Open panel")
+        // Esc, once the panel has the keyboard: pressed as it slid in, CI's slower runner sometimes
+        // sent it to the window behind.
         app.typeKey(.escape, modifierFlags: [])
+        if !panel.disappears(timeout: 2) { app.typeKey(.escape, modifierFlags: []) }
         XCTAssertTrue(panel.disappears(timeout: 5), "Esc didn't close the Open panel")
         add.click()
         visibleMenuItem("Mention a File").click()
