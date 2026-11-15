@@ -163,6 +163,14 @@ extension TranscriptModel {
         loadOlderIfNear()
     }
 
+    /// The rows around what the view shows, built.
+    func buildRowsInView() {
+        guard ready else { return }
+        let top = view.visibleTop - historyTop
+        let w = index.window(for: top...(top + view.height), overscan: view.height)
+        if w != window { window = w }
+    }
+
     /// Builds, off the main thread, the text of messages up to two screens beyond the rows built,
     /// into the text views' cache: built in its row as it was mounted, a long reply held up the
     /// scroll that brought it in.
