@@ -112,8 +112,13 @@ final class TranscriptModel {
     @ObservationIgnored var following = true
     /// The prompt Previous or Next Prompt last went to, until the reader scrolls for themselves.
     @ObservationIgnored var lastPrompt: String?
-    /// Under Tasks or Diff: the geometry isn't the reader's.
-    @ObservationIgnored var hidden = false
+    /// Under Tasks or Diff: the geometry isn't the reader's. Shown again, the rows built are
+    /// worked out afresh from where the view is: while hidden, a change of place (an older page
+    /// going in) moved the view without its rows following, and coming back from Tasks showed none
+    /// until the reader scrolled (CI, 2026-11).
+    @ObservationIgnored var hidden = false {
+        didSet { if oldValue, !hidden { buildRowsInView() } }
+    }
     /// The offset the view is being taken to: SwiftUI reports the content laid out anew at the old
     /// offset first, which is never drawn and isn't the reader (it asked for a second older page).
     @ObservationIgnored var landing: CGFloat? { didSet { landingSkips = 0 } }
