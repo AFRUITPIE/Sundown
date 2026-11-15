@@ -26,7 +26,10 @@ struct LiveServerTests {
         #expect(conn.serverInfo?.host.mode == "daemon")
         try await eventually(timeout: Self.patience, interval: .milliseconds(100)) { !conn.models.isEmpty }
 
-        let thread = try await conn.startThread(cwd: cwd.path, input: [], options: .init(model: "sonnet", effort: .low))
+        // The default mode, which asks before a Write: unset, a session starts as the host's
+        // settings say, and Claude Code's own start is auto where the model supports it.
+        let thread = try await conn.startThread(cwd: cwd.path, input: [], options: .init(model: "sonnet", effort: .low,
+                                                                                        permissionMode: PermissionMode(rawValue: "default")))
         await conn.send(thread, input: [.text(.init(text: "Write the word swift to swift.txt, then reply ok."))])
         try await eventually(timeout: Self.patience, interval: .milliseconds(100)) { !thread.pending.isEmpty }
         let p = try #require(thread.pending[0].request.permissionRequest)
