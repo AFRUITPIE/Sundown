@@ -15,9 +15,8 @@ public struct WindowTarget: Codable, Hashable, Sendable {
     /// Tells apart windows that show no chat.
     public var id: UUID
 
-    /// A window for one chat (Open in New Window): it opens without the sidebar, which the
-    /// toolbar's toggle and View ▸ Show Sidebar bring back. Optional, so a window saved before
-    /// this was here still restores.
+    /// A window for one chat (Open in New Window): it has no sidebar. Optional, so a window saved
+    /// before this was here still restores.
     public var hidesSidebar: Bool?
 
     public init(hostID: UUID, threadID: String? = nil, id: UUID = UUID(), hidesSidebar: Bool = false) {
@@ -56,7 +55,7 @@ extension EnvironmentValues {
 @Observable
 public final class WindowModel {
     public let app: AppModel
-    /// Opened for one chat (Open in New Window): its sidebar starts hidden.
+    /// Opened for one chat (Open in New Window): it has no sidebar.
     public let opensWithoutSidebar: Bool
 
     /// The host the sidebar is showing. Changing it starts a new chat there.
