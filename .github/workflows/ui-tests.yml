@@ -11,53 +11,9 @@ concurrency:
   group: ui-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  DERIVED_DATA: ${{ github.workspace }}/../DerivedData
-  PACKAGES: ${{ github.workspace }}/../SourcePackages
-
-# The app is built once for testing and its products shared, so the UI tests can be split across
-# runners. They can't run in parallel on one Mac: they press real keys into the frontmost window.
-# The package tests run beside them. Timings to balance the shards by are in each run's log.
+# The package tests and the app's UI tests run side by side on their own runners. The UI tests run
+# one at a time on one Mac: they press real keys into the frontmost window.
 jobs:
-  build:
-    runs-on: xcode-27
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache Swift packages
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.PACKAGES }}
-          key: spm-app-${{ hashFiles('Sundown.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-          restore-keys: spm-app-
-
-      - name: Build for testing
-        run: |
-          xcodebuild build-for-testing \
-            -project Sundown.xcodeproj \
-            -scheme Sundown \
-            -destination 'platform=macOS' \
-            -derivedDataPath "$DERIVED_DATA" \
-            -clonedSourcePackagesDirPath "$PACKAGES" \
-            -skipMacroValidation \
-            -skipPackagePluginValidation \
-            SUNDOWN_APP_BUNDLE_IDENTIFIER=com.haydenhong.SundownUITestFixture \
-            CODE_SIGN_IDENTITY=- \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM=
-
-      # A tar keeps the app bundles' symlinks and permissions, which an artifact alone loses.
-      - name: Pack test products
-        run: tar -czf "$RUNNER_TEMP/products.tgz" -C "$DERIVED_DATA" Build/Products
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: test-products
-          path: ${{ runner.temp }}/products.tgz
-          retention-days: 1
-          compression-level: 0
-
   package-tests:
     runs-on: xcode-27
     timeout-minutes: 20
@@ -74,70 +30,52 @@ jobs:
       - name: Run package tests
         run: swift test --package-path SundownKit
 
-  ui-shard:
-    needs: build
+  app-ui-tests:
     runs-on: xcode-27
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        # About four minutes each, from the run of 15 November 2026. The last shard takes every
-        # class not named in the others, so a new test class always runs somewhere.
-        include:
-          - shard: transcript-blank
-            select: >-
-              -only-testing:SundownAppUITests/TranscriptBlankUITests
-              -only-testing:SundownAppUITests/TasksUITests
-          - shard: transcript-chats
-            select: >-
-              -only-testing:SundownAppUITests/TranscriptUITests
-              -only-testing:SundownAppUITests/ChatListUITests
-              -only-testing:SundownAppUITests/SettingsUITests
-              -only-testing:SundownAppUITests/PromptCardsUITests
-          - shard: rest
-            select: >-
-              -skip-testing:SundownAppUITests/TranscriptBlankUITests
-              -skip-testing:SundownAppUITests/TasksUITests
-              -skip-testing:SundownAppUITests/TranscriptUITests
-              -skip-testing:SundownAppUITests/ChatListUITests
-              -skip-testing:SundownAppUITests/SettingsUITests
-              -skip-testing:SundownAppUITests/PromptCardsUITests
-              -skip-testing:SundownAppUITests/SundownPerformanceUITests
-    name: ui-tests (${{ matrix.shard }})
+    timeout-minutes: 30
+    env:
+      PACKAGES: ${{ github.workspace }}/../SourcePackages
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
         with:
-          name: test-products
-          path: ${{ runner.temp }}
+          path: ${{ env.PACKAGES }}
+          key: spm-app-${{ hashFiles('Sundown.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: spm-app-
 
-      - name: Unpack test products
+      - name: Run app UI tests
         run: |
-          mkdir -p "$DERIVED_DATA"
-          tar -xzf "$RUNNER_TEMP/products.tgz" -C "$DERIVED_DATA"
-
-      - name: Run UI tests
-        run: |
-          xctestrun=$(ls "$DERIVED_DATA"/Build/Products/*.xctestrun | head -n 1)
-          xcodebuild test-without-building \
-            -xctestrun "$xctestrun" \
+          xcodebuild test \
+            -project Sundown.xcodeproj \
+            -scheme Sundown \
             -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/SundownDerivedData" \
+            -clonedSourcePackagesDirPath "$PACKAGES" \
             -resultBundlePath "$RUNNER_TEMP/SundownUITests.xcresult" \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
             -parallel-testing-enabled NO \
-            ${{ matrix.select }}
+            -skip-testing:SundownAppUITests/SundownPerformanceUITests \
+            SUNDOWN_APP_BUNDLE_IDENTIFIER=com.haydenhong.SundownUITestFixture \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM=
 
       - name: Upload UI test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SundownUITests-${{ matrix.shard }}-xcresult
+          name: SundownUITests-xcresult
           path: ${{ runner.temp }}/SundownUITests.xcresult
 
-  # One check named as before, for branch protection and anything waiting on it.
+  # One check named as before, covering both, for branch protection and anything waiting on it.
   ui-tests:
     if: always()
-    needs: [package-tests, ui-shard]
+    needs: [package-tests, app-ui-tests]
     runs-on: ubuntu-latest
     steps:
       - name: All tests passed
         run: |
-          [ "${{ needs.package-tests.result }}" = success ] && [ "${{ needs.ui-shard.result }}" = success ]
+          [ "${{ needs.package-tests.result }}" = success ] && [ "${{ needs.app-ui-tests.result }}" = success ]
