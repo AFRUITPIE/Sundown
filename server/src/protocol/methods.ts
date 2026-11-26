@@ -1,0 +1,361 @@
+import { z } from 'zod';
+import {
+  AccountInfo,
+  EffortLevel,
+  EnvOverrides,
+  JsonValue,
+  McpServerStatus,
+  ModelInfo,
+  PermissionMode,
+  SlashCommand,
+  ThinkingSetting,
+  ThreadInfo,
+  ThreadSummary,
+  UserInput,
+} from './common.ts';
+import { DiffHunk, Item, Turn } from './items.ts';
+import { TaskState } from './tasks.ts';
+
+const Empty = z.object({});
+const ThreadRef = z.object({ threadId: z.string() });
+
+/** Client → server requests. Each entry: params and result schema. */
+export const Methods = {
+  initialize: {
+    params: z.object({
+      clientInfo: z.object({ name: z.string(), title: z.string().optional(), version: z.string() }),
+      /** The client's protocol. A client that sends none is taken to speak protocol 1, and refused. */
+      protocolVersion: z.number().int().optional(),
+      capabilities: z
+        .object({
+          experimentalApi: z.boolean().optional(),
+        })
+        .optional(),
+      /** Env overrides applied to every thread this connection starts (e.g. AWS_PROFILE). */
+      env: EnvOverrides.optional(),
+    }),
+    result: z.object({
+      serverInfo: z.object({ name: z.string(), version: z.string() }),
+      protocolVersion: z.number().int(),
+      /**
+       * The oldest client protocol this server serves; an older client is refused with
+       * `incompatibleProtocol`.
+       */
+      minClientProtocol: z.number().int().optional(),
+      host: z.object({
+        hostname: z.string(),
+        platform: z.string(),
+        arch: z.string(),
+        home: z.string(),
+        pid: z.number().int(),
+        mode: z.enum(['stdio', 'daemon']),
+      }),
+      claude: z.object({ path: z.string(), version: z.string() }),
+    }),
+  },
+
+  /** Ask the daemon to exit (used for upgrades). Accepted only when no thread is running or waiting on input; otherwise it exits once they settle. */
+  'host/requestShutdown': {
+    params: z.object({ reason: z.string().optional() }),
+    result: z.object({ accepted: z.boolean() }),
+  },
+
+  'account/read': {
+    params: z.object({ cwd: z.string().optional() }),
+    result: z.object({ account: AccountInfo }),
+  },
+
+  'model/list': {
+    params: z.object({ cwd: z.string().optional() }),
+    result: z.object({ models: z.array(ModelInfo) }),
+  },
+
+  /**
+   * What a new thread in `cwd` starts with when nothing is chosen, as Claude Code's own settings on
+   * the host decide: the model, the effort it sends that model (`model` when given, else the
+   * default one), and the permission mode an interactive session starts in (`permissions.
+   * defaultMode`, else auto where the model supports it, else default). `thread/start` without a
+   * permission mode starts in that mode.
+   */
+  'session/defaults': {
+    params: z.object({ cwd: z.string().optional(), model: z.string().optional() }),
+    result: z.object({
+      model: z.string().optional(),
+      effort: EffortLevel.nullable(),
+      permissionMode: PermissionMode,
+    }),
+  },
+
+  'command/list': {
+    params: z.object({ cwd: z.string().optional(), threadId: z.string().optional() }),
+    result: z.object({ commands: z.array(SlashCommand) }),
+  },
+
+  'thread/list': {
+    params: z.object({
+      cwd: z.string().optional(),
+      limit: z.number().int().optional(),
+      offset: z.number().int().optional(),
+      includeWorktrees: z.boolean().optional(),
+    }),
+    result: z.object({ threads: z.array(ThreadSummary) }),
+  },
+
+  'thread/start': {
+    params: z.object({
+      cwd: z.string(),
+      model: z.string().optional(),
+      fallbackModel: z.string().optional(),
+      effort: EffortLevel.optional(),
+      permissionMode: PermissionMode.optional(),
+      fastMode: z.boolean().optional(),
+      thinking: ThinkingSetting.optional(),
+      additionalDirectories: z.array(z.string()).optional(),
+      systemPromptAppend: z.string().optional(),
+      allowedTools: z.array(z.string()).optional(),
+      disallowedTools: z.array(z.string()).optional(),
+      mcpServers: z.record(z.string(), JsonValue).optional(),
+      agent: z.string().optional(),
+      maxTurns: z.number().int().optional(),
+      maxBudgetUsd: z.number().optional(),
+      betas: z.array(z.string()).optional(),
+      env: EnvOverrides.optional(),
+      title: z.string().optional(),
+      /** First user input, sent immediately after start. */
+      input: z.array(UserInput).optional(),
+      /**
+       * Start in a new git worktree of `cwd`'s repository, under `<repo>/.claude/worktrees/`, on a
+       * branch of its own, so parallel sessions don't edit the same checkout. The thread's `cwd` is
+       * the worktree's copy of the folder asked for (its root if the checkout lacks that folder);
+       * from inside a worktree, the new one goes beside it in the main checkout, from its HEAD. A
+       * thread that fails to start removes the worktree again.
+       */
+      worktree: z.boolean().optional(),
+      /** Give Claude tools to list and read the host's other sessions and to suggest tasks. */
+      sessionTools: z.boolean().optional(),
+      /**
+       * Have Claude Code name the chat from its first prompt, as it starts (or loads), if it has no
+       * title: Claude Code doesn't name an SDK session itself while
+       * `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set. One small-model call per chat; none for
+       * a chat that has a title.
+       */
+      generateTitle: z.boolean().optional(),
+    }),
+    /**
+     * With `input`: the id of the prompt's `userMessage` item and of the turn it starts. The prompt's
+     * item (`item/started`, `item/completed`) and its `turn/started` are on the chat's stream before
+     * this result: a client that has the result has the item.
+     */
+    result: z.object({ thread: ThreadInfo, messageId: z.string().optional(), turnId: z.string().optional() }),
+  },
+
+  'thread/resume': {
+    params: z.object({
+      threadId: z.string(),
+      /** As thread/start's; applies when this resume loads the thread. */
+      sessionTools: z.boolean().optional(),
+      /** As thread/start's; also turns it on for a thread already loaded. */
+      generateTitle: z.boolean().optional(),
+      cwd: z.string().optional(),
+      /** Resume with history truncated after this message uuid (conversation rewind). */
+      atMessageId: z.string().optional(),
+      model: z.string().optional(),
+      effort: EffortLevel.optional(),
+      permissionMode: PermissionMode.optional(),
+      env: EnvOverrides.optional(),
+      /** Client already has events up to this seq; only newer events are replayed. */
+      afterSeq: z.number().int().optional(),
+      includeHistory: z.boolean().optional(),
+      /** With `includeHistory`, only the most recent `limit` items, as `thread/read` pages them. */
+      limit: z.number().int().positive().optional(),
+    }),
+    result: z.object({
+      thread: ThreadInfo,
+      items: z.array(Item).optional(),
+      turns: z.array(Turn).optional(),
+      /** Seq the history snapshot corresponds to; events after it are streamed. */
+      historySeq: z.number().int().optional(),
+      /** Whether older items exist before those returned. */
+      hasMore: z.boolean().optional(),
+      /** With `includeHistory`: every task of the chat, as `thread/read`'s. */
+      tasks: z.array(TaskState).optional(),
+    }),
+  },
+
+  'thread/fork': {
+    params: z.object({ threadId: z.string(), atMessageId: z.string().optional(), title: z.string().optional() }),
+    result: z.object({ threadId: z.string() }),
+  },
+
+  'thread/read': {
+    params: z.object({
+      threadId: z.string(),
+      cwd: z.string().optional(),
+      includeSubagents: z.boolean().optional(),
+      /**
+       * Return only the most recent `limit` items. Omit for the whole transcript. A session run
+       * for days is tens of megabytes and tens of thousands of items; a client that only needs
+       * the end of it should not be handed all of that.
+       */
+      limit: z.number().int().positive().optional(),
+      /** Page backwards: the items immediately preceding this one. Use with `limit`. */
+      before: z.string().optional(),
+    }),
+    result: z.object({
+      items: z.array(Item),
+      turns: z.array(Turn),
+      summary: ThreadSummary.optional(),
+      /** Present when the thread is loaded: the snapshot includes all events up to this seq. */
+      historySeq: z.number().int().optional(),
+      /** Whether older items exist before the first one returned. */
+      hasMore: z.boolean().optional(),
+      /**
+       * Every task of the chat, whatever page of items this is, finished ones included: what this
+       * daemon saw of them live (kept with the chat in its home, so a reload or a restart still has
+       * them), what the transcript and the session's workflow files say, and the chat's schedules
+       * and goals. As of `historySeq`: `task/updated` after it are newer.
+       */
+      tasks: z.array(TaskState),
+    }),
+  },
+
+  'thread/subscribe': {
+    params: z.object({ threadId: z.string(), afterSeq: z.number().int().optional() }),
+    /** `tasks`: every task of the chat as it stands now, newer than anything replayed before this result. */
+    result: z.object({ thread: ThreadInfo, replayed: z.number().int(), gap: z.boolean(), tasks: z.array(TaskState) }),
+  },
+  'thread/unsubscribe': { params: ThreadRef, result: Empty },
+  'thread/rename': { params: z.object({ threadId: z.string(), title: z.string() }), result: Empty },
+  'thread/tag': { params: z.object({ threadId: z.string(), tag: z.string().nullable() }), result: Empty },
+  'thread/delete': { params: ThreadRef, result: Empty },
+
+  'thread/setModel': { params: z.object({ threadId: z.string(), model: z.string().nullable() }), result: Empty },
+  'thread/setEffort': { params: z.object({ threadId: z.string(), effort: EffortLevel.nullable() }), result: Empty },
+  'thread/setFastMode': { params: z.object({ threadId: z.string(), enabled: z.boolean() }), result: Empty },
+  'thread/setPermissionMode': { params: z.object({ threadId: z.string(), mode: PermissionMode }), result: Empty },
+
+  'thread/contextUsage': {
+    params: z.object({ threadId: z.string(), detail: z.enum(['summary', 'full']).optional() }),
+    result: z.object({ usage: JsonValue }),
+  },
+  'thread/rewindFiles': {
+    params: z.object({ threadId: z.string(), userMessageId: z.string(), dryRun: z.boolean().optional() }),
+    result: z.object({ result: JsonValue }),
+  },
+
+  'turn/start': {
+    params: z.object({
+      threadId: z.string(),
+      input: z.array(UserInput),
+      /** If a turn is running: 'next' delivers at the next tool boundary, 'later' after the turn. */
+      priority: z.enum(['now', 'next', 'later']).optional(),
+    }),
+    result: z.object({ turnId: z.string(), messageId: z.string(), queued: z.boolean() }),
+  },
+  'turn/interrupt': {
+    params: z.object({ threadId: z.string(), cancelQueued: z.boolean().optional() }),
+    result: z.object({ stillQueued: z.array(z.string()).optional() }),
+  },
+
+  'task/stop': { params: z.object({ threadId: z.string(), taskId: z.string() }), result: Empty },
+  'task/background': {
+    params: z.object({ threadId: z.string(), toolUseId: z.string().optional() }),
+    result: z.object({ backgrounded: z.boolean() }),
+  },
+
+  /** One workflow agent's transcript, itemized as history is. Empty while it hasn't written one. */
+  'workflow/agentItems': {
+    params: z.object({ threadId: z.string(), runId: z.string(), agentId: z.string() }),
+    result: z.object({ items: z.array(Item) }),
+  },
+
+  'mcp/status': { params: ThreadRef, result: z.object({ servers: z.array(McpServerStatus) }) },
+  'mcp/reconnect': { params: z.object({ threadId: z.string(), name: z.string() }), result: Empty },
+  'mcp/toggle': { params: z.object({ threadId: z.string(), name: z.string(), enabled: z.boolean() }), result: Empty },
+
+  'fs/list': {
+    params: z.object({ path: z.string(), showHidden: z.boolean().optional() }),
+    result: z.object({
+      entries: z.array(z.object({ name: z.string(), path: z.string(), isDirectory: z.boolean(), size: z.number() })),
+    }),
+  },
+  'fs/search': {
+    params: z.object({ cwd: z.string(), query: z.string(), limit: z.number().int().optional() }),
+    result: z.object({ paths: z.array(z.string()) }),
+  },
+  'git/status': {
+    params: z.object({ cwd: z.string() }),
+    result: z.object({
+      isRepo: z.boolean(),
+      branch: z.string().optional(),
+      files: z.array(z.object({ path: z.string(), status: z.string() })),
+    }),
+  },
+  /**
+   * Everything in `cwd`'s repository that differs from its last commit: staged and unstaged changes
+   * together (`git diff HEAD`, renames found; against the empty tree before the first commit), and
+   * files git doesn't track yet, their whole content as added (at most 200, read eight at a time,
+   * the rest counted in `omittedFiles`; each read up to 4 MB). Paths are relative to the
+   * repository's `root`, sorted. Each file is bounded as an edit is: 5,000 lines kept, the rest
+   * counted (`truncatedLines`), lines cut at 1,000 characters. `isRepo` false: not in a repository.
+   */
+  'git/changes': {
+    params: z.object({ cwd: z.string() }),
+    result: z.object({
+      isRepo: z.boolean(),
+      /** The repository's top folder, which the paths are relative to. */
+      root: z.string().optional(),
+      branch: z.string().optional(),
+      files: z.array(
+        z
+          .object({
+            path: z.string(),
+            /** A renamed file's path before. */
+            oldPath: z.string().optional(),
+            status: z.enum(['added', 'modified', 'deleted', 'renamed', 'untracked']),
+            /** Binary: no lines to show. */
+            binary: z.boolean().optional(),
+            hunks: z.array(DiffHunk),
+            added: z.number().int(),
+            removed: z.number().int(),
+            truncatedLines: z.number().int(),
+          })
+          .meta({ id: 'WorkingFileChange' }),
+      ),
+      /** Untracked files past the 200 read: counted, not listed. */
+      omittedFiles: z.number().int(),
+    }),
+  },
+
+  /**
+   * A question about the thread, answered with its context but kept out of its transcript and
+   * context (the CLI's /btw). `answer` is null when Claude Code gave none. Given up on (error
+   * `sdkError`) after 60 seconds without an answer.
+   */
+  'thread/sideQuestion': {
+    params: z.object({ threadId: z.string(), question: z.string() }),
+    result: z.object({ answer: z.string().nullable() }),
+  },
+
+  /**
+   * Removes a worktree `thread/start` made (`<checkout>/.claude/worktrees/tether-…`) and its
+   * `claude/…` branch; any other path is refused. Refuses one with uncommitted changes unless
+   * `force` (error `worktreeDirty`), and one whose branch has commits merged nowhere else unless
+   * `discardCommits` (error `worktreeUnmerged`, before anything is removed). Both errors' `data`
+   * says which of the two apply, so a client can ask once.
+   */
+  'git/removeWorktree': {
+    params: z.object({
+      path: z.string(),
+      /** Discard uncommitted changes in the worktree. */
+      force: z.boolean().optional(),
+      /** Delete the branch even though it has commits merged nowhere else. */
+      discardCommits: z.boolean().optional(),
+    }),
+    result: Empty,
+  },
+} as const;
+
+export type MethodName = keyof typeof Methods;
+export type Params<M extends MethodName> = z.infer<(typeof Methods)[M]['params']>;
+export type Result<M extends MethodName> = z.infer<(typeof Methods)[M]['result']>;

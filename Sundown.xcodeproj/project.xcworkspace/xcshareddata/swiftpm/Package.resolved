@@ -1,5 +1,4 @@
 {
-  "originHash" : "6718978d5a760435c6ef1d23e767f72e77c0e6f8642e2d347f8ce6a07184a51b",
   "pins" : [
     {
       "identity" : "swift-cmark",
@@ -35,15 +34,6 @@
       "state" : {
         "revision" : "869129b7bf4ecc57b97d0193ad29690ca2134750",
         "version" : "1.8.1"
-      }
-    },
-    {
-      "identity" : "tether-server",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/AFRUITPIE/tether-server.git",
-      "state" : {
-        "revision" : "2e2972174aba5d5e259d691f1867edd882ebbee7",
-        "version" : "0.6.1"
       }
     }
   ],

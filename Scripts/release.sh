@@ -44,8 +44,6 @@ fi
 # A release says which commit it is, so that commit has to be on GitHub.
 [ -n "$(git branch -r --contains HEAD)" ] || { echo "Push $(git rev-parse --short HEAD) first."; exit 1; }
 
-# The protocol package at its pin, not a sibling tether-server checkout.
-export SUNDOWN_USE_RELEASE=1
 team=K4M2TD6G2A
 out=build/release
 version=$(xcodebuild -project Sundown.xcodeproj -scheme Sundown -configuration Release -showBuildSettings 2>/dev/null \

@@ -48,6 +48,15 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Verify pinned server is published on npm
+        run: |
+          server_version=$(sed -n 's/.*public static let version = "\(.*\)"/\1/p' SundownKit/Sources/SundownKit/Bootstrap.swift)
+          [ -n "$server_version" ] || { echo "::error::No ServerRelease.version in Bootstrap.swift"; exit 1; }
+          if ! npm view "tether-server@$server_version" version >/dev/null 2>&1; then
+            echo "::error::tether-server@$server_version is not published on npm yet. Approve the staged npm package first, then rerun this job."
+            exit 1
+          fi
+          echo "Verified tether-server@$server_version is live on npm."
       - name: Signing and notarizing credentials
         env:
           DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}

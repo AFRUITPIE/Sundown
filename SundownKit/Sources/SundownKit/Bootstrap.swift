@@ -1,10 +1,10 @@
 import Foundation
 
-/// The Sundown server this build of the app runs: tether-server's npm package, at the version its
-/// protocol package is pinned to. Every host has Node.js 18 or later, and runs it with `npx`, so
-/// nothing is installed beside npm's cache.
+/// The Sundown server this build of the app runs: `server/`'s published `tether-server` npm
+/// package, pinned to a published version. Every host has Node.js 18 or later, and runs it with
+/// `npx`, so nothing is installed beside npm's cache.
 public enum ServerRelease {
-    /// Moves with the protocol package's pin, which is the server this app was built against.
+    /// The published `tether-server` npm version this build of the app runs.
     public static let version = "0.6.1"
 
     /// What connecting runs on a host. Not `--prefer-offline`: npm then trusts a cached list of the

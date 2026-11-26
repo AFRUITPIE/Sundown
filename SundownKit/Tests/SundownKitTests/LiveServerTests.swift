@@ -5,12 +5,12 @@ import TetherProtocol
 @testable import SundownKit
 
 /// Drives a real tether-server + real `claude`. Opt in with SUNDOWN_E2E=1; TETHER_SERVER_BIN picks
-/// the server, e.g. `bun run ~/Code/tether-server/src/cli.ts` to test a working copy.
+/// the server, e.g. `bun run <repo>/server/src/cli.ts` to test a working copy.
 @MainActor
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["SUNDOWN_E2E"] == "1"), .serialized)
 struct LiveServerTests {
     static let server = ProcessInfo.processInfo.environment["TETHER_SERVER_BIN"]
-        ?? NSString(string: "~/Code/tether-server/dist/sundown-0.1.0-darwin-arm64").expandingTildeInPath
+        ?? "bun run \(URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appending(path: "server/src/cli.ts").path)"
 
     /// A real model takes its time: minutes, polled gently.
     static let patience = Duration.seconds(120)

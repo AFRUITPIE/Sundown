@@ -2,9 +2,16 @@
 
 ## What this is
 
-A native macOS SwiftUI client for Claude Code. It's a thin client: it shows hosts, chats, streamed transcript items,
-requests and settings, while [tether-server](https://github.com/AFRUITPIE/tether-server) (`../tether-server`) runs the
-Agent SDK queries and owns every live session. Closing the app never ends a turn.
+A native macOS SwiftUI client for Claude Code and its companion daemon (`server/`, published to npm as `tether-server`).
+The app is a thin client: it shows hosts, chats, streamed transcript items, requests and settings, while the daemon runs
+the Agent SDK queries against the host's own `claude` (`TETHER_CLAUDE_PATH`, else `PATH`, else the login shell's) and
+owns every live session. Closing the app never ends a turn.
+
+```text
+tether connect         stdio <-> daemon socket; starts the daemon, or replaces one of another version (what the app runs)
+tether daemon          the daemon, on <TETHER_HOME>/tether.sock (mode 0600; TETHER_HOME defaults to ~/.tether)
+tether serve --stdio   one client, in-process (development, tests); keeps task state only under an explicit TETHER_HOME
+```
 
 Each host runs the server with the first `npx` on its login shell's PATH: `npx --yes tether-server@<version> connect`,
 locally or over system `ssh`, at the version the app pins (`ServerRelease.version`, `Bootstrap.swift`). Nothing is
@@ -12,13 +19,17 @@ checked or installed first; a host without Node.js 18+ fails to connect with the
 protocol 2 and refuses an older server (`HostConnection.minServerProtocol`).
 
 Built with Xcode 27 and Swift 6, running on macOS 26 and later (deployment target 26.0). Anything new in macOS 27 goes
-behind `#available`.
+behind `#available`. The server is TypeScript on Bun (pinned in `server/mise.toml`), bundled to a single Node 18+ file
+for npm.
 
 ## Building and testing
 
+### App (macOS)
+
 - **Build:** open `Sundown.xcodeproj`, or `xcodebuild build -project Sundown.xcodeproj -scheme Sundown -destination 'platform=macOS'`.
   The project file is `project.xcproj`, Xcode 27's JSON project format: edit it directly, as text (JSON5, trailing commas).
-- **Package tests:** `swift test --package-path SundownKit`. No server, no network: hosts are `FakeHost`.
+- **Package tests:** `swift test --package-path SundownKit`. No server, no network: hosts are `FakeHost`, and
+  `TetherProtocolTests` decodes recorded wire traffic.
 - **UI tests** (`SundownAppUITests`, in the `Sundown` scheme): they drive the app with real key presses, which go to whatever
   window is in front, so run them only when nobody is using the Mac, or leave them to CI. The `Sundown Performance` scheme
   runs `SundownPerformanceUITests` in Release (hitches, CPU, memory, signposts); the main scheme and CI skip it.
@@ -30,35 +41,43 @@ behind `#available`.
 - Always look at the running app after a UI change; a clean build isn't a visual check. Make sure the window you look at
   belongs to the build you just made.
 
+### Server (`server/`, mise tasks with Bun pinned in `server/mise.toml`)
+
+Run inside `server/`:
+
+- `mise run install`, `typecheck`, `test`: `bun install`, `tsc --noEmit`, Bun unit tests (no `claude`, no network).
+  `test/cli.test.ts` runs the CLI modes as processes (fresh `HOME`/`TETHER_HOME`, stand-in `claude`); `TETHER_TEST_BINARY=<path>`
+  targets a compiled binary instead.
+- `mise run gen`: regenerates `server/schema/tether.schema.json` and `SundownKit/Sources/TetherProtocol/Generated.swift`
+  from `server/src/protocol` (`test/generated.test.ts` catches drift). Never hand-edit either file.
+- `mise run swift-test`: runs `TetherProtocolTests` in `SundownKit`.
+- `mise run dev`: `serve --stdio` from source. To run the working copy from the app, set This Mac's Server Command
+  (Settings ▸ Hosts ▸ Advanced) to `<bun> run <repo>/server/src/cli.ts connect`, with full paths.
+- `mise run compile`: standalone binaries in `server/dist/` (`TETHER_TARGETS` to choose). `mise run build-npm`: the npm
+  package in `server/npm/`, a single bundled file for Node 18+.
+- `mise run bench`: hot-path benchmarks over copies of real transcripts in `~/.claude/projects` (read-only, no `claude`).
+- **Costs money:** `mise run e2e` (`scripts/e2e*.ts`) and `scripts/record-sdk.ts` run the real `claude` on the host's account,
+  creating temp projects and real sessions. Run them only when asked, or when nothing else can check a change.
+
 ### Without a Mac
 
-On Linux or in a cloud session there is no Xcode, so nothing here builds locally; GitHub Actions is the Mac. Push the branch
-and run `tests.yml` on it (`workflow_dispatch`, any branch, no pull request needed; a pull request runs it too). It builds
-the app and runs the package tests and the UI tests on Xcode 27 runners; read failures in the job logs, and each run uploads
-its `.xcresult`. A run takes a quarter of an hour of macOS runner time, so get as far as reading the code allows first.
+On Linux or in a cloud session there is no Xcode, so Swift doesn't build locally (server tests still run locally with Bun);
+GitHub Actions is the Mac. Push the branch and run `tests.yml` on it (`workflow_dispatch`, any branch, no pull request needed;
+a pull request runs it too). It builds the app and runs the package tests, UI tests (Xcode 27 runners), and server tests
+(Ubuntu + macOS 26); read failures in the job logs, and each run uploads its `.xcresult`. A run takes a quarter of an hour
+of macOS runner time, so get as far as reading the code and running server tests allows first.
 For speed, run `benchmarks.yml` on the branch (`gh workflow run benchmarks.yml --ref <branch>`, optionally `-f base=<ref>`);
 its numbers are in the run's summary, in the log between `BEGIN-BENCH-JSON` and `END-BENCH-JSON`, and in its `benchmarks`
 artifact. The runner has no CPU counters and its times wander, so it compares CPU time, clock time and peak memory over
 rounds in alternating order, and counts a change only with no overlap between the rounds and at 10% or more for times, 3%
 for memory: it catches regressions, not small wins, which still need a Mac. It builds twice in Release, so use it when
 working on speed, not on every change.
-The repository is cloned alone there, so a change that needs an unreleased tether-server waits for its release.
 CI can't look at the app for you: a UI change still needs someone to look at the running app.
-
-### Both repositories side by side
-
-With `../tether-server` checked out, `SundownKit/Package.swift` takes `TetherProtocol` from it by path, so a protocol change
-shows on the next build with no release. That empties both `Package.resolved` files: put them back
-(`git checkout -- '*Package.resolved'`) before committing. `SUNDOWN_USE_RELEASE=1` uses the published package at its pin,
-as CI and a fresh clone do. To run that checkout's server, set This Mac's Server Command (Settings ▸ Hosts ▸ Advanced) to
-`<bun> run <path>/tether-server/src/cli.ts connect`, with full paths.
-
-The protocol is generated in tether-server: change its Zod, run `mise run gen` there, then update the call sites here.
-Never hand-edit `Generated.swift`. Protocol enums and unions keep unknown future values; keep the fallbacks.
 
 ## Repository map
 
 - `Sundown/`: the app target: `SundownApp.swift` (scenes, commands), `SundownIntents.swift` (Shortcuts), `Info.plist` (`sundown://`).
+- `SundownKit/Sources/TetherProtocol`: generated `Generated.swift` plus hand-written `Support.swift`.
 - `SundownKit/Sources/SundownKit`: transport and state, no UI.
   - `Bootstrap.swift`: the pinned server version and the connect command (PATH from the host's interactive shell, then `npx`).
   - `Transport.swift`: the server process and its JSONL pipes. `RPCClient.swift`: JSON-RPC (an actor), notifications batched per frame.
@@ -73,18 +92,87 @@ Never hand-edit `Generated.swift`. Protocol enums and unions keep unknown future
 - `SundownKit/Sources/SundownFixtures`: an in-memory daemon (`FakeHost`) and the chats it serves (`FixtureScenario`), compiled
   into every build and inert unless the app is launched with `SUNDOWN_UI_TEST_MODE=1`. Previews' samples are in `PreviewSupport.swift`.
 - `SundownKit/Sources/SundownTestSupport`: `eventually`, observation checks, item builders.
-- `SundownKit/Tests`: `SundownKitTests` (state, folding, connections, real workflow captures) and `SundownUITests` (view logic,
-  Markdown, the transcript's height index, request budgets, benchmarks).
+- `SundownKit/Tests`: `TetherProtocolTests` (decoding `Fixtures/e2e-wire.jsonl`), `SundownKitTests` (state, folding, connections,
+  real workflow captures) and `SundownUITests` (view logic, Markdown, the transcript's height index, request budgets, benchmarks).
+- `server/`: the Tether daemon (`tether-server` on npm).
+  - `src/cli.ts`: modes. `src/version.ts`: `version --json`. `src/claude.ts`: finds `claude` (`resolveClaude`).
+  - `src/protocol/`: the Zod protocol, and the only schema source (`common.ts` holds `PROTOCOL_VERSION`, `methods.ts`,
+    `notifications.ts`, `serverRequests.ts`, `items.ts`, `tasks.ts`).
+  - `src/rpc/connection.ts`: JSONL framing, correlation, cancellation, error codes.
+  - `src/server/`: `session.ts` (handshake, dispatch, subscriptions), `fsApi.ts` (`fs/*`, `git/*`, worktrees), `diff.ts`.
+  - `src/daemon/daemon.ts`: socket daemon, detached start, `connect` bridge, version handoff.
+  - `src/threads/`: `ThreadManager.ts` (loaded/followed threads, catalog, eviction, draining), `LiveThread.ts`,
+    `FollowedThread.ts`, `events.ts` (`EventStream`, `seqOrigin`), `itemizer.ts`, `transcript.ts` (`readSessionHistory`,
+    `TranscriptExtras`, `TranscriptTail`), `tasks.ts`, `scheduled.ts`, `workflows.ts` (`isSafeId`), `taskStore.ts`,
+    `edits.ts`, `pushQueue.ts`. `src/client/TetherClient.ts`: E2E client.
+  - `scripts/`: code generation, `compile`, `build-npm`, E2E, `record-sdk`. `bench/run.ts`. `test/`: unit and capture tests
+    replaying recorded fixtures with no `claude`.
 
 ## Invariants
+
+### Protocol & server
+
+- **Wire:** JSON-RPC 2.0 as JSONL, one object per line, with no `"jsonrpc"` member.
+- **Handshake first:** every method except `initialize` fails with `notInitialized` until it's done. Params are
+  validated against the method's Zod schema before the handler runs.
+- **Zod is the only schema source.** Edit `server/src/protocol`, run `mise run gen` in `server/`, then update Swift call sites.
+  Never hand-edit `server/schema/tether.schema.json` or `SundownKit/Sources/TetherProtocol/Generated.swift`. Keep Swift
+  forward-compatible: string enums as `RawRepresentable` structs, discriminated unions with `.unknown`. Fix mismatches in
+  the schema or generator, not with hand-written decoding in the app.
+- **Versions** (`server/src/protocol/common.ts`): bump `PROTOCOL_VERSION` only for breaking changes. Raise
+  `MIN_CLIENT_PROTOCOL` only when older clients can't be served; they then get `incompatibleProtocol`, with both numbers.
+  Additive changes bump neither, and new result fields must be optional. `connect`'s upgrade client (`tether-upgrade`) is
+  served at any protocol, but only for `host/requestShutdown`, so any release can replace any other's daemon.
+- **Sequencing:** thread-scoped notifications carry `threadId` and a per-thread `seq`; `thread/summaryChanged` is
+  host-wide and has neither. Each new stream starts at `seqOrigin()`, above every earlier stream, so a stale `afterSeq`
+  shows as a gap. `historySeq`, `lastSeq` and `afterSeq` are applied so snapshot and live tail never overlap or leave a gap;
+  a replay gap reloads as far back as the chat already held, no further.
+- **Disconnects never end work.** The daemon owns the queries. Eviction and upgrade drains skip any thread that is running,
+  waiting on a person, starting, or has background work (`ThreadManager.busy`, `sweep`).
+- **Server requests** stay pending until a subscriber answers or the SDK cancels. They're re-sent to each client that
+  subscribes, the first answer wins, and the rest get `serverRequest/resolved` (keep the once-only answer in the app).
+- **Live and history parity:** both paths must yield the same items, turns and tasks. Capture tests assert this.
+- **Tasks are whole state:** `task/updated` carries a complete `TaskState`, never a patch.
+- **Unmodeled SDK messages are ignored, never errors.** Shapes change between Claude Code versions, so read optional
+  fields defensively.
+- **Ids that name paths** (session, thread, workflow run, agent) must pass `isSafeId` first.
+- **stdout carries protocol only.** Logs go to stderr; the daemon's stderr is `<TETHER_HOME>/daemon.log`, which nothing
+  rotates. Claude Code's stderr goes there too, per thread and with long lines cut.
+- **Host config stays the host's:** `settingSources: ['user','project','local']`, the `claude_code` preset prompt, and client
+  env layered over the host's. Human input is sent with `origin: { kind: 'human' }`.
+- **Session tools:** only the `tether` server's own tools (`SESSION_TOOL_NAMES`), on threads that requested them, skip the
+  permission prompt.
+- **Isolation:** tests must never touch the real `~/.tether`, daemon or Claude sessions. Use temp `TETHER_HOME`
+  (and `HOME`/`CLAUDE_CONFIG_DIR` for transcripts) and a stand-in `claude`. `serve --stdio` uses `<TETHER_HOME>/tasks`
+  only when `TETHER_HOME` is set; every E2E script sets a temp one.
+
+### Server subsystems that surprise people
+
+These depend on undocumented Claude Code behavior (background in `server/docs/notes.md`, not auto-loaded, may be stale):
+
+- **History across compactions** (`transcript.ts` `readSessionHistory`): the SDK follows only the latest message chain,
+  and every compaction starts a new one, so history is rebuilt chain by chain. `TranscriptExtras` reads back records the
+  SDK drops. See `server/test/history.test.ts`.
+- **Workflows** (`workflows.ts`, `itemizer.ts`): visible only through `workflow_progress` and the session folder's files.
+  See `server/test/workflows.test.ts`, `workflowCapture.test.ts`, `slowCheckCapture.test.ts`.
+- **Scheduled jobs and goals** (`scheduled.ts`): /loop, CronCreate, ScheduleWakeup and /goal read prompts from the
+  transcript and pending wakeups from a Stop hook (`sessionCrons`). Tether runs no scheduler of its own. See
+  `server/test/scheduled.test.ts`, `loopGoalCapture.test.ts`.
+- **Skill instructions** become the Skill call's `skillInstructions`, never a message (live by position, history by
+  `sourceToolUseID`). See `server/test/tasks.test.ts`.
+- **Task state & store** (`tasks.ts`, `taskStore.ts`): recomputed from CLI facts after any message that could change it;
+  live-only fields (usage, task types, workflow agents) are persisted and merged into reads. A running task whose process
+  is gone is shown as stopped.
+
+`TETHER_DEBUG_TASKS=1` (raw `task_*` messages) and `TETHER_DEBUG_MESSAGES=1` (all SDK messages except deltas) log to
+the daemon log. Use them to capture fixtures.
+
+### App
 
 - **Threads:** network and process work stay off the main actor; UI state is `@MainActor @Observable`. Never create or insert
   an observable model from a `body`.
 - **One `ThreadModel` per (host, thread id)**, for its whole life: replacing one loses subscriptions, pending requests and the
   reader's place. A chat opened before its host connects waits in `openRequested`.
-- **Sequencing:** `historySeq`, `lastSeq` and `afterSeq` are applied so a snapshot and its live tail never overlap or leave a gap.
-  A replay gap reloads as far back as the chat already held, no further.
-- **Server requests** may be answered by another client: keep the once-only answer, and drop the card on `serverRequest/resolved`.
 - **Streaming is coalesced:** at most one transcript update per frame, a reply's text appended in place, and the last turn
   folded again while earlier turns are kept. What the sidebar, toolbar or tabs read (`title`, `tasks`, status) never changes per
   delta; only the transcript reads `rows` and `items`.
@@ -148,16 +236,24 @@ Signposts and logs use subsystem `com.haydenhong.Sundown`: `/usr/bin/log stream 
 
 ## Releases
 
-Releases happen on merge, down a chain. A new Agent SDK becomes a tether-server PR; merging a server version bump publishes it
-to npm (approved by hand). A newly published server becomes a PR here (`server-update.yml`: `ServerRelease.version`, both
-`Package.resolved` pins and the app's next patch version). Merging an app version bump releases the app (`release.yml`,
-running `Scripts/release.sh`: Developer ID, notarized, approved in the `release` environment), then updates the Homebrew tap.
-`MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are set only on the app target. Main stays at the released version, so
-bumping it is deciding to release: a pull request that does is held by Release Check's Approval until the owner approves it
-in the `release-approval` environment. `Scripts/release.sh --beta [<PR> | <branch>]` makes a beta on this Mac.
+Server and app versions move independently (`server/package.json` vs `MARKETING_VERSION` in `project.xcproj`):
 
-CI (`tests.yml`, on pull requests) runs Package Tests and UI Tests side by side on Xcode 27 runners; branch protection
-requires both by those names, and Approval (`release-check.yml`).
+- **Server (`server-release.yml`):** merging a `server/package.json` version bump tests, bundles `server/npm`, smoke-runs
+  `node npm/cli.js version --json`, stages `tether-server` on npm via trusted publishing (OIDC, provenance), and pushes a
+  `server-v<version>` git tag (not a GitHub Release, keeping Releases strictly for the app). Approve the staged package on
+  npmjs.com with 2FA to publish it.
+- **App (`release.yml`, running `Scripts/release.sh`):** merging a `MARKETING_VERSION` bump releases the app (Developer ID,
+  notarized, approved in the `release` environment, verified that `ServerRelease.version` is live on npm), publishes the
+  `v<version>` GitHub Release, and updates the Homebrew tap. `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are set only
+  on the app target. Main stays at the released version, so bumping it is deciding to release: a pull request that does is
+  held by Release Check's Approval until the owner approves it in the `release-approval` environment.
+  `Scripts/release.sh --beta [<PR> | <branch>]` makes a beta on this Mac.
+- **Agent SDK (`sdk-update.yml`):** keeps one `agent-sdk` PR open that moves `server/` to the newest Agent SDK, bumps
+  `server/package.json`, pins `ServerRelease.version`, and bumps Sundown's patch version. On merge, approve the staged npm
+  release first, then approve the `release` environment.
+
+CI (`tests.yml`, on pull requests) runs Package Tests, UI Tests (Xcode 27 runners), and Server Tests (Ubuntu + macOS 26);
+branch protection requires Package Tests, UI Tests, and Approval (`release-check.yml`).
 
 ## Working here
 

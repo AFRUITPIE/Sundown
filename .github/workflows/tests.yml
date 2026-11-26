@@ -70,3 +70,45 @@ jobs:
         with:
           name: SundownUITests-xcresult
           path: ${{ runner.temp }}/SundownUITests.xcresult
+
+  server-tests:
+    name: Server Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Hosts run Tether on Linux and macOS.
+        os: [ubuntu-latest, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      # Bun at the version server/mise.toml pins.
+      - uses: jdx/mise-action@v5
+        with:
+          working_directory: server
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: mise run typecheck
+
+      # Unit tests, including the check that the committed schema and Swift match src/protocol.
+      - name: Test
+        run: mise run test
+
+      # The standalone binary for this runner, driven through the same CLI and daemon tests.
+      - name: Compile this platform's binary
+        run: |
+          platform=$(bun -e 'console.log(`${process.platform}-${process.arch}`)')
+          version=$(bun -e 'console.log(require("./package.json").version)')
+          echo "TETHER_TEST_BINARY=dist/tether-$version-$platform" >> "$GITHUB_ENV"
+          TETHER_TARGETS=$platform mise run compile
+
+      - name: Test the compiled binary
+        run: bun test test/cli.test.ts
+

@@ -10,7 +10,7 @@ name: Release Check
 on:
   pull_request:
     branches: [main]
-  # server-update.yml starts it on its pull requests: a pull request opened by a workflow's token
+  # sdk-update.yml starts it on its pull requests: a pull request opened by a workflow's token
   # starts no workflows itself.
   workflow_dispatch:
 
@@ -36,6 +36,10 @@ jobs:
           else
             releases=true
             message="Merging this releases Sundown $version: it needs the owner's approval first."
+            server_version=$(sed -n 's/.*public static let version = "\(.*\)"/\1/p' SundownKit/Sources/SundownKit/Bootstrap.swift)
+            if [ -n "$server_version" ] && ! npm view "tether-server@$server_version" version >/dev/null 2>&1; then
+              message="$message Note: tether-server@$server_version is not on npm yet — approve its staged npm release before approving the app release environment."
+            fi
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "releases=$releases" >> "$GITHUB_OUTPUT"

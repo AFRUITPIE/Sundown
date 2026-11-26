@@ -34,7 +34,7 @@ Requires macOS 27. Each host needs Claude Code installed and configured, and Nod
 
 ## How it works
 
-Sundown starts a [Tether](https://github.com/AFRUITPIE/tether-server) daemon on each host, which keeps your sessions running after you quit the app. Like [Remote Control](https://code.claude.com/docs/en/remote-control), you can leave a session running and pick it up later, from any Mac.
+Sundown starts a [Tether](server/) daemon on each host, which keeps your sessions running after you quit the app. Like [Remote Control](https://code.claude.com/docs/en/remote-control), you can leave a session running and pick it up later, from any Mac.
 
 ```mermaid
 sequenceDiagram

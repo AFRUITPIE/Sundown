@@ -5,3 +5,7 @@ DerivedData/
 *.xcuserstate
 .DS_Store
 build/
+node_modules/
+server/dist/
+server/npm/
+*.log

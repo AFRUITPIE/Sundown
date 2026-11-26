@@ -1,0 +1,79 @@
+name: Server Release
+
+# Merging a server/package.json version bump releases tether-server to npm. On each push to main,
+# if server/package.json's version has no server-v<version> tag and isn't already on npm, this
+# tests and builds the npm package, stages it on npm, and pushes the server-v<version> git tag
+# (not a GitHub Release, so Sundown's Releases page and Homebrew tap stay strictly app releases).
+#
+# Staged by trusted publishing: npm takes this workflow's OIDC token instead of a stored one, and
+# records where the package was built (provenance). The package's trusted publisher on npmjs.com
+# names this repository (AFRUITPIE/Sundown) and this file (server-release.yml), and may only stage:
+# a maintainer approves the version with 2FA before it's published (`npm stage approve <id>`, or
+# Staged Packages on npmjs.com).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency: server-release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sdk=$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-agent-sdk']")" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/server-v$version" > /dev/null; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "server-v$version is already tagged."
+          elif npm view "tether-server@$version" version >/dev/null 2>&1; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "tether-server@$version is already on npm."
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.version.outputs.new == 'true'
+        uses: jdx/mise-action@v5
+        with:
+          working_directory: server
+      - if: steps.version.outputs.new == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing and staging need a recent npm; Node 22 comes with npm 10.
+      - if: steps.version.outputs.new == 'true'
+        run: npm install -g npm@latest
+      - if: steps.version.outputs.new == 'true'
+        run: bun install --frozen-lockfile
+      - if: steps.version.outputs.new == 'true'
+        run: bun test
+      - if: steps.version.outputs.new == 'true'
+        run: bun run scripts/build-npm.ts
+      # What npm will serve, run the way a host runs it.
+      - if: steps.version.outputs.new == 'true'
+        run: node npm/cli.js version --json
+      - if: steps.version.outputs.new == 'true'
+        run: npm stage publish ./npm --access public
+      # Tagged only once npm has it, so a failed run leaves nothing half released and the next
+      # push tries again.
+      - if: steps.version.outputs.new == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SDK: ${{ steps.version.outputs.sdk }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "server-v$VERSION" -m "Tether server $VERSION, built against Claude Agent SDK $SDK." "$GITHUB_SHA"
+          git push origin "server-v$VERSION"
