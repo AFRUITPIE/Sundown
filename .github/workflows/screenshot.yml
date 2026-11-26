@@ -47,9 +47,11 @@ jobs:
           app="$RUNNER_TEMP/DerivedData/Build/Products/Debug/Sundown.app"
           ls "$app/Contents/MacOS"
           for appearance in light dark; do
-            if [ "$appearance" = dark ]; then style=(-AppleInterfaceStyle Dark); else style=(); fi
+            # The app follows the system appearance, so switch the runner's.
+            dark=$([ "$appearance" = dark ] && echo true || echo false)
+            osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark"
             SUNDOWN_UI_TEST_MODE=1 SUNDOWN_UI_TEST_SCENARIO="$SCENARIO" \
-              "$app/Contents/MacOS/Sundown" -ApplePersistenceIgnoreState YES "${style[@]}" \
+              "$app/Contents/MacOS/Sundown" -ApplePersistenceIgnoreState YES \
               > "$SHOTS/app-$appearance.log" 2>&1 &
             pid=$!
             sleep 15
@@ -60,16 +62,6 @@ jobs:
             wait "$pid" 2>/dev/null || true
           done
           ls -la "$SHOTS"
-
-      - name: Print screenshots as base64
-        run: |
-          # The log is a fallback way to read the images when the artifact can't be downloaded.
-          for f in "$SHOTS"/*.png; do
-            sips -Z 1600 "$f" --out "$f.small.png" > /dev/null
-            echo "BEGIN-SHOT $(basename "$f")"
-            base64 -i "$f.small.png" | fold -w 4000
-            echo "END-SHOT $(basename "$f")"
-          done
 
       - name: Upload screenshots
         if: always()
