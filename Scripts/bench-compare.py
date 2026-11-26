@@ -1,68 +1,107 @@
 #!/usr/bin/env python3
-"""Compares two runs of the package benchmarks (`swift test ... --filter Benchmark`) by their
-XCTest `measured [...] average:` lines, for the Performance workflow.
+"""Compares rounds of the package benchmarks (`swift test ... --filter Benchmark`) run on a base
+commit and on a branch, by XCTest's `measured [...]` lines, for the Performance workflow.
 
-    Scripts/bench-compare.py <base log> <branch log> <json out>
+    Scripts/bench-compare.py <json out> --base <log>... --branch <log>...
 
-Prints a Markdown table (also appended to $GITHUB_STEP_SUMMARY when set) and writes every
-metric's base and branch averages, relative standard deviations and change as JSON. A change is
-flagged only when it's larger than both runs' noise: CPU instructions retired are the steady
-metric on a shared runner; clock time and cycles move with the machine's load.
+Each log is one round. Run the rounds interleaved (base, branch, base, branch, ...): two runs one
+after the other on the same runner differ by several percent with identical code, far more than
+XCTest's spread within a run, so a change counts only when every branch round is beyond every
+base round and the medians differ by at least MIN_CHANGE. Prints a Markdown table (also appended
+to $GITHUB_STEP_SUMMARY when set) and writes every metric's rounds and verdict as JSON. All of
+these metrics are better lower.
 """
 import json
 import os
 import re
+import statistics
 import sys
 
+MIN_CHANGE = 3.0  # percent
 LINE = re.compile(
     r"Test Case '-?\[?(?P<suite>[\w.]+)[ .](?P<test>\w+)\]?' measured \[(?P<metric>[^,\]]+), (?P<unit>[^\]]+)\] "
-    r"average: (?P<avg>[\d.]+), relative standard deviation: (?P<rsd>[\d.]+)%"
+    r"average: (?P<avg>[\d.]+), relative standard deviation: (?P<rsd>[\d.]+)%(?:, values: \[(?P<values>[^\]]*)\])?"
 )
 
 
 def read(path):
+    """One round: {(test, metric): (unit, mean, rsd)}, the mean from the raw values when printed."""
     results = {}
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             m = LINE.search(line)
-            if m:
-                suite = m["suite"].split(".")[-1]
-                key = (f"{suite}.{m['test']}", m["metric"])
-                results[key] = {"unit": m["unit"], "average": float(m["avg"]), "rsd": float(m["rsd"])}
+            if not m:
+                continue
+            values = [float(v) for v in (m["values"] or "").split(",") if v.strip()]
+            mean = statistics.fmean(values) if values else float(m["avg"])
+            key = (f"{m['suite'].split('.')[-1]}.{m['test']}", m["metric"])
+            results[key] = (m["unit"], mean, float(m["rsd"]))
     return results
 
 
+def parse_args(argv):
+    out, groups, current = argv[0], {"--base": [], "--branch": []}, None
+    for arg in argv[1:]:
+        if arg in groups:
+            current = arg
+        elif current:
+            groups[current].append(arg)
+    return out, groups["--base"], groups["--branch"]
+
+
 def main():
-    base_path, branch_path, out_path = sys.argv[1:4]
-    base, branch = read(base_path), read(branch_path)
+    out_path, base_logs, branch_logs = parse_args(sys.argv[1:])
+    base = [read(p) for p in base_logs]
+    branch = [read(p) for p in branch_logs]
+    keys = sorted({k for r in base + branch for k in r})
     rows = []
-    for key in sorted(set(base) | set(branch)):
-        b, n = base.get(key), branch.get(key)
-        row = {"test": key[0], "metric": key[1], "unit": (n or b)["unit"],
-               "base": b and b["average"], "branch": n and n["average"],
-               "baseRsd": b and b["rsd"], "branchRsd": n and n["rsd"], "changePercent": None, "verdict": "missing"}
-        if b and n and b["average"]:
-            change = (n["average"] - b["average"]) / b["average"] * 100
-            noise = max(b["rsd"], n["rsd"], 1.0)
+    for key in keys:
+        a = [r[key] for r in base if key in r]
+        b = [r[key] for r in branch if key in r]
+        unit = (a or b)[0][0]
+        am, bm = [x[1] for x in a], [x[1] for x in b]
+        row = {"test": key[0], "metric": key[1], "unit": unit, "baseRounds": am, "branchRounds": bm,
+               "base": statistics.median(am) if am else None, "branch": statistics.median(bm) if bm else None,
+               "changePercent": None}
+        if max(am + bm) == 0:
+            row["verdict"] = "unavailable"  # e.g. CPU counters on a virtual machine
+        elif max(x[2] for x in a + b) > 50:
+            row["verdict"] = "unreliable"
+        elif not am or not bm:
+            row["verdict"] = "missing"
+        else:
+            change = (row["branch"] - row["base"]) / row["base"] * 100 if row["base"] else 0.0
             row["changePercent"] = round(change, 2)
-            row["verdict"] = "slower" if change > noise else "faster" if change < -noise else "within noise"
+            if change >= MIN_CHANGE and min(bm) > max(am):
+                row["verdict"] = "worse"
+            elif change <= -MIN_CHANGE and max(bm) < min(am):
+                row["verdict"] = "better"
+            else:
+                row["verdict"] = "within noise"
         rows.append(row)
     with open(out_path, "w") as f:
-        json.dump({"rows": rows}, f, indent=2)
+        json.dump({"minChangePercent": MIN_CHANGE, "baseRounds": len(base), "branchRounds": len(branch),
+                   "rows": rows}, f, indent=2)
 
     def num(v):
-        return "–" if v is None else f"{v:,.3f}".rstrip("0").rstrip(".")
+        return "–" if v is None else f"{v:,.6g}"
 
-    def cell(value, rsd):
-        return "–" if value is None else f"{num(value)} ±{num(rsd)}%"
+    def spread(rounds):
+        return "" if len(rounds) < 2 else f" ({num(min(rounds))}–{num(max(rounds))})"
 
-    lines = ["| Test | Metric | Base | Branch | Change | |", "|---|---|---:|---:|---:|---|"]
-    for r in rows:
+    shown = [r for r in rows if r["verdict"] not in ("unavailable", "unreliable")]
+    hidden = sorted({f"{r['metric']}" for r in rows if r["verdict"] in ("unavailable", "unreliable")})
+    lines = [f"Median of {len(base)} base and {len(branch)} branch rounds, interleaved; a change counts at "
+             f"{MIN_CHANGE:g}% or more with no overlap between the rounds. Lower is better.", "",
+             "| Test | Metric | Base | Branch | Change | |", "|---|---|---:|---:|---:|---|"]
+    for r in shown:
         change = "–" if r["changePercent"] is None else f"{r['changePercent']:+.1f}%"
-        lines.append(f"| {r['test']} | {r['metric']} ({r['unit']}) | {cell(r['base'], r['baseRsd'])} "
-                     f"| {cell(r['branch'], r['branchRsd'])} | {change} | {r['verdict']} |")
+        lines.append(f"| {r['test']} | {r['metric']} ({r['unit']}) | {num(r['base'])}{spread(r['baseRounds'])} "
+                     f"| {num(r['branch'])}{spread(r['branchRounds'])} | {change} | {r['verdict']} |")
+    if hidden:
+        lines += ["", "Left out, as zero or too noisy on this machine: " + ", ".join(hidden) + "."]
     if not rows:
-        lines = ["No benchmark results were found in either log."]
+        lines = ["No benchmark results were found."]
     table = "\n".join(lines)
     print(table)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")

@@ -1,13 +1,14 @@
 name: Performance
 
-# The package benchmarks (SundownKit/Tests/SundownUITests/*Benchmark*.swift), run on a base commit
-# and on the branch this is started on, one after the other on the same runner, and compared.
-# Started by hand: `gh workflow run performance.yml --ref <branch>`, or from the Actions tab.
+# The package benchmarks (SundownKit/Tests/SundownUITests/*Benchmark*.swift) on a base commit and
+# on the branch this is started on, compared. Started by hand: `gh workflow run performance.yml
+# --ref <branch>`, or from the Actions tab.
 #
-# The comparison is in the run's summary, in the log between BEGIN-BENCH-JSON and END-BENCH-JSON,
-# and in the `benchmarks` artifact (bench.json and both raw logs). Trust CPU instructions retired:
-# a runner is a shared machine, so clock time and cycles move with its load. There are no stored
-# baselines; compare within one run.
+# Both are built in Release in folders of the same shape, then run in interleaved rounds (base,
+# branch, base, ...): two runs one after the other on a runner differ by a few percent with the same
+# code. The comparison is in the run's summary, in the log between BEGIN-BENCH-JSON and
+# END-BENCH-JSON, and in the `benchmarks` artifact (bench.json and every round's log). The runner
+# is a virtual machine with no CPU counters, so judge by CPU time, clock time and peak memory.
 on:
   # Also on a pull request that changes this workflow or its script, so a change to it is tried.
   pull_request:
@@ -20,6 +21,9 @@ on:
       filter:
         description: swift test --filter
         default: Benchmark
+      rounds:
+        description: Rounds of each
+        default: "3"
 
 permissions:
   contents: read
@@ -29,7 +33,9 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 45
     env:
-      OUT: ${{ github.workspace }}/../bench
+      FILTER: ${{ inputs.filter || 'Benchmark' }}
+      ROUNDS: ${{ inputs.rounds || '3' }}
+      SUNDOWN_BENCH: "1"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,33 +54,43 @@ jobs:
             [ "$base" != "$(git rev-parse HEAD)" ] || base=$(git rev-parse HEAD~1)
           fi
           echo "Branch $(git rev-parse --short HEAD) against base $(git rev-parse --short "$base")"
-          mkdir -p "$OUT"
-          git worktree add -q --detach "$GITHUB_WORKSPACE/../base" "$base"
+          # Same-shaped paths, so neither build differs by where it lives.
+          git worktree add -q --detach "$RUNNER_TEMP/a/sundown" "$base"
+          git worktree add -q --detach "$RUNNER_TEMP/b/sundown" HEAD
+          mkdir -p "$RUNNER_TEMP/bench"
 
-      - name: Benchmark the base
-        continue-on-error: true
+      - name: Build both
+        run: |
+          for side in a b; do
+            swift build -c release --build-tests -Xswiftc -DDEBUG -Xswiftc -enable-testing \
+              --package-path "$RUNNER_TEMP/$side/sundown/SundownKit"
+          done
+
+      - name: Run interleaved rounds
         run: |
           set -o pipefail
-          cd "$GITHUB_WORKSPACE/../base"
-          SUNDOWN_BENCH=1 swift test -c release -Xswiftc -DDEBUG -Xswiftc -enable-testing \
-            --package-path SundownKit --filter "${{ inputs.filter || 'Benchmark' }}" 2>&1 | tee "$OUT/base.log"
-
-      - name: Benchmark the branch
-        run: |
-          set -o pipefail
-          SUNDOWN_BENCH=1 swift test -c release -Xswiftc -DDEBUG -Xswiftc -enable-testing \
-            --package-path SundownKit --filter "${{ inputs.filter || 'Benchmark' }}" 2>&1 | tee "$OUT/branch.log"
+          for round in $(seq "$ROUNDS"); do
+            for side in a b; do
+              name=$([ $side = a ] && echo base || echo branch)
+              echo "::group::Round $round, $name"
+              swift test --skip-build -c release -Xswiftc -DDEBUG -Xswiftc -enable-testing \
+                --package-path "$RUNNER_TEMP/$side/sundown/SundownKit" --filter "$FILTER" 2>&1 \
+                | tee "$RUNNER_TEMP/bench/$name-$round.log" || [ $side = a ]
+              echo "::endgroup::"
+            done
+          done
 
       - name: Compare
         run: |
-          python3 Scripts/bench-compare.py "$OUT/base.log" "$OUT/branch.log" "$OUT/bench.json"
+          bench="$RUNNER_TEMP/bench"
+          python3 Scripts/bench-compare.py "$bench/bench.json" --base "$bench"/base-*.log --branch "$bench"/branch-*.log
           echo BEGIN-BENCH-JSON
-          cat "$OUT/bench.json"
+          cat "$bench/bench.json"
           echo END-BENCH-JSON
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: benchmarks
-          path: ${{ env.OUT }}
+          path: ${{ runner.temp }}/bench
           retention-days: 30

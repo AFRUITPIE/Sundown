@@ -33,15 +33,13 @@ jobs:
   app-ui-tests:
     runs-on: xcode-27
     timeout-minutes: 30
-    env:
-      PACKAGES: ${{ github.workspace }}/../SourcePackages
     steps:
       - uses: actions/checkout@v4
 
       - name: Cache Swift packages
         uses: actions/cache@v4
         with:
-          path: ${{ env.PACKAGES }}
+          path: ${{ runner.temp }}/SourcePackages
           key: spm-app-${{ hashFiles('Sundown.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: spm-app-
 
@@ -52,7 +50,7 @@ jobs:
             -scheme Sundown \
             -destination 'platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/SundownDerivedData" \
-            -clonedSourcePackagesDirPath "$PACKAGES" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
             -resultBundlePath "$RUNNER_TEMP/SundownUITests.xcresult" \
             -skipMacroValidation \
             -skipPackagePluginValidation \
