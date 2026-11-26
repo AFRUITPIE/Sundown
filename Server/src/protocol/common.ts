@@ -1,0 +1,212 @@
+import { z } from 'zod';
+
+/**
+ * Bumped on a breaking change to a method, notification or payload. Additive changes (a new
+ * notification, an optional field) don't bump it: unions already keep unknown variants.
+ *
+ * 2: typed, persisted task state (`TaskState`, `task/updated`, `tasks` on thread/read, resume
+ * and subscribe) in place of `task/event` patches, `task/backgroundChanged` and `workflow/read`;
+ * edits on tool calls and turns; `git/changes`; `thread/summaryChanged`; `thread/start`'s
+ * `messageId`. Protocol 1 clients are refused, and a protocol 2 client needs no fallbacks for a
+ * protocol 1 server.
+ */
+export const PROTOCOL_VERSION = 2;
+/** The oldest client protocol this server still serves. */
+export const MIN_CLIENT_PROTOCOL = 2;
+
+export const JsonValue: z.ZodType<unknown> = z.unknown().meta({ id: 'JsonValue' });
+
+export const PermissionMode = z
+  .enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'])
+  .meta({ id: 'PermissionMode' });
+export type PermissionMode = z.infer<typeof PermissionMode>;
+
+export const EffortLevel = z.enum(['low', 'medium', 'high', 'xhigh', 'max']).meta({ id: 'EffortLevel' });
+export type EffortLevel = z.infer<typeof EffortLevel>;
+
+export const ThinkingSetting = z
+  .discriminatedUnion('type', [
+    z.object({ type: z.literal('adaptive') }),
+    z.object({ type: z.literal('enabled'), budgetTokens: z.number().int().optional() }),
+    z.object({ type: z.literal('disabled') }),
+  ])
+  .meta({ id: 'ThinkingSetting' });
+export type ThinkingSetting = z.infer<typeof ThinkingSetting>;
+
+export const ThreadStatus = z
+  .enum(['notLoaded', 'starting', 'idle', 'running', 'requiresAction', 'interrupted', 'closed', 'error'])
+  .meta({ id: 'ThreadStatus' });
+export type ThreadStatus = z.infer<typeof ThreadStatus>;
+
+export const EnvOverrides = z.record(z.string(), z.string()).meta({ id: 'EnvOverrides' });
+
+export const UserInput = z
+  .discriminatedUnion('type', [
+    z.object({ type: z.literal('text'), text: z.string() }),
+    z.object({
+      type: z.literal('image'),
+      mediaType: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']),
+      data: z.string().describe('base64'),
+    }),
+    z.object({ type: z.literal('fileRef'), path: z.string() }),
+    z.object({
+      type: z.literal('document'),
+      mediaType: z.enum(['application/pdf']),
+      /** base64. Left out of history, where only the name and type are needed. */
+      data: z.string().optional(),
+      name: z.string().optional(),
+    }),
+  ])
+  .meta({ id: 'UserInput' });
+export type UserInput = z.infer<typeof UserInput>;
+
+export const Usage = z
+  .object({
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+    cacheReadInputTokens: z.number(),
+    cacheCreationInputTokens: z.number(),
+  })
+  .meta({ id: 'Usage' });
+export type Usage = z.infer<typeof Usage>;
+
+export const ModelUsage = z
+  .object({
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+    cacheReadInputTokens: z.number(),
+    cacheCreationInputTokens: z.number(),
+    costUsd: z.number(),
+    contextWindow: z.number().optional(),
+    maxOutputTokens: z.number().optional(),
+  })
+  .meta({ id: 'ModelUsage' });
+
+export const ModelInfo = z
+  .object({
+    value: z.string(),
+    resolvedModel: z.string().optional(),
+    displayName: z.string(),
+    description: z.string(),
+    supportsEffort: z.boolean().optional(),
+    supportedEffortLevels: z.array(EffortLevel).optional(),
+    supportsAdaptiveThinking: z.boolean().optional(),
+    supportsFastMode: z.boolean().optional(),
+    supportsAutoMode: z.boolean().optional(),
+  })
+  .meta({ id: 'ModelInfo' });
+
+export const AccountInfo = z
+  .object({
+    email: z.string().optional(),
+    organization: z.string().optional(),
+    subscriptionType: z.string().optional(),
+    tokenSource: z.string().optional(),
+    apiKeySource: z.string().optional(),
+    apiProvider: z.string().optional().describe('firstParty | bedrock | vertex | foundry | gateway | …'),
+  })
+  .meta({ id: 'AccountInfo' });
+
+export const SlashCommand = z
+  .object({
+    name: z.string(),
+    description: z.string(),
+    argumentHint: z.string().optional(),
+    terminalOnly: z.boolean().optional(),
+  })
+  .meta({ id: 'SlashCommand' });
+
+export const McpServerStatus = z
+  .object({
+    name: z.string(),
+    status: z.string().describe('connected | failed | needs-auth | pending | disabled'),
+    source: z.string().optional(),
+    error: z.string().optional(),
+    toolCount: z.number().optional(),
+  })
+  .meta({ id: 'McpServerStatus' });
+
+export const ThreadSummary = z
+  .object({
+    threadId: z.string(),
+    title: z.string(),
+    customTitle: z.string().optional(),
+    firstPrompt: z.string().optional(),
+    /**
+     * The directory the chat runs in: the transcript's (read from its lines where the SDK misses
+     * it), or a live chat's. Absent only for a transcript that records none. What a client lists
+     * recent directories from.
+     */
+    cwd: z.string().optional(),
+    gitBranch: z.string().optional(),
+    tag: z.string().optional(),
+    createdAt: z.number().optional(),
+    updatedAt: z.number(),
+    status: ThreadStatus,
+    /** Background commands and agents still running after the turn that started them, when loaded. */
+    backgroundTasks: z.number().int().optional(),
+  })
+  .meta({ id: 'ThreadSummary' });
+export type ThreadSummary = z.infer<typeof ThreadSummary>;
+
+export const ThreadSettings = z
+  .object({
+    cwd: z.string(),
+    model: z.string().optional(),
+    effort: EffortLevel.optional(),
+    permissionMode: PermissionMode.optional(),
+    fastMode: z.boolean().optional(),
+    thinking: ThinkingSetting.optional(),
+    additionalDirectories: z.array(z.string()).optional(),
+  })
+  .meta({ id: 'ThreadSettings' });
+
+/** A job that will wake a session: the CLI's `SessionCronSummary`. */
+export const SessionCron = z
+  .object({
+    id: z.string(),
+    /** A cron expression, in the host's local time. */
+    schedule: z.string(),
+    /** False for a one-shot wakeup whose cron encodes a single fire time. */
+    recurring: z.boolean(),
+    /** What it fires with, cut at 1000 characters (the CLI marks the cut). */
+    prompt: z.string(),
+  })
+  .meta({ id: 'SessionCron' });
+export type SessionCron = z.infer<typeof SessionCron>;
+
+export const ThreadInfo = z
+  .object({
+    threadId: z.string(),
+    status: ThreadStatus,
+    cwd: z.string(),
+    title: z.string().optional(),
+    model: z.string().optional(),
+    effort: EffortLevel.nullable().optional(),
+    /**
+     * The effort Claude Code sends: `effort` when one is chosen, else the model's own default (or
+     * the host's `effortLevel`). Null when the model takes no effort; absent when not yet known.
+     */
+    appliedEffort: EffortLevel.nullable().optional(),
+    permissionMode: PermissionMode.optional(),
+    fastModeState: z.enum(['off', 'cooldown', 'on']).optional(),
+    fastModeDisabledReason: z.string().optional(),
+    tools: z.array(z.string()).optional(),
+    slashCommands: z.array(z.string()).optional(),
+    skills: z.array(z.string()).optional(),
+    agents: z.array(z.string()).optional(),
+    outputStyle: z.string().optional(),
+    mcpServers: z.array(McpServerStatus).optional(),
+    claudeCodeVersion: z.string().optional(),
+    capabilities: z.array(z.string()).optional(),
+    /**
+     * What will wake this session later (CronCreate, ScheduleWakeup, /loop), as its Stop hook last
+     * saw them: the CLI's whole list, after each turn. Empty once its process has ended (they're
+     * session-only) and when a process starts; absent for a thread not loaded here.
+     */
+    sessionCrons: z.array(SessionCron).optional(),
+    lastSeq: z.number().int(),
+  })
+  .meta({ id: 'ThreadInfo' });
+export type ThreadInfo = z.infer<typeof ThreadInfo>;
+
