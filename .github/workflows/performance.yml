@@ -9,6 +9,9 @@ name: Performance
 # a runner is a shared machine, so clock time and cycles move with its load. There are no stored
 # baselines; compare within one run.
 on:
+  # Also on a pull request that changes this workflow or its script, so a change to it is tried.
+  pull_request:
+    paths: [.github/workflows/performance.yml, Scripts/bench-compare.py]
   workflow_dispatch:
     inputs:
       base:
@@ -54,13 +57,13 @@ jobs:
           set -o pipefail
           cd "$GITHUB_WORKSPACE/../base"
           SUNDOWN_BENCH=1 swift test -c release -Xswiftc -DDEBUG -Xswiftc -enable-testing \
-            --package-path SundownKit --filter "${{ inputs.filter }}" 2>&1 | tee "$OUT/base.log"
+            --package-path SundownKit --filter "${{ inputs.filter || 'Benchmark' }}" 2>&1 | tee "$OUT/base.log"
 
       - name: Benchmark the branch
         run: |
           set -o pipefail
           SUNDOWN_BENCH=1 swift test -c release -Xswiftc -DDEBUG -Xswiftc -enable-testing \
-            --package-path SundownKit --filter "${{ inputs.filter }}" 2>&1 | tee "$OUT/branch.log"
+            --package-path SundownKit --filter "${{ inputs.filter || 'Benchmark' }}" 2>&1 | tee "$OUT/branch.log"
 
       - name: Compare
         run: |
