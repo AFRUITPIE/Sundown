@@ -139,7 +139,8 @@ running `Scripts/release.sh`: Developer ID, notarized, approved in the `release`
 `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are set only on the app target. Main stays at the released version, so
 bumping it is deciding to release. `Scripts/release.sh --beta [<PR> | <branch>]` makes a beta on this Mac.
 
-CI (`ui-tests.yml`, on pull requests) runs the package tests, then the UI tests, on an Xcode 27 runner.
+CI (`ui-tests.yml`, on pull requests) builds the app for testing once, then runs the package tests and three shards of the
+UI tests side by side on Xcode 27 runners. A new UI test class runs in the last shard; move one to rebalance.
 
 ## Working here
 
