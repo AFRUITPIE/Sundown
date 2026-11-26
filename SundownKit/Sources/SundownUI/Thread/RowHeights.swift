@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// What a row's height is made of when it's a message: its text, laid out by TextKit (off the main
 /// thread for a page of rows), and chrome that doesn't depend on the text.

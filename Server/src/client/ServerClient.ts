@@ -4,8 +4,8 @@ import { PROTOCOL_VERSION, type MethodName, type Params, type Result } from '../
 
 type ServerRequestHandler = (method: string, params: any) => Promise<unknown> | unknown;
 
-/** Minimal Tether client for tests, the REPL, and scripting. */
-export class TetherClient {
+/** Minimal server client for tests, the REPL, and scripting. */
+export class ServerClient {
   readonly conn: Connection;
   private listeners = new Set<(method: string, params: any) => void>();
   /** Every inbound notification / server request, for fixtures. */
@@ -31,7 +31,7 @@ export class TetherClient {
 
   static spawn(command: string[], env?: Record<string, string>) {
     const proc = spawn(command[0]!, command.slice(1), { stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, ...env } });
-    return new TetherClient(proc);
+    return new ServerClient(proc);
   }
 
   private nextId = 0;
@@ -62,7 +62,7 @@ export class TetherClient {
 
   async initialize(env?: Record<string, string>) {
     const r = await this.call('initialize', {
-      clientInfo: { name: 'tether-test', version: '0' },
+      clientInfo: { name: 'server-test', version: '0' },
       protocolVersion: PROTOCOL_VERSION,
       capabilities: { experimentalApi: true },
       ...(env ? { env } : {}),

@@ -53,7 +53,7 @@ type Handlers = {
 
 /**
  * One peer connection. Symmetric: either side can send requests. `request` uses the id it is
- * given (server→client approvals pass their own `req_<uuid>`, `TetherClient` `c<n>`), and only
+ * given (server→client approvals pass their own `req_<uuid>`, `ServerClient` `c<n>`), and only
  * without one makes up an `s:<n>`. A response is matched only against this side's own pending
  * requests (an inbound line with `method` is a request), so the two directions' ids can't clash;
  * a caller passing ids keeps them unique among its own.

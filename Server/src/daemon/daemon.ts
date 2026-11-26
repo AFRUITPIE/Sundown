@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer, type Socket } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -7,27 +7,37 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { resolveClaude } from '../claude.ts';
 import { PROTOCOL_VERSION } from '../protocol/index.ts';
 import { Connection } from '../rpc/connection.ts';
-import { ClientSession, UPGRADE_CLIENT } from '../server/session.ts';
-import { TETHER_VERSION } from '../threads/LiveThread.ts';
+import { ClientSession, LEGACY_UPGRADE_CLIENT, UPGRADE_CLIENT } from '../server/session.ts';
+import { SERVER_VERSION } from '../threads/LiveThread.ts';
 import { TaskStore } from '../threads/taskStore.ts';
 import { ThreadManager } from '../threads/ThreadManager.ts';
 
-export const TETHER_HOME = process.env.TETHER_HOME ?? join(homedir(), '.tether');
-export const SOCKET_PATH = join(TETHER_HOME, 'tether.sock');
-const PID_PATH = join(TETHER_HOME, 'daemon.pid');
-const LOG_PATH = join(TETHER_HOME, 'daemon.log');
+/** The daemon's socket, pid, log and task states: `SUNDOWN_SERVER_HOME`, else `~/.sundown`. */
+export const SERVER_HOME = process.env.SUNDOWN_SERVER_HOME ?? join(homedir(), '.sundown');
+export const SOCKET_PATH = join(SERVER_HOME, 'server.sock');
+const PID_PATH = join(SERVER_HOME, 'daemon.pid');
+const LOG_PATH = join(SERVER_HOME, 'daemon.log');
 /** Each chat's tasks as the daemon saw them (`TaskStore`). */
-export const TASKS_DIR = join(TETHER_HOME, 'tasks');
+export const TASKS_DIR = join(SERVER_HOME, 'tasks');
+
+/**
+ * Where releases before the rename (as Tether) kept all that: `TETHER_HOME`, else `~/.tether`, with
+ * the socket `tether.sock`. `connect` replaces a daemon still listening there and moves the home
+ * over (`takeOverLegacyHome`). Only for the default home: one given explicitly (tests, development)
+ * has no earlier release behind it.
+ */
+const LEGACY_HOME = process.env.SUNDOWN_SERVER_HOME ? undefined : (process.env.TETHER_HOME ?? join(homedir(), '.tether'));
+const LEGACY_SOCKET = LEGACY_HOME && join(LEGACY_HOME, 'tether.sock');
 
 type DaemonMeta = { pid: number; version: string; startedAt: number };
 
 /**
  * Long-lived per-host server. Owns every live Claude query so turns keep
- * running while clients disconnect; clients attach via `tether connect`.
+ * running while clients disconnect; clients attach via `sundown-server connect`.
  */
 export async function runDaemon() {
-  mkdirSync(TETHER_HOME, { recursive: true, mode: 0o700 });
-  const log = (m: string) => process.stderr.write(`[tetherd ${new Date().toISOString()}] ${m}\n`);
+  mkdirSync(SERVER_HOME, { recursive: true, mode: 0o700 });
+  const log = (m: string) => process.stderr.write(`[sundown-server daemon ${new Date().toISOString()}] ${m}\n`);
   const claude = await resolveClaude();
   const mgr = new ThreadManager(claude, log, { taskStore: new TaskStore(TASKS_DIR) });
   const clients = new Set<ClientSession>();
@@ -47,9 +57,9 @@ export async function runDaemon() {
   });
   server.listen(SOCKET_PATH, () => {
     chmodSync(SOCKET_PATH, 0o600);
-    const meta: DaemonMeta = { pid: process.pid, version: TETHER_VERSION, startedAt: Date.now() };
+    const meta: DaemonMeta = { pid: process.pid, version: SERVER_VERSION, startedAt: Date.now() };
     writeFileSync(PID_PATH, JSON.stringify(meta));
-    log(`daemon ${TETHER_VERSION} listening on ${SOCKET_PATH}; claude ${claude.version} at ${claude.path}`);
+    log(`daemon ${SERVER_VERSION} listening on ${SOCKET_PATH}; claude ${claude.version} at ${claude.path}`);
   });
 
   const shutdown = (why: string) => {
@@ -77,10 +87,10 @@ export function readDaemonMeta(): DaemonMeta | undefined {
   }
 }
 
-function isSocketLive(): Promise<boolean> {
+function isSocketLive(path = SOCKET_PATH): Promise<boolean> {
   return new Promise((resolve) => {
-    if (!existsSync(SOCKET_PATH)) return resolve(false);
-    const s = createConnection(SOCKET_PATH);
+    if (!existsSync(path)) return resolve(false);
+    const s = createConnection(path);
     s.once('connect', () => {
       s.destroy();
       resolve(true);
@@ -91,7 +101,7 @@ function isSocketLive(): Promise<boolean> {
 
 /** Start a detached daemon from the current executable. */
 export function spawnDaemon() {
-  mkdirSync(TETHER_HOME, { recursive: true, mode: 0o700 });
+  mkdirSync(SERVER_HOME, { recursive: true, mode: 0o700 });
   const out = openSync(LOG_PATH, 'a');
   const [exe, ...pre] = selfCommand() as [string, ...string[]];
   const child = spawn(exe, [...pre, 'daemon'], { detached: true, stdio: ['ignore', out, out], env: process.env });
@@ -105,16 +115,20 @@ export function selfCommand(): string[] {
   return isCompiled ? [process.execPath] : [process.execPath, script!];
 }
 
+function openSocket(path: string): Promise<Socket> {
+  return new Promise<Socket>((resolve, reject) => {
+    const s = createConnection(path);
+    s.once('connect', () => resolve(s));
+    s.once('error', reject);
+  });
+}
+
 async function connectSocket(timeoutMs: number): Promise<Socket> {
   const deadline = Date.now() + timeoutMs;
   let spawned = false;
   for (;;) {
     try {
-      return await new Promise<Socket>((resolve, reject) => {
-        const s = createConnection(SOCKET_PATH);
-        s.once('connect', () => resolve(s));
-        s.once('error', reject);
-      });
+      return await openSocket(SOCKET_PATH);
     } catch (e) {
       if (!spawned) {
         spawnDaemon();
@@ -132,34 +146,87 @@ async function connectSocket(timeoutMs: number): Promise<Socket> {
  * it is asked to exit and a new one is spawned; otherwise the old one is used.
  */
 export async function runConnect() {
+  // A daemon of a release before the rename, still busy, keeps serving: its chats stay reachable,
+  // and it exits by itself once idle (it was asked to), so a later `connect` moves on.
+  if (LEGACY_SOCKET && !(await takeOverLegacyHome(LEGACY_SOCKET))) {
+    // Gone in the moment since (it had just gone idle): the home moves on the next `connect`.
+    const old = await openSocket(LEGACY_SOCKET).catch(() => undefined);
+    if (old) return bridge(old);
+  }
   const meta = readDaemonMeta();
-  if (meta && meta.version !== TETHER_VERSION) await tryUpgrade(meta);
-  const sock = await connectSocket(15_000);
+  if (meta && meta.version !== SERVER_VERSION) await tryUpgrade(SOCKET_PATH, UPGRADE_CLIENT, meta.version);
+  bridge(await connectSocket(15_000));
+}
+
+function bridge(sock: Socket) {
   process.stdin.pipe(sock);
   sock.pipe(process.stdout);
   sock.on('close', () => process.exit(0));
   process.stdin.on('end', () => sock.end());
 }
 
-async function tryUpgrade(meta: DaemonMeta) {
+/**
+ * Asks the daemon on `socket` to make way, as `client` (the name that daemon's release looks for).
+ * True once it has gone; false when it's busy, and will exit by itself once idle.
+ */
+async function tryUpgrade(socket: string, client: string, version: string): Promise<boolean> {
   try {
-    const sock = await new Promise<Socket>((resolve, reject) => {
-      const s = createConnection(SOCKET_PATH);
-      s.once('connect', () => resolve(s));
-      s.once('error', reject);
-    });
+    const sock = await openSocket(socket);
     const conn = new Connection(sock, sock, 'upgrade');
     conn.start({ onRequest: async () => ({}), onNotification: () => {}, onClose: () => {} });
-    await conn.request('initialize', { clientInfo: { name: UPGRADE_CLIENT, version: TETHER_VERSION }, protocolVersion: PROTOCOL_VERSION }, 'u1');
-    const r = (await conn.request('host/requestShutdown', { reason: `upgrade to ${TETHER_VERSION}` }, 'u2')) as {
+    await conn.request('initialize', { clientInfo: { name: client, version: SERVER_VERSION }, protocolVersion: PROTOCOL_VERSION }, 'u1');
+    const r = (await conn.request('host/requestShutdown', { reason: `upgrade to ${SERVER_VERSION}` }, 'u2')) as {
       accepted: boolean;
     };
     conn.close();
     if (r.accepted) {
-      process.stderr.write(`[tether] replacing daemon ${meta.version} with ${TETHER_VERSION}\n`);
-      for (let i = 0; i < 50 && existsSync(SOCKET_PATH); i++) await sleep(100);
-    } else {
-      process.stderr.write(`[tether] daemon ${meta.version} is busy; will upgrade when idle\n`);
+      process.stderr.write(`[sundown-server] replacing daemon ${version} with ${SERVER_VERSION}\n`);
+      for (let i = 0; i < 50 && existsSync(socket); i++) await sleep(100);
+      return true;
     }
-  } catch {}
+    process.stderr.write(`[sundown-server] daemon ${version} is busy; will upgrade when idle\n`);
+    return false;
+  } catch {
+    return !(await isSocketLive(socket));
+  }
+}
+
+/**
+ * Moves an earlier release's home (`LEGACY_HOME`) to this one's, replacing its daemon first. False
+ * while that daemon is busy, which leaves everything where it is.
+ *
+ * With no home here yet, the old one is renamed: task states and log carry over. With both (an
+ * older release's daemon started again since), its task states this home lacks are moved over and
+ * its socket and pid file removed, so it's only looked at again for the log left in it.
+ */
+async function takeOverLegacyHome(socket: string): Promise<boolean> {
+  const legacy = LEGACY_HOME!;
+  if (!existsSync(legacy)) return true;
+  if (await isSocketLive(socket)) {
+    let version = 'from before the rename';
+    try {
+      version = (JSON.parse(readFileSync(join(legacy, 'daemon.pid'), 'utf8')) as DaemonMeta).version;
+    } catch {}
+    if (!(await tryUpgrade(socket, LEGACY_UPGRADE_CLIENT, version))) return false;
+  }
+  try {
+    if (!existsSync(SERVER_HOME)) {
+      renameSync(legacy, SERVER_HOME);
+    } else {
+      const from = join(legacy, 'tasks');
+      if (existsSync(from)) {
+        mkdirSync(TASKS_DIR, { recursive: true, mode: 0o700 });
+        for (const f of readdirSync(from)) if (!existsSync(join(TASKS_DIR, f))) renameSync(join(from, f), join(TASKS_DIR, f));
+      }
+      rmSync(join(legacy, 'daemon.pid'), { force: true });
+    }
+    // The old daemon's socket and pid file, wherever they ended up: neither is this daemon's.
+    rmSync(join(SERVER_HOME, 'tether.sock'), { force: true });
+    rmSync(join(legacy, 'tether.sock'), { force: true });
+    if (!existsSync(SOCKET_PATH)) rmSync(PID_PATH, { force: true });
+  } catch (e) {
+    // Another `connect` moving it at the same moment, most likely: this one carries on regardless.
+    process.stderr.write(`[sundown-server] couldn't move ${legacy} to ${SERVER_HOME}: ${(e as Error).message}\n`);
+  }
+  return true;
 }

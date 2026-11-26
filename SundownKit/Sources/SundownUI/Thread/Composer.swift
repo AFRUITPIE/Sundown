@@ -2,7 +2,7 @@ import ImageIO
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 import UniformTypeIdentifiers
 
 /// Prompt field: a multiline field that styles its Markdown as it's typed (`ComposerTextView`;

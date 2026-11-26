@@ -4,14 +4,14 @@
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TetherClient } from '../src/client/TetherClient.ts';
+import { ServerClient } from '../src/client/ServerClient.ts';
 
-// TETHER_E2E_MODEL / TETHER_E2E_EFFORT pick what the runs cost, e.g. sonnet at low effort.
-const model = { model: process.env.TETHER_E2E_MODEL ?? 'haiku', ...(process.env.TETHER_E2E_EFFORT ? { effort: process.env.TETHER_E2E_EFFORT as 'low' } : {}) };
-const home = mkdtempSync(join(tmpdir(), 'tether-home-'));
-const cwd = mkdtempSync(join(tmpdir(), 'tether-bg-'));
+// SUNDOWN_SERVER_E2E_MODEL / SUNDOWN_SERVER_E2E_EFFORT pick what the runs cost, e.g. sonnet at low effort.
+const model = { model: process.env.SUNDOWN_SERVER_E2E_MODEL ?? 'haiku', ...(process.env.SUNDOWN_SERVER_E2E_EFFORT ? { effort: process.env.SUNDOWN_SERVER_E2E_EFFORT as 'low' } : {}) };
+const home = mkdtempSync(join(tmpdir(), 'server-home-'));
+const cwd = mkdtempSync(join(tmpdir(), 'server-bg-'));
 // Evict idle threads after 2s; the sweep itself runs once a minute.
-const env = { TETHER_HOME: home, TETHER_IDLE_EVICT_MS: '2000' };
+const env = { SUNDOWN_SERVER_HOME: home, SUNDOWN_SERVER_IDLE_EVICT_MS: '2000' };
 const cmd = ['bun', 'run', join(import.meta.dir, '../src/cli.ts'), 'connect'];
 const ok = (cond: unknown, msg: string) => {
   if (!cond) {
@@ -22,7 +22,7 @@ const ok = (cond: unknown, msg: string) => {
 };
 
 async function client() {
-  const c = TetherClient.spawn(cmd, env);
+  const c = ServerClient.spawn(cmd, env);
   const seqs = new Map<string, number>();
   const events: { m: string; p: any }[] = [];
   c.on((m, p) => {
@@ -34,7 +34,7 @@ async function client() {
   return { c, seqs, events };
 }
 
-async function startTurn(c: TetherClient, text: string) {
+async function startTurn(c: ServerClient, text: string) {
   const { thread } = await c.call('thread/start', { cwd, ...model, permissionMode: 'bypassPermissions' } as any);
   const done = c.waitFor((m, p) => m === 'turn/completed' && p.threadId === thread.threadId);
   await c.call('turn/start', { threadId: thread.threadId, input: [{ type: 'text', text }] });

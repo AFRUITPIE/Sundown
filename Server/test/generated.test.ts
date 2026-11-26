@@ -14,21 +14,21 @@ async function run(script: string, ...args: string[]) {
 }
 
 describe('generated artifacts', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'tether-gen-'));
+  const dir = mkdtempSync(join(tmpdir(), 'server-gen-'));
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
-  const schema = join(dir, 'tether.schema.json');
+  const schema = join(dir, 'server.schema.json');
   const swift = join(dir, 'Generated.swift');
   await run('scripts/gen-schema.ts', schema);
   await run('scripts/gen-swift.ts', schema, swift);
   const stale = 'is out of date with src/protocol: run `mise run gen` and commit the result';
 
-  test('schema/tether.schema.json matches src/protocol', () => {
-    const committed = readFileSync(join(root, 'schema/tether.schema.json'), 'utf8');
-    expect(readFileSync(schema, 'utf8') === committed, `schema/tether.schema.json ${stale}`).toBe(true);
+  test('schema/server.schema.json matches src/protocol', () => {
+    const committed = readFileSync(join(root, 'schema/server.schema.json'), 'utf8');
+    expect(readFileSync(schema, 'utf8') === committed, `schema/server.schema.json ${stale}`).toBe(true);
   });
 
-  test('SundownKit/Sources/TetherProtocol/Generated.swift matches the schema', () => {
-    const committed = readFileSync(join(root, '../SundownKit/Sources/TetherProtocol/Generated.swift'), 'utf8');
-    expect(readFileSync(swift, 'utf8') === committed, `SundownKit/Sources/TetherProtocol/Generated.swift ${stale}`).toBe(true);
+  test('SundownKit/Sources/ServerProtocol/Generated.swift matches the schema', () => {
+    const committed = readFileSync(join(root, '../SundownKit/Sources/ServerProtocol/Generated.swift'), 'utf8');
+    expect(readFileSync(swift, 'utf8') === committed, `SundownKit/Sources/ServerProtocol/Generated.swift ${stale}`).toBe(true);
   });
 });

@@ -476,10 +476,12 @@ struct WorktreeRemovalTests {
     /// Only Sundown's own worktrees are offered for removal, from the chat's folder or a subfolder of
     /// it; Claude Desktop's, beside them, are left alone.
     @Test func onlySundownsOwnWorktreesAreOffered() {
+        #expect(WindowModel.sundownWorktree("/r/app/.claude/worktrees/sundown-0a1b2c3d") == "/r/app/.claude/worktrees/sundown-0a1b2c3d")
+        #expect(WindowModel.sundownWorktree("/r/app/.claude/worktrees/sundown-0a1b2c3d/SundownKit") == "/r/app/.claude/worktrees/sundown-0a1b2c3d")
+        // Made before the server was renamed.
         #expect(WindowModel.sundownWorktree("/r/app/.claude/worktrees/tether-0a1b2c3d") == "/r/app/.claude/worktrees/tether-0a1b2c3d")
-        #expect(WindowModel.sundownWorktree("/r/app/.claude/worktrees/tether-0a1b2c3d/SundownKit") == "/r/app/.claude/worktrees/tether-0a1b2c3d")
         #expect(WindowModel.sundownWorktree("/r/app/.claude/worktrees/brave-otter") == nil)
-        #expect(WindowModel.sundownWorktree("/r/app/.claude/worktrees/tether-XYZ") == nil)
+        #expect(WindowModel.sundownWorktree("/r/app/.claude/worktrees/sundown-XYZ") == nil)
         #expect(WindowModel.sundownWorktree("/r/app") == nil)
     }
 }

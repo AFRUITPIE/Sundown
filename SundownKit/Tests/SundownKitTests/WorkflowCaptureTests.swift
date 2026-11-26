@@ -1,7 +1,7 @@
 import Foundation
 import SundownTestSupport
 import Testing
-import TetherProtocol
+import ServerProtocol
 @testable import SundownKit
 
 /// Two real dynamic workflows' items, as Claude Code 2.1.291 ran them and the daemon itemized them:

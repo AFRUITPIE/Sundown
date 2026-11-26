@@ -233,11 +233,12 @@ async function mainCheckout(top: string): Promise<string> {
   return top;
 }
 
-/** A worktree Tether makes is named `tether-<first 8 of the thread id>`, on a branch `claude/<name>`. */
+/** A worktree the server makes is named `sundown-<first 8 of the thread id>`, on a branch `claude/<name>`. */
 export function worktreeName(threadId: string) {
-  return `tether-${threadId.slice(0, 8)}`;
+  return `sundown-${threadId.slice(0, 8)}`;
 }
-const TETHER_WORKTREE_NAME = /^tether-[0-9a-f]{8}$/;
+/** Ours: `sundown-<id>`, or `tether-<id>` as releases before the rename named them. */
+const WORKTREE_NAME = /^(sundown|tether)-[0-9a-f]{8}$/;
 
 /** What `git/removeWorktree` found, as the `data` of its `worktreeDirty` and `worktreeUnmerged` errors. */
 export type WorktreeRemovalData = {
@@ -251,7 +252,7 @@ export type WorktreeRemovalData = {
 
 /**
  * Removes a worktree `thread/start` made, and its `claude/…` branch. Only a registered worktree at
- * exactly `<checkout>/.claude/worktrees/tether-<id>` qualifies: Claude Desktop's worktrees there,
+ * exactly `<checkout>/.claude/worktrees/sundown-<id>` (or an older `tether-<id>`) qualifies: Claude Desktop's worktrees there,
  * and anything else, are refused. Nothing is lost without being asked for: uncommitted changes need
  * `force` (else `worktreeDirty`), and a branch with commits merged nowhere else needs
  * `discardCommits` (else `worktreeUnmerged`, checked before anything is removed). Both errors carry
@@ -262,8 +263,8 @@ export async function removeWorktree(path: string, opts: { force?: boolean; disc
   const name = basename(dir);
   const worktrees = dirname(dir);
   const root = dirname(dirname(worktrees));
-  const notOurs = () => new RpcError(ErrorCodes.invalidParams, `${path} isn't a worktree Tether made`);
-  if (!TETHER_WORKTREE_NAME.test(name) || basename(worktrees) !== 'worktrees' || basename(dirname(worktrees)) !== '.claude')
+  const notOurs = () => new RpcError(ErrorCodes.invalidParams, `${path} isn't a worktree the server made`);
+  if (!WORKTREE_NAME.test(name) || basename(worktrees) !== 'worktrees' || basename(dirname(worktrees)) !== '.claude')
     throw notOurs();
   // The folder holding `.claude/worktrees` has to be the top of a checkout of the repository.
   let top: string;

@@ -1,5 +1,5 @@
 import Testing
-import TetherProtocol
+import ServerProtocol
 @testable import SundownUI
 
 /// Server states are shown as words. Raw wire values reaching the user is the bug these guard

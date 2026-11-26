@@ -1,6 +1,6 @@
 import Foundation
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// A daemon's chats and what it says of itself, as `FakeHost.serve(_:)` serves them: the UI-test
 /// fixture's scenarios (SUNDOWN_UI_TEST_SCENARIO), the chats previews seed from, and a test's own.

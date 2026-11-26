@@ -1,6 +1,6 @@
 import Foundation
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// The chat's tasks as the Tasks tab browses them: each under the task that started it, as the
 /// daemon says (`TaskState.parentId`), with what it is, how it stands and how long it has run.

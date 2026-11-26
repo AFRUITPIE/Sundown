@@ -2,20 +2,20 @@
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TetherClient } from '../src/client/TetherClient.ts';
+import { ServerClient } from '../src/client/ServerClient.ts';
 
-// TETHER_E2E_MODEL / TETHER_E2E_EFFORT pick what the runs cost, e.g. sonnet at low effort.
-const model = { model: process.env.TETHER_E2E_MODEL ?? 'haiku', ...(process.env.TETHER_E2E_EFFORT ? { effort: process.env.TETHER_E2E_EFFORT as 'low' } : {}) };
+// SUNDOWN_SERVER_E2E_MODEL / SUNDOWN_SERVER_E2E_EFFORT pick what the runs cost, e.g. sonnet at low effort.
+const model = { model: process.env.SUNDOWN_SERVER_E2E_MODEL ?? 'haiku', ...(process.env.SUNDOWN_SERVER_E2E_EFFORT ? { effort: process.env.SUNDOWN_SERVER_E2E_EFFORT as 'low' } : {}) };
 
 const server = process.argv[2] ? process.argv.slice(2) : ['bun', 'run', join(import.meta.dir, '../src/cli.ts'), 'serve', '--stdio'];
-const cwd = mkdtempSync(join(tmpdir(), 'tether-e2e-'));
-// Its own TETHER_HOME, shared by both server processes below so the task store carries across, and
+const cwd = mkdtempSync(join(tmpdir(), 'server-e2e-'));
+// Its own SUNDOWN_SERVER_HOME, shared by both server processes below so the task store carries across, and
 // removed however the run ends: never the real ~/.tether.
-const home = mkdtempSync(join(tmpdir(), 'tether-home-'));
-const env = { TETHER_HOME: home };
+const home = mkdtempSync(join(tmpdir(), 'server-home-'));
+const env = { SUNDOWN_SERVER_HOME: home };
 process.on('exit', () => rmSync(home, { recursive: true, force: true }));
-writeFileSync(join(cwd, 'hello.txt'), 'hello from tether\n');
-const c = TetherClient.spawn(server, env);
+writeFileSync(join(cwd, 'hello.txt'), 'hello from the server\n');
+const c = ServerClient.spawn(server, env);
 const events: { method: string; params: any }[] = [];
 c.on((method, params) => events.push({ method, params }));
 const ok = (cond: unknown, msg: string) => {
@@ -51,7 +51,7 @@ ok(thread.threadId && thread.status === 'idle', `thread/start ${thread.threadId}
 const done1 = c.waitFor((m, p) => m === 'turn/completed' && p.threadId === thread.threadId);
 await c.call('turn/start', {
   threadId: thread.threadId,
-  input: [{ type: 'text', text: 'Create a file named out.md containing the word "tether". If you are told to use a different name, do so. Reply with one short sentence.' }],
+  input: [{ type: 'text', text: 'Create a file named out.md containing the word "sundown". If you are told to use a different name, do so. Reply with one short sentence.' }],
 });
 const t1 = await done1;
 ok(t1.params.turn.status === 'completed', `turn 1 completed (cost $${t1.params.turn.result.totalCostUsd.toFixed(4)})`);
@@ -102,19 +102,19 @@ ok(loaded.thread.permissionMode === 'acceptEdits', 'permission mode switched to 
 c.onServerRequest = prevHandler;
 
 // Resume in a fresh server process (simulates reconnect without daemon)
-if (process.env.TETHER_RECORD) {
-  await Bun.write(process.env.TETHER_RECORD, c.transcript.map((t) => JSON.stringify(t)).join('\n') + '\n');
-  console.log(`recorded ${c.transcript.length} wire messages to ${process.env.TETHER_RECORD}`);
+if (process.env.SUNDOWN_SERVER_RECORD) {
+  await Bun.write(process.env.SUNDOWN_SERVER_RECORD, c.transcript.map((t) => JSON.stringify(t)).join('\n') + '\n');
+  console.log(`recorded ${c.transcript.length} wire messages to ${process.env.SUNDOWN_SERVER_RECORD}`);
 }
 c.close();
-const c2 = TetherClient.spawn(server, env);
+const c2 = ServerClient.spawn(server, env);
 await c2.initialize();
 const r = await c2.call('thread/resume', { threadId: thread.threadId, includeHistory: true });
 ok(r.thread.status === 'idle' && (r.items?.length ?? 0) > 0, `thread/resume in new process with ${r.items?.length} history items`);
 const done3 = c2.waitFor((m, p) => m === 'turn/completed');
 await c2.call('turn/start', { threadId: thread.threadId, input: [{ type: 'text', text: 'What word did you write into the file? One word.' }] });
 const t3 = await done3;
-ok(/tether/i.test(t3.params.turn.result.resultText ?? ''), `resumed thread remembers context: "${t3.params.turn.result.resultText}"`);
+ok(/sundown/i.test(t3.params.turn.result.resultText ?? ''), `resumed thread remembers context: "${t3.params.turn.result.resultText}"`);
 c2.close();
 console.log('\nall e2e checks passed');
 process.exit(0);

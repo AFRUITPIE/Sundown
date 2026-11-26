@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// Status, any pending prompt, and the composer, grouped so their glass shapes blend.
 struct BottomBar: View {

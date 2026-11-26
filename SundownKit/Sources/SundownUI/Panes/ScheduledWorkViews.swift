@@ -1,6 +1,6 @@
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// How a scheduled job reads: in its Tasks row, how often it fires or when next, and once it has
 /// stopped, how many times it fired. Pure, so it's tested without a view.

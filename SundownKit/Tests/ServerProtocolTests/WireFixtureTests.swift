@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import TetherProtocol
+@testable import ServerProtocol
 
 private func fixtureLines(_ name: String) throws -> [JSONValue] {
     let url = try #require(Bundle.module.url(forResource: name, withExtension: "jsonl", subdirectory: "Fixtures"))

@@ -3,7 +3,7 @@
 ## What this is
 
 A native macOS SwiftUI client for Claude Code. It's a thin client: it shows hosts, chats, streamed transcript items,
-requests and settings, while its server, tether-server (`Server/`, with its own [guide](Server/AGENTS.md)), runs the
+requests and settings, while its server (`Server/`, published to npm as `tether-server`, with its own [guide](Server/AGENTS.md)), runs the
 Agent SDK queries and owns every live session. Closing the app never ends a turn. Both live in this repository.
 
 Each host runs the server with the first `npx` on its login shell's PATH: `npx --yes tether-server@<version> connect`,
@@ -25,7 +25,7 @@ behind `#available`.
 - **Benchmarks:** `SUNDOWN_BENCH=1 swift test -c release -Xswiftc -DDEBUG -Xswiftc -enable-testing --package-path SundownKit --filter Benchmark`;
   compare against the parent commit on the same Mac. `benchmarks.yml` does that on a runner: started on a branch, it runs them
   on the branch and on where it left `main`, and reports each metric's change (`Scripts/bench-compare.py`).
-- **Costs money or touches real hosts:** `SUNDOWN_E2E=1` (live tests against a real `claude`; set `TETHER_SERVER_BIN`),
+- **Costs money or touches real hosts:** `SUNDOWN_E2E=1` (live tests against a real `claude`; set `SUNDOWN_SERVER_BIN`),
   `SUNDOWN_NPX_E2E=1` (runs the published server with npx), `SUNDOWN_SSH_*` (SSH end to end). Run them only when asked.
 - Always look at the running app after a UI change; a clean build isn't a visual check. Make sure the window you look at
   belongs to the build you just made.
@@ -48,7 +48,7 @@ CI can't look at the app for you: a UI change still needs someone to look at the
 ### The server
 
 `Server/` is the npm package hosts run; read [its guide](Server/AGENTS.md) before changing it. The protocol's Swift is the
-`TetherProtocol` target in SundownKit (`Sources/TetherProtocol`): change the Zod in `Server/src/protocol`, run `mise run gen`
+`ServerProtocol` target in SundownKit (`Sources/ServerProtocol`): change the Zod in `Server/src/protocol`, run `mise run gen`
 in `Server/`, then update the call sites here, in the same change. Never hand-edit `Generated.swift`. Protocol enums and
 unions keep unknown future values; keep the fallbacks.
 
@@ -59,10 +59,10 @@ with full paths.
 
 ## Repository map
 
-- `Server/`: tether-server, the daemon hosts run (TypeScript on Bun, published to npm). Its map is in its guide.
+- `Server/`: the server, the daemon hosts run (TypeScript on Bun, published to npm as `tether-server`). Its map is in its guide.
 - `Sundown/`: the app target: `SundownApp.swift` (scenes, commands), `SundownIntents.swift` (Shortcuts), `Info.plist` (`sundown://`).
-- `SundownKit/Sources/TetherProtocol`: the protocol's Swift (`Generated.swift`, from `Server/`, and `Support.swift`), with
-  `Tests/TetherProtocolTests` decoding recorded wire traffic.
+- `SundownKit/Sources/ServerProtocol`: the protocol's Swift (`Generated.swift`, from `Server/`, and `Support.swift`), with
+  `Tests/ServerProtocolTests` decoding recorded wire traffic.
 - `SundownKit/Sources/SundownKit`: transport and state, no UI.
   - `Bootstrap.swift`: the pinned server version and the connect command (PATH from the host's interactive shell, then `npx`).
   - `Transport.swift`: the server process and its JSONL pipes. `RPCClient.swift`: JSON-RPC (an actor), notifications batched per frame.

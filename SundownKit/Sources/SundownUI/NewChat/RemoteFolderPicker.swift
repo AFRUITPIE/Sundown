@@ -1,6 +1,6 @@
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// Browses a remote host's directories (`fs/list`), one level per page of a navigation stack:
 /// double-click or Return opens a directory, the path pop-up above the list goes to any directory

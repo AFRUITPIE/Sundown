@@ -6,7 +6,7 @@ import { runResultReader, workflowAgentLocator, workflowCallLocator } from '../s
 
 /**
  * A second real run in the same chat, slow-check (Wait: three haiku agents, each told to run
- * `sleep 45` in Bash; Report: one agent), captured with TETHER_DEBUG_TASKS=1 against Claude Code
+ * `sleep 45` in Bash; Report: one agent), captured with SUNDOWN_SERVER_DEBUG_TASKS=1 against Claude Code
  * 2.1.291, paths scrubbed:
  *
  * - `stream.jsonl`: every raw task_* message the daemon got from the run's launch on. The agents

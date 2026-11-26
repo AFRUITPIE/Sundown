@@ -265,7 +265,7 @@ describe('schedules of a live thread', () => {
 });
 
 describe('kept with the chat', () => {
-  const home = mkdtempSync(join(tmpdir(), 'tether-tasks-'));
+  const home = mkdtempSync(join(tmpdir(), 'server-tasks-'));
   afterAll(() => rmSync(home, { recursive: true, force: true }));
 
   test('the store keeps each state by id, writes it a moment later, and reads it back', () => {

@@ -34,20 +34,20 @@ Requires macOS 27. Each host needs Claude Code installed and configured, and Nod
 
 ## How it works
 
-Sundown starts a [Tether](Server/) daemon on each host, which keeps your sessions running after you quit the app. Like [Remote Control](https://code.claude.com/docs/en/remote-control), you can leave a session running and pick it up later, from any Mac.
+Sundown starts its [server](Server/) as a daemon on each host, which keeps your sessions running after you quit the app. Like [Remote Control](https://code.claude.com/docs/en/remote-control), you can leave a session running and pick it up later, from any Mac.
 
 ```mermaid
 sequenceDiagram
     participant Sundown
-    participant Tether as Tether daemon
+    participant Server as Server daemon
     participant SDK as Agent SDK
     participant Claude as Claude Code
-    Sundown->>+Tether: Prompt
-    Tether->>+SDK: Query
+    Sundown->>+Server: Prompt
+    Server->>+SDK: Query
     SDK->>+Claude: Run the turn
     Claude-->>-SDK: Replies and tool calls
-    SDK-->>-Tether: Messages
-    Tether-->>-Sundown: Stream into the chat
+    SDK-->>-Server: Messages
+    Server-->>-Sundown: Stream into the chat
 ```
 
 ## Privacy

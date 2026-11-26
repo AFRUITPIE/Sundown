@@ -338,7 +338,7 @@ export const Methods = {
   },
 
   /**
-   * Removes a worktree `thread/start` made (`<checkout>/.claude/worktrees/tether-…`) and its
+   * Removes a worktree `thread/start` made (`<checkout>/.claude/worktrees/sundown-…`, or an older `tether-…`) and its
    * `claude/…` branch; any other path is refused. Refuses one with uncommitted changes unless
    * `force` (error `worktreeDirty`), and one whose branch has commits merged nowhere else unless
    * `discardCommits` (error `worktreeUnmerged`, before anything is removed). Both errors' `data`

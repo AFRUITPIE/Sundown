@@ -1,5 +1,5 @@
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 // Test-only views of the enums' cases, so a test can `try #require` one rather than `guard case`.
 

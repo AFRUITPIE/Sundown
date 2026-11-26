@@ -6,7 +6,7 @@ import { agentPromptReader, readAgentItems, readRunRecord, unframeAgentPrompt, w
 
 /**
  * A real run of a six-agent haiku workflow, typo-check (Scan, Review, Verify), captured with
- * TETHER_DEBUG_TASKS=1 against Claude Code 2.1.291, paths scrubbed:
+ * SUNDOWN_SERVER_DEBUG_TASKS=1 against Claude Code 2.1.291, paths scrubbed:
  *
  * - `stream.jsonl`: every raw task_started / task_progress / task_updated / task_notification the
  *   daemon got, in order. Agent states seen: start, progress, done. `workflow_progress` rides on

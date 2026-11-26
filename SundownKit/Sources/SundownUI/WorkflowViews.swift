@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// A dynamic workflow's row in the chat: what it is and how far it has got, opening it in the Tasks
 /// tab, as a subagent's row does. Its call comes back at once (the run goes on in the background),

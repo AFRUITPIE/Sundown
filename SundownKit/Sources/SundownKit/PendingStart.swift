@@ -1,6 +1,6 @@
 import Foundation
 import Observation
-import TetherProtocol
+import ServerProtocol
 
 /// A chat being started from New Chat (`HostConnection.prepareStart`), from Send until the host has
 /// started it and its first prompt is in. `thread/start` is sent as it always was; only what the
@@ -108,7 +108,7 @@ public final class PendingStart: Identifiable {
 extension PendingStart {
     /// A chat just sent from New Chat, before the host has answered, for `#Preview`s.
     public static func sample(_ prompt: String = "Tidy up the build scripts and make the release one runnable locally.",
-                              cwd: String = "/Users/hayden/Code/tether-app") -> PendingStart {
+                              cwd: String = "/Users/hayden/Code/Sundown") -> PendingStart {
         let op = PendingStart(hostID: HostConfig.local.id, cwd: cwd, input: [.text(.init(text: prompt))], options: .init(), defaults: nil)
         op.placeholder.settleArrivals()
         return op

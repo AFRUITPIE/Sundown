@@ -1,6 +1,6 @@
 import Foundation
 import Observation
-import TetherProtocol
+import ServerProtocol
 
 /// A pending server → client request (approval, question, plan, elicitation, dialog).
 public struct PendingRequest: Identifiable, Sendable {

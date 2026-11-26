@@ -1,5 +1,5 @@
 import Foundation
-import TetherProtocol
+import ServerProtocol
 
 /// One row in the rendered transcript: a single item, a run of consecutive finished tool calls
 /// collapsed into one quiet summary line, a finished turn's work folded behind its last reply, the

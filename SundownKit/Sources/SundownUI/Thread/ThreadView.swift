@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// One chat: its transcript, with the controls pinned to the bottom edge. Nothing else — the
 /// window's title, subtitle and toolbar belong to the shell.

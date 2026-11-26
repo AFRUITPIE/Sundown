@@ -3,7 +3,7 @@ import AppKit
 import SwiftUI
 import Testing
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 @testable import SundownUI
 
 /// A preview can't open a menu, so these read the menu SwiftUI builds from the permissions menu's

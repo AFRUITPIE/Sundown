@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// What the three session menus read and write, resolved in one place. A live chat writes through
 /// its connection (optimistic state is already `ThreadModel.pendingSettings`), the New Chat screen

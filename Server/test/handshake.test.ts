@@ -43,9 +43,10 @@ describe('protocol handshake', () => {
     expect(e.data).toEqual({ protocolVersion: PROTOCOL_VERSION, minClientProtocol: MIN_CLIENT_PROTOCOL });
   });
 
-  test("an older release's `connect` can still ask the daemon to make way, and nothing else", async () => {
+  // Under its name now, and under the one releases before the rename gave it.
+  test.each(['sundown-server-upgrade', 'tether-upgrade'])("an older release's `connect` (%s) can still ask the daemon to make way, and nothing else", async (name) => {
     const c = connect();
-    const r: any = await c.request('initialize', { clientInfo: { name: 'tether-upgrade', version: '0.5.22' } }, 'c1');
+    const r: any = await c.request('initialize', { clientInfo: { name, version: '0.5.22' } }, 'c1');
     expect(r.protocolVersion).toBe(PROTOCOL_VERSION);
     // serve --stdio has no daemon to stop, but the method is served.
     expect(await c.request<any>('host/requestShutdown', { reason: 'upgrade' }, 'c2')).toEqual({ accepted: false });
@@ -53,7 +54,7 @@ describe('protocol handshake', () => {
     expect(e.code).toBe(ErrorCodes.incompatibleProtocol);
   });
 
-  test('`tether version --json` names this machine’s release asset', () => {
+  test('`sundown-server version --json` names this machine’s release asset', () => {
     const v = versionInfo();
     expect(v.protocolVersion).toBe(PROTOCOL_VERSION);
     expect(v.minClientProtocol).toBe(MIN_CLIENT_PROTOCOL);

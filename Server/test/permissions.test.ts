@@ -29,9 +29,9 @@ function threadWithClient(opts: { sessionTools?: boolean } = {}) {
 describe('session tools', () => {
   test('are the three tools the thread registers', () => {
     expect([...SESSION_TOOL_NAMES].sort()).toEqual([
-      'mcp__tether__list_sessions',
-      'mcp__tether__read_session',
-      'mcp__tether__suggest_task',
+      'mcp__sundown__list_sessions',
+      'mcp__sundown__read_session',
+      'mcp__sundown__suggest_task',
     ]);
   });
 
@@ -43,14 +43,14 @@ describe('session tools', () => {
 
   test('are asked about on a thread that does not', async () => {
     const { asked, canUseTool } = threadWithClient();
-    expect((await canUseTool('mcp__tether__list_sessions')).behavior).toBe('deny');
-    expect(asked.map((a) => [a.method, a.params.toolName])).toEqual([['permission/request', 'mcp__tether__list_sessions']]);
+    expect((await canUseTool('mcp__sundown__list_sessions')).behavior).toBe('deny');
+    expect(asked.map((a) => [a.method, a.params.toolName])).toEqual([['permission/request', 'mcp__sundown__list_sessions']]);
   });
 
-  test('another tool of a server called tether is asked about, even with session tools on', async () => {
+  test('another tool of a server called sundown is asked about, even with session tools on', async () => {
     const { asked, canUseTool } = threadWithClient({ sessionTools: true });
-    expect((await canUseTool('mcp__tether__delete_everything')).behavior).toBe('deny');
-    expect((await canUseTool('mcp__tether__list_sessions_and_more')).behavior).toBe('deny');
-    expect(asked.map((a) => a.params.toolName)).toEqual(['mcp__tether__delete_everything', 'mcp__tether__list_sessions_and_more']);
+    expect((await canUseTool('mcp__sundown__delete_everything')).behavior).toBe('deny');
+    expect((await canUseTool('mcp__sundown__list_sessions_and_more')).behavior).toBe('deny');
+    expect(asked.map((a) => a.params.toolName)).toEqual(['mcp__sundown__delete_everything', 'mcp__sundown__list_sessions_and_more']);
   });
 });

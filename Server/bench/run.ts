@@ -35,7 +35,7 @@ const chosen = args.length ? args : CASES;
 // Each case runs in a process of its own, so one's garbage and peak memory aren't another's.
 if (!child) {
   const results: Record<string, unknown> = {};
-  const file = join(mkdtempSync(join(tmpdir(), 'tether-bench-results-')), 'results.json');
+  const file = join(mkdtempSync(join(tmpdir(), 'server-bench-results-')), 'results.json');
   for (const c of chosen) {
     // A long chat's open is measured alone, for its peak memory.
     const each = c === 'history' && !only ? sources().map((f) => basename(f, '.jsonl')) : [only];
@@ -52,10 +52,10 @@ if (!child) {
   process.exit(0);
 }
 
-const ROOT = mkdtempSync(join(tmpdir(), 'tether-bench-'));
+const ROOT = mkdtempSync(join(tmpdir(), 'server-bench-'));
 const CONFIG = join(ROOT, 'claude');
 process.env.CLAUDE_CONFIG_DIR = CONFIG;
-process.env.TETHER_HOME = join(ROOT, 'tether');
+process.env.SUNDOWN_SERVER_HOME = join(ROOT, 'home');
 mkdirSync(join(CONFIG, 'projects'), { recursive: true });
 
 const { Connection } = await import('../src/rpc/connection.ts');
@@ -396,7 +396,7 @@ async function benchList() {
 // ---------- tasks: a busy workflow in a long live chat ----------
 
 async function benchTasks() {
-  const store = new TaskStore(join(ROOT, 'tether', 'tasks'), 60_000);
+  const store = new TaskStore(join(ROOT, 'home', 'tasks'), 60_000);
   for (const t of [undefined, withWorkflows]) {
     const thread = new LiveThread({
       threadId: randomUUID(),

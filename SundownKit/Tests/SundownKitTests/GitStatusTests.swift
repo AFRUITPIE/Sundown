@@ -1,5 +1,5 @@
 import Testing
-import TetherProtocol
+import ServerProtocol
 @testable import SundownKit
 
 /// The daemon passes on the header of `git status -b` as git wrote it; New Chat's branch chip and

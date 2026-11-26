@@ -1,6 +1,6 @@
 import Foundation
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// The words a tool call's line reads as: a verb in the tense its status calls for ("Reading",
 /// "Read", "Read" for a denied call too — its reason line says it didn't happen), then what it

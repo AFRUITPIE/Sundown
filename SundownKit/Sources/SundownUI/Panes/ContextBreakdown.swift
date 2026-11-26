@@ -1,6 +1,6 @@
 import Charts
 import SwiftUI
-import TetherProtocol
+import ServerProtocol
 
 /// What fills a chat's context window, from `thread/contextUsage`: each category Claude Code counts,
 /// in its order, sorted by what it is. Classified by the SDK's `kind`; a host whose Claude Code

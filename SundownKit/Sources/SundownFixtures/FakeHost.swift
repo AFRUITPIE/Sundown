@@ -1,7 +1,7 @@
 import Foundation
 import Synchronization
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// A Sundown daemon in memory: the one fake host the package's tests, the UI-test fixture and the
 /// benchmarks talk to. Each `connect()` is a new connection (`Link`) to the same daemon, which
@@ -116,7 +116,7 @@ public final class FakeHost: Sendable {
     /// A method nothing answers is an error saying `unscripted` and the method.
     public init(hostname: String = "fake", pid: Int = 1, unscripted: String = "Not in the script") {
         state = Mutex(State(initialize: InitializeResult(
-            serverInfo: .init(name: "tether-server", version: "test"), protocolVersion: tetherProtocolVersion,
+            serverInfo: .init(name: "sundown-server", version: "test"), protocolVersion: serverProtocolVersion,
             host: .init(hostname: hostname, platform: "linux", arch: "arm64", home: "/home/dev", pid: pid, mode: .daemon),
             claude: .init(path: "/usr/bin/claude", version: "test"))))
         self.unscripted = unscripted

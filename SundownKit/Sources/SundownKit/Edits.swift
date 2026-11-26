@@ -1,4 +1,4 @@
-import TetherProtocol
+import ServerProtocol
 
 /// Two versions of some text compared line by line, for an edit the daemon hasn't diffed: one a
 /// permission request asks about, or a call still running. A finished call's change is its `edit`.

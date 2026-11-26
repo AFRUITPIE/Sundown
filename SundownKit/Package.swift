@@ -16,26 +16,26 @@ let package = Package(
     targets: [
         // The server's protocol as Swift: `Generated.swift` is written by `mise run gen` in Server/
         // from its Zod, never by hand; `Support.swift` is the hand-written rest.
-        .target(name: "TetherProtocol"),
+        .target(name: "ServerProtocol"),
         // Decodes wire traffic recorded from the real server (`Server/scripts/e2e.ts`).
-        .testTarget(name: "TetherProtocolTests", dependencies: ["TetherProtocol"], resources: [.copy("Fixtures")]),
+        .testTarget(name: "ServerProtocolTests", dependencies: ["ServerProtocol"], resources: [.copy("Fixtures")]),
         .target(name: "SundownKit", dependencies: [
-            "TetherProtocol",
+            "ServerProtocol",
             .product(name: "Subprocess", package: "swift-subprocess"),
         ]),
         // A daemon in memory (`FakeHost`) and the chats it serves: the UI-test fixture, which every
         // build carries (the performance tests run against Release), previews' samples, and the
         // tests' fake host.
-        .target(name: "SundownFixtures", dependencies: ["SundownKit", "TetherProtocol"]),
+        .target(name: "SundownFixtures", dependencies: ["SundownKit", "ServerProtocol"]),
         .target(name: "SundownUI", dependencies: [
             "SundownKit", "SundownFixtures", .product(name: "Markdown", package: "swift-markdown"),
         ]),
         // What both test targets share: waiting, observing, building items. Tests only.
-        .target(name: "SundownTestSupport", dependencies: ["SundownKit", "SundownFixtures", "TetherProtocol"]),
+        .target(name: "SundownTestSupport", dependencies: ["SundownKit", "SundownFixtures", "ServerProtocol"]),
         .testTarget(name: "SundownKitTests", dependencies: ["SundownKit", "SundownFixtures", "SundownTestSupport"],
                     resources: [.copy("Fixtures")]),
         .testTarget(name: "SundownUITests", dependencies: [
-            "SundownUI", "SundownKit", "SundownFixtures", "SundownTestSupport", "TetherProtocol",
+            "SundownUI", "SundownKit", "SundownFixtures", "SundownTestSupport", "ServerProtocol",
         ]),
     ]
 )

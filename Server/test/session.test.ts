@@ -72,17 +72,17 @@ describe('method routing', () => {
 describe('a host that names its claude', () => {
   /** A company wrapper the daemon's PATH doesn't reach, named in Settings ▸ Hosts ▸ Environment. */
   test('initialize reports that claude, not the daemon\'s', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tether-wrapper-'));
+    const dir = mkdtempSync(join(tmpdir(), 'server-wrapper-'));
     const wrapper = join(dir, 'claude');
     writeFileSync(wrapper, '#!/bin/sh\necho "9.9.9 (Claude Code)"\n');
     chmodSync(wrapper, 0o755);
-    const r = await connect().call('initialize', { clientInfo, protocolVersion: PROTOCOL_VERSION, env: { TETHER_CLAUDE_PATH: wrapper } });
+    const r = await connect().call('initialize', { clientInfo, protocolVersion: PROTOCOL_VERSION, env: { SUNDOWN_SERVER_CLAUDE_PATH: wrapper } });
     expect(r.claude).toEqual({ path: wrapper, version: '9.9.9' });
   });
 
   /** It used to fail initialize, and a retry was then refused as already initialized. */
   test('one that is not there is reported, and initialize still succeeds', async () => {
-    const r = await connect().call('initialize', { clientInfo, protocolVersion: PROTOCOL_VERSION, env: { TETHER_CLAUDE_PATH: '/nonexistent/claude' } });
+    const r = await connect().call('initialize', { clientInfo, protocolVersion: PROTOCOL_VERSION, env: { SUNDOWN_SERVER_CLAUDE_PATH: '/nonexistent/claude' } });
     expect(r.claude).toEqual({ path: '', version: 'not found' });
   });
 });

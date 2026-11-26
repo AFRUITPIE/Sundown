@@ -15,7 +15,7 @@ struct SidebarSectionsTests {
         return c
     }
 
-    private func chat(_ id: String, _ title: String = "Chat", cwd: String? = "/Users/hayden/Code/tether-app",
+    private func chat(_ id: String, _ title: String = "Chat", cwd: String? = "/Users/hayden/Code/Sundown",
                       daysAgo: Double = 0, hoursAgo: Double = 0,
                       pinned: Bool = false, archived: Bool = false) -> SidebarChat {
         SidebarChat(id: id, title: title, cwd: cwd,
@@ -81,34 +81,34 @@ struct SidebarSectionsTests {
 
     @Test func directoriesBecomeSectionsOrderedByTheirMostRecentChat() {
         let result = sections([
-            chat("app-old", cwd: "/Users/hayden/Code/tether-app", daysAgo: 4),
-            chat("server-new", cwd: "/Users/hayden/Code/tether-server", hoursAgo: 1),
-            chat("app-new", cwd: "/Users/hayden/Code/tether-app", daysAgo: 2),
+            chat("app-old", cwd: "/Users/hayden/Code/Sundown", daysAgo: 4),
+            chat("server-new", cwd: "/Users/hayden/Code/sundown-server", hoursAgo: 1),
+            chat("app-new", cwd: "/Users/hayden/Code/Sundown", daysAgo: 2),
         ], .directory)
 
-        #expect(result.map(\.title) == ["tether-server", "tether-app"])
+        #expect(result.map(\.title) == ["sundown-server", "Sundown"])
         #expect(result[1].chats.map(\.id) == ["app-new", "app-old"])
     }
 
     @Test func twoFoldersWithTheSameNameStayTwoSections() {
         let result = sections([
-            chat("current", cwd: "/Users/hayden/Code/tether-app", hoursAgo: 1),
-            chat("archived", cwd: "/Users/hayden/Developer/archive/tether-app", daysAgo: 5),
+            chat("current", cwd: "/Users/hayden/Code/Sundown", hoursAgo: 1),
+            chat("archived", cwd: "/Users/hayden/Developer/archive/Sundown", daysAgo: 5),
         ], .directory)
 
         #expect(result.count == 2)
-        #expect(result.map(\.title) == ["tether-app", "tether-app"])
+        #expect(result.map(\.title) == ["Sundown", "Sundown"])
         #expect(Set(result.map(\.id)).count == 2)
-        #expect(result.map(\.help) == ["/Users/hayden/Code/tether-app", "/Users/hayden/Developer/archive/tether-app"])
+        #expect(result.map(\.help) == ["/Users/hayden/Code/Sundown", "/Users/hayden/Developer/archive/Sundown"])
     }
 
     @Test func chatsWithoutAFolderGetTheirOwnSection() {
         let result = sections([
             chat("none", cwd: nil, hoursAgo: 1),
-            chat("some", cwd: "/Users/hayden/Code/tether-app", daysAgo: 2),
+            chat("some", cwd: "/Users/hayden/Code/Sundown", daysAgo: 2),
         ], .directory)
 
-        #expect(result.map(\.title) == ["No Directory", "tether-app"])
+        #expect(result.map(\.title) == ["No Directory", "Sundown"])
         #expect(result[0].help == nil)
     }
 
@@ -116,20 +116,20 @@ struct SidebarSectionsTests {
 
     @Test func searchMatchesTitleAndFolderIgnoringCase() {
         let chats = [
-            chat("by-title", "Rebuild the Sidebar", cwd: "/Users/hayden/Code/tether-app", hoursAgo: 1),
-            chat("by-folder", "Unrelated", cwd: "/Users/hayden/Code/tether-server", daysAgo: 2),
+            chat("by-title", "Rebuild the Sidebar", cwd: "/Users/hayden/Code/Sundown", hoursAgo: 1),
+            chat("by-folder", "Unrelated", cwd: "/Users/hayden/Code/sundown-server", daysAgo: 2),
             chat("no-match", "Unrelated", cwd: "/Users/hayden/Code/other", daysAgo: 3),
         ]
 
         #expect(sections(chats, search: "sidebar").flatMap { $0.chats.map(\.id) } == ["by-title"])
         #expect(sections(chats, search: "SERVER").flatMap { $0.chats.map(\.id) } == ["by-folder"])
-        #expect(sections(chats, search: "tether").flatMap { $0.chats.map(\.id) } == ["by-title", "by-folder"])
+        #expect(sections(chats, search: "sundown").flatMap { $0.chats.map(\.id) } == ["by-title", "by-folder"])
     }
 
     @Test func searchRunsBeforeGroupingSoEmptySectionsNeverAppear() {
         let result = sections([
-            chat("kept", "Sidebar", cwd: "/Users/hayden/Code/tether-app", hoursAgo: 1),
-            chat("dropped", "Inspector", cwd: "/Users/hayden/Code/tether-app", daysAgo: 40),
+            chat("kept", "Sidebar", cwd: "/Users/hayden/Code/Sundown", hoursAgo: 1),
+            chat("dropped", "Inspector", cwd: "/Users/hayden/Code/Sundown", daysAgo: 40),
         ], search: "sidebar")
 
         #expect(result.map(\.title) == ["Today"])
@@ -168,23 +168,23 @@ struct SidebarSectionsTests {
 
     @Test func pinnedStaysOnTopWhenGroupedByFolder() {
         let result = sections([
-            chat("server", cwd: "/Users/hayden/Code/tether-server", hoursAgo: 1),
-            chat("pinned-app", cwd: "/Users/hayden/Code/tether-app", daysAgo: 3, pinned: true),
-            chat("app", cwd: "/Users/hayden/Code/tether-app", daysAgo: 5),
+            chat("server", cwd: "/Users/hayden/Code/sundown-server", hoursAgo: 1),
+            chat("pinned-app", cwd: "/Users/hayden/Code/Sundown", daysAgo: 3, pinned: true),
+            chat("app", cwd: "/Users/hayden/Code/Sundown", daysAgo: 5),
         ], .directory)
 
-        #expect(result.map(\.title) == ["Pinned", "tether-server", "tether-app"])
+        #expect(result.map(\.title) == ["Pinned", "sundown-server", "Sundown"])
         #expect(result[0].folder == nil)
         #expect(result[2].chats.map(\.id) == ["app"])
     }
 
     @Test func aFolderWhollyPinnedHasNoSectionOfItsOwn() {
         let result = sections([
-            chat("pinned-app", cwd: "/Users/hayden/Code/tether-app", hoursAgo: 1, pinned: true),
-            chat("server", cwd: "/Users/hayden/Code/tether-server", daysAgo: 2),
+            chat("pinned-app", cwd: "/Users/hayden/Code/Sundown", hoursAgo: 1, pinned: true),
+            chat("server", cwd: "/Users/hayden/Code/sundown-server", daysAgo: 2),
         ], .directory)
 
-        #expect(result.map(\.title) == ["Pinned", "tether-server"])
+        #expect(result.map(\.title) == ["Pinned", "sundown-server"])
     }
 
     @Test func anArchivedChatLeavesPinnedWhileArchived() {
@@ -211,11 +211,11 @@ struct SidebarSectionsTests {
 
     @Test func folderSectionsCarryTheirFolderForTheHeadersActions() {
         let result = sections([
-            chat("app", cwd: "/Users/hayden/Code/tether-app", hoursAgo: 1),
+            chat("app", cwd: "/Users/hayden/Code/Sundown", hoursAgo: 1),
             chat("none", cwd: nil, daysAgo: 2),
         ], .directory)
 
-        #expect(result.map(\.folder) == ["/Users/hayden/Code/tether-app", nil])
+        #expect(result.map(\.folder) == ["/Users/hayden/Code/Sundown", nil])
         #expect(sections([chat("app", hoursAgo: 1)]).allSatisfy { $0.folder == nil })
     }
 

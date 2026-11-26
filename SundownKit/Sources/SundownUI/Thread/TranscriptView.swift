@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// The scrolling transcript: settled history, windowed (`TranscriptHistoryView`), then the live
 /// turn (`TranscriptLiveView`), then the tail, in one scroll view, with what floats over it. Where

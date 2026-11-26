@@ -8,11 +8,11 @@ relying on anything here. Current rules live in `AGENTS.md`.
 ## Hosting and the `claude` binary
 
 - The npm package (`scripts/build-npm.ts`) bundles the Agent SDK but leaves out the SDK's per-platform
-  packages, because each of those is a full Claude Code. Tether always runs the host's `claude`. The
+  packages, because each of those is a full Claude Code. the server always runs the host's `claude`. The
   package has no dependencies and no install scripts, and isn't minified.
 - The daemon looks up `claude` when it starts, using the PATH of the first `connect`, which is a login
   shell's and not an interactive one's. A client whose host environment (in the app) sets `PATH` or
-  `TETHER_CLAUDE_PATH` gets `claude` looked up there instead (`ThreadManager.claudeFor`). That's how a
+  `SUNDOWN_SERVER_CLAUDE_PATH` gets `claude` looked up there instead (`ThreadManager.claudeFor`). That's how a
   wrapper that only an interactive shell's PATH reaches can be used without restarting the daemon. A
   `PATH` set there replaces the daemon's rather than extending it. The SDK runs the file as it is, so a
   wrapper script's exports reach Claude Code.
@@ -69,7 +69,7 @@ relying on anything here. Current rules live in `AGENTS.md`.
 
 - A job firing (/loop, CronCreate, ScheduleWakeup) is a meta `user` record with
   `turnOrigin: scheduled`. Its uuid is the CLI's command uuid. Live, the stream carries only
-  `command_lifecycle` `started` for a command Tether never sent, so the turn opens at once and
+  `command_lifecycle` `started` for a command the server never sent, so the turn opens at once and
   `LiveThread` re-reads the transcript until the prompt appears.
 - What will wake a session is reported to every Stop hook as `session_crons` after each turn, with the
   same ids CronCreate returns. Crons are session-only: a new process starts with none. No control

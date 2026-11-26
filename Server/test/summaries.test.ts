@@ -13,7 +13,7 @@ const claude = { path: '/usr/bin/false', version: '0' } as any;
 const clientInfo = { name: 'test', version: '0' };
 
 describe('thread/summaryChanged', () => {
-  const home = mkdtempSync(join(tmpdir(), 'tether-summaries-'));
+  const home = mkdtempSync(join(tmpdir(), 'server-summaries-'));
   const sid = '0d9a7b1c-0000-4000-8000-000000000001';
   const project = join(home, 'projects', '-home-me');
   mkdirSync(project, { recursive: true });

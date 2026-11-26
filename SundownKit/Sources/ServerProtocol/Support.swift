@@ -1,13 +1,13 @@
 import Foundation
 
 /// A client → server method: its wire name and typed params/result.
-public protocol TetherMethod {
+public protocol ServerMethod {
     associatedtype Params: Encodable & Sendable
     associatedtype Result: Decodable & Sendable
     static var name: String { get }
 }
 
-/// Arbitrary JSON, used for SDK payloads Tether forwards without modelling.
+/// Arbitrary JSON, used for SDK payloads the server forwards without modelling.
 public enum JSONValue: Codable, Sendable, Hashable {
     case null
     case bool(Bool)

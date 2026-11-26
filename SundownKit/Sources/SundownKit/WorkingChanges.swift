@@ -1,5 +1,5 @@
 import Foundation
-import TetherProtocol
+import ServerProtocol
 
 /// What differs from the last commit in a chat's directory, as the Changes pane shows it: the
 /// daemon's `git/changes`, each file's lines numbered.

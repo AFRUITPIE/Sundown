@@ -13,12 +13,12 @@ import {
   filterEscalatingDefaultMode,
 } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
-import { type ClaudeBinary, resolveClaude } from '../claude.ts';
+import { type ClaudeBinary, claudePathIn, resolveClaude } from '../claude.ts';
 import { PermissionMode, type Item, type Params, type Result, type TaskState, type ThreadSummary, type Turn } from '../protocol/index.ts';
 import { ErrorCodes, RpcError } from '../rpc/connection.ts';
 import { createWorktree, removeWorktree, worktreeName } from '../server/fsApi.ts';
 import { FollowedThread } from './FollowedThread.ts';
-import { LiveThread, TETHER_VERSION } from './LiveThread.ts';
+import { LiveThread, SERVER_VERSION } from './LiveThread.ts';
 import { PushQueue } from './pushQueue.ts';
 import { readTranscript, sessionDir, transcriptCwd, transcriptFile, transcriptSettings, type SessionSettings } from './transcript.ts';
 import { isSafeId, readAgentItems, RECENT_RUN_MS } from './workflows.ts';
@@ -26,7 +26,7 @@ import { mergeTasks } from './tasks.ts';
 import type { TaskStore } from './taskStore.ts';
 import { stat } from 'node:fs/promises';
 
-const IDLE_EVICT_MS = Number(process.env.TETHER_IDLE_EVICT_MS ?? 30 * 60_000);
+const IDLE_EVICT_MS = Number(process.env.SUNDOWN_SERVER_IDLE_EVICT_MS ?? 30 * 60_000);
 const CATALOG_TTL_MS = 5 * 60_000;
 /**
  * How long a followed chat no client watches is kept after it was last read: a client that reads
@@ -362,11 +362,11 @@ export class ThreadManager {
 
   /**
    * `claude` for a client whose host sends `env` (Settings ▸ Hosts ▸ Environment): looked up again
-   * only when that names it (`TETHER_CLAUDE_PATH`) or sets `PATH`, and otherwise the daemon's own.
+   * only when that names it (`claudePathIn`) or sets `PATH`, and otherwise the daemon's own.
    */
   claudeFor(env: Record<string, string>): Promise<ClaudeBinary> {
     // The daemon's own, unless it had none when it started: installed since, it's found now.
-    if (!env.TETHER_CLAUDE_PATH && !env.PATH && this.claude.path) return Promise.resolve(this.claude);
+    if (!claudePathIn(env) && !env.PATH && this.claude.path) return Promise.resolve(this.claude);
     return resolveClaude({ ...process.env, ...env });
   }
 
@@ -374,11 +374,12 @@ export class ThreadManager {
   async runnable(env: Record<string, string>): Promise<ClaudeBinary> {
     const claude = await this.claudeFor(env);
     if (claude.path) return claude;
+    const named = claudePathIn(env);
     throw new RpcError(
       ErrorCodes.sdkError,
-      env.TETHER_CLAUDE_PATH
-        ? `TETHER_CLAUDE_PATH (${env.TETHER_CLAUDE_PATH}) isn't an executable file on this host.`
-        : "`claude` isn't on this host's PATH or its login shell's. Install Claude Code, or name it with TETHER_CLAUDE_PATH in the host's environment.",
+      named
+        ? `SUNDOWN_SERVER_CLAUDE_PATH (${named}) isn't an executable file on this host.`
+        : "`claude` isn't on this host's PATH or its login shell's. Install Claude Code, or name it with SUNDOWN_SERVER_CLAUDE_PATH in the host's environment.",
     );
   }
 
@@ -405,7 +406,7 @@ export class ThreadManager {
         options: {
           pathToClaudeCodeExecutable: claude.path,
           cwd: dir,
-          env: { ...process.env, ...env, CLAUDE_AGENT_SDK_CLIENT_APP: `tether/${TETHER_VERSION}` },
+          env: { ...process.env, ...env, CLAUDE_AGENT_SDK_CLIENT_APP: `sundown-server/${SERVER_VERSION}` },
           settingSources: ['user', 'project', 'local'],
           persistSession: false,
         },

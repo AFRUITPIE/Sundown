@@ -1,6 +1,6 @@
 import AppKit
 import Testing
-import TetherProtocol
+import ServerProtocol
 @testable import SundownUI
 
 /// The session menus are mostly icons, so a symbol name that doesn't exist on this OS is a blank

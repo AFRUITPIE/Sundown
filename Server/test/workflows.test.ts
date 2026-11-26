@@ -355,7 +355,7 @@ describe('workflow tasks read with the chat', async () => {
   // CLI's are: the prompt, the Workflow call and its launch, a reply, and a second call whose run
   // has only a journal.
   const h = await history();
-  const home = mkdtempSync(join(tmpdir(), 'tether-wf-'));
+  const home = mkdtempSync(join(tmpdir(), 'server-wf-'));
   const sid = '7b6fdb6f-2818-40c9-a34a-82ca9650b1e0';
   const project = join(home, 'projects', '-home-me');
   mkdirSync(project, { recursive: true });
@@ -442,7 +442,7 @@ describe('workflow tasks read with the chat', async () => {
 
 describe('finding the agent that made a call', () => {
   test('a call written after the first look is found, each transcript read on from where it was looked at', () => {
-    const session = mkdtempSync(join(tmpdir(), 'tether-locate-'));
+    const session = mkdtempSync(join(tmpdir(), 'server-locate-'));
     const run = join(session, 'subagents', 'workflows', 'wf_run-1');
     mkdirSync(run, { recursive: true });
     const a = join(run, 'agent-a1.jsonl');

@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 import os
-import TetherProtocol
+import ServerProtocol
 
 /// Live connection to one host's Sundown daemon, plus that host's chats and the directories they're in.
 @MainActor
@@ -137,7 +137,7 @@ public final class HostConnection: Identifiable {
             state = .connecting("Handshaking…")
             let initResult = try await client.call(Methods.Initialize.self, .init(
                 clientInfo: .init(name: "sundown-app", title: "Sundown", version: Self.appVersion),
-                protocolVersion: tetherProtocolVersion,
+                protocolVersion: serverProtocolVersion,
                 capabilities: .init(experimentalApi: true),
                 env: env.isEmpty ? nil : env))
             try await client.notify("initialized")

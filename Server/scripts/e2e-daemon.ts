@@ -3,14 +3,14 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TetherClient } from '../src/client/TetherClient.ts';
+import { ServerClient } from '../src/client/ServerClient.ts';
 
-// TETHER_E2E_MODEL / TETHER_E2E_EFFORT pick what the runs cost, e.g. sonnet at low effort.
-const model = { model: process.env.TETHER_E2E_MODEL ?? 'haiku', ...(process.env.TETHER_E2E_EFFORT ? { effort: process.env.TETHER_E2E_EFFORT as 'low' } : {}) };
+// SUNDOWN_SERVER_E2E_MODEL / SUNDOWN_SERVER_E2E_EFFORT pick what the runs cost, e.g. sonnet at low effort.
+const model = { model: process.env.SUNDOWN_SERVER_E2E_MODEL ?? 'haiku', ...(process.env.SUNDOWN_SERVER_E2E_EFFORT ? { effort: process.env.SUNDOWN_SERVER_E2E_EFFORT as 'low' } : {}) };
 
-const home = mkdtempSync(join(tmpdir(), 'tether-home-'));
-const cwd = mkdtempSync(join(tmpdir(), 'tether-d-'));
-const env = { TETHER_HOME: home };
+const home = mkdtempSync(join(tmpdir(), 'server-home-'));
+const cwd = mkdtempSync(join(tmpdir(), 'server-d-'));
+const env = { SUNDOWN_SERVER_HOME: home };
 const cmd = ['bun', 'run', join(import.meta.dir, '../src/cli.ts'), 'connect'];
 const ok = (cond: unknown, msg: string) => {
   if (!cond) {
@@ -21,7 +21,7 @@ const ok = (cond: unknown, msg: string) => {
 };
 
 // Client A starts a turn that needs approval, then vanishes before answering.
-const a = TetherClient.spawn(cmd, env);
+const a = ServerClient.spawn(cmd, env);
 const initA = await a.initialize();
 ok(initA.host.mode === 'daemon', 'connected through daemon');
 let lastSeqA = 0;
@@ -35,7 +35,7 @@ a.close();
 await Bun.sleep(1000);
 
 // Client B reconnects, catches up, receives the parked request, approves it.
-const b = TetherClient.spawn(cmd, env);
+const b = ServerClient.spawn(cmd, env);
 await b.initialize();
 // Read, not subscribed: the parked request must reach B only once it subscribes.
 const lt = (await b.call('thread/read', { threadId: thread.threadId, limit: 1 })).summary;
@@ -68,7 +68,7 @@ const offline = () => readdirSync(cwd).some((f) => f.startsWith('offline'));
 for (let i = 0; i < 90 && !offline(); i++) await Bun.sleep(1000);
 ok(offline(), 'turn finished its work with no client attached');
 await Bun.sleep(3000);
-const d = TetherClient.spawn(cmd, env);
+const d = ServerClient.spawn(cmd, env);
 await d.initialize();
 const dEvents: any[] = [];
 d.on((m, p) => dEvents.push({ m, p }));

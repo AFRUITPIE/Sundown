@@ -2,7 +2,7 @@ import Charts
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// The chat's tasks (subagents, commands, workflows, monitors, MCP tools), browsed in columns as
 /// Finder browses: each column the tasks started by the one selected to its left, and the last the

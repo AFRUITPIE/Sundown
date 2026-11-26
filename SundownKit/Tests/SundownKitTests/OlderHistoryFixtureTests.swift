@@ -1,7 +1,7 @@
 import Foundation
 @testable import SundownFixtures
 import Testing
-import TetherProtocol
+import ServerProtocol
 @testable import SundownKit
 
 /// The long fixture chat pages back to its start, one older page at a time.

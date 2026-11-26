@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// What differs from the last commit in the chat's folder, file by file, as the desktop app's diff
 /// view shows it. Click a line to leave a comment on it; the comments go to Claude together as one

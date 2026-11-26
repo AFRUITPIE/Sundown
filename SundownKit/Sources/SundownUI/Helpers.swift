@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 extension JSONValue {
     private static let prettyEncoder: JSONEncoder = {

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { gitChanges, MAX_UNTRACKED_FILES } from '../src/server/fsApi.ts';
 import { parseUnifiedDiff } from '../src/server/diff.ts';
 
-const tmp = mkdtempSync(join(tmpdir(), 'tether-changes-'));
+const tmp = mkdtempSync(join(tmpdir(), 'server-changes-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 function repo(name: string) {

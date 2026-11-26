@@ -3,7 +3,7 @@ import Foundation
 @testable import SundownFixtures
 import Testing
 @testable import SundownKit
-import TetherProtocol
+import ServerProtocol
 @testable import SundownUI
 
 /// The Tasks tab's columns: each task under the one that started it, with what it is and how it stands.

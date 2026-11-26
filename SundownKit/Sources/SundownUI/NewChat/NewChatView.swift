@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// Compose a new chat: choose the working directory, then send the first message. The host is
 /// the one the sidebar shows.

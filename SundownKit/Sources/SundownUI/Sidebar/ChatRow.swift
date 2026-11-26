@@ -118,7 +118,7 @@ struct ChatStatusDot: View {
         ChatRow(thread: .samplePendingPermission())
         ChatRow(thread: .sampleErrorTurn())
         ChatRow(thread: .sampleListed(title: "A chat with a title long enough that it has to truncate somewhere",
-                                      cwd: "/Users/hayden/Code/tether-server", secondsAgo: 3_600))
+                                      cwd: "/Users/hayden/Code/sundown-server", secondsAgo: 3_600))
     }
     .listStyle(.sidebar)
     .frame(width: 280, height: 260)
@@ -129,7 +129,7 @@ struct ChatStatusDot: View {
         ChatRow(thread: .sampleIdleChat(), grouping: .directory)
         ChatRow(thread: .sampleListed(title: "Bump the pinned server version", cwd: nil, secondsAgo: 90_000),
                 grouping: .directory)
-        ChatRow(thread: .sampleListed(title: "Trace the reconnect path", cwd: "/Users/hayden/Code/tether-server",
+        ChatRow(thread: .sampleListed(title: "Trace the reconnect path", cwd: "/Users/hayden/Code/sundown-server",
                                       secondsAgo: 40 * 86_400), grouping: .directory)
     }
     .listStyle(.sidebar)

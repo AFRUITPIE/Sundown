@@ -1,4 +1,4 @@
-// Emits schema/tether.schema.json: every method, notification and server request, with shared $defs.
+// Emits schema/server.schema.json: every method, notification and server request, with shared $defs.
 import { z } from 'zod';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { MIN_CLIENT_PROTOCOL, Methods, Notifications, PROTOCOL_VERSION, ServerRequests } from '../src/protocol/index.ts';
@@ -15,7 +15,7 @@ function convert(schema: z.ZodType): unknown {
 
 const doc = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
-  title: 'Tether protocol',
+  title: 'Sundown server protocol',
   protocolVersion: PROTOCOL_VERSION,
   minClientProtocol: MIN_CLIENT_PROTOCOL,
   methods: Object.fromEntries(
@@ -28,7 +28,7 @@ const doc = {
   $defs: defs,
 };
 
-const out = process.argv[2] ?? 'schema/tether.schema.json';
+const out = process.argv[2] ?? 'schema/server.schema.json';
 mkdirSync(out.split('/').slice(0, -1).join('/') || '.', { recursive: true });
 writeFileSync(out, JSON.stringify(doc, null, 2) + '\n');
 console.log(`wrote ${out}: ${Object.keys(doc.methods).length} methods, ${Object.keys(doc.notifications).length} notifications, ${Object.keys(doc.serverRequests).length} server requests, ${Object.keys(defs).length} shared types`);

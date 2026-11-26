@@ -1,6 +1,6 @@
 import Foundation
 
-/// The Sundown server this build of the app runs: tether-server's npm package, built from `Server/`
+/// The Sundown server this build of the app runs: the `tether-server` npm package, built from `Server/`
 /// and published from main. Every host has Node.js 18 or later, and runs it with `npx`, so nothing is
 /// installed beside npm's cache.
 public enum ServerRelease {

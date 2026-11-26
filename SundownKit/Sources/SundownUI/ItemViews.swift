@@ -2,7 +2,7 @@ import ImageIO
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// A transcript row's item as it is now. Reads the item's box, so a streamed delta redraws this row
 /// alone: the row list it sits in holds the item's value from before the delta.

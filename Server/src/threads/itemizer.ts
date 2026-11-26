@@ -86,7 +86,7 @@ export function userContentToInputs(content: unknown): UserInput[] {
 type StreamBlock = { index: number; blockType: string; itemId: string; consumed: boolean };
 
 /**
- * Pure SDKMessage → Tether item/turn reducer. Used for both live streams and
+ * Pure SDKMessage → protocol item/turn reducer. Used for both live streams and
  * transcript history, so the client sees one shape regardless of source.
  */
 export class Itemizer {
@@ -210,7 +210,7 @@ export class Itemizer {
     return this.turn;
   }
 
-  /** Called when Tether itself sends a user message, so the echo from the CLI is not duplicated. */
+  /** Called when the server itself sends a user message, so the echo from the CLI is not duplicated. */
   noteSentUserMessage(uuid: string) {
     this.echoUuids.add(uuid);
   }
@@ -223,7 +223,7 @@ export class Itemizer {
     this.interruptRequested = true;
   }
 
-  /** Start a turn for user input Tether sent (live mode). Returns emissions for turn + user item. */
+  /** Start a turn for user input the server sent (live mode). Returns emissions for turn + user item. */
   beginUserTurn(messageId: string, content: UserInput[], queued: boolean): { turnId: string; out: Emission[] } {
     const out: Emission[] = [];
     if (!this.turn) out.push(...this.startTurn(messageId));
@@ -376,7 +376,7 @@ export class Itemizer {
             },
           },
         ];
-      // A message Tether doesn't model is ignored, never an error.
+      // A message the server doesn't model is ignored, never an error.
       default:
         return [];
     }
@@ -1167,7 +1167,7 @@ export class Itemizer {
   }
 
   /**
-   * Live, a command the CLI took in that Tether didn't send: a scheduled job firing (its prompt is
+   * Live, a command the CLI took in that the server didn't send: a scheduled job firing (its prompt is
    * never echoed). Its turn starts now, named for the command, as history names it from the
    * prompt's record; the prompt itself is said once read from the transcript (`ingestExtra`).
    */

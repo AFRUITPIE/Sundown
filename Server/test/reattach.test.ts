@@ -329,7 +329,7 @@ describe('paging history back', () => {
 
 describe('reading a live thread', () => {
   test('the page handed out is as of historySeq, though the reply goes on streaming into it', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'tether-live-read-'));
+    const home = mkdtempSync(join(tmpdir(), 'server-live-read-'));
     const saved = process.env.CLAUDE_CONFIG_DIR;
     process.env.CLAUDE_CONFIG_DIR = home;
     const mgr = new ThreadManager(claude);
@@ -360,7 +360,7 @@ describe('reading a live thread', () => {
 
 describe('a session whose cwd the SDK misses', () => {
   test('is read from past a first message too long for the SDK’s look at the head', async () => {
-    const path = join(mkdtempSync(join(tmpdir(), 'tether-cwd-')), 'session.jsonl');
+    const path = join(mkdtempSync(join(tmpdir(), 'server-cwd-')), 'session.jsonl');
     const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(1_000_000) } };
     writeFileSync(
       path,
@@ -375,7 +375,7 @@ describe('a session whose cwd the SDK misses', () => {
   });
 
   test('a transcript that records none has none', async () => {
-    const path = join(mkdtempSync(join(tmpdir(), 'tether-cwd-')), 'session.jsonl');
+    const path = join(mkdtempSync(join(tmpdir(), 'server-cwd-')), 'session.jsonl');
     writeFileSync(path, '{"type":"summary","note":"no \\"cwd\\" here"}\n{"cwd":\n');
     expect(await recordedCwd(path)).toBeUndefined();
     expect(await recordedCwd(join(tmpdir(), 'missing-transcript.jsonl'))).toBeUndefined();
@@ -409,7 +409,7 @@ describe('a resumed session keeps its settings', () => {
   });
 
   test('a permission mode megabytes back, behind a long turn of tool output, is still found', async () => {
-    const path = join(mkdtempSync(join(tmpdir(), 'tether-settings-')), 'session.jsonl');
+    const path = join(mkdtempSync(join(tmpdir(), 'server-settings-')), 'session.jsonl');
     const screenshot = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'A'.repeat(5_000_000) }] } };
     writeFileSync(
       path,
@@ -423,7 +423,7 @@ describe('a resumed session keeps its settings', () => {
   });
 
   test('an error the CLI wrote itself is not the model in use', async () => {
-    const path = join(mkdtempSync(join(tmpdir(), 'tether-settings-')), 'session.jsonl');
+    const path = join(mkdtempSync(join(tmpdir(), 'server-settings-')), 'session.jsonl');
     writeFileSync(
       path,
       [

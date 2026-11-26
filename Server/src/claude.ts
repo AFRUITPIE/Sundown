@@ -12,7 +12,15 @@ export type ClaudeBinary = { path: string; version: string };
 const cache = new Map<string, Promise<ClaudeBinary>>();
 
 /**
- * `claude` as `env` finds it: its `TETHER_CLAUDE_PATH`, else the first `claude` on its PATH, else
+ * The `claude` that `env` names outright: `SUNDOWN_SERVER_CLAUDE_PATH`, or `TETHER_CLAUDE_PATH`, its name
+ * before the server was renamed, which hosts' environments in the app may still set.
+ */
+export function claudePathIn(env: Record<string, string | undefined>): string | undefined {
+  return env.SUNDOWN_SERVER_CLAUDE_PATH || env.TETHER_CLAUDE_PATH || undefined;
+}
+
+/**
+ * `claude` as `env` finds it: the one it names (`claudePathIn`), else the first `claude` on its PATH, else
  * the login shell's. Each client resolves it with the environment the app sends for its host
  * (Settings ▸ Hosts ▸ Environment) over the daemon's own, so a wrapper the daemon's PATH misses can
  * be named there, and takes effect without restarting the daemon. Cached per path and PATH; not
@@ -20,7 +28,7 @@ const cache = new Map<string, Promise<ClaudeBinary>>();
  * every client of the daemon while it did.
  */
 export function resolveClaude(env: Record<string, string | undefined> = process.env): Promise<ClaudeBinary> {
-  const key = `${env.TETHER_CLAUDE_PATH ?? ''}\0${env.PATH ?? ''}`;
+  const key = `${claudePathIn(env) ?? ''}\0${env.PATH ?? ''}`;
   let found = cache.get(key);
   if (!found) {
     found = lookUp(env);
@@ -33,7 +41,8 @@ export function resolveClaude(env: Record<string, string | undefined> = process.
 async function lookUp(env: Record<string, string | undefined>): Promise<ClaudeBinary> {
   // One named outright is the one: if it isn't there, that's said rather than another used.
   const home = env.HOME || homedir();
-  const named = env.TETHER_CLAUDE_PATH ? expandHome(env.TETHER_CLAUDE_PATH, home) : undefined;
+  const given = claudePathIn(env);
+  const named = given ? expandHome(given, home) : undefined;
   const path = named !== undefined ? (isExecutable(named) ? named : '') : which('claude', env.PATH, home) || (await loginShellWhich());
   if (!path) return { path: '', version: 'not found' };
   let version = 'unknown';

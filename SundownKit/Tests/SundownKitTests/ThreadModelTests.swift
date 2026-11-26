@@ -2,7 +2,7 @@ import Foundation
 import Observation
 import Testing
 import SundownTestSupport
-import TetherProtocol
+import ServerProtocol
 @testable import SundownKit
 
 @MainActor

@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 import UserNotifications
 
 /// Settings ▸ Notifications (persisted by `AppModel`).

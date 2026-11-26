@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 @testable import SundownFixtures
 import SwiftUI
-import TetherProtocol
+import ServerProtocol
 import XCTest
 @testable import SundownKit
 @testable import SundownUI

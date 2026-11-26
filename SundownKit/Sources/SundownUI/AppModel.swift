@@ -5,7 +5,7 @@ import SundownFixtures
 import SwiftUI
 import Synchronization
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// How the sidebar groups a host's chats (persisted).
 public enum SidebarGrouping: String, CaseIterable, Sendable {

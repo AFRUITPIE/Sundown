@@ -2,7 +2,7 @@
 import SundownTestSupport
 import Testing
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 @testable import SundownUI
 
 @MainActor

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import TetherProtocol
+import ServerProtocol
 @testable import SundownKit
 import SundownFixtures
 import SundownTestSupport
@@ -10,13 +10,13 @@ import SundownTestSupport
 @Suite
 struct ProtocolHandshakeTests {
     @Test func sendsItsProtocolAndConnects() async throws {
-        let host = server(protocolVersion: tetherProtocolVersion)
+        let host = server(protocolVersion: serverProtocolVersion)
         let connection = connection(host)
 
         await connection.connect()
 
         #expect(connection.state == .connected)
-        #expect(host.calls(of: "initialize").first?["protocolVersion"]?.intValue == tetherProtocolVersion)
+        #expect(host.calls(of: "initialize").first?["protocolVersion"]?.intValue == serverProtocolVersion)
         await connection.disconnect()
     }
 
@@ -37,7 +37,7 @@ struct ProtocolHandshakeTests {
     @Test func aServerThatRefusesTheAppSaysTheAppNeedsUpdating() async throws {
         let host = FakeHost(hostname: "claude-box")
         host.fail("initialize", code: RPCError.incompatibleProtocol,
-                  "This client speaks protocol 1; tether 0.9.0 needs 2 or later",
+                  "This client speaks protocol 1; sundown-server 0.9.0 needs 2 or later",
                   data: ["protocolVersion": 2, "minClientProtocol": 2])
         let connection = connection(host)
 
@@ -53,7 +53,7 @@ struct ProtocolHandshakeTests {
     private func server(protocolVersion: Int) -> FakeHost {
         let host = FakeHost(hostname: "claude-box")
         var result = host.initializeResult
-        result.serverInfo = .init(name: "tether", version: "0.4.0")
+        result.serverInfo = .init(name: "sundown-server", version: "0.4.0")
         result.protocolVersion = protocolVersion
         result.minClientProtocol = 1
         host.initializeResult = result

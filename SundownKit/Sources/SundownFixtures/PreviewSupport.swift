@@ -7,7 +7,7 @@
 #if DEBUG
 import Foundation
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// A millisecond timestamp `seconds` in the past, so relative-time labels read naturally.
 private func preview(secondsAgo seconds: Double) -> Double {
@@ -153,7 +153,7 @@ extension PendingRequest {
 
     public static func sampleDialog() -> PendingRequest {
         let params = DialogRequestParams(threadId: "preview-thread", requestId: "req-dialog", dialogKind: "trustFolder",
-                                          payload: ["path": "/Users/hayden/Code/tether-app"])
+                                          payload: ["path": "/Users/hayden/Code/Sundown"])
         return PendingRequest(id: params.requestId, request: .dialogRequest(params), respond: { _ in })
     }
 
@@ -194,7 +194,7 @@ extension ThreadModel {
     /// Builds a thread the way `thread/read` would (seeded history + live info), with no network.
     public static func sample(
         id: String = "preview-\(UUID().uuidString)",
-        cwd: String = "/Users/hayden/Code/tether-app",
+        cwd: String = "/Users/hayden/Code/Sundown",
         title: String? = nil,
         status: ThreadStatus = .idle,
         model: String? = "opus",
@@ -237,7 +237,7 @@ extension ThreadModel {
         }
         func report(_ n: Int) -> Item {
             .userMessage(.init(id: "report-\(n)", createdAt: preview(secondsAgo: Double(50 - n * 5)),
-                               content: [.text(.init(text: "Sundown\ntether-server"))], synthetic: true,
+                               content: [.text(.init(text: "Sundown\nsundown-server"))], synthetic: true,
                                origin: "subagent", originName: "ls after \(n) s"))
         }
         let done = 5 - running
@@ -247,7 +247,7 @@ extension ThreadModel {
         for n in stride(from: 1, through: done, by: 1) {
             items.append(report(n))
             items.append(.notice(.sample("Agent \"ls after \(n) s\" finished", kind: "taskNotification", secondsAgo: Double(49 - n * 5))))
-            items.append(.agentMessage(.sample("The \(n)-second agent returned `Sundown/` and `tether-server/`.", secondsAgo: Double(48 - n * 5))))
+            items.append(.agentMessage(.sample("The \(n)-second agent returned `Sundown/` and `sundown-server/`.", secondsAgo: Double(48 - n * 5))))
         }
         return sample(title: "Background agents", status: status, items: items, turns: [.sample()], backgroundTasks: running)
     }
@@ -271,7 +271,7 @@ extension ThreadModel {
     /// A chat whose transcript hasn't arrived — what the transcript stands in for. With a message
     /// the read itself failed; without one the connection's own state has to explain it.
     public static func sampleUnloaded(lastError: String? = nil) -> ThreadModel {
-        let thread = sampleListed(title: "Deploy to production", cwd: "/Users/hayden/Code/tether-app", secondsAgo: 300)
+        let thread = sampleListed(title: "Deploy to production", cwd: "/Users/hayden/Code/Sundown", secondsAgo: 300)
         if let lastError { thread.lastError = lastError }
         return thread
     }
@@ -446,12 +446,12 @@ extension ThreadModel {
                                 input: ["command": "swift test --filter ThreadModelTests", "description": "Run ThreadModel tests"],
                                 status: .completed, outputText: "Test Suite 'ThreadModelTests' passed.\nExecuted 6 tests, with 0 failures.", secondsAgo: 220)),
                 .toolCall(.sample(name: "Read", kind: .fileRead,
-                                input: ["file_path": "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownKit/ThreadModel.swift"],
+                                input: ["file_path": "/Users/hayden/Code/Sundown/SundownKit/Sources/SundownKit/ThreadModel.swift"],
                                 status: .completed, secondsAgo: 210)),
                 .toolCall(.sample(name: "Grep", kind: .grep, input: ["pattern": "upsertTurn", "path": "SundownKit/Sources/SundownKit"],
                                 status: .completed, outputText: "ThreadModel.swift:145:    private func upsertTurn(_ t: Turn) {", secondsAgo: 200)),
                 .toolCall(.sample(name: "Edit", kind: .fileEdit, input: [
-                    "file_path": "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownKit/ThreadModel.swift",
+                    "file_path": "/Users/hayden/Code/Sundown/SundownKit/Sources/SundownKit/ThreadModel.swift",
                     "old_string": "    public private(set) var lastSeq = 0",
                     "new_string": "    public private(set) var lastSeq = 0\n    public private(set) var isPreview = false",
                 ], status: .completed, secondsAgo: 190)),
@@ -470,7 +470,7 @@ extension ThreadModel {
                                     secondsAgo: 166, parentToolUseId: subagentId)),
                 .toolCall(.sample(name: "mcp__xcode__RenderPreview", kind: .mcp, input: ["file": "ItemViews.swift", "preview": "Bash tool call"],
                                 status: .completed, outputText: "Rendered 1 preview.", secondsAgo: 60)),
-                .toolCall(.sample(name: "NotebookRead", kind: .other, input: ["notebook_path": "/Users/hayden/Code/tether-app/notes.ipynb"],
+                .toolCall(.sample(name: "NotebookRead", kind: .other, input: ["notebook_path": "/Users/hayden/Code/Sundown/notes.ipynb"],
                                 status: .denied, secondsAgo: 50)),
             ],
             turns: [.sample(secondsAgo: 40)],
@@ -482,7 +482,7 @@ extension ThreadModel {
     /// Two finished turns of real-looking work: messages between runs of reads, searches, edits and
     /// commands, one of which failed. For comparing View ▸ Tool Calls.
     public static func sampleWorkChat() -> ThreadModel {
-        let root = "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownUI/"
+        let root = "/Users/hayden/Code/Sundown/SundownKit/Sources/SundownUI/"
         let build: JSONValue = ["command": "swift build --package-path SundownKit", "description": "Build SundownKit"]
         let edit: JSONValue = [
             "file_path": .string(root + "RootView.swift"),
@@ -539,7 +539,7 @@ extension ThreadModel {
     /// which gets none.
     public static func sampleDatedChat() -> ThreadModel {
         let day: Double = 86_400
-        let root = "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownUI/"
+        let root = "/Users/hayden/Code/Sundown/SundownKit/Sources/SundownUI/"
         let items: [Item] = [
             .userMessage(.sample("Sketch how the transcript could mark where a chat picks up after a break.", secondsAgo: 8 * day)),
             .agentMessage(.sample("Messages puts the date above the first message after an hour's gap, and above every day change. The same rule suits a transcript.", secondsAgo: 8 * day - 40)),
@@ -645,11 +645,11 @@ extension HostConnection {
             ThreadModel.sampleErrorTurn(),
             // Listed-only chats, spread across the date buckets and a few folders — including two
             // folders that share a last path component, which must stay two sections.
-            .sampleListed(title: "Fold completed tool calls into a group", cwd: "/Users/hayden/Code/tether-app", secondsAgo: 3 * 3_600),
-            .sampleListed(title: "Why does reconnect replay from zero?", cwd: "/Users/hayden/Code/tether-server", secondsAgo: day + 4 * 3_600),
+            .sampleListed(title: "Fold completed tool calls into a group", cwd: "/Users/hayden/Code/Sundown", secondsAgo: 3 * 3_600),
+            .sampleListed(title: "Why does reconnect replay from zero?", cwd: "/Users/hayden/Code/sundown-server", secondsAgo: day + 4 * 3_600),
             .sampleListed(title: "Bump the pinned server version", cwd: nil, secondsAgo: 3 * day),
-            .sampleListed(title: "Sidebar grouping spike", cwd: "/Users/hayden/Developer/archive/tether-app", secondsAgo: 12 * day),
-            .sampleListed(title: "First pass at the SSH bootstrapper", cwd: "/Users/hayden/Code/tether-server", secondsAgo: 45 * day),
+            .sampleListed(title: "Sidebar grouping spike", cwd: "/Users/hayden/Developer/archive/Sundown", secondsAgo: 12 * day),
+            .sampleListed(title: "First pass at the SSH bootstrapper", cwd: "/Users/hayden/Code/sundown-server", secondsAgo: 45 * day),
         ]
         let connection = HostConnection(host: .local)
         connection.previewSeed(
@@ -659,8 +659,8 @@ extension HostConnection {
             // sends a real request over it.
             client: RPCClient(transport: PreviewTransport()),
             serverInfo: .init(
-                serverInfo: .init(name: "tether-server", version: "0.4.0"),
-                protocolVersion: tetherProtocolVersion,
+                serverInfo: .init(name: "sundown-server", version: "0.4.0"),
+                protocolVersion: serverProtocolVersion,
                 host: .init(hostname: "haydens-mac.local", platform: "darwin", arch: "arm64", home: NSHomeDirectory(), pid: 4242, mode: .daemon),
                 claude: .init(path: "/opt/homebrew/bin/claude", version: "2.1.4")),
             account: .init(email: "hello@haydenhong.com", organization: "Personal", subscriptionType: "max", tokenSource: "keychain", apiProvider: "firstParty"),
@@ -693,8 +693,8 @@ extension HostConnection {
             state: .connected,
             client: RPCClient(transport: PreviewTransport()),
             serverInfo: .init(
-                serverInfo: .init(name: "tether-server", version: "0.4.0"),
-                protocolVersion: tetherProtocolVersion,
+                serverInfo: .init(name: "sundown-server", version: "0.4.0"),
+                protocolVersion: serverProtocolVersion,
                 host: .init(hostname: "build-box.local", platform: "linux", arch: "x86_64", home: "/home/hayden", pid: 812, mode: .daemon),
                 claude: .init(path: "/usr/local/bin/claude", version: "2.1.4")),
             account: .init(tokenSource: "env", apiProvider: "bedrock"),

@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// The MCP servers this chat's Claude Code has, whether they came up, and what can be done about
 /// one that didn't: reconnect it, or turn it off or on for this chat. What `thread.info` reported

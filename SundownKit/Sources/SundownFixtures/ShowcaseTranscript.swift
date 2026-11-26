@@ -1,6 +1,6 @@
 import Foundation
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// The `showcase` scenario (SUNDOWN_UI_TEST_SCENARIO=showcase): a week of believable work for the
 /// README's screenshots and recordings. A weather app (Tidecast), a Node API (pantry-api) and this

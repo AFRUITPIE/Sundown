@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import TetherProtocol
+import ServerProtocol
 @testable import SundownKit
 
 /// A chat whose turn has ended while its background agents and commands still run is still at work.

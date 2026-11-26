@@ -3,7 +3,7 @@ import Foundation
 @testable import SundownFixtures
 import SundownTestSupport
 import Testing
-import TetherProtocol
+import ServerProtocol
 import XCTest
 @testable import SundownKit
 @testable import SundownUI

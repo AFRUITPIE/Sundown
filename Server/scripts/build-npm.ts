@@ -3,7 +3,7 @@
 // (the app pins the version), or install it with `npm install -g tether-server`.
 //
 // Everything is bundled, the Agent SDK included, as the compiled binaries do. The SDK's platform
-// packages are left out: each is a Claude Code of its own (about 200 MB), and Tether always runs
+// packages are left out: each is a Claude Code of its own (about 200 MB), and the server always runs
 // the host's `claude`. Not minified, so what npm serves can be read.
 //
 // `--dev` stamps the version as `<package.json version>-dev.<time>`, as `mise run compile -- --dev`
@@ -18,7 +18,7 @@ const out = 'npm';
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out);
-await $`bun build src/cli.ts --target=node --format=esm --outfile ${out}/cli.js --external '@anthropic-ai/claude-agent-sdk-*' --define TETHER_BUILD_VERSION=${JSON.stringify(version)}`.quiet();
+await $`bun build src/cli.ts --target=node --format=esm --outfile ${out}/cli.js --external '@anthropic-ai/claude-agent-sdk-*' --define SERVER_BUILD_VERSION=${JSON.stringify(version)}`.quiet();
 
 // Node, not Bun, runs it: the source's own shebang names bun.
 const js = readFileSync(`${out}/cli.js`, 'utf8').replace(/^#!.*\n/, '');
@@ -28,17 +28,17 @@ chmodSync(`${out}/cli.js`, 0o755);
 writeFileSync(`${out}/package.json`, `${JSON.stringify({
   name: pkg.name,
   version,
-  description: 'The Tether daemon: runs Claude Code sessions on a host for the Tether app, through the Claude Agent SDK.',
+  description: 'The Sundown server: runs Claude Code sessions on a host for the Sundown app, through the Claude Agent SDK.',
   license: pkg.license,
   type: 'module',
-  bin: { tether: 'cli.js' },
+  bin: { 'sundown-server': 'cli.js' },
   files: ['cli.js', 'LICENSE'],
   engines: { node: '>=18' },
   repository: { type: 'git', url: 'git+https://github.com/AFRUITPIE/Sundown.git', directory: 'Server' },
   homepage: 'https://github.com/AFRUITPIE/Sundown/tree/main/Server#readme',
   bugs: 'https://github.com/AFRUITPIE/Sundown/issues',
-  keywords: ['claude', 'claude-code', 'agent-sdk', 'tether'],
-  // Bundled at build time; nothing for npm to fetch. The SDK's version is reported by `tether version --json`.
+  keywords: ['claude', 'claude-code', 'agent-sdk', 'sundown'],
+  // Bundled at build time; nothing for npm to fetch. The SDK's version is reported by `sundown-server version --json`.
   agentSdkVersion: pkg.dependencies['@anthropic-ai/claude-agent-sdk'],
   publishConfig: { access: 'public', provenance: true },
 }, null, 2)}\n`);

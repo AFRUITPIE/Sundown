@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// The files a finished turn edited, after its last reply, as quiet as a tool row: "Edited 3 files
 /// +42 −7", from the turn's own edits (`EditedFiles`). Open, one line per file, each opening
@@ -160,14 +160,14 @@ private func sampleTurnEdits() -> EditedFiles {
 }
 
 #Preview("Edited files (collapsed)") {
-    TurnEditsView(edits: sampleTurnEdits(), cwd: "/Users/hayden/Code/tether-app")
+    TurnEditsView(edits: sampleTurnEdits(), cwd: "/Users/hayden/Code/Sundown")
         .scaledFont(.body)
         .padding(20)
         .frame(width: 560)
 }
 
 #Preview("Edited files (expanded)") {
-    TurnEditsView(edits: sampleTurnEdits(), cwd: "/Users/hayden/Code/tether-app", expanded: true)
+    TurnEditsView(edits: sampleTurnEdits(), cwd: "/Users/hayden/Code/Sundown", expanded: true)
         .scaledFont(.body)
         .padding(20)
         .frame(width: 560)
@@ -176,7 +176,7 @@ private func sampleTurnEdits() -> EditedFiles {
 /// One file open to its diffs: the turn's two edits to it, in the order they were made.
 #Preview("Edited files (a file open)") {
     let edits = sampleTurnEdits()
-    return TurnEditsView(edits: edits, cwd: "/Users/hayden/Code/tether-app", expanded: true,
+    return TurnEditsView(edits: edits, cwd: "/Users/hayden/Code/Sundown", expanded: true,
                          openFiles: [edits.files[0].path])
         .scaledFont(.body)
         .padding(20)

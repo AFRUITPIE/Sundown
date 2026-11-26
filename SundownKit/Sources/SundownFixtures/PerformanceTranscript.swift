@@ -1,5 +1,5 @@
 import Foundation
-import TetherProtocol
+import ServerProtocol
 import SundownKit
 
 /// A long transcript and a long streamed reply, for profiling (SUNDOWN_UI_TEST_SCENARIO=performance).

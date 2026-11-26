@@ -1,5 +1,5 @@
 import Testing
-import TetherProtocol
+import ServerProtocol
 @testable import SundownUI
 
 /// The composer's suggestion list is a pure function of the text and the two catalogs it has

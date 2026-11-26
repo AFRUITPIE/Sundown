@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Methods, MIN_CLIENT_PROTOCOL, PROTOCOL_VERSION, type MethodName, type Params, type Result } from '../protocol/index.ts';
 import { Connection, ErrorCodes, RpcError } from '../rpc/connection.ts';
 import type { Subscriber, WatchableThread } from '../threads/events.ts';
-import { TETHER_VERSION } from '../threads/LiveThread.ts';
+import { SERVER_VERSION } from '../threads/LiveThread.ts';
 import type { ThreadManager } from '../threads/ThreadManager.ts';
 import * as fsApi from './fsApi.ts';
 
@@ -12,11 +12,13 @@ type Handler<M extends MethodName> = (p: Params<M>) => Promise<Result<M>> | Resu
 const SIDE_QUESTION_TIMEOUT_MS = 60_000;
 
 /**
- * The client `tether connect` is when it asks a daemon of another version to make way. Served
+ * The client `sundown-server connect` is when it asks a daemon of another version to make way. Served
  * whatever protocol it speaks, for that alone (`host/requestShutdown`): a release's `connect`
  * must be able to replace any other release's daemon, an older app's included.
  */
-export const UPGRADE_CLIENT = 'tether-upgrade';
+export const UPGRADE_CLIENT = 'sundown-server-upgrade';
+/** The upgrade client's name before the rename: what a daemon of an earlier release looks for. */
+export const LEGACY_UPGRADE_CLIENT = 'tether-upgrade';
 const UPGRADE_METHODS = new Set(['initialize', 'host/requestShutdown']);
 
 /**
@@ -50,7 +52,7 @@ export async function askSideQuestion(query: unknown, question: string, timeoutM
 export class ClientSession implements Subscriber {
   readonly id = randomUUID();
   private initialized = false;
-  /** Initialized as `tether connect`'s upgrade client with a protocol this server doesn't serve. */
+  /** Initialized as `sundown-server connect`'s upgrade client with a protocol this server doesn't serve. */
   private upgradeOnly = false;
   private env: Record<string, string> = {};
   private subscriptions = new Map<string, WatchableThread>();
@@ -125,12 +127,12 @@ export class ClientSession implements Subscriber {
     initialize: async (p) => {
       if (this.initialized) throw new RpcError(ErrorCodes.alreadyInitialized, 'Already initialized');
       const clientProtocol = p.protocolVersion ?? 1;
-      this.upgradeOnly = clientProtocol < MIN_CLIENT_PROTOCOL && p.clientInfo.name === UPGRADE_CLIENT;
+      this.upgradeOnly = clientProtocol < MIN_CLIENT_PROTOCOL && (p.clientInfo.name === UPGRADE_CLIENT || p.clientInfo.name === LEGACY_UPGRADE_CLIENT);
       if (clientProtocol < MIN_CLIENT_PROTOCOL && !this.upgradeOnly) {
         this.log(`client ${this.id} refused: ${p.clientInfo.name} ${p.clientInfo.version} speaks protocol ${clientProtocol}`);
         throw new RpcError(
           ErrorCodes.incompatibleProtocol,
-          `This client speaks protocol ${clientProtocol}; tether ${TETHER_VERSION} needs ${MIN_CLIENT_PROTOCOL} or later`,
+          `This client speaks protocol ${clientProtocol}; sundown-server ${SERVER_VERSION} needs ${MIN_CLIENT_PROTOCOL} or later`,
           { protocolVersion: PROTOCOL_VERSION, minClientProtocol: MIN_CLIENT_PROTOCOL },
         );
       }
@@ -140,7 +142,7 @@ export class ClientSession implements Subscriber {
       if (!this.upgradeOnly) this.unwatchSummaries = this.mgr.watchSummaries((summary) => this.notify('thread/summaryChanged', { summary }));
       this.log(`client ${this.id} initialized: ${p.clientInfo.name} ${p.clientInfo.version}`);
       return {
-        serverInfo: { name: 'tether', version: TETHER_VERSION },
+        serverInfo: { name: 'sundown-server', version: SERVER_VERSION },
         protocolVersion: PROTOCOL_VERSION,
         minClientProtocol: MIN_CLIENT_PROTOCOL,
         host: { hostname: hostname(), platform: platform(), arch: arch(), home: homedir(), pid: process.pid, mode: this.mode },

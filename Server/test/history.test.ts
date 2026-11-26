@@ -9,7 +9,7 @@ import { ThreadManager } from '../src/threads/ThreadManager.ts';
 describe('history across compactions', () => {
   // A Claude config folder holding one session that was compacted twice, as the CLI writes it: each
   // boundary starts the chain again (no parentUuid), pointing back with logicalParentUuid.
-  const home = mkdtempSync(join(tmpdir(), 'tether-history-'));
+  const home = mkdtempSync(join(tmpdir(), 'server-history-'));
   const sid = '5f0c8a52-3f7e-4c1e-9d55-0b7a2f6f1c01';
   const project = join(home, 'projects', '-home-me');
   mkdirSync(project, { recursive: true });
@@ -90,7 +90,7 @@ describe('history across compactions', () => {
 
 describe('following a chat as it is written', () => {
   // A session another client runs, appended to while it's followed, compacted along the way.
-  const home = mkdtempSync(join(tmpdir(), 'tether-follow-'));
+  const home = mkdtempSync(join(tmpdir(), 'server-follow-'));
   const sid = '5f0c8a52-3f7e-4c1e-9d55-0b7a2f6f1c09';
   const project = join(home, 'projects', '-home-me');
   mkdirSync(project, { recursive: true });

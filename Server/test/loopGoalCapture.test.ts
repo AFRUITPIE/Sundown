@@ -8,13 +8,13 @@ import { ingestHistory, TranscriptExtras } from '../src/threads/transcript.ts';
 import { sessionCronsOf } from '../src/threads/LiveThread.ts';
 
 /**
- * Two real sessions against Claude Code 2.1.291, captured with TETHER_DEBUG_MESSAGES=1 (every SDK
+ * Two real sessions against Claude Code 2.1.291, captured with SUNDOWN_SERVER_DEBUG_MESSAGES=1 (every SDK
  * message but stream deltas; the init lines, cut at 4000 characters, left out), paths and email
  * scrubbed (`test/fixtures/loop-goal`):
  *
  * - loop: "/loop 1m reply with the current time in one short line" → CronCreate every minute (job
  *   6db9ae9a) → it fired twice → "stop the loop" → CronDelete. Live, a firing is only a
- *   `command_lifecycle` `started` for a command Tether never sent (no `queued` before it), then the
+ *   `command_lifecycle` `started` for a command the server never sent (no `queued` before it), then the
  *   turn's work; its prompt is never echoed. The transcript has it as a meta user record,
  *   `turnOrigin: scheduled`, whose uuid is that command's, which getSessionMessages drops.
  * - goal: "/goal notes.md in this directory has no spelling mistakes", met on the first check. Live,
@@ -38,7 +38,7 @@ const CONDITION = 'notes.md in this directory has no spelling mistakes';
 const completed = (out: Emission[]) => out.flatMap((e) => (e.method === 'item/completed' ? [e.body.item as Item] : []));
 
 /**
- * The stream as the daemon saw it, with Tether's own prompts begun as `send` begins them and the
+ * The stream as the daemon saw it, with the server's own prompts begun as `send` begins them and the
  * transcript read as LiveThread reads it (`TranscriptExtras.take`).
  */
 function live(stream: any[], raw: string[], prompts: Record<string, string>) {

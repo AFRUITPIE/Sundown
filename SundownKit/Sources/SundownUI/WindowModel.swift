@@ -3,7 +3,7 @@ import Observation
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// What a window shows: a host, and a chat on it or New Chat. The window's scene value: each window
 /// keeps it current (`WindowRoot`), so the system restores each window to it, and opening a chat
@@ -182,12 +182,13 @@ public final class WindowModel {
         worktreeToRemove = WorktreeRemoval(path: root)
     }
 
-    /// The worktree `cwd` is in, when Sundown made it: `<repo>/.claude/worktrees/tether-<8 hex>`. The
+    /// The worktree `cwd` is in, when Sundown made it: `<repo>/.claude/worktrees/sundown-<8 hex>` (`tether-<8 hex>` before
+    /// the server was renamed). The
     /// chat may work in a subfolder of it; Claude Desktop's worktrees, beside Sundown's, aren't ours.
     static func sundownWorktree(_ cwd: String) -> String? {
         guard let marker = cwd.range(of: "/.claude/worktrees/") else { return nil }
         let name = cwd[marker.upperBound...].split(separator: "/", maxSplits: 1).first.map(String.init) ?? ""
-        guard name.wholeMatch(of: /tether-[0-9a-f]{8}/) != nil else { return nil }
+        guard name.wholeMatch(of: /(sundown|tether)-[0-9a-f]{8}/) != nil else { return nil }
         return String(cwd[..<marker.upperBound]) + name
     }
 

@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// What a new chat starts with, how chats read and send, and what Claude may do. The session rows
 /// use the same words and symbols the toolbar uses for the same value.

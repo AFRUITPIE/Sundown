@@ -1,5 +1,5 @@
 import Foundation
-import TetherProtocol
+import ServerProtocol
 
 /// A dynamic workflow as Claude Code and the daemon report one, for previews and the UI-test
 /// fixture's `tasks` scenario: a Workflow call whose input is only its script, which comes back at

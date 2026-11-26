@@ -1,4 +1,4 @@
-import TetherProtocol
+import ServerProtocol
 @testable import SundownUI
 
 // Test-only views of the enums' cases, so a test can `try #require` one rather than `guard case`.

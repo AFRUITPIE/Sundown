@@ -3,7 +3,7 @@ import Foundation
 import SundownTestSupport
 import Testing
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 @testable import SundownUI
 
 /// The host fields apply as they lose focus, so what counts as a commit is worth pinning down:

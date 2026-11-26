@@ -20,7 +20,7 @@ const gitIn = (cwd: string, ...args: string[]) => execFileSync('git', args, { cw
 
 /** A repository with one commit; `tmp` is its path as tmpdir() spells it (on macOS, through /var). */
 function repository() {
-  const tmp = mkdtempSync(join(tmpdir(), 'tether-wt-'));
+  const tmp = mkdtempSync(join(tmpdir(), 'server-wt-'));
   const repo = realpathSync(tmp);
   gitIn(repo, 'init', '-q', '-b', 'main');
   gitIn(repo, 'commit', '-q', '--allow-empty', '-m', 'first');
@@ -75,7 +75,7 @@ describe('creating a worktree', () => {
   });
 
   test('outside a repository it says so', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tether-nowt-'));
+    const dir = mkdtempSync(join(tmpdir(), 'server-nowt-'));
     await expect(createWorktree(dir, name(1))).rejects.toThrow("isn't in a git repository");
   });
 });
@@ -84,6 +84,15 @@ describe('removing a worktree', () => {
   test('a clean one goes, with its branch', async () => {
     const { repo, branches } = repository();
     const { path } = await createWorktree(repo, name(1));
+    await removeWorktree(path);
+    expect(existsSync(path)).toBe(false);
+    expect(branches()).toEqual(['main']);
+  });
+
+  test('one made before the rename, named tether-<id>, goes too', async () => {
+    const { repo, branches } = repository();
+    expect(name(1)).toMatch(/^sundown-[0-9a-f]{8}$/);
+    const { path } = await createWorktree(repo, 'tether-0a1b2c3d');
     await removeWorktree(path);
     expect(existsSync(path)).toBe(false);
     expect(branches()).toEqual(['main']);

@@ -1,7 +1,7 @@
 @testable import SundownFixtures
 import Testing
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 @testable import SundownUI
 
 @Suite

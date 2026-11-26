@@ -1,7 +1,7 @@
 import Foundation
 import ImageIO
 import Testing
-import TetherProtocol
+import ServerProtocol
 import UniformTypeIdentifiers
 @testable import SundownUI
 

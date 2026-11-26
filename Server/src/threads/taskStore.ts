@@ -7,7 +7,7 @@ import { isSafeId } from './workflows.ts';
 const HELD = 32;
 
 /**
- * Each chat's tasks as this daemon last saw them, kept in its home (`<TETHER_HOME>/tasks/<thread
+ * Each chat's tasks as this daemon last saw them, kept in its home (`<SUNDOWN_SERVER_HOME>/tasks/<thread
  * id>.json`): the CLI's task events and a workflow's progress reach only
  * the live stream, never the transcript, so without this a reload, a restart or a later resume
  * would know no more of a task than its call. A thread's states are merged by id as they change and

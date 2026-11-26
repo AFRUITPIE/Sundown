@@ -1,5 +1,5 @@
 import Foundation
-import TetherProtocol
+import ServerProtocol
 import SundownKit
 
 /// The `tasks` scenario's chat: a workflow that has finished (`WorkflowSample`, its result a

@@ -1,7 +1,7 @@
 import CoreGraphics
 import Testing
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 @testable import SundownUI
 
 /// The transcript's height index: where rows start, which rows to build for a view, and how far a

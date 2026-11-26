@@ -1,7 +1,7 @@
 import Foundation
 import Synchronization
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// The app's hosts for XCTest UI runs: each connection a `FakeHost` serving a scenario, in-process.
 /// In every build, inert unless the app is launched with SUNDOWN_UI_TEST_MODE=1: the performance
@@ -60,12 +60,12 @@ public enum UITestFixture {
         })
     }
 
-    /// A host serving `scenario`, as the fixture's hosts are: it calls itself tether-fixture, on
+    /// A host serving `scenario`, as the fixture's hosts are: it calls itself sundown-fixture, on
     /// fixture-host.
     public static func fixtureHost(_ scenario: FixtureScenario) -> FakeHost {
         let host = FakeHost(unscripted: "Unexpected fixture method")
         host.initializeResult = InitializeResult(
-            serverInfo: .init(name: "tether-fixture", version: "1"), protocolVersion: tetherProtocolVersion,
+            serverInfo: .init(name: "sundown-fixture", version: "1"), protocolVersion: serverProtocolVersion,
             host: .init(hostname: "fixture-host", platform: "darwin", arch: "arm64", home: "/tmp", pid: 1, mode: .daemon),
             claude: .init(path: "/fixture/claude", version: "fixture"))
         host.serve(scenario)

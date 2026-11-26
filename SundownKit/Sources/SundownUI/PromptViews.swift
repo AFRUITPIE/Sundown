@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// Inline card for a pending server request (permission, question, plan, elicitation, dialog).
 struct PendingRequestView: View {
@@ -394,7 +394,7 @@ private func params(_ request: ServerRequest) -> ElicitationRequestParams {
     PermissionPrompt(params: params(PendingRequest.samplePermission(
         toolName: "Edit", displayName: "Edit",
         description: "Edit SundownKit/Sources/SundownKit/ThreadModel.swift",
-        input: ["file_path": "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownKit/ThreadModel.swift",
+        input: ["file_path": "/Users/hayden/Code/Sundown/SundownKit/Sources/SundownKit/ThreadModel.swift",
                 "old_string": "    public private(set) var lastSeq = 0",
                 "new_string": "    public private(set) var lastSeq = 0\n    public private(set) var isPreview = false"],
         decisionReason: nil

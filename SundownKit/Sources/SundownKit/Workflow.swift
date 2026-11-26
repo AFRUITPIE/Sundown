@@ -1,5 +1,5 @@
 import Foundation
-import TetherProtocol
+import ServerProtocol
 
 // A Claude Code dynamic workflow ("ultracode"): a `Workflow` tool call whose script runs many
 // agents in phases inside the CLI's workflow runner. The daemon says how it stands as tasks: the

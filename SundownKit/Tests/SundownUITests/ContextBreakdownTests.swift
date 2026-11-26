@@ -1,5 +1,5 @@
 import Testing
-import TetherProtocol
+import ServerProtocol
 @testable import SundownUI
 
 @Suite

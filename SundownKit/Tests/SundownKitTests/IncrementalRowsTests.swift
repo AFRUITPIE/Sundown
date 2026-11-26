@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 import Testing
-import TetherProtocol
+import ServerProtocol
 @testable import SundownKit
 import SundownTestSupport
 

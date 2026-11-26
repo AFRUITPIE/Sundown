@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// One quiet transcript line for a tool call, starting where the reply's text does and reading as
 /// what it did ("Read RootView.swift"), expanding to kind-specific detail. A call that failed, was
@@ -708,7 +708,7 @@ enum PrettyInput {
 
 #Preview("File edit") {
     ToolCallView(call: .sample(name: "Edit", kind: .fileEdit, input: [
-        "file_path": "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownKit/ThreadModel.swift",
+        "file_path": "/Users/hayden/Code/Sundown/SundownKit/Sources/SundownKit/ThreadModel.swift",
         "old_string": "    public private(set) var lastSeq = 0",
         "new_string": "    public private(set) var lastSeq = 0\n    public private(set) var isPreview = false",
     ], status: .completed, secondsAgo: 30), thread: .sampleIdleChat())
@@ -718,7 +718,7 @@ enum PrettyInput {
 
 #Preview("File read") {
     ToolCallView(call: .sample(name: "Read", kind: .fileRead,
-                                input: ["file_path": "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownUI/ItemViews.swift"],
+                                input: ["file_path": "/Users/hayden/Code/Sundown/SundownKit/Sources/SundownUI/ItemViews.swift"],
                                 status: .completed, secondsAgo: 30), thread: .sampleIdleChat())
         .padding(20)
         .frame(width: 560)
@@ -764,7 +764,7 @@ private func sampleSubagentCall(in thread: ThreadModel) -> Item.ToolCall {
 }
 
 #Preview("Other / denied") {
-    ToolCallView(call: .sample(name: "NotebookRead", kind: .other, input: ["notebook_path": "/Users/hayden/Code/tether-app/notes.ipynb"],
+    ToolCallView(call: .sample(name: "NotebookRead", kind: .other, input: ["notebook_path": "/Users/hayden/Code/Sundown/notes.ipynb"],
                                 status: .denied, secondsAgo: 30), thread: .sampleIdleChat())
         .padding(20)
         .frame(width: 560)
@@ -781,18 +781,18 @@ private func sampleSubagentCall(in thread: ThreadModel) -> Item.ToolCall {
 @MainActor
 private func sampleFinishedRun() -> [Item.ToolCall] {
     [
-        .sample(name: "Read", kind: .fileRead, input: ["file_path": "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownUI/ThreadView.swift"],
+        .sample(name: "Read", kind: .fileRead, input: ["file_path": "/Users/hayden/Code/Sundown/SundownKit/Sources/SundownUI/ThreadView.swift"],
                 status: .completed, secondsAgo: 40),
         .sample(name: "Grep", kind: .grep, input: ["pattern": "TranscriptView"], status: .completed,
                 outputText: "ThreadView.swift:74:    ForEach(foldTranscriptRows(thread.topLevelItems), id: \\.id) { row in", secondsAgo: 36),
         .sample(name: "Edit", kind: .fileEdit, input: [
-            "file_path": "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownUI/ThreadView.swift",
+            "file_path": "/Users/hayden/Code/Sundown/SundownKit/Sources/SundownUI/ThreadView.swift",
             "old_string": "ForEach(thread.topLevelItems, id: \\.id) { item in",
             "new_string": "ForEach(foldTranscriptRows(thread.topLevelItems), id: \\.id) { row in",
         ], status: .completed, secondsAgo: 30),
         .sample(name: "Bash", kind: .bash, input: ["command": "swift build", "description": "Build SundownKit"],
                 status: .completed, outputText: "Build complete!", secondsAgo: 24),
-        .sample(name: "Read", kind: .fileRead, input: ["file_path": "/Users/hayden/Code/tether-app/SundownKit/Sources/SundownUI/ItemViews.swift"],
+        .sample(name: "Read", kind: .fileRead, input: ["file_path": "/Users/hayden/Code/Sundown/SundownKit/Sources/SundownUI/ItemViews.swift"],
                 status: .completed, secondsAgo: 18),
     ]
 }

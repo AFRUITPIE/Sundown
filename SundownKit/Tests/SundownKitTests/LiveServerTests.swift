@@ -1,15 +1,15 @@
 import Foundation
 import SundownTestSupport
 import Testing
-import TetherProtocol
+import ServerProtocol
 @testable import SundownKit
 
-/// Drives a real tether-server + real `claude`. Opt in with SUNDOWN_E2E=1; TETHER_SERVER_BIN picks
+/// Drives a real server + real `claude`. Opt in with SUNDOWN_E2E=1; SUNDOWN_SERVER_BIN picks
 /// the server, e.g. `bun run ~/Code/Sundown/Server/src/cli.ts` to test a working copy.
 @MainActor
 @Suite(.enabled(if: ProcessInfo.processInfo.environment["SUNDOWN_E2E"] == "1"), .serialized)
 struct LiveServerTests {
-    static let server = ProcessInfo.processInfo.environment["TETHER_SERVER_BIN"]
+    static let server = ProcessInfo.processInfo.environment["SUNDOWN_SERVER_BIN"]
         ?? NSString(string: "~/Code/Sundown/Server/dist/sundown-0.1.0-darwin-arm64").expandingTildeInPath
 
     /// A real model takes its time: minutes, polled gently.
@@ -19,7 +19,7 @@ struct LiveServerTests {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("sundown-kit-\(UUID().uuidString.prefix(8))").path
         let cwd = FileManager.default.temporaryDirectory.appendingPathComponent("sundown-kit-cwd-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
-        let host = HostConfig(name: "test", kind: .local, serverCommand: "TETHER_HOME=\(home) exec \(Self.server) connect")
+        let host = HostConfig(name: "test", kind: .local, serverCommand: "SUNDOWN_SERVER_HOME=\(home) exec \(Self.server) connect")
         let conn = HostConnection(host: host)
         await conn.connect()
         #expect(conn.state == .connected)
@@ -159,7 +159,7 @@ struct LiveServerTests {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("sundown-kit-\(UUID().uuidString.prefix(8))").path
         let cwd = FileManager.default.temporaryDirectory.appendingPathComponent("sundown-kit-cwd-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
-        let host = HostConfig(name: "test", kind: .local, serverCommand: "TETHER_HOME=\(home) exec \(Self.server) connect")
+        let host = HostConfig(name: "test", kind: .local, serverCommand: "SUNDOWN_SERVER_HOME=\(home) exec \(Self.server) connect")
         let conn = HostConnection(host: host)
         await conn.connect()
         #expect(conn.state == .connected)

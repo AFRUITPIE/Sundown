@@ -35,10 +35,10 @@ import { EventStream, type Subscriber } from './events.ts';
 import pkg from '../../package.json' with { type: 'json' };
 
 /** Set by `scripts/compile.ts`: the package version, or a `-dev.<time>` stamp for a local build. */
-declare const TETHER_BUILD_VERSION: string | undefined;
-export const TETHER_VERSION: string = typeof TETHER_BUILD_VERSION === 'string' ? TETHER_BUILD_VERSION : pkg.version;
-/** The Agent SDK this build wraps. Reported, not encoded in TETHER_VERSION: the daemon replaces
- *  itself only when the running version differs, so that string has to move when Tether changes
+declare const SERVER_BUILD_VERSION: string | undefined;
+export const SERVER_VERSION: string = typeof SERVER_BUILD_VERSION === 'string' ? SERVER_BUILD_VERSION : pkg.version;
+/** The Agent SDK this build wraps. Reported, not encoded in SERVER_VERSION: the daemon replaces
+ *  itself only when the running version differs, so that string has to move when the server changes
  *  even if the SDK hasn't. */
 export const AGENT_SDK_VERSION: string = pkg.dependencies['@anthropic-ai/claude-agent-sdk'];
 
@@ -98,11 +98,11 @@ export type LiveThreadOptions = {
 
 /**
  * Logs every raw `task_*` message: what the CLI reports of background tasks and workflows isn't
- * documented, and this is how to see it. `TETHER_DEBUG_TASKS=1` in the daemon's environment.
+ * documented, and this is how to see it. `SUNDOWN_SERVER_DEBUG_TASKS=1` in the daemon's environment.
  */
-const DEBUG_TASKS = !!process.env.TETHER_DEBUG_TASKS;
-/** \`TETHER_DEBUG_MESSAGES=1\`: every SDK message but streamed deltas, for capturing what a feature sends. */
-const DEBUG_MESSAGES = !!process.env.TETHER_DEBUG_MESSAGES;
+const DEBUG_TASKS = !!process.env.SUNDOWN_SERVER_DEBUG_TASKS;
+/** \`SUNDOWN_SERVER_DEBUG_MESSAGES=1\`: every SDK message but streamed deltas, for capturing what a feature sends. */
+const DEBUG_MESSAGES = !!process.env.SUNDOWN_SERVER_DEBUG_MESSAGES;
 
 const MAX_BUFFERED_EVENTS = 20_000;
 
@@ -122,13 +122,13 @@ export function claudeStderrLines(threadId: string, data: string): string[] {
 }
 
 /** The in-process MCP server the session tools are served from, and the tools it registers. */
-const SESSION_TOOL_SERVER = 'tether';
+const SESSION_TOOL_SERVER = 'sundown';
 const SESSION_TOOLS = { list: 'list_sessions', read: 'read_session', suggest: 'suggest_task' } as const;
 
 /**
  * The session tools as the CLI names them. These, and only on a thread that has them, run without
- * asking: they read and suggest, never change anything. Any other `mcp__tether__…` tool, such as
- * one from a project's own MCP server called `tether`, is asked about like every other tool.
+ * asking: they read and suggest, never change anything. Any other `mcp__sundown__…` tool, such as
+ * one from a project's own MCP server called `sundown`, is asked about like every other tool.
  */
 export const SESSION_TOOL_NAMES: ReadonlySet<string> = new Set(
   Object.values(SESSION_TOOLS).map((name) => `mcp__${SESSION_TOOL_SERVER}__${name}`),
@@ -221,7 +221,7 @@ export class LiveThread {
     const options: Options = {
       pathToClaudeCodeExecutable: o.claude.path,
       cwd: o.cwd,
-      env: { ...process.env, ...o.env, CLAUDE_AGENT_SDK_CLIENT_APP: `tether/${TETHER_VERSION}` },
+      env: { ...process.env, ...o.env, CLAUDE_AGENT_SDK_CLIENT_APP: `sundown-server/${SERVER_VERSION}` },
       includePartialMessages: true,
       enableFileCheckpointing: true,
       promptSuggestions: true,
@@ -406,7 +406,7 @@ export class LiveThread {
 
   /**
    * Reads the transcript when it holds something the stream doesn't say: a scheduled job's prompt,
-   * once the CLI starts a command Tether didn't send (written as it starts, so looked for a few
+   * once the CLI starts a command the server didn't send (written as it starts, so looked for a few
    * times until found); a /goal's check, written as its Stop hook answers: after the turn ends, or,
    * while a goal is active, before the model is asked again.
    */
@@ -676,7 +676,7 @@ export class LiveThread {
       this.setStatus(this.itemizer.currentTurn ? 'running' : 'idle');
   }
 
-  /** The session tools as an in-process MCP server named `tether`. */
+  /** The session tools as an in-process MCP server named `sundown`. */
   private sessionToolServer(tools: SessionTools) {
     const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
     return createSdkMcpServer({
@@ -806,7 +806,7 @@ function toSdkThinking(t: ThinkingSetting): Options['thinking'] {
   return { type: 'adaptive', display: 'summarized' };
 }
 
-/** Tether UserInput → Anthropic content blocks. fileRef becomes an @-mention, which Claude Code expands. */
+/** Protocol UserInput → Anthropic content blocks. fileRef becomes an @-mention, which Claude Code expands. */
 function toContentBlocks(content: UserInput[], cwd: string): any[] {
   const blocks: any[] = [];
   let text = '';

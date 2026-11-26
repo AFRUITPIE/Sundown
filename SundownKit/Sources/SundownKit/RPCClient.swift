@@ -1,5 +1,5 @@
 import Foundation
-import TetherProtocol
+import ServerProtocol
 
 public struct RPCError: LocalizedError, Sendable {
     public let code: Int
@@ -85,7 +85,7 @@ public actor RPCClient {
 
     // MARK: requests
 
-    public func call<M: TetherMethod>(_ method: M.Type, _ params: M.Params) async throws -> M.Result {
+    public func call<M: ServerMethod>(_ method: M.Type, _ params: M.Params) async throws -> M.Result {
         let signpost = Signposts.rpc(M.name)
         defer { signpost.end() }
         nextId += 1

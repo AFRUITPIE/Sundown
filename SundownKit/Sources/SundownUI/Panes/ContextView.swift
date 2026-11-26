@@ -1,7 +1,7 @@
 import SundownFixtures
 import SwiftUI
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 /// How full the chat's context window is, by category: the toolbar's Context popover. Owns the
 /// context-usage fetch, so the daemon is asked only while the popover is open.

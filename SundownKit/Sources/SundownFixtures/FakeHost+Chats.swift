@@ -1,7 +1,7 @@
 import Foundation
 import Synchronization
 import SundownKit
-import TetherProtocol
+import ServerProtocol
 
 extension FakeHost {
     /// Answers as a daemon holding `scenario`'s chats: the catalog, the list, reads paged from the
