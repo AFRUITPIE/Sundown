@@ -28,7 +28,8 @@ description = "End-to-end tests against the real `claude` on PATH (a few cents o
 run = ["bun run scripts/e2e.ts", "bun run scripts/e2e-daemon.ts", "bun run scripts/e2e-background.ts"]
 
 [tasks.swift-test]
-run = "swift test"
+description = "The app's Swift protocol tests: the generated Swift decoding recorded wire traffic (macOS)"
+run = "swift test --package-path ../SundownKit --filter TetherProtocolTests"
 
 [tasks.bench]
 description = "Benchmarks of the hot paths against copies of real transcripts (bench/run.ts; no claude, no tokens)"

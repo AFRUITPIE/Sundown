@@ -13,8 +13,8 @@ struct ConnectCommandTests {
         #expect(ssh.executable == "/usr/bin/ssh")
         #expect(ssh.arguments.suffix(2) == ["box", "exec \"$SHELL\" -lc 'exec \(npx)'"])
         var custom = HostConfig.local
-        custom.serverCommand = "bun run ../tether-server/src/cli.ts connect"
-        #expect(boot.connectCommand(for: custom).arguments.last == "bun run ../tether-server/src/cli.ts connect")
+        custom.serverCommand = "bun run Server/src/cli.ts connect"
+        #expect(boot.connectCommand(for: custom).arguments.last == "bun run Server/src/cli.ts connect")
     }
 
     /// The interactive shell's PATH goes to `npx` through `env`, which every shell runs alike; one

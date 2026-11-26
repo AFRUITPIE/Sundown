@@ -3,8 +3,8 @@
 ## What this is
 
 A native macOS SwiftUI client for Claude Code. It's a thin client: it shows hosts, chats, streamed transcript items,
-requests and settings, while [tether-server](https://github.com/AFRUITPIE/tether-server) (`../tether-server`) runs the
-Agent SDK queries and owns every live session. Closing the app never ends a turn.
+requests and settings, while its server, tether-server (`Server/`, with its own [guide](Server/AGENTS.md)), runs the
+Agent SDK queries and owns every live session. Closing the app never ends a turn. Both live in this repository.
 
 Each host runs the server with the first `npx` on its login shell's PATH: `npx --yes tether-server@<version> connect`,
 locally or over system `ssh`, at the version the app pins (`ServerRelease.version`, `Bootstrap.swift`). Nothing is
@@ -42,23 +42,27 @@ artifact. The runner has no CPU counters and its times wander, so it compares CP
 rounds in alternating order, and counts a change only with no overlap between the rounds and at 10% or more for times, 3%
 for memory: it catches regressions, not small wins, which still need a Mac. It builds twice in Release, so use it when
 working on speed, not on every change.
-The repository is cloned alone there, so a change that needs an unreleased tether-server waits for its release.
+The server does build and test there: `bun install && bun test` in `Server/` (or its `mise` tasks).
 CI can't look at the app for you: a UI change still needs someone to look at the running app.
 
-### Both repositories side by side
+### The server
 
-With `../tether-server` checked out, `SundownKit/Package.swift` takes `TetherProtocol` from it by path, so a protocol change
-shows on the next build with no release. That empties both `Package.resolved` files: put them back
-(`git checkout -- '*Package.resolved'`) before committing. `SUNDOWN_USE_RELEASE=1` uses the published package at its pin,
-as CI and a fresh clone do. To run that checkout's server, set This Mac's Server Command (Settings ▸ Hosts ▸ Advanced) to
-`<bun> run <path>/tether-server/src/cli.ts connect`, with full paths.
+`Server/` is the npm package hosts run; read [its guide](Server/AGENTS.md) before changing it. The protocol's Swift is the
+`TetherProtocol` target in SundownKit (`Sources/TetherProtocol`): change the Zod in `Server/src/protocol`, run `mise run gen`
+in `Server/`, then update the call sites here, in the same change. Never hand-edit `Generated.swift`. Protocol enums and
+unions keep unknown future values; keep the fallbacks.
 
-The protocol is generated in tether-server: change its Zod, run `mise run gen` there, then update the call sites here.
-Never hand-edit `Generated.swift`. Protocol enums and unions keep unknown future values; keep the fallbacks.
+Hosts run the server from npm at `ServerRelease.version`, not from this checkout, so the app on main may know protocol the
+published server doesn't send yet: new fields stay optional, and the app copes with a server that lacks them. To run this
+checkout's server, set This Mac's Server Command (Settings ▸ Hosts ▸ Advanced) to `<bun> run <path>/Server/src/cli.ts connect`,
+with full paths.
 
 ## Repository map
 
+- `Server/`: tether-server, the daemon hosts run (TypeScript on Bun, published to npm). Its map is in its guide.
 - `Sundown/`: the app target: `SundownApp.swift` (scenes, commands), `SundownIntents.swift` (Shortcuts), `Info.plist` (`sundown://`).
+- `SundownKit/Sources/TetherProtocol`: the protocol's Swift (`Generated.swift`, from `Server/`, and `Support.swift`), with
+  `Tests/TetherProtocolTests` decoding recorded wire traffic.
 - `SundownKit/Sources/SundownKit`: transport and state, no UI.
   - `Bootstrap.swift`: the pinned server version and the connect command (PATH from the host's interactive shell, then `npx`).
   - `Transport.swift`: the server process and its JSONL pipes. `RPCClient.swift`: JSON-RPC (an actor), notifications batched per frame.
@@ -148,16 +152,18 @@ Signposts and logs use subsystem `com.haydenhong.Sundown`: `/usr/bin/log stream 
 
 ## Releases
 
-Releases happen on merge, down a chain. A new Agent SDK becomes a tether-server PR; merging a server version bump publishes it
-to npm (approved by hand). A newly published server becomes a PR here (`server-update.yml`: `ServerRelease.version`, both
-`Package.resolved` pins and the app's next patch version). Merging an app version bump releases the app (`release.yml`,
+Releases happen on merge, down a chain. A new Agent SDK becomes a PR (`server-sdk-update.yml`, branch `agent-sdk`); merging a
+version bump in `Server/package.json` stages it on npm and tags `server-v<version>` (`server-release.yml`; approved on npm by
+hand, and never a GitHub release, which are the app's). A newly published server becomes another PR (`server-update.yml`:
+`ServerRelease.version` and the app's next patch version). Merging an app version bump releases the app (`release.yml`,
 running `Scripts/release.sh`: Developer ID, notarized, approved in the `release` environment), then updates the Homebrew tap.
 `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are set only on the app target. Main stays at the released version, so
 bumping it is deciding to release: a pull request that does is held by Release Check's Approval until the owner approves it
 in the `release-approval` environment. `Scripts/release.sh --beta [<PR> | <branch>]` makes a beta on this Mac.
 
 CI (`tests.yml`, on pull requests) runs Package Tests and UI Tests side by side on Xcode 27 runners; branch protection
-requires both by those names, and Approval (`release-check.yml`).
+requires both by those names, and Approval (`release-check.yml`). `server-ci.yml` runs the server's tests on Linux and macOS
+when `Server/` or the protocol's Swift changes.
 
 ## Working here
 

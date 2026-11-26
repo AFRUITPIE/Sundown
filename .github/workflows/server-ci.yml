@@ -1,21 +1,30 @@
-name: CI
+name: Server CI
 
+# The server in Server/: typecheck, unit tests (including the check that the committed schema and
+# the app's Generated.swift match src/protocol), and its compiled binary through the CLI and daemon
+# tests, on both kinds of host. The Swift protocol tests run with the app's package tests (tests.yml).
 on:
   push:
     branches: [main]
+    paths: [Server/**, SundownKit/Sources/TetherProtocol/**, .github/workflows/server-ci.yml]
   pull_request:
+    paths: [Server/**, SundownKit/Sources/TetherProtocol/**, .github/workflows/server-ci.yml]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: server-ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: Server
 
 jobs:
   test:
-    name: Test (${{ matrix.os }})
+    name: Server Test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -26,8 +35,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Bun at the version mise.toml pins.
+      # Bun at the version Server/mise.toml pins.
       - uses: jdx/mise-action@v5
+        with:
+          working_directory: Server
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -35,7 +46,6 @@ jobs:
       - name: Typecheck
         run: mise run typecheck
 
-      # Unit tests, including the check that the committed schema and Swift match src/protocol.
       - name: Test
         run: mise run test
 
@@ -49,17 +59,3 @@ jobs:
 
       - name: Test the compiled binary
         run: bun test test/cli.test.ts
-
-  swift:
-    name: Swift protocol package
-    # Package.swift needs Swift 6.2, which Xcode 26 provides.
-    runs-on: macos-26
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Swift version
-        run: swift --version
-
-      - name: Test
-        run: swift test

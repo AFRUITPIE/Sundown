@@ -5,8 +5,9 @@
 A JSON-RPC server that runs the host's Claude Code through the Claude Agent SDK. It uses the host's own
 `claude` (`TETHER_CLAUDE_PATH`, else `PATH`, else the login shell's), so credentials, settings, hooks, MCP
 servers and skills stay the host installation's concern. One long-lived daemon per host owns all live sessions,
-so turns survive client disconnects. The only client today is the Sundown macOS app (`../Sundown`), which uses
-the generated `TetherProtocol` Swift package published from this repo.
+so turns survive client disconnects. Its only client is the Sundown macOS app, whose repository this folder is in
+(`Server/`; the app's guide is `../AGENTS.md`). The app decodes the protocol with Swift generated from here, the
+`TetherProtocol` target in `../SundownKit`. Paths below are relative to `Server/`.
 
 ```text
 tether connect         stdio <-> daemon socket; starts the daemon, or replaces one of another version (what the app runs)
@@ -20,8 +21,8 @@ in the host's login shell, at the version it pins, with no probe or install step
 ## Commands (mise tasks; Bun pinned in `mise.toml`)
 
 - `install`, `typecheck`, `test`: `bun install`, `tsc --noEmit`, Bun unit tests (no `claude`, no network).
-- `gen`: regenerates `schema/tether.schema.json` and `Sources/TetherProtocol/Generated.swift` from the Zod.
-- `swift-test`: the generated Swift decoding recorded wire traffic.
+- `gen`: regenerates `schema/tether.schema.json` and `../SundownKit/Sources/TetherProtocol/Generated.swift` from the Zod.
+- `swift-test`: the generated Swift decoding recorded wire traffic (SundownKit's `TetherProtocolTests`; macOS only).
 - `dev`: `serve --stdio` from source.
 - `compile`: standalone binaries in `dist/` (`TETHER_TARGETS` to choose). `build-npm`: the npm package in `npm/`,
   a single bundled file for Node 18+.
@@ -50,7 +51,7 @@ in the host's login shell, at the version it pins, with no probe or install step
 - `src/threads/taskStore.ts`: per-chat task states saved to `<TETHER_HOME>/tasks/<thread id>.json`.
 - `src/threads/edits.ts`: edit calls' hunks. `pushQueue.ts`: async input queue. `src/client/TetherClient.ts`: E2E client.
 - `scripts/`: code generation, `compile`, `build-npm`, E2E, `record-sdk`. `bench/run.ts`.
-- `Sources/TetherProtocol/`: `Generated.swift` plus hand-written `Support.swift`. `Tests/TetherProtocolTests/`: Swift tests.
+- `../SundownKit/Sources/TetherProtocol/`: `Generated.swift` plus hand-written `Support.swift`. `../SundownKit/Tests/TetherProtocolTests/`: Swift tests.
 
 ## Invariants
 
@@ -115,13 +116,14 @@ the daemon log. Use them to capture fixtures.
 ## Changing the protocol
 
 1. Edit the Zod in `src/protocol` and the runtime. 2. `mise run gen`, then review both generated diffs.
-3. Update the tests. `Tests/TetherProtocolTests/Fixtures/e2e-wire.jsonl` was recorded with `TETHER_RECORD=<file>` on
-   `scripts/e2e.ts` (costs money). 4. `typecheck`, `test`, `swift-test`. 5. Apply the version rules and update the app.
+3. Update the tests. `../SundownKit/Tests/TetherProtocolTests/Fixtures/e2e-wire.jsonl` was recorded with `TETHER_RECORD=<file>`
+   on `scripts/e2e.ts` (costs money). 4. `typecheck`, `test`, `swift-test`. 5. Apply the version rules and update the app's
+   call sites in the same change.
 
-**`../Sundown` contract:** `SundownKit/Package.swift` takes `TetherProtocol` from `../../tether-server` by path when the
-checkout exists, otherwise from the GitHub release. Keep the Swift package named `tether-server`, matching the folder. To run this
-checkout from the app, set a host's Server Command to `<bun> run <path>/src/cli.ts connect`. Fix mismatches in the
-schema or generator, not with hand-written decoding in the app.
+**The app contract:** the app builds against this checkout's generated Swift, but hosts run the server from npm at the app's
+pinned `ServerRelease.version`, so an app on main can meet an older published server: that's why additions stay optional.
+To run this checkout from the app, set a host's Server Command to `<bun> run <path>/Server/src/cli.ts connect`. Fix
+mismatches in the schema or generator, not with hand-written decoding in the app.
 
 ## Tests, CI, releases
 
@@ -131,15 +133,16 @@ schema or generator, not with hand-written decoding in the app.
   stream, the history read back, and the transcript or session folder.
 - `test/cli.test.ts` runs the CLI modes as processes (fresh `HOME`/`TETHER_HOME`, stand-in `claude`), including `connect`
   replacing a daemon of another version. `TETHER_TEST_BINARY=<path>` targets a compiled binary instead.
-- Swift: `Tests/TetherProtocolTests` decodes `Fixtures/e2e-wire.jsonl`.
+- Swift: `../SundownKit/Tests/TetherProtocolTests` decodes `Fixtures/e2e-wire.jsonl`, in the app's Package Tests.
 - E2E (costs money): `e2e.ts` (smoke test over `serve --stdio`), `e2e-daemon.ts` (reattach, parked approvals),
   `e2e-background.ts` (background work across disconnects, renumbering, eviction). `TETHER_E2E_MODEL`/`_EFFORT`
   choose the model (default haiku).
-- CI (`ci.yml`, pushes to main and PRs): typecheck, test and a compiled-binary `cli.test.ts` on Ubuntu and macOS 26,
-  plus `swift test`. No `claude`, no credentials.
-- Release (`npm.yml`): merge a `package.json` version bump to main. The workflow tests, builds, smoke-runs
-  `node npm/cli.js version --json`, stages on npm via trusted publishing (OIDC, provenance), then tags `v<version>`
-  with a GitHub release. A maintainer publishes it by approving with 2FA. `sdk-update.yml` keeps an `agent-sdk` PR
+- CI (`../.github/workflows/server-ci.yml`, on pushes to main and PRs that touch `Server/` or the protocol's Swift):
+  typecheck, test and a compiled-binary `cli.test.ts` on Ubuntu and macOS 26. No `claude`, no credentials.
+- Release (`server-release.yml`): merge a `package.json` version bump to main. The workflow tests, builds, smoke-runs
+  `node npm/cli.js version --json`, stages on npm via trusted publishing (OIDC, provenance), then tags `server-v<version>`
+  (no GitHub release: those, and `v<version>` tags, are the app's). A maintainer publishes it by approving with 2FA, and
+  the app's `server-update.yml` then moves `ServerRelease.version` to it. `server-sdk-update.yml` keeps an `agent-sdk` PR
   open that moves to the newest Agent SDK plus a patch bump.
 
 Don't run paid commands, delete real sessions, stop the user's daemon or change host Claude configuration unless asked.

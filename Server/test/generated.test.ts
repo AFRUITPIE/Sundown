@@ -27,8 +27,8 @@ describe('generated artifacts', async () => {
     expect(readFileSync(schema, 'utf8') === committed, `schema/tether.schema.json ${stale}`).toBe(true);
   });
 
-  test('Sources/TetherProtocol/Generated.swift matches the schema', () => {
-    const committed = readFileSync(join(root, 'Sources/TetherProtocol/Generated.swift'), 'utf8');
-    expect(readFileSync(swift, 'utf8') === committed, `Sources/TetherProtocol/Generated.swift ${stale}`).toBe(true);
+  test('SundownKit/Sources/TetherProtocol/Generated.swift matches the schema', () => {
+    const committed = readFileSync(join(root, '../SundownKit/Sources/TetherProtocol/Generated.swift'), 'utf8');
+    expect(readFileSync(swift, 'utf8') === committed, `SundownKit/Sources/TetherProtocol/Generated.swift ${stale}`).toBe(true);
   });
 });

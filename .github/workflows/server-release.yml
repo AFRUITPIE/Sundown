@@ -1,8 +1,12 @@
-name: Release
+name: Server Release
 
-# Merging a version bump releases it. On each push to main, if package.json's version has no tag
-# yet, this tests and builds the npm package, stages it on npm, then tags that commit and publishes
-# its GitHub release (which the app's Swift package pin reads). Any other push does nothing.
+# Merging a server version bump releases it to npm. On each push to main, if Server/package.json's
+# version isn't on npm and has no `server-v<version>` tag yet, this tests and builds the npm package,
+# stages it on npm, then tags that commit `server-v<version>`. Any other push does nothing. The app
+# picks a published version up through server-update.yml.
+#
+# Only a tag, never a GitHub release: this repository's releases are the app's, which the Homebrew
+# tap reads, and `v<version>` tags are the app's too.
 #
 # Staged by trusted publishing: npm takes this workflow's OIDC token instead of a stored one, and
 # records where the package was built (provenance). The package's trusted publisher on npmjs.com
@@ -17,7 +21,11 @@ permissions:
   contents: write
   id-token: write
 
-concurrency: release
+concurrency: server-release
+
+defaults:
+  run:
+    working-directory: Server
 
 jobs:
   release:
@@ -29,9 +37,12 @@ jobs:
           version=$(node -p "require('./package.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "sdk=$(node -p "require('./package.json').dependencies['@anthropic-ai/claude-agent-sdk']")" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+          # Versions released before the server moved here have tags only in the old tether-server
+          # repository, so npm is asked too.
+          if git ls-remote --exit-code --tags origin "refs/tags/server-v$version" > /dev/null \
+            || [ "$(npm view "tether-server@$version" version 2>/dev/null)" = "$version" ]; then
             echo "new=false" >> "$GITHUB_OUTPUT"
-            echo "v$version is already released."
+            echo "tether-server $version is already released."
           else
             echo "new=true" >> "$GITHUB_OUTPUT"
           fi
@@ -60,9 +71,9 @@ jobs:
       # push tries again.
       - if: steps.version.outputs.new == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
           SDK: ${{ steps.version.outputs.sdk }}
         run: |
-          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" \
-            --notes "Tether server $VERSION, built against Claude Agent SDK $SDK. Approve the staged npm version to publish it."
+          git tag "server-v$VERSION" "$GITHUB_SHA"
+          git push origin "refs/tags/server-v$VERSION"
+          echo "tether-server $VERSION, built against Claude Agent SDK $SDK, is staged on npm. Approve it there to publish it." >> "$GITHUB_STEP_SUMMARY"

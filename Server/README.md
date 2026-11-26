@@ -14,10 +14,10 @@ A host runs it from npm, with Node 18 or later. The Sundown app runs this, pinne
 npx --yes tether-server@<version> connect
 ```
 
-`npm install -g tether-server` installs it instead. The package is one bundled file with no dependencies and no install scripts, published from this repository's workflow with npm provenance.
+`npm install -g tether-server` installs it instead. The package is one bundled file with no dependencies and no install scripts, published with npm provenance from [Sundown's repository](https://github.com/AFRUITPIE/Sundown), where it lives in `Server/`.
 
 - **Wire format:** JSON-RPC 2.0 without the `"jsonrpc"` field, one JSON object per line (JSONL). The protocol is defined in `src/protocol` using zod.
-- **Schema:** `mise run gen` writes `schema/tether.schema.json` and `Sources/TetherProtocol/Generated.swift`, the Swift package the app consumes.
+- **Schema:** `mise run gen` writes `schema/tether.schema.json` and the app's Swift types (`SundownKit/Sources/TetherProtocol/Generated.swift`).
 
 ## Protocol
 
@@ -39,7 +39,7 @@ mise run test          # unit tests (itemizer against recorded SDK fixtures)
 mise run typecheck
 mise run e2e           # real `claude`, haiku model (spends tokens)
 mise run gen           # regenerate JSON Schema + Swift
-mise run swift-test    # Swift decoding tests against recorded wire traffic
+mise run swift-test    # the app's Swift decoding tests against recorded wire traffic (macOS)
 mise run compile       # standalone binaries for darwin/linux × arm64/x64 → dist/
 ```
 

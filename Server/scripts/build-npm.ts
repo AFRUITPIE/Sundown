@@ -34,9 +34,9 @@ writeFileSync(`${out}/package.json`, `${JSON.stringify({
   bin: { tether: 'cli.js' },
   files: ['cli.js', 'LICENSE'],
   engines: { node: '>=18' },
-  repository: { type: 'git', url: 'git+https://github.com/AFRUITPIE/tether-server.git' },
-  homepage: 'https://github.com/AFRUITPIE/tether-server#readme',
-  bugs: 'https://github.com/AFRUITPIE/tether-server/issues',
+  repository: { type: 'git', url: 'git+https://github.com/AFRUITPIE/Sundown.git', directory: 'Server' },
+  homepage: 'https://github.com/AFRUITPIE/Sundown/tree/main/Server#readme',
+  bugs: 'https://github.com/AFRUITPIE/Sundown/issues',
   keywords: ['claude', 'claude-code', 'agent-sdk', 'tether'],
   // Bundled at build time; nothing for npm to fetch. The SDK's version is reported by `tether version --json`.
   agentSdkVersion: pkg.dependencies['@anthropic-ai/claude-agent-sdk'],

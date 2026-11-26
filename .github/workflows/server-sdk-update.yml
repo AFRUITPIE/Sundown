@@ -1,7 +1,8 @@
-name: Agent SDK update
+name: Server Agent SDK update
 
-# Keeps one pull request, from the branch `agent-sdk`, that moves the server to the newest Claude
-# Agent SDK and to the next patch version, so merging it releases the server on that SDK.
+# Keeps one pull request, from the branch `agent-sdk`, that moves the server (Server/) to the newest
+# Claude Agent SDK and to the next patch version, so merging it releases the server on that SDK
+# (server-release.yml); server-update.yml then moves the app onto it once npm publishes it.
 # The branch is rebuilt from main on every run: daily, by hand, and whenever main changes. So the
 # pull request never falls behind main or names a version another release already took, and a newer
 # SDK replaces an older one in the same pull request. When main already has the newest SDK, an open
@@ -10,8 +11,11 @@ name: Agent SDK update
 on:
   schedule:
     - cron: "7 9 * * *"
+  # Only when the server changes: the app's own pushes don't touch what this pull request moves,
+  # and rebuilding it would run the app's tests again for nothing. The daily run catches up.
   push:
     branches: [main]
+    paths: [Server/**, .github/workflows/server-sdk-update.yml]
   workflow_dispatch:
 
 permissions:
@@ -23,6 +27,10 @@ permissions:
 concurrency:
   group: agent-sdk-update
   cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: Server
 
 jobs:
   update:
@@ -51,9 +59,11 @@ jobs:
           else
             echo "new=true" >> "$GITHUB_OUTPUT"
           fi
-      # Bun at the version mise.toml pins, as CI uses, so the lockfile is written the way CI reads it.
+      # Bun at the version Server/mise.toml pins, as CI uses, so the lockfile is written the way CI reads it.
       - if: steps.check.outputs.new == 'true'
         uses: jdx/mise-action@v5
+        with:
+          working_directory: Server
       - if: steps.check.outputs.new == 'true'
         env:
           LATEST: ${{ steps.check.outputs.latest }}
@@ -71,8 +81,8 @@ jobs:
         run: |
           version=$(node -p "require('./package.json').version")
           base=$(git rev-parse --short HEAD)
-          title="Agent SDK $LATEST, as $version"
-          body="Moves the server to Claude Agent SDK $LATEST and makes it $version, on main as of $base; typecheck and tests passed in [this run]($RUN). Merging it releases $version (approve it on npm), and the app picks it up. This branch is rebuilt from main whenever main or the SDK changes, so it's always current."
+          title="Server on Agent SDK $LATEST, as $version"
+          body="Moves the server to Claude Agent SDK $LATEST and makes it $version, on main as of $base; typecheck and tests passed in [this run]($RUN). Merging it releases the server $version (approve it on npm), and the app picks it up in a pull request of its own. This branch is rebuilt from main whenever main or the SDK changes, so it's always current."
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c agent-sdk
@@ -84,8 +94,11 @@ jobs:
           else
             git push --force origin agent-sdk
             # A push made with this workflow's token starts no workflows, so CI is started here,
-            # and its checks land on the pull request's commit.
-            gh workflow run ci.yml --ref agent-sdk
+            # and its checks land on the pull request's commit. Branch protection requires the app's
+            # tests and Release Check on every pull request, this one included.
+            gh workflow run server-ci.yml --ref agent-sdk
+            gh workflow run tests.yml --ref agent-sdk
+            gh workflow run release-check.yml --ref agent-sdk
           fi
           if [ -n "$PR" ]; then
             gh pr edit "$PR" --title "$title" --body "$body"

@@ -1,4 +1,4 @@
-// Generates Sources/TetherProtocol/Generated.swift from schema/tether.schema.json.
+// Generates SundownKit's Sources/TetherProtocol/Generated.swift from schema/tether.schema.json.
 // Conventions:
 //  - objects → public structs (Codable, Sendable, Hashable) with explicit coding so
 //    required-nullable fields encode `null` and optional ones are omitted;
@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 
 type S = Record<string, any>;
 const schemaPath = process.argv[2] ?? 'schema/tether.schema.json';
-const outPath = process.argv[3] ?? 'Sources/TetherProtocol/Generated.swift';
+const outPath = process.argv[3] ?? '../SundownKit/Sources/TetherProtocol/Generated.swift';
 const schemaDoc = JSON.parse(readFileSync(schemaPath, 'utf8'));
 const defs: Record<string, S> = schemaDoc.$defs;
 
