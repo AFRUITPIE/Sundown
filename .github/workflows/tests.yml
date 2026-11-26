@@ -1,4 +1,4 @@
-name: macOS UI tests
+name: Tests
 
 on:
   pull_request:
@@ -8,13 +8,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: ui-tests-${{ github.event.pull_request.number || github.ref }}
+  group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 # The package tests and the app's UI tests run side by side on their own runners. The UI tests run
-# one at a time on one Mac: they press real keys into the frontmost window.
+# one at a time on one Mac: they press real keys into the frontmost window. Branch protection
+# requires both jobs by name, so renaming one means changing it there too.
 jobs:
   package-tests:
+    name: Package Tests
     runs-on: xcode-27
     timeout-minutes: 20
     steps:
@@ -30,7 +32,8 @@ jobs:
       - name: Run package tests
         run: swift test --package-path SundownKit
 
-  app-ui-tests:
+  ui-tests:
+    name: UI Tests
     runs-on: xcode-27
     timeout-minutes: 30
     steps:
@@ -67,14 +70,3 @@ jobs:
         with:
           name: SundownUITests-xcresult
           path: ${{ runner.temp }}/SundownUITests.xcresult
-
-  # One check named as before, covering both, for branch protection and anything waiting on it.
-  # Skipped only when the whole run is cancelled (a newer push); a failure or timeout still fails it.
-  ui-tests:
-    if: ${{ !cancelled() }}
-    needs: [package-tests, app-ui-tests]
-    runs-on: ubuntu-latest
-    steps:
-      - name: All tests passed
-        run: |
-          [ "${{ needs.package-tests.result }}" = success ] && [ "${{ needs.app-ui-tests.result }}" = success ]

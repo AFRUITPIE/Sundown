@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compares rounds of the package benchmarks (`swift test ... --filter Benchmark`) run on a base
-commit and on a branch, by XCTest's `measured [...]` lines, for the Performance workflow.
+commit and on a branch, by XCTest's `measured [...]` lines, for the Benchmarks workflow
+(`benchmarks.yml`).
 
     Scripts/bench-compare.py <json out> --base <log>... --branch <log>...
 

@@ -1,7 +1,7 @@
-name: Performance
+name: Benchmarks
 
 # The package benchmarks (SundownKit/Tests/SundownUITests/*Benchmark*.swift) on a base commit and
-# on the branch this is started on, compared. Started by hand: `gh workflow run performance.yml
+# on the branch this is started on, compared. Started by hand: `gh workflow run benchmarks.yml
 # --ref <branch>`, or from the Actions tab.
 #
 # Both are built in Release in folders of the same shape, then run in rounds whose order swaps
@@ -13,7 +13,7 @@ name: Performance
 on:
   # Also on a pull request that changes this workflow or its script, so a change to it is tried.
   pull_request:
-    paths: [.github/workflows/performance.yml, Scripts/bench-compare.py]
+    paths: [.github/workflows/benchmarks.yml, Scripts/bench-compare.py]
   workflow_dispatch:
     inputs:
       base:
@@ -31,6 +31,7 @@ permissions:
 
 jobs:
   compare:
+    name: Compare with Base
     runs-on: xcode-27
     timeout-minutes: 45
     env:

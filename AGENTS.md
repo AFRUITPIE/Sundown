@@ -23,7 +23,7 @@ behind `#available`.
   window is in front, so run them only when nobody is using the Mac, or leave them to CI. The `Sundown Performance` scheme
   runs `SundownPerformanceUITests` in Release (hitches, CPU, memory, signposts); the main scheme and CI skip it.
 - **Benchmarks:** `SUNDOWN_BENCH=1 swift test -c release -Xswiftc -DDEBUG -Xswiftc -enable-testing --package-path SundownKit --filter Benchmark`;
-  compare against the parent commit on the same Mac. `performance.yml` does that on a runner: started on a branch, it runs them
+  compare against the parent commit on the same Mac. `benchmarks.yml` does that on a runner: started on a branch, it runs them
   on the branch and on where it left `main`, and reports each metric's change (`Scripts/bench-compare.py`).
 - **Costs money or touches real hosts:** `SUNDOWN_E2E=1` (live tests against a real `claude`; set `TETHER_SERVER_BIN`),
   `SUNDOWN_NPX_E2E=1` (runs the published server with npx), `SUNDOWN_SSH_*` (SSH end to end). Run them only when asked.
@@ -33,10 +33,10 @@ behind `#available`.
 ### Without a Mac
 
 On Linux or in a cloud session there is no Xcode, so nothing here builds locally; GitHub Actions is the Mac. Push the branch
-and run `ui-tests.yml` on it (`workflow_dispatch`, any branch, no pull request needed; a pull request runs it too). It builds
+and run `tests.yml` on it (`workflow_dispatch`, any branch, no pull request needed; a pull request runs it too). It builds
 the app and runs the package tests and the UI tests on Xcode 27 runners; read failures in the job logs, and each run uploads
 its `.xcresult`. A run takes a quarter of an hour of macOS runner time, so get as far as reading the code allows first.
-For speed, run `performance.yml` on the branch (`gh workflow run performance.yml --ref <branch>`, optionally `-f base=<ref>`);
+For speed, run `benchmarks.yml` on the branch (`gh workflow run benchmarks.yml --ref <branch>`, optionally `-f base=<ref>`);
 its numbers are in the run's summary, in the log between `BEGIN-BENCH-JSON` and `END-BENCH-JSON`, and in its `benchmarks`
 artifact. The runner has no CPU counters and its times wander, so it compares CPU time, clock time and peak memory over
 rounds in alternating order, and counts a change only with no overlap between the rounds and at 10% or more for times, 3%
@@ -155,7 +155,8 @@ running `Scripts/release.sh`: Developer ID, notarized, approved in the `release`
 `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are set only on the app target. Main stays at the released version, so
 bumping it is deciding to release. `Scripts/release.sh --beta [<PR> | <branch>]` makes a beta on this Mac.
 
-CI (`ui-tests.yml`, on pull requests) runs the package tests and the UI tests side by side on Xcode 27 runners.
+CI (`tests.yml`, on pull requests) runs Package Tests and UI Tests side by side on Xcode 27 runners; branch protection
+requires both by those names.
 
 ## Working here
 
