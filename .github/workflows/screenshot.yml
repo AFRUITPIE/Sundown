@@ -25,8 +25,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build
+        timeout-minutes: 15
         run: |
           xcodebuild build \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
             -project Sundown.xcodeproj \
             -scheme Sundown \
             -configuration Debug \
@@ -35,10 +38,10 @@ jobs:
             SUNDOWN_APP_BUNDLE_IDENTIFIER=com.haydenhong.SundownUITestFixture \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM= \
-            | tail -n 30
+            DEVELOPMENT_TEAM=
 
       - name: Launch and capture
+        timeout-minutes: 5
         run: |
           mkdir -p "$SHOTS"
           app="$RUNNER_TEMP/DerivedData/Build/Products/Debug/Sundown.app"
