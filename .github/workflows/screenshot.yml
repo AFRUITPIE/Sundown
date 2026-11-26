@@ -63,6 +63,47 @@ jobs:
           done
           ls -la "$SHOTS"
 
+      - name: Record a scripted walkthrough
+        timeout-minutes: 5
+        run: |
+          osascript -e 'tell application "System Events" to tell appearance preferences to set dark mode to false'
+          app="$RUNNER_TEMP/DerivedData/Build/Products/Debug/Sundown.app"
+          # StressDriver (Debug builds, fixture mode only) runs these one after another.
+          script="$RUNNER_TEMP/walkthrough.txt"
+          cat > "$script" <<'EOF'
+          wait 3000
+          scroll top
+          wait 1500
+          scroll bottom
+          wait 1500
+          tab tasks
+          wait 2500
+          tab diff
+          wait 2500
+          tab chat
+          wait 1500
+          chat 0
+          wait 3000
+          chat 2
+          wait 3000
+          chat 1
+          wait 1500
+          send Add a background refresh too.
+          wait 6000
+          EOF
+          sed -i '' 's/^ *//' "$script"
+          screencapture -x -V 35 "$SHOTS/walkthrough.mov" &
+          rec=$!
+          sleep 1
+          SUNDOWN_UI_TEST_MODE=1 SUNDOWN_UI_TEST_SCENARIO="$SCENARIO" SUNDOWN_STRESS_FILE="$script" \
+            "$app/Contents/MacOS/Sundown" -ApplePersistenceIgnoreState YES \
+            > "$SHOTS/app-walkthrough.log" 2>&1 &
+          pid=$!
+          wait "$rec" || true
+          echo "commands run: $(cat "$script.done" 2>/dev/null || echo none)"
+          kill "$pid" || true
+          ls -la "$SHOTS"
+
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
