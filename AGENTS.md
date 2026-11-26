@@ -29,6 +29,15 @@ behind `#available`.
 - Always look at the running app after a UI change; a clean build isn't a visual check. Make sure the window you look at
   belongs to the build you just made.
 
+### Without a Mac
+
+On Linux or in a cloud session there is no Xcode, so nothing here builds locally; GitHub Actions is the Mac. Push the branch
+and run `ui-tests.yml` on it (`workflow_dispatch`, any branch, no pull request needed; a pull request runs it too). It builds
+the app and runs the package tests and the UI tests on Xcode 27 runners; read failures in the job logs, and each run uploads
+its `.xcresult`. A run takes a quarter of an hour of macOS runner time, so get as far as reading the code allows first.
+The repository is cloned alone there, so a change that needs an unreleased tether-server waits for its release.
+CI can't look at the app for you: a UI change still needs someone to look at the running app.
+
 ### Both repositories side by side
 
 With `../tether-server` checked out, `SundownKit/Package.swift` takes `TetherProtocol` from it by path, so a protocol change
