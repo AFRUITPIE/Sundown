@@ -71,8 +71,9 @@ jobs:
           path: ${{ runner.temp }}/SundownUITests.xcresult
 
   # One check named as before, covering both, for branch protection and anything waiting on it.
+  # Skipped only when the whole run is cancelled (a newer push); a failure or timeout still fails it.
   ui-tests:
-    if: always()
+    if: ${{ !cancelled() }}
     needs: [package-tests, app-ui-tests]
     runs-on: ubuntu-latest
     steps:
