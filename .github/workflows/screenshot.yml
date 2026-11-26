@@ -1,0 +1,76 @@
+name: App screenshot
+
+# Builds the app, launches it against the in-memory FakeHost (SUNDOWN_UI_TEST_MODE=1, no daemon,
+# no network) and captures the screen, so a change can be looked at without a Mac.
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: SUNDOWN_UI_TEST_SCENARIO (empty for one short chat)
+        default: showcase
+  push:
+    branches: ["claude/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  screenshot:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    env:
+      SCENARIO: ${{ inputs.scenario || 'showcase' }}
+      SHOTS: ${{ github.workspace }}/screenshots
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -project Sundown.xcodeproj \
+            -scheme Sundown \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            SUNDOWN_APP_BUNDLE_IDENTIFIER=com.haydenhong.SundownUITestFixture \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= \
+            | tail -n 30
+
+      - name: Launch and capture
+        run: |
+          mkdir -p "$SHOTS"
+          app="$RUNNER_TEMP/DerivedData/Build/Products/Debug/Sundown.app"
+          ls "$app/Contents/MacOS"
+          for appearance in light dark; do
+            if [ "$appearance" = dark ]; then style=(-AppleInterfaceStyle Dark); else style=(); fi
+            SUNDOWN_UI_TEST_MODE=1 SUNDOWN_UI_TEST_SCENARIO="$SCENARIO" \
+              "$app/Contents/MacOS/Sundown" -ApplePersistenceIgnoreState YES "${style[@]}" \
+              > "$SHOTS/app-$appearance.log" 2>&1 &
+            pid=$!
+            sleep 15
+            osascript -e 'tell application "System Events" to set frontmost of (first process whose unix id is '"$pid"') to true' || true
+            sleep 2
+            screencapture -x "$SHOTS/screen-$appearance.png"
+            kill "$pid" || true
+            wait "$pid" 2>/dev/null || true
+          done
+          ls -la "$SHOTS"
+
+      - name: Print screenshots as base64
+        run: |
+          # The log is a fallback way to read the images when the artifact can't be downloaded.
+          for f in "$SHOTS"/*.png; do
+            sips -Z 1600 "$f" --out "$f.small.png" > /dev/null
+            echo "BEGIN-SHOT $(basename "$f")"
+            base64 -i "$f.small.png" | fold -w 4000
+            echo "END-SHOT $(basename "$f")"
+          done
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: ${{ env.SHOTS }}
