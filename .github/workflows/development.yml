@@ -99,7 +99,13 @@ jobs:
             "$app/Contents/MacOS/Sundown" -ApplePersistenceIgnoreState YES \
             > "$SHOTS/app-walkthrough.log" 2>&1 &
           pid=$!
+          sleep 3
+          osascript -e 'tell application "System Events" to set frontmost of (first process whose unix id is '"$pid"') to true' || true
+          # Stills partway through, to compare with the video.
+          for t in 8 14 22 30; do (sleep $((t - 4)); screencapture -x "$SHOTS/walkthrough-${t}s.png") & done
           wait "$rec" || true
+          /usr/bin/log show --last 3m --info --debug --style compact \
+            --predicate 'subsystem == "com.haydenhong.Sundown"' > "$SHOTS/app-os.log" || true
           echo "commands run: $(cat "$script.done" 2>/dev/null || echo none)"
           kill "$pid" || true
           ls -la "$SHOTS"
