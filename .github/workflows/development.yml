@@ -1,7 +1,7 @@
-name: App screenshot
+name: Development
 
-# Builds the app, launches it against the in-memory FakeHost (SUNDOWN_UI_TEST_MODE=1, no daemon,
-# no network) and captures the screen, so a change can be looked at without a Mac.
+# For working on the app without a Mac: builds it, launches it against the in-memory FakeHost
+# (SUNDOWN_UI_TEST_MODE=1, no daemon, no network), and saves screenshots and a screen recording.
 on:
   workflow_dispatch:
     inputs:
@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 jobs:
-  screenshot:
+  app:
     runs-on: xcode-27
     timeout-minutes: 30
     env:
