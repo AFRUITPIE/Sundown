@@ -52,29 +52,50 @@ final class LayoutUITests: SundownUITestCase {
 
         // Scrolled into the middle of the chat, switching doesn't blank it either, and the end is
         // there to go back to.
-        // The message at the top stays on screen through each.
+        // The reader's place is the row the view's top edge is in (TranscriptModel.place()); rows
+        // below it move when a fold between opens, so a message merely near the top can be pushed
+        // off screen by its own turn's calls. Somewhere a reply spans the top edge, then: that reply
+        // is the row kept, and it stays exactly where it was through each switch. Where a fixed
+        // scroll lands depends on the replies' heights at the window's size, so nudge until one does.
         let middle = mainWindow().coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
         middle.scroll(byDeltaX: 0, deltaY: 4000)
-        // Somewhere with a prompt or heading in view to keep: one long reply can fill the window,
-        // and where a fixed scroll lands depends on the replies' heights.
-        var place = topMessage(in: messageTops())
-        for _ in 0..<4 where place == nil {
+        var place = replyAcrossTop(in: messageTops())
+        for _ in 0..<8 where place == nil {
             middle.scroll(byDeltaX: 0, deltaY: 300)
-            place = topMessage(in: messageTops())
+            place = replyAcrossTop(in: messageTops())
         }
-        XCTAssertNotNil(place, "no message on screen after scrolling into the middle")
+        XCTAssertNotNil(place, "no reply across the top of the view after scrolling into the middle")
         for display in ["Every Call", "Summarized"] {
             chooseMenuItem("View", display)
             let tops = messageTops()
             if let place {
-                XCTAssertTrue(isVisible(place.key, in: tops), "\(display) in the middle lost the reader's place: \(place.key) isn't on screen, \(tops)")
+                let now = tops[place.key]
+                XCTAssertNotNil(now, "\(display) in the middle lost the reader's place: \(place.key) isn't built, \(tops)")
+                if let now {
+                    XCTAssertEqual(now, place.value, accuracy: 8,
+                                   "\(display) in the middle moved the reader's place: \(place.key) went from \(place.value) to \(now), \(tops)")
+                }
             }
-            place = topMessage(in: tops)
         }
         let jump = app.buttons["Jump to Latest"]
         if jump.appears(timeout: 3) { jump.click() }
         XCTAssertTrue(waitUntil(5) { self.isOnScreen(end) }, "the chat is blank after switching in its middle")
         assertAlive("after switching tool calls")
+    }
+
+    /// A reply ("Section n") the transcript's top edge falls inside, well clear of both its ends,
+    /// and where it starts: starting above the scroll view's top and running 200 points past it,
+    /// it holds the view's top whatever the toolbar's inset. Only a date can come between a reply
+    /// and the next prompt, so the next message's start stands for the reply's end.
+    @MainActor
+    private func replyAcrossTop(in tops: [String: CGFloat]) -> (key: String, value: CGFloat)? {
+        let top = app.scrollViews["Transcript"].frame.minY
+        let ordered = tops.sorted { $0.value < $1.value }
+        for (i, message) in ordered.enumerated() where message.key.hasPrefix("Section ") && message.value <= top - 20 {
+            let next = i + 1 < ordered.count ? ordered[i + 1].value : .infinity
+            if next >= top + 200 { return (message.key, message.value) }
+        }
+        return nil
     }
 
     /// Whether a prompt or a heading of the long chat is on screen in the chat window, waiting a

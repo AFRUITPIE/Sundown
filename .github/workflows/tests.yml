@@ -1,0 +1,72 @@
+name: Tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# The package tests and the app's UI tests run side by side on their own runners. The UI tests run
+# one at a time on one Mac: they press real keys into the frontmost window. Branch protection
+# requires both jobs by name, so renaming one means changing it there too.
+jobs:
+  package-tests:
+    name: Package Tests
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache package build
+        uses: actions/cache@v4
+        with:
+          path: SundownKit/.build
+          key: spm-kit-${{ hashFiles('SundownKit/Package.resolved') }}-${{ hashFiles('SundownKit/Sources/**', 'SundownKit/Tests/**') }}
+          restore-keys: spm-kit-${{ hashFiles('SundownKit/Package.resolved') }}-
+
+      - name: Run package tests
+        run: swift test --package-path SundownKit
+
+  ui-tests:
+    name: UI Tests
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/SourcePackages
+          key: spm-app-${{ hashFiles('Sundown.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: spm-app-
+
+      - name: Run app UI tests
+        run: |
+          xcodebuild test \
+            -project Sundown.xcodeproj \
+            -scheme Sundown \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/SundownDerivedData" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/SourcePackages" \
+            -resultBundlePath "$RUNNER_TEMP/SundownUITests.xcresult" \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
+            -parallel-testing-enabled NO \
+            -skip-testing:SundownAppUITests/SundownPerformanceUITests \
+            SUNDOWN_APP_BUNDLE_IDENTIFIER=com.haydenhong.SundownUITestFixture \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM=
+
+      - name: Upload UI test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SundownUITests-xcresult
+          path: ${{ runner.temp }}/SundownUITests.xcresult

@@ -106,23 +106,30 @@ final class StreamingBenchmark: XCTestCase {
 @MainActor
 @Suite
 struct StreamingFrameTests {
+    /// The best p95 of three replays: a shared machine can stall any one of them, while work that
+    /// grew slows all three. (One replay on a CI runner measured p95 2.12 ms with nothing changed,
+    /// where others measured 1.2 to 1.5.)
     @Test func eachFrameIsASliver() throws {
         let notifications = try StreamingBenchmark.reply.map { try ServerNotification(method: $0.method, params: JSONEncoder().encode($0.params)) }
-        let replay = Replay()
-        var frames: [Duration] = []
-        let clock = ContinuousClock()
-        for n in notifications {
-            let start = clock.now
-            replay.frame(n)
-            frames.append(clock.now - start)
-        }
         func milliseconds(_ d: Duration) -> Double { Double(d.components.attoseconds) / 1e15 + Double(d.components.seconds) * 1000 }
-        let ms = frames.map(milliseconds).sorted()
-        let total = ms.reduce(0, +)
-        let p50 = ms[ms.count / 2], p95 = ms[ms.count * 95 / 100], worst = ms.last ?? 0
-        print(String(format: "StreamingBenchmark: %d frames, total %.1f ms (building text %.1f ms), p50 %.3f ms, p95 %.3f ms, worst %.3f ms",
-                     ms.count, total, milliseconds(replay.fading), p50, p95, worst))
-        #expect(p95 < 2)
+        var best = Double.infinity
+        for _ in 0..<3 {
+            let replay = Replay()
+            var frames: [Duration] = []
+            let clock = ContinuousClock()
+            for n in notifications {
+                let start = clock.now
+                replay.frame(n)
+                frames.append(clock.now - start)
+            }
+            let ms = frames.map(milliseconds).sorted()
+            let total = ms.reduce(0, +)
+            let p50 = ms[ms.count / 2], p95 = ms[ms.count * 95 / 100], worst = ms.last ?? 0
+            print(String(format: "StreamingBenchmark: %d frames, total %.1f ms (building text %.1f ms), p50 %.3f ms, p95 %.3f ms, worst %.3f ms",
+                         ms.count, total, milliseconds(replay.fading), p50, p95, worst))
+            best = min(best, p95)
+        }
+        #expect(best < 2)
     }
 }
 

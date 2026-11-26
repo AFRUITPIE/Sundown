@@ -1,0 +1,69 @@
+name: Release Check
+
+# Whether merging this pull request releases the app, and if it does, the owner's approval first.
+# release.yml releases a MARKETING_VERSION with no tag yet as soon as it reaches main, so a pull
+# request that bumps the version is the decision to release.
+#
+# Version works it out. Approval runs only when merging would release (or Version couldn't tell),
+# and waits in the release-approval environment, which must have a required reviewer. Branch
+# protection requires Approval; when it's skipped (nothing to release) it counts as passed.
+on:
+  pull_request:
+    branches: [main]
+  # server-update.yml starts it on its pull requests: a pull request opened by a workflow's token
+  # starts no workflows itself.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      releases: ${{ steps.check.outputs.releases }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          version=$(sed -n 's/.*"MARKETING_VERSION": "\([^"]*\)".*/\1/p' Sundown.xcodeproj/project.xcproj | head -1)
+          [ -n "$version" ] || { echo "::error::No MARKETING_VERSION in project.xcproj"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            releases=false
+            message="Merging this doesn't release: v$version is already out."
+          else
+            releases=true
+            message="Merging this releases Sundown $version: it needs the owner's approval first."
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "releases=$releases" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Release::$message"
+          echo "$message" >> "$GITHUB_STEP_SUMMARY"
+
+  approval:
+    name: Approval
+    needs: version
+    # Also when Version failed: not knowing whether it releases is no reason to skip the approval.
+    if: ${{ !cancelled() && needs.version.outputs.releases != 'false' }}
+    runs-on: ubuntu-latest
+    environment: release-approval
+    permissions:
+      actions: read
+    steps:
+      # A workflow naming an environment that doesn't exist creates one with no reviewers, which
+      # would pass here unasked.
+      - name: The environment requires a reviewer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          types=$(gh api "repos/${{ github.repository }}/environments/release-approval" --jq '[.protection_rules[].type] | join(" ")')
+          case " $types " in
+            *" required_reviewers "*) ;;
+            *) echo "::error::The release-approval environment has no required reviewer, so this approved itself. Add one in Settings ▸ Environments."; exit 1 ;;
+          esac
+      - name: Approved
+        run: |
+          [ "${{ needs.version.result }}" = success ] || { echo "::error::Version failed, so what this releases is unknown."; exit 1; }
+          echo "Releasing Sundown ${{ needs.version.outputs.version }} on merge: approved." >> "$GITHUB_STEP_SUMMARY"

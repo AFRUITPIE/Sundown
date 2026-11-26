@@ -128,21 +128,6 @@ class SundownUITestCase: XCTestCase {
         return last
     }
 
-    /// The topmost prompt or reply that starts in the transcript's visible part (below the toolbar,
-    /// above the bottom bar), and where.
-    @MainActor
-    func topMessage(in tops: [String: CGFloat]) -> (key: String, value: CGFloat)? {
-        let frame = app.scrollViews["Transcript"].frame
-        return tops.filter { $0.value >= frame.minY + 60 && $0.value <= frame.maxY - 150 }.min { $0.value < $1.value }
-    }
-
-    /// Whether the message `key` starts in the transcript's visible part.
-    @MainActor
-    func isVisible(_ key: String, in tops: [String: CGFloat]) -> Bool {
-        let frame = app.scrollViews["Transcript"].frame
-        return tops[key].map { $0 >= frame.minY && $0 <= frame.maxY - 100 } ?? false
-    }
-
     /// Types `message` into the composer and presses Send.
     @MainActor
     func send(_ message: String, file: StaticString = #filePath, line: UInt = #line) {
