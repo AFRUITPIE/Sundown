@@ -1,0 +1,77 @@
+name: Performance
+
+# The package benchmarks (SundownKit/Tests/SundownUITests/*Benchmark*.swift), run on a base commit
+# and on the branch this is started on, one after the other on the same runner, and compared.
+# Started by hand: `gh workflow run performance.yml --ref <branch>`, or from the Actions tab.
+#
+# The comparison is in the run's summary, in the log between BEGIN-BENCH-JSON and END-BENCH-JSON,
+# and in the `benchmarks` artifact (bench.json and both raw logs). Trust CPU instructions retired:
+# a runner is a shared machine, so clock time and cycles move with its load. There are no stored
+# baselines; compare within one run.
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Commit or branch to compare against (empty for where the branch left main, or the parent on main)
+        required: false
+      filter:
+        description: swift test --filter
+        default: Benchmark
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      OUT: ${{ github.workspace }}/../bench
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Choose the base
+        env:
+          BASE: ${{ inputs.base }}
+        run: |
+          git fetch -q origin main
+          if [ -n "$BASE" ]; then
+            git fetch -q origin "$BASE" 2>/dev/null || true
+            base=$(git rev-parse --verify "origin/$BASE" 2>/dev/null || git rev-parse --verify "$BASE^{commit}")
+          else
+            base=$(git merge-base HEAD origin/main)
+            [ "$base" != "$(git rev-parse HEAD)" ] || base=$(git rev-parse HEAD~1)
+          fi
+          echo "Branch $(git rev-parse --short HEAD) against base $(git rev-parse --short "$base")"
+          mkdir -p "$OUT"
+          git worktree add -q --detach "$GITHUB_WORKSPACE/../base" "$base"
+
+      - name: Benchmark the base
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cd "$GITHUB_WORKSPACE/../base"
+          SUNDOWN_BENCH=1 swift test -c release -Xswiftc -DDEBUG -Xswiftc -enable-testing \
+            --package-path SundownKit --filter "${{ inputs.filter }}" 2>&1 | tee "$OUT/base.log"
+
+      - name: Benchmark the branch
+        run: |
+          set -o pipefail
+          SUNDOWN_BENCH=1 swift test -c release -Xswiftc -DDEBUG -Xswiftc -enable-testing \
+            --package-path SundownKit --filter "${{ inputs.filter }}" 2>&1 | tee "$OUT/branch.log"
+
+      - name: Compare
+        run: |
+          python3 Scripts/bench-compare.py "$OUT/base.log" "$OUT/branch.log" "$OUT/bench.json"
+          echo BEGIN-BENCH-JSON
+          cat "$OUT/bench.json"
+          echo END-BENCH-JSON
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmarks
+          path: ${{ env.OUT }}
+          retention-days: 30

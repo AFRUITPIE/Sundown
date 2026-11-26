@@ -23,7 +23,8 @@ behind `#available`.
   window is in front, so run them only when nobody is using the Mac, or leave them to CI. The `Sundown Performance` scheme
   runs `SundownPerformanceUITests` in Release (hitches, CPU, memory, signposts); the main scheme and CI skip it.
 - **Benchmarks:** `SUNDOWN_BENCH=1 swift test -c release -Xswiftc -DDEBUG -Xswiftc -enable-testing --package-path SundownKit --filter Benchmark`;
-  compare against the parent commit on the same Mac.
+  compare against the parent commit on the same Mac. `performance.yml` does that on a runner: started on a branch, it runs them
+  on the branch and on where it left `main`, and reports each metric's change (`Scripts/bench-compare.py`).
 - **Costs money or touches real hosts:** `SUNDOWN_E2E=1` (live tests against a real `claude`; set `TETHER_SERVER_BIN`),
   `SUNDOWN_NPX_E2E=1` (runs the published server with npx), `SUNDOWN_SSH_*` (SSH end to end). Run them only when asked.
 - Always look at the running app after a UI change; a clean build isn't a visual check. Make sure the window you look at
@@ -35,6 +36,10 @@ On Linux or in a cloud session there is no Xcode, so nothing here builds locally
 and run `ui-tests.yml` on it (`workflow_dispatch`, any branch, no pull request needed; a pull request runs it too). It builds
 the app and runs the package tests and the UI tests on Xcode 27 runners; read failures in the job logs, and each run uploads
 its `.xcresult`. A run takes a quarter of an hour of macOS runner time, so get as far as reading the code allows first.
+For speed, run `performance.yml` on the branch (`gh workflow run performance.yml --ref <branch>`, optionally `-f base=<ref>`);
+its numbers are in the run's summary, in the log between `BEGIN-BENCH-JSON` and `END-BENCH-JSON`, and in its `benchmarks`
+artifact. Judge by CPU instructions retired, which a shared runner barely moves, not clock time; changes within the runs'
+noise are marked so. It builds twice in Release, so use it when working on speed, not on every change.
 The repository is cloned alone there, so a change that needs an unreleased tether-server waits for its release.
 CI can't look at the app for you: a UI change still needs someone to look at the running app.
 
