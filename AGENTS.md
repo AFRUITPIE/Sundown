@@ -38,9 +38,10 @@ the app and runs the package tests and the UI tests on Xcode 27 runners; read fa
 its `.xcresult`. A run takes a quarter of an hour of macOS runner time, so get as far as reading the code allows first.
 For speed, run `performance.yml` on the branch (`gh workflow run performance.yml --ref <branch>`, optionally `-f base=<ref>`);
 its numbers are in the run's summary, in the log between `BEGIN-BENCH-JSON` and `END-BENCH-JSON`, and in its `benchmarks`
-artifact. The runner has no CPU counters, so it compares CPU time, clock time and peak memory over interleaved rounds, and
-counts a change only at 3% or more with no overlap between the rounds: it finds large changes, not small ones. It builds
-twice in Release, so use it when working on speed, not on every change.
+artifact. The runner has no CPU counters and its times wander, so it compares CPU time, clock time and peak memory over
+rounds in alternating order, and counts a change only with no overlap between the rounds and at 10% or more for times, 3%
+for memory: it catches regressions, not small wins, which still need a Mac. It builds twice in Release, so use it when
+working on speed, not on every change.
 The repository is cloned alone there, so a change that needs an unreleased tether-server waits for its release.
 CI can't look at the app for you: a UI change still needs someone to look at the running app.
 

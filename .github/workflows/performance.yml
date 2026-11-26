@@ -4,10 +4,11 @@ name: Performance
 # on the branch this is started on, compared. Started by hand: `gh workflow run performance.yml
 # --ref <branch>`, or from the Actions tab.
 #
-# Both are built in Release in folders of the same shape, then run in interleaved rounds (base,
-# branch, base, ...): two runs one after the other on a runner differ by a few percent with the same
-# code. The comparison is in the run's summary, in the log between BEGIN-BENCH-JSON and
-# END-BENCH-JSON, and in the `benchmarks` artifact (bench.json and every round's log). The runner
+# Both are built in Release in folders of the same shape, then run in rounds whose order swaps
+# (base then branch, branch then base, ...): on a runner, identical builds' times differ by 10% or
+# more between runs, peak memory by about 1%. The comparison is in the run's summary, in the log
+# between BEGIN-BENCH-JSON and END-BENCH-JSON, and in the `benchmarks` artifact (bench.json and
+# every round's log). The runner
 # is a virtual machine with no CPU counters, so judge by CPU time, clock time and peak memory.
 on:
   # Also on a pull request that changes this workflow or its script, so a change to it is tried.
@@ -23,7 +24,7 @@ on:
         default: Benchmark
       rounds:
         description: Rounds of each
-        default: "3"
+        default: "5"
 
 permissions:
   contents: read
@@ -34,7 +35,7 @@ jobs:
     timeout-minutes: 45
     env:
       FILTER: ${{ inputs.filter || 'Benchmark' }}
-      ROUNDS: ${{ inputs.rounds || '3' }}
+      ROUNDS: ${{ inputs.rounds || '5' }}
       SUNDOWN_BENCH: "1"
     steps:
       - uses: actions/checkout@v4
@@ -66,11 +67,13 @@ jobs:
               --package-path "$RUNNER_TEMP/$side/sundown/SundownKit"
           done
 
-      - name: Run interleaved rounds
+      - name: Run the rounds
         run: |
           set -o pipefail
+          # The order swaps every round, so going second costs both sides alike.
           for round in $(seq "$ROUNDS"); do
-            for side in a b; do
+            order=$([ $((round % 2)) = 1 ] && echo "a b" || echo "b a")
+            for side in $order; do
               name=$([ $side = a ] && echo base || echo branch)
               echo "::group::Round $round, $name"
               swift test --skip-build -c release -Xswiftc -DDEBUG -Xswiftc -enable-testing \

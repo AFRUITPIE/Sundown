@@ -7,7 +7,8 @@ commit and on a branch, by XCTest's `measured [...]` lines, for the Performance 
 Each log is one round. Run the rounds interleaved (base, branch, base, branch, ...): two runs one
 after the other on the same runner differ by several percent with identical code, far more than
 XCTest's spread within a run, so a change counts only when every branch round is beyond every
-base round and the medians differ by at least MIN_CHANGE. Prints a Markdown table (also appended
+base round and the medians differ by at least the metric's threshold: 10% for times, which differ
+by that much between identical builds on a runner, and 3% for memory. Prints a Markdown table (also appended
 to $GITHUB_STEP_SUMMARY when set) and writes every metric's rounds and verdict as JSON. All of
 these metrics are better lower.
 """
@@ -17,7 +18,11 @@ import re
 import statistics
 import sys
 
-MIN_CHANGE = 3.0  # percent
+MIN_CHANGE = {"time": 10.0, "other": 3.0}  # percent
+
+
+def threshold(metric):
+    return MIN_CHANGE["time"] if "Time" in metric else MIN_CHANGE["other"]
 LINE = re.compile(
     r"Test Case '-?\[?(?P<suite>[\w.]+)[ .](?P<test>\w+)\]?' measured \[(?P<metric>[^,\]]+), (?P<unit>[^\]]+)\] "
     r"average: (?P<avg>[\d.]+), relative standard deviation: (?P<rsd>[\d.]+)%(?:, values: \[(?P<values>[^\]]*)\])?"
@@ -72,9 +77,11 @@ def main():
         else:
             change = (row["branch"] - row["base"]) / row["base"] * 100 if row["base"] else 0.0
             row["changePercent"] = round(change, 2)
-            if change >= MIN_CHANGE and min(bm) > max(am):
+            limit = threshold(key[1])
+            row["thresholdPercent"] = limit
+            if change >= limit and min(bm) > max(am):
                 row["verdict"] = "worse"
-            elif change <= -MIN_CHANGE and max(bm) < min(am):
+            elif change <= -limit and max(bm) < min(am):
                 row["verdict"] = "better"
             else:
                 row["verdict"] = "within noise"
@@ -92,7 +99,8 @@ def main():
     shown = [r for r in rows if r["verdict"] not in ("unavailable", "unreliable")]
     hidden = sorted({f"{r['metric']}" for r in rows if r["verdict"] in ("unavailable", "unreliable")})
     lines = [f"Median of {len(base)} base and {len(branch)} branch rounds, interleaved; a change counts at "
-             f"{MIN_CHANGE:g}% or more with no overlap between the rounds. Lower is better.", "",
+             f"{MIN_CHANGE['time']:g}% or more for times and {MIN_CHANGE['other']:g}% for memory, with no overlap "
+             "between the rounds. Lower is better.", "",
              "| Test | Metric | Base | Branch | Change | |", "|---|---|---:|---:|---:|---|"]
     for r in shown:
         change = "–" if r["changePercent"] is None else f"{r['changePercent']:+.1f}%"
