@@ -153,10 +153,11 @@ to npm (approved by hand). A newly published server becomes a PR here (`server-u
 `Package.resolved` pins and the app's next patch version). Merging an app version bump releases the app (`release.yml`,
 running `Scripts/release.sh`: Developer ID, notarized, approved in the `release` environment), then updates the Homebrew tap.
 `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` are set only on the app target. Main stays at the released version, so
-bumping it is deciding to release. `Scripts/release.sh --beta [<PR> | <branch>]` makes a beta on this Mac.
+bumping it is deciding to release: a pull request that does is held by Release Check's Approval until the owner approves it
+in the `release-approval` environment. `Scripts/release.sh --beta [<PR> | <branch>]` makes a beta on this Mac.
 
 CI (`tests.yml`, on pull requests) runs Package Tests and UI Tests side by side on Xcode 27 runners; branch protection
-requires both by those names.
+requires both by those names, and Approval (`release-check.yml`).
 
 ## Working here
 

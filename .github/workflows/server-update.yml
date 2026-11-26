@@ -64,3 +64,4 @@ jobs:
           # A pull request this workflow's token opens starts no other workflows, so its tests are
           # started by hand; they report on the branch's commit, which the PR shows.
           gh workflow run tests.yml --ref "$branch"
+          gh workflow run release-check.yml --ref "$branch"
